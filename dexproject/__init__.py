@@ -6,6 +6,6 @@ so that shared_task will use this app.
 """
 
 # Import the Celery app to ensure it's loaded when Django starts
-from .celery import app as celery_app
+from .celery_app import app as celery_app
 
 __all__ = ('celery_app',)
