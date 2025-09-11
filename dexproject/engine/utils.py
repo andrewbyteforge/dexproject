@@ -1,21 +1,26 @@
 """
-Engine Utilities
+Enhanced Engine Utilities
 
-Shared utilities for provider management, logging configuration,
-and common helper functions used across the trading engine.
+Robust provider management with circuit breakers, health monitoring,
+automatic failover, and comprehensive error handling for production use.
+
+File: dexproject/engine/utils.py
 """
 
 import asyncio
 import logging
 import time
 import json
-from typing import Dict, List, Optional, Any, Callable, TypeVar, Awaitable
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Any, Callable, TypeVar, Awaitable, Union
+from dataclasses import dataclass, field
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from enum import Enum
 import aiohttp
 import websockets
 from web3 import Web3
+from web3.exceptions import Web3Exception, BlockNotFound, TransactionNotFound
+from eth_utils import is_address, to_checksum_address
 
 from .config import config, RPCProvider, ChainConfig
 
@@ -23,15 +28,15 @@ T = TypeVar('T')
 
 # Configure logging for the engine
 def setup_logging() -> None:
-    """Configure logging for the trading engine."""
+    """Configure enhanced logging for the trading engine."""
     
-    # Create formatter
+    # Create detailed formatter
     formatter = logging.Formatter(
         fmt='%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Console handler
+    # Console handler with level filtering
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     
@@ -40,353 +45,612 @@ def setup_logging() -> None:
     root_logger.setLevel(getattr(logging, config.log_level))
     root_logger.addHandler(console_handler)
     
-    # Engine-specific logger
-    engine_logger = logging.getLogger('engine')
-    engine_logger.setLevel(getattr(logging, config.log_level))
+    # Engine-specific loggers
+    for logger_name in ['engine', 'engine.provider', 'engine.discovery', 'engine.risk']:
+        engine_logger = logging.getLogger(logger_name)
+        engine_logger.setLevel(getattr(logging, config.log_level))
     
-    logging.info(f"Logging configured at {config.log_level} level")
+    logging.info(f"Enhanced logging configured at {config.log_level} level")
+
+
+class ProviderStatus(Enum):
+    """Provider health status states."""
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"  # High latency but functional
+    FAILING = "failing"    # Intermittent failures
+    CIRCUIT_OPEN = "circuit_open"  # Circuit breaker triggered
+    OFFLINE = "offline"    # Completely unavailable
 
 
 @dataclass
-class ProviderHealth:
-    """Health status for an RPC provider."""
-    provider: RPCProvider
-    is_healthy: bool = True
-    last_success: Optional[datetime] = None
-    last_error: Optional[str] = None
-    consecutive_failures: int = 0
+class ProviderMetrics:
+    """Detailed provider performance metrics."""
+    total_requests: int = 0
+    successful_requests: int = 0
+    failed_requests: int = 0
     average_latency_ms: float = 0.0
+    last_latency_ms: float = 0.0
     requests_per_second: float = 0.0
-
-
-class ProviderManager:
-    """
-    Manages RPC provider connections with health monitoring and failover.
+    last_success: Optional[datetime] = None
+    last_failure: Optional[datetime] = None
+    last_error_message: str = ""
+    consecutive_failures: int = 0
+    consecutive_successes: int = 0
+    uptime_percentage: float = 100.0
     
-    Handles automatic failover between providers, tracks health metrics,
-    and implements circuit breaker patterns for reliability.
-    """
+    # Circuit breaker state
+    circuit_breaker_triggered: bool = False
+    circuit_breaker_until: Optional[datetime] = None
     
-    def __init__(self, chain_config: ChainConfig):
-        """Initialize provider manager for a chain."""
-        self.chain_config = chain_config
-        self.provider_health: Dict[str, ProviderHealth] = {}
-        self.current_provider: Optional[RPCProvider] = None
-        self.web3_instances: Dict[str, Web3] = {}
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.logger = logging.getLogger(f'engine.provider.{chain_config.name.lower()}')
+    def update_success(self, latency_ms: float) -> None:
+        """Update metrics after a successful request."""
+        self.total_requests += 1
+        self.successful_requests += 1
+        self.consecutive_successes += 1
+        self.consecutive_failures = 0
+        self.last_success = datetime.now(timezone.utc)
+        self.last_latency_ms = latency_ms
         
-        # Circuit breaker settings
-        self.max_consecutive_failures = 5
-        self.health_check_interval = 30  # seconds
-        self.failover_cooldown = 60  # seconds
-        
-        self._initialize_providers()
-    
-    def _initialize_providers(self) -> None:
-        """Initialize provider health tracking."""
-        for provider in self.chain_config.rpc_providers:
-            self.provider_health[provider.name] = ProviderHealth(
-                provider=provider,
-                last_success=datetime.now(timezone.utc)
-            )
-            
-            # Create Web3 instance
-            try:
-                w3 = Web3(Web3.HTTPProvider(provider.url))
-                if w3.is_connected():
-                    self.web3_instances[provider.name] = w3
-                    self.logger.info(f"Connected to provider {provider.name}")
-                else:
-                    self.logger.warning(f"Failed to connect to provider {provider.name}")
-            except Exception as e:
-                self.logger.error(f"Error initializing provider {provider.name}: {e}")
-        
-        # Set current provider to highest priority healthy one
-        self._select_current_provider()
-    
-    def _select_current_provider(self) -> None:
-        """Select the best available provider based on priority and health."""
-        healthy_providers = [
-            health.provider for health in self.provider_health.values()
-            if health.is_healthy and health.provider.name in self.web3_instances
-        ]
-        
-        if healthy_providers:
-            # Sort by priority (lower = better) then by health metrics
-            self.current_provider = min(
-                healthy_providers,
-                key=lambda p: (p.priority, self.provider_health[p.name].consecutive_failures)
-            )
-            self.logger.info(f"Selected provider: {self.current_provider.name}")
+        # Update rolling average latency
+        if self.average_latency_ms == 0:
+            self.average_latency_ms = latency_ms
         else:
-            self.current_provider = None
-            self.logger.error("No healthy providers available!")
-    
-    async def get_web3(self) -> Optional[Web3]:
-        """Get current Web3 instance with automatic failover."""
-        if not self.current_provider:
-            self._select_current_provider()
-        
-        if self.current_provider and self.current_provider.name in self.web3_instances:
-            return self.web3_instances[self.current_provider.name]
-        
-        return None
+            # Run synchronous operation in thread pool
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, operation, w3)
     
     async def http_request(self, method: str, url: str, **kwargs) -> Optional[Any]:
-        """Make HTTP request with provider failover."""
+        """Make HTTP request with provider authentication and failover."""
         if not self.session:
-            self.session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=30)
+            self.session = aiohttp.ClientSession(timeout=timeout)
         
-        provider = self.current_provider
-        if not provider:
+        health = self.provider_health.get(self.current_provider) if self.current_provider else None
+        if not health or not health.is_available():
+            self._select_best_provider()
+            health = self.provider_health.get(self.current_provider) if self.current_provider else None
+        
+        if not health:
+            self.logger.error("No healthy provider for HTTP request")
             return None
         
+        provider = health.provider
         start_time = time.time()
         
         try:
-            # Add API key if configured
+            # Add API key authentication if available
             headers = kwargs.get('headers', {})
             if provider.api_key:
-                headers['Authorization'] = f'Bearer {provider.api_key}'
+                if 'alchemy' in provider.url.lower():
+                    headers['Authorization'] = f'Bearer {provider.api_key}'
+                elif 'infura' in provider.url.lower():
+                    # Infura uses API key in URL typically
+                    pass
             kwargs['headers'] = headers
             
-            async with self.session.request(method, url, timeout=10, **kwargs) as response:
+            # Rate limiting
+            await self.rate_limiters[provider.name].acquire()
+            
+            async with self.session.request(method, url, **kwargs) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
-                # Update health metrics
+                # Record success
                 latency_ms = (time.time() - start_time) * 1000
-                self._record_success(provider.name, latency_ms)
+                health.metrics.update_success(latency_ms)
                 
                 return data
                 
         except Exception as e:
+            health.metrics.update_failure(str(e))
             self.logger.error(f"HTTP request failed for {provider.name}: {e}")
-            self._record_failure(provider.name, str(e))
-            
-            # Try failover
-            await self._attempt_failover()
             return None
     
-    async def websocket_connect(self, url: str) -> Optional[websockets.WebSocketServerProtocol]:
-        """Connect to WebSocket with provider failover."""
-        provider = self.current_provider
-        if not provider or not provider.websocket_url:
-            return None
+    async def websocket_connect(self, on_message: Callable[[str], Awaitable[None]]) -> None:
+        """Maintain WebSocket connection with automatic reconnection."""
+        if not self.current_provider:
+            self._select_best_provider()
         
-        try:
-            # Add authentication if needed
-            headers = {}
-            if provider.api_key:
-                headers['Authorization'] = f'Bearer {provider.api_key}'
-            
-            websocket = await websockets.connect(
-                provider.websocket_url,
-                extra_headers=headers,
-                ping_timeout=config.websocket_timeout
-            )
-            
-            self._record_success(provider.name, 0)  # WebSocket connection success
-            self.logger.info(f"WebSocket connected to {provider.name}")
-            return websocket
-            
-        except Exception as e:
-            self.logger.error(f"WebSocket connection failed for {provider.name}: {e}")
-            self._record_failure(provider.name, str(e))
-            await self._attempt_failover()
-            return None
+        while True:
+            try:
+                health = self.provider_health.get(self.current_provider) if self.current_provider else None
+                if not health or not health.provider.websocket_url:
+                    self.logger.warning("No WebSocket URL available, switching to HTTP polling")
+                    await asyncio.sleep(config.websocket_reconnect_delay)
+                    continue
+                
+                ws_url = health.provider.websocket_url
+                if health.provider.api_key and 'alchemy' in ws_url.lower():
+                    # Add API key for Alchemy WebSocket
+                    ws_url = f"{ws_url}/{health.provider.api_key}"
+                
+                self.logger.info(f"Connecting to WebSocket: {health.provider.name}")
+                
+                async with websockets.connect(
+                    ws_url,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=10
+                ) as websocket:
+                    
+                    # Subscribe to new block headers for connection monitoring
+                    subscribe_msg = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "eth_subscribe",
+                        "params": ["newHeads"]
+                    }
+                    await websocket.send(json.dumps(subscribe_msg))
+                    
+                    self.logger.info(f"WebSocket connected to {health.provider.name}")
+                    health.metrics.update_success(0)  # Connection success
+                    
+                    async for message in websocket:
+                        try:
+                            await on_message(message)
+                            health.metrics.update_success(0)  # Message processing success
+                        except Exception as e:
+                            self.logger.error(f"Error processing WebSocket message: {e}")
+                            health.metrics.update_failure(str(e))
+                
+            except Exception as e:
+                if self.current_provider:
+                    health = self.provider_health[self.current_provider]
+                    health.metrics.update_failure(str(e))
+                    health.status = ProviderStatus.FAILING
+                
+                self.logger.error(f"WebSocket connection failed: {e}")
+                self._select_best_provider()  # Try different provider
+                
+                await asyncio.sleep(config.websocket_reconnect_delay)
     
-    def _record_success(self, provider_name: str, latency_ms: float) -> None:
-        """Record successful request for provider health tracking."""
-        if provider_name in self.provider_health:
-            health = self.provider_health[provider_name]
-            health.is_healthy = True
-            health.last_success = datetime.now(timezone.utc)
-            health.consecutive_failures = 0
-            
-            # Update rolling average latency
-            if health.average_latency_ms == 0:
-                health.average_latency_ms = latency_ms
-            else:
-                health.average_latency_ms = (health.average_latency_ms * 0.9) + (latency_ms * 0.1)
+    async def _health_monitor_task(self) -> None:
+        """Background task to monitor provider health."""
+        while True:
+            try:
+                await asyncio.sleep(self.health_check_interval)
+                await self._check_provider_health()
+            except Exception as e:
+                self.logger.error(f"Health monitor error: {e}")
     
-    def _record_failure(self, provider_name: str, error: str) -> None:
-        """Record failed request for provider health tracking."""
-        if provider_name in self.provider_health:
-            health = self.provider_health[provider_name]
-            health.last_error = error
-            health.consecutive_failures += 1
-            
-            # Mark as unhealthy if too many consecutive failures
-            if health.consecutive_failures >= self.max_consecutive_failures:
-                health.is_healthy = False
-                self.logger.warning(f"Provider {provider_name} marked unhealthy after {health.consecutive_failures} failures")
-    
-    async def _attempt_failover(self) -> None:
-        """Attempt to failover to next healthy provider."""
-        old_provider = self.current_provider
-        self._select_current_provider()
+    async def _check_provider_health(self) -> None:
+        """Perform health checks on all providers."""
+        for name, health in self.provider_health.items():
+            try:
+                if not health.web3_instance:
+                    continue
+                
+                # Simple connectivity test
+                start_time = time.time()
+                block_number = health.web3_instance.eth.block_number
+                latency_ms = (time.time() - start_time) * 1000
+                
+                if block_number > 0:
+                    health.metrics.update_success(latency_ms)
+                    
+                    # Update status based on latency
+                    if latency_ms > 5000:
+                        health.status = ProviderStatus.DEGRADED
+                    elif health.status in [ProviderStatus.DEGRADED, ProviderStatus.FAILING]:
+                        health.status = ProviderStatus.HEALTHY
+                        
+                else:
+                    health.metrics.update_failure("Invalid block number")
+                    health.status = ProviderStatus.FAILING
+                    
+            except Exception as e:
+                health.metrics.update_failure(str(e))
+                if health.status != ProviderStatus.CIRCUIT_OPEN:
+                    health.status = ProviderStatus.OFFLINE
+                
+                self.logger.debug(f"Health check failed for {name}: {e}")
         
-        if self.current_provider != old_provider:
-            if old_provider:
-                self.logger.warning(f"Failed over from {old_provider.name} to {self.current_provider.name}")
-            else:
-                self.logger.info(f"Selected new provider: {self.current_provider.name}")
+        # Reselect best provider if current one is unhealthy
+        if self.current_provider:
+            current_health = self.provider_health[self.current_provider]
+            if not current_health.is_available():
+                self._select_best_provider()
     
-    async def health_check(self) -> Dict[str, Any]:
-        """Perform health check on all providers."""
-        health_status = {}
+    def get_health_summary(self) -> Dict[str, Any]:
+        """Get comprehensive health summary for monitoring."""
+        summary = {
+            "current_provider": self.current_provider,
+            "total_requests": self.total_requests,
+            "successful_requests": self.successful_requests,
+            "success_rate": (self.successful_requests / max(self.total_requests, 1)) * 100,
+            "failover_count": self.failover_count,
+            "providers": {}
+        }
         
         for name, health in self.provider_health.items():
-            health_status[name] = {
-                'is_healthy': health.is_healthy,
-                'consecutive_failures': health.consecutive_failures,
-                'average_latency_ms': health.average_latency_ms,
-                'last_success': health.last_success.isoformat() if health.last_success else None,
-                'last_error': health.last_error
+            summary["providers"][name] = {
+                "status": health.status.value,
+                "is_paid": health.provider.is_paid,
+                "priority": health.provider.priority,
+                "total_requests": health.metrics.total_requests,
+                "success_rate": health.metrics.uptime_percentage,
+                "average_latency_ms": health.metrics.average_latency_ms,
+                "consecutive_failures": health.metrics.consecutive_failures,
+                "circuit_breaker_active": health.metrics.circuit_breaker_triggered,
+                "last_success": health.metrics.last_success.isoformat() if health.metrics.last_success else None,
+                "last_error": health.metrics.last_error_message[:100] if health.metrics.last_error_message else None
             }
         
-        return {
-            'chain': self.chain_config.name,
-            'current_provider': self.current_provider.name if self.current_provider else None,
-            'providers': health_status
-        }
+        return summary
     
     async def close(self) -> None:
-        """Close all connections and cleanup."""
+        """Clean up resources."""
         if self.session:
             await self.session.close()
+        
+        for health in self.provider_health.values():
+            if health.web3_instance:
+                # Close any open connections
+                try:
+                    health.web3_instance.provider.endpoint_uri = None
+                except:
+                    pass
+        
         self.logger.info(f"Provider manager closed for {self.chain_config.name}")
 
 
-class CircuitBreaker:
-    """
-    Circuit breaker implementation for protecting against cascading failures.
+# Utility functions for common blockchain operations
+async def get_token_info(provider_manager: ProviderManager, token_address: str) -> Optional[Dict[str, Any]]:
+    """Get basic token information using provider manager."""
+    if not is_address(token_address):
+        return None
     
-    Implements the circuit breaker pattern to prevent repeated calls
-    to failing services and allow graceful degradation.
-    """
+    token_address = to_checksum_address(token_address)
     
-    def __init__(self, failure_threshold: int = 5, timeout: int = 60):
-        """Initialize circuit breaker."""
-        self.failure_threshold = failure_threshold
-        self.timeout = timeout
-        self.failure_count = 0
-        self.last_failure_time = None
-        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
-        self.logger = logging.getLogger('engine.circuit_breaker')
+    # Basic ERC20 ABI
+    erc20_abi = [
+        {"constant": True, "inputs": [], "name": "name", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
+        {"constant": True, "inputs": [], "name": "totalSupply", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}
+    ]
     
-    async def call(self, func: Callable[[], Awaitable[T]]) -> Optional[T]:
-        """Execute function with circuit breaker protection."""
-        if self.state == "OPEN":
-            if self._should_attempt_reset():
-                self.state = "HALF_OPEN"
-                self.logger.info("Circuit breaker moving to HALF_OPEN state")
-            else:
-                self.logger.warning("Circuit breaker is OPEN, call blocked")
-                return None
+    async def _get_info(w3: Web3) -> Dict[str, Any]:
+        contract = w3.eth.contract(address=token_address, abi=erc20_abi)
         
         try:
-            result = await func()
-            self._on_success()
-            return result
-        except Exception as e:
-            self._on_failure()
-            self.logger.error(f"Circuit breaker caught exception: {e}")
-            raise
-    
-    def _should_attempt_reset(self) -> bool:
-        """Check if enough time has passed to attempt reset."""
-        if not self.last_failure_time:
-            return True
-        return time.time() - self.last_failure_time >= self.timeout
-    
-    def _on_success(self) -> None:
-        """Handle successful call."""
-        if self.state == "HALF_OPEN":
-            self.state = "CLOSED"
-            self.logger.info("Circuit breaker reset to CLOSED state")
-        self.failure_count = 0
-    
-    def _on_failure(self) -> None:
-        """Handle failed call."""
-        self.failure_count += 1
-        self.last_failure_time = time.time()
+            name = contract.functions.name().call()
+        except:
+            name = "Unknown"
         
-        if self.failure_count >= self.failure_threshold:
-            self.state = "OPEN"
-            self.logger.warning(f"Circuit breaker opened after {self.failure_count} failures")
+        try:
+            symbol = contract.functions.symbol().call()
+        except:
+            symbol = "UNKNOWN"
+        
+        try:
+            decimals = contract.functions.decimals().call()
+        except:
+            decimals = 18
+        
+        try:
+            total_supply = contract.functions.totalSupply().call()
+        except:
+            total_supply = 0
+        
+        return {
+            "address": token_address,
+            "name": name,
+            "symbol": symbol,
+            "decimals": decimals,
+            "total_supply": total_supply
+        }
+    
+    return await provider_manager.execute_with_failover(_get_info)
+
+
+async def get_latest_block(provider_manager: ProviderManager) -> Optional[int]:
+    """Get latest block number using provider manager."""
+    
+    async def _get_block(w3: Web3) -> int:
+        return w3.eth.block_number
+    
+    return await provider_manager.execute_with_failover(_get_block)
+
+
+# Async context manager for provider lifecycle
+class ProviderManagerContext:
+    """Context manager for ProviderManager lifecycle."""
+    
+    def __init__(self, chain_config: ChainConfig):
+        self.chain_config = chain_config
+        self.provider_manager: Optional[ProviderManager] = None
+    
+    async def __aenter__(self) -> ProviderManager:
+        self.provider_manager = ProviderManager(self.chain_config)
+        return self.provider_manager
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.provider_manager:
+            await self.provider_manager.close()
+ Exponential moving average (alpha = 0.1)
+            self.average_latency_ms = 0.9 * self.average_latency_ms + 0.1 * latency_ms
+        
+        # Update uptime percentage
+        if self.total_requests > 0:
+            self.uptime_percentage = (self.successful_requests / self.total_requests) * 100
+    
+    def update_failure(self, error_message: str) -> None:
+        """Update metrics after a failed request."""
+        self.total_requests += 1
+        self.failed_requests += 1
+        self.consecutive_failures += 1
+        self.consecutive_successes = 0
+        self.last_failure = datetime.now(timezone.utc)
+        self.last_error_message = error_message
+        
+        # Update uptime percentage
+        if self.total_requests > 0:
+            self.uptime_percentage = (self.successful_requests / self.total_requests) * 100
+    
+    def reset_circuit_breaker(self) -> None:
+        """Reset circuit breaker state."""
+        self.circuit_breaker_triggered = False
+        self.circuit_breaker_until = None
+        self.consecutive_failures = 0
+    
+    def trigger_circuit_breaker(self, duration_seconds: int = 60) -> None:
+        """Trigger circuit breaker for specified duration."""
+        self.circuit_breaker_triggered = True
+        self.circuit_breaker_until = datetime.now(timezone.utc) + timedelta(seconds=duration_seconds)
+
+
+@dataclass
+class ProviderHealth:
+    """Enhanced provider health status with detailed metrics."""
+    provider: RPCProvider
+    status: ProviderStatus = ProviderStatus.HEALTHY
+    metrics: ProviderMetrics = field(default_factory=ProviderMetrics)
+    web3_instance: Optional[Web3] = None
+    
+    def is_available(self) -> bool:
+        """Check if provider is available for requests."""
+        if self.status == ProviderStatus.OFFLINE:
+            return False
+        
+        if self.metrics.circuit_breaker_triggered:
+            if self.metrics.circuit_breaker_until and datetime.now(timezone.utc) > self.metrics.circuit_breaker_until:
+                self.metrics.reset_circuit_breaker()
+                self.status = ProviderStatus.HEALTHY
+                return True
+            return False
+        
+        return self.status in [ProviderStatus.HEALTHY, ProviderStatus.DEGRADED]
+    
+    def get_priority_score(self) -> float:
+        """Calculate priority score for provider selection (lower = better)."""
+        base_priority = self.provider.priority
+        
+        # Adjust based on health status
+        if self.status == ProviderStatus.HEALTHY:
+            status_penalty = 0
+        elif self.status == ProviderStatus.DEGRADED:
+            status_penalty = 1
+        elif self.status == ProviderStatus.FAILING:
+            status_penalty = 3
+        else:
+            status_penalty = 10  # Circuit open or offline
+        
+        # Adjust based on recent performance
+        latency_penalty = min(self.metrics.average_latency_ms / 1000, 2)  # Max 2 points for latency
+        failure_penalty = self.metrics.consecutive_failures * 0.5
+        
+        return base_priority + status_penalty + latency_penalty + failure_penalty
 
 
 class RateLimiter:
-    """Rate limiter for API requests."""
+    """Advanced rate limiter with burst handling."""
     
-    def __init__(self, max_requests: int, time_window: int = 60):
+    def __init__(self, max_requests_per_second: int, burst_size: Optional[int] = None):
         """Initialize rate limiter."""
-        self.max_requests = max_requests
-        self.time_window = time_window
-        self.requests = []
-        self.logger = logging.getLogger('engine.rate_limiter')
+        self.max_rps = max_requests_per_second
+        self.burst_size = burst_size or min(max_requests_per_second * 2, 100)
+        self.tokens = self.burst_size
+        self.last_update = time.time()
+        self.lock = asyncio.Lock()
     
-    async def acquire(self) -> bool:
-        """Acquire permission to make a request."""
-        now = time.time()
+    async def acquire(self) -> None:
+        """Acquire a token, waiting if necessary."""
+        async with self.lock:
+            now = time.time()
+            elapsed = now - self.last_update
+            
+            # Add tokens based on elapsed time
+            tokens_to_add = elapsed * self.max_rps
+            self.tokens = min(self.burst_size, self.tokens + tokens_to_add)
+            self.last_update = now
+            
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return
+            
+            # Need to wait
+            wait_time = (1 - self.tokens) / self.max_rps
+            await asyncio.sleep(wait_time)
+            self.tokens = 0
+
+
+class ProviderManager:
+    """
+    Enhanced provider manager with circuit breakers, health monitoring,
+    automatic failover, and comprehensive error handling.
+    """
+    
+    def __init__(self, chain_config: ChainConfig):
+        """Initialize enhanced provider manager."""
+        self.chain_config = chain_config
+        self.provider_health: Dict[str, ProviderHealth] = {}
+        self.current_provider: Optional[str] = None  # Store provider name
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.rate_limiters: Dict[str, RateLimiter] = {}
         
-        # Remove old requests outside time window
-        self.requests = [req_time for req_time in self.requests if now - req_time < self.time_window]
+        self.logger = logging.getLogger(f'engine.provider.{chain_config.name.lower()}')
         
-        # Check if we can make another request
-        if len(self.requests) < self.max_requests:
-            self.requests.append(now)
-            return True
+        # Circuit breaker settings
+        self.failure_threshold = config.provider_failover_threshold
+        self.recovery_timeout = config.provider_recovery_time
+        self.health_check_interval = config.provider_health_check_interval
+        
+        # Performance tracking
+        self.total_requests = 0
+        self.successful_requests = 0
+        self.failover_count = 0
+        
+        # Initialize providers
+        self._initialize_providers()
+        
+        # Start background health monitoring
+        asyncio.create_task(self._health_monitor_task())
+    
+    def _initialize_providers(self) -> None:
+        """Initialize all providers with health tracking."""
+        for provider in self.chain_config.rpc_providers:
+            # Create health tracker
+            health = ProviderHealth(provider=provider)
+            self.provider_health[provider.name] = health
+            
+            # Create rate limiter
+            self.rate_limiters[provider.name] = RateLimiter(provider.max_requests_per_second)
+            
+            # Initialize Web3 connection
+            try:
+                w3 = Web3(Web3.HTTPProvider(
+                    provider.url,
+                    request_kwargs={'timeout': provider.timeout_seconds}
+                ))
+                
+                # Test connection
+                if w3.is_connected():
+                    health.web3_instance = w3
+                    health.status = ProviderStatus.HEALTHY
+                    self.logger.info(f"Successfully connected to {provider.name}")
+                else:
+                    health.status = ProviderStatus.OFFLINE
+                    self.logger.warning(f"Failed to connect to {provider.name}")
+                    
+            except Exception as e:
+                health.status = ProviderStatus.OFFLINE
+                health.metrics.update_failure(str(e))
+                self.logger.error(f"Error initializing {provider.name}: {e}")
+        
+        # Select initial provider
+        self._select_best_provider()
+        
+        self.logger.info(f"Initialized {len(self.provider_health)} providers for {self.chain_config.name}")
+    
+    def _select_best_provider(self) -> None:
+        """Select the best available provider based on health and priority."""
+        available_providers = [
+            (name, health) for name, health in self.provider_health.items()
+            if health.is_available()
+        ]
+        
+        if not available_providers:
+            self.current_provider = None
+            self.logger.error("No healthy providers available!")
+            return
+        
+        # Sort by priority score (lower = better)
+        best_provider_name, best_health = min(
+            available_providers,
+            key=lambda x: x[1].get_priority_score()
+        )
+        
+        if self.current_provider != best_provider_name:
+            old_provider = self.current_provider
+            self.current_provider = best_provider_name
+            
+            if old_provider:
+                self.failover_count += 1
+                self.logger.warning(f"Failover from {old_provider} to {best_provider_name} "
+                                  f"(failover #{self.failover_count})")
+            else:
+                self.logger.info(f"Selected provider: {best_provider_name}")
+    
+    async def get_web3(self) -> Optional[Web3]:
+        """Get current Web3 instance with automatic failover."""
+        if not self.current_provider:
+            self._select_best_provider()
+        
+        if self.current_provider:
+            health = self.provider_health[self.current_provider]
+            if health.is_available() and health.web3_instance:
+                return health.web3_instance
+        
+        # No healthy provider available
+        self.logger.error("No healthy Web3 instance available")
+        return None
+    
+    async def execute_with_failover(self, operation: Callable[[Web3], T], max_retries: int = 3) -> Optional[T]:
+        """Execute an operation with automatic provider failover."""
+        for attempt in range(max_retries):
+            try:
+                w3 = await self.get_web3()
+                if not w3:
+                    if attempt == max_retries - 1:
+                        self.logger.error("All providers failed - no Web3 available")
+                    await asyncio.sleep(min(2 ** attempt, 10))  # Exponential backoff
+                    continue
+                
+                # Rate limiting
+                if self.current_provider:
+                    await self.rate_limiters[self.current_provider].acquire()
+                
+                # Execute operation with timing
+                start_time = time.time()
+                result = await self._execute_operation(operation, w3)
+                execution_time = (time.time() - start_time) * 1000
+                
+                # Record success
+                if self.current_provider:
+                    health = self.provider_health[self.current_provider]
+                    health.metrics.update_success(execution_time)
+                    
+                    # Update status based on performance
+                    if execution_time > 5000:  # > 5 seconds
+                        health.status = ProviderStatus.DEGRADED
+                    elif health.status == ProviderStatus.DEGRADED and execution_time < 2000:
+                        health.status = ProviderStatus.HEALTHY
+                
+                self.total_requests += 1
+                self.successful_requests += 1
+                
+                return result
+                
+            except Exception as e:
+                self.total_requests += 1
+                
+                if self.current_provider:
+                    health = self.provider_health[self.current_provider]
+                    health.metrics.update_failure(str(e))
+                    
+                    # Check if we should trigger circuit breaker
+                    if health.metrics.consecutive_failures >= self.failure_threshold:
+                        health.metrics.trigger_circuit_breaker(self.recovery_timeout)
+                        health.status = ProviderStatus.CIRCUIT_OPEN
+                        self.logger.warning(f"Circuit breaker triggered for {self.current_provider}")
+                    elif health.metrics.consecutive_failures >= 2:
+                        health.status = ProviderStatus.FAILING
+                
+                self.logger.warning(f"Operation failed on {self.current_provider} (attempt {attempt + 1}): {e}")
+                
+                # Try to select a different provider
+                self._select_best_provider()
+                
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(min(2 ** attempt, 5))  # Exponential backoff
+        
+        self.logger.error(f"Operation failed after {max_retries} attempts across all providers")
+        return None
+    
+    async def _execute_operation(self, operation: Callable[[Web3], T], w3: Web3) -> T:
+        """Execute operation with proper error handling."""
+        if asyncio.iscoroutinefunction(operation):
+            return await operation(w3)
         else:
-            self.logger.warning(f"Rate limit exceeded: {len(self.requests)}/{self.max_requests} requests")
-            return False
-    
-    async def wait_if_needed(self) -> None:
-        """Wait if rate limit would be exceeded."""
-        while not await self.acquire():
-            await asyncio.sleep(1)
-
-
-def format_currency(amount: Decimal, decimals: int = 2) -> str:
-    """Format decimal amount as currency string."""
-    return f"${amount:,.{decimals}f}"
-
-
-def format_percentage(value: Decimal, decimals: int = 2) -> str:
-    """Format decimal as percentage string."""
-    return f"{value:.{decimals}f}%"
-
-
-def calculate_slippage(expected: Decimal, actual: Decimal) -> Decimal:
-    """Calculate slippage percentage between expected and actual amounts."""
-    if expected == 0:
-        return Decimal('0')
-    return abs((actual - expected) / expected) * 100
-
-
-def truncate_address(address: str, start: int = 6, end: int = 4) -> str:
-    """Truncate Ethereum address for display."""
-    if len(address) <= start + end:
-        return address
-    return f"{address[:start]}...{address[-end:]}"
-
-
-def safe_decimal(value: Any, default: Decimal = Decimal('0')) -> Decimal:
-    """Safely convert value to Decimal."""
-    try:
-        return Decimal(str(value))
-    except (ValueError, TypeError, OverflowError):
-        return default
-
-
-def get_current_timestamp() -> int:
-    """Get current Unix timestamp."""
-    return int(time.time())
-
-
-def get_current_timestamp_ms() -> int:
-    """Get current Unix timestamp in milliseconds."""
-    return int(time.time() * 1000)
+            pass
