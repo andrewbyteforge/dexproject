@@ -103,10 +103,31 @@ def ownership_check(
         # Analyze contract upgradeability
         upgrade_analysis = _analyze_contract_upgradeability(w3, token_address)
         
-        # Calculate risk score
+        # Enhanced ownership analysis with new functions
+        enhanced_analysis = {}
+        
+        # Enhanced fake renouncement detection
+        if ownership_analysis.get('is_renounced') and ownership_analysis.get('owner_address'):
+            enhanced_analysis['fake_renounce'] = _detect_fake_renounce(
+                w3, token_address, ownership_analysis['owner_address'], ownership_analysis['is_renounced']
+            )
+        
+        # Enhanced proxy ownership analysis
+        enhanced_analysis['proxy_ownership'] = _analyze_proxy_ownership(w3, token_address)
+        
+        # Enhanced admin function detection
+        enhanced_analysis['enhanced_admin_functions'] = _enhanced_admin_function_detection(w3, token_address)
+        
+        # Enhanced timelock integrity verification
+        if timelock_analysis.get('has_timelock'):
+            enhanced_analysis['timelock_integrity'] = _verify_timelock_integrity(
+                w3, token_address, timelock_analysis
+            )
+        
+        # Calculate risk score including enhanced analysis
         risk_score = _calculate_ownership_risk_score(
             ownership_analysis, admin_analysis, timelock_analysis, 
-            multisig_analysis, upgrade_analysis
+            multisig_analysis, upgrade_analysis, enhanced_analysis
         )
         
         # Prepare detailed results
@@ -117,11 +138,12 @@ def ownership_check(
             'timelock': timelock_analysis,
             'multisig': multisig_analysis,
             'upgradeability': upgrade_analysis,
+            'enhanced_analysis': enhanced_analysis,
             'risk_factors': _identify_risk_factors(
-                ownership_analysis, admin_analysis, upgrade_analysis
+                ownership_analysis, admin_analysis, upgrade_analysis, enhanced_analysis
             ),
             'security_recommendations': _generate_security_recommendations(
-                ownership_analysis, admin_analysis, timelock_analysis
+                ownership_analysis, admin_analysis, timelock_analysis, enhanced_analysis
             ),
             'centralization_score': _calculate_centralization_score(
                 ownership_analysis, admin_analysis, multisig_analysis
@@ -664,9 +686,10 @@ def _calculate_ownership_risk_score(
     admin_functions: Dict[str, Any],
     timelock: Dict[str, Any],
     multisig: Dict[str, Any],
-    upgrade: Dict[str, Any]
+    upgrade: Dict[str, Any],
+    enhanced_analysis: Optional[Dict[str, Any]] = None
 ) -> Decimal:
-    """Calculate overall ownership risk score."""
+    """Calculate overall ownership risk score including enhanced analysis."""
     score = Decimal('0')
     
     # Ownership risk
@@ -710,6 +733,27 @@ def _calculate_ownership_risk_score(
     # Upgradeability risk
     if upgrade.get('is_upgradeable'):
         score += Decimal('25')  # Upgradeable contracts are risky
+    
+    # Enhanced analysis risk adjustments
+    if enhanced_analysis:
+        # Fake renouncement detection
+        fake_renounce = enhanced_analysis.get('fake_renounce', {})
+        if fake_renounce.get('is_fake_renounce'):
+            score += Decimal(str(fake_renounce.get('risk_score', 30)))
+            logger.warning(f"Fake renouncement detected - adding {fake_renounce.get('risk_score', 30)} to risk score")
+        
+        # Proxy ownership risks
+        proxy_ownership = enhanced_analysis.get('proxy_ownership', {})
+        score += Decimal(str(proxy_ownership.get('risk_score', 0)))
+        
+        # Enhanced admin function risks
+        enhanced_admin = enhanced_analysis.get('enhanced_admin_functions', {})
+        score += Decimal(str(enhanced_admin.get('risk_score', 0)))
+        
+        # Timelock integrity issues
+        timelock_integrity = enhanced_analysis.get('timelock_integrity', {})
+        if timelock_integrity.get('has_bypass_risks'):
+            score += Decimal(str(timelock_integrity.get('risk_score', 20)))
     
     # Ensure score is within bounds
     return max(Decimal('0'), min(score, Decimal('100')))
@@ -886,8 +930,13 @@ def _assess_multisig_security(is_multisig: bool, owners_count: Optional[int], th
         return 'MINIMAL'
 
 
-def _identify_risk_factors(ownership: Dict, admin_functions: Dict, upgrade: Dict) -> List[str]:
-    """Identify specific risk factors."""
+def _identify_risk_factors(
+    ownership: Dict, 
+    admin_functions: Dict, 
+    upgrade: Dict, 
+    enhanced_analysis: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Identify specific risk factors including enhanced analysis."""
     risks = []
     
     if not ownership.get('is_renounced') and ownership.get('has_owner'):
@@ -908,11 +957,35 @@ def _identify_risk_factors(ownership: Dict, admin_functions: Dict, upgrade: Dict
     if ownership.get('owner_activity', {}).get('is_eoa'):
         risks.append('Owner is single private key (EOA)')
     
+    # Enhanced analysis risks
+    if enhanced_analysis:
+        fake_renounce = enhanced_analysis.get('fake_renounce', {})
+        if fake_renounce.get('is_fake_renounce'):
+            risks.append('Fake ownership renouncement detected')
+            risks.extend(fake_renounce.get('indicators', []))
+        
+        proxy_ownership = enhanced_analysis.get('proxy_ownership', {})
+        if proxy_ownership.get('has_hidden_ownership'):
+            risks.append('Hidden ownership through proxy patterns')
+        
+        enhanced_admin = enhanced_analysis.get('enhanced_admin_functions', {})
+        if enhanced_admin.get('disguised_functions'):
+            risks.append('Disguised admin functions detected')
+        
+        timelock_integrity = enhanced_analysis.get('timelock_integrity', {})
+        if timelock_integrity.get('has_bypass_risks'):
+            risks.append('Timelock bypass mechanisms detected')
+    
     return risks
 
 
-def _generate_security_recommendations(ownership: Dict, admin_functions: Dict, timelock: Dict) -> List[str]:
-    """Generate security recommendations."""
+def _generate_security_recommendations(
+    ownership: Dict, 
+    admin_functions: Dict, 
+    timelock: Dict,
+    enhanced_analysis: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """Generate security recommendations including enhanced analysis."""
     recommendations = []
     
     if not ownership.get('is_renounced'):
@@ -926,6 +999,20 @@ def _generate_security_recommendations(ownership: Dict, admin_functions: Dict, t
     
     if admin_functions.get('has_mint_function'):
         recommendations.append('Consider removing mint function or adding strict controls')
+    
+    # Enhanced analysis recommendations
+    if enhanced_analysis:
+        fake_renounce = enhanced_analysis.get('fake_renounce', {})
+        if fake_renounce.get('is_fake_renounce'):
+            recommendations.append('Verify legitimate ownership renouncement')
+        
+        proxy_ownership = enhanced_analysis.get('proxy_ownership', {})
+        if proxy_ownership.get('has_hidden_ownership'):
+            recommendations.append('Review proxy ownership patterns for transparency')
+        
+        timelock_integrity = enhanced_analysis.get('timelock_integrity', {})
+        if timelock_integrity.get('has_bypass_risks'):
+            recommendations.append('Remove timelock bypass mechanisms')
     
     return recommendations
 
@@ -965,3 +1052,909 @@ def _store_ownership_result(result: Dict[str, Any]) -> None:
             logger.debug(f"Storing ownership result for {result['token_address']}")
     except Exception as e:
         logger.error(f"Failed to store ownership result: {e}")
+
+
+# ============================================================================
+# ENHANCED OWNERSHIP ANALYSIS FUNCTIONS
+# ============================================================================
+
+def _detect_fake_renounce(
+    w3: Web3, 
+    token_address: str, 
+    owner_address: str,
+    is_renounced: bool
+) -> Dict[str, Any]:
+    """
+    Detect fake renouncement patterns where ownership is transferred to suspicious addresses
+    that appear to be burn addresses but may still have control mechanisms.
+    
+    Args:
+        w3: Web3 connection instance
+        token_address: The token contract address being analyzed
+        owner_address: Current owner address (may be burn address)
+        is_renounced: Current renouncement status from basic analysis
+        
+    Returns:
+        Dict containing fake renouncement analysis results
+    """
+    logger.debug(f"[_detect_fake_renounce] Analyzing fake renouncement patterns for {token_address}")
+    
+    try:
+        # Known suspicious patterns that indicate fake renouncement
+        suspicious_patterns = {
+            # Common fake burn addresses that may have backdoors
+            'fake_burn_addresses': [
+                '0x000000000000000000000000000000000000dead',
+                '0x0000000000000000000000000000000000000001',
+                '0x0000000000000000000000000000000000000002',
+                '0x1111111111111111111111111111111111111111',
+                '0x2222222222222222222222222222222222222222',
+                '0x0000000000000000000000000000000000001111',
+            ],
+        }
+        
+        fake_renounce_indicators = []
+        risk_score = 0
+        
+        if not is_renounced:
+            logger.debug(f"[_detect_fake_renounce] Owner not renounced, skipping fake renounce detection for {token_address}")
+            return {
+                'is_fake_renounce': False,
+                'risk_score': 0,
+                'indicators': [],
+                'analysis': 'Ownership not renounced'
+            }
+        
+        # Check if owner matches known fake burn patterns
+        owner_lower = owner_address.lower()
+        
+        # Check against known fake burn addresses
+        if owner_lower in [addr.lower() for addr in suspicious_patterns['fake_burn_addresses']]:
+            fake_renounce_indicators.append(f"Owner transferred to suspicious burn address: {owner_address}")
+            risk_score += 30
+            logger.warning(f"[_detect_fake_renounce] Fake burn address detected for {token_address}: {owner_address}")
+        
+        # Check against vanity burn patterns
+        suspicious_vanity_patterns = [
+            # Addresses ending in 'dead' but not the standard burn
+            lambda addr: addr.lower().endswith('dead') and addr != '0x000000000000000000000000000000000000dead',
+            # Addresses with repeating patterns that aren't zero
+            lambda addr: len(set(addr[2:].lower())) <= 2 and '0' not in addr[2:].lower(),
+            # Addresses that are all the same digit except zeros
+            lambda addr: all(c in '1111111111111111111111111111111111111111' for c in addr[2:].lower()),
+        ]
+        
+        for pattern_func in suspicious_vanity_patterns:
+            try:
+                if pattern_func(owner_address):
+                    fake_renounce_indicators.append(f"Owner transferred to suspicious vanity burn: {owner_address}")
+                    risk_score += 25
+                    logger.warning(f"[_detect_fake_renounce] Suspicious vanity burn detected for {token_address}: {owner_address}")
+                    break
+            except Exception as e:
+                logger.debug(f"[_detect_fake_renounce] Error checking vanity burn pattern: {e}")
+                continue
+        
+        # Check if burn address still has transaction activity (red flag)
+        burn_tx_count = 0
+        try:
+            burn_tx_count = w3.eth.get_transaction_count(owner_address)
+            if burn_tx_count > 0:
+                fake_renounce_indicators.append(f"Burn address has transaction history: {burn_tx_count} transactions")
+                risk_score += 40
+                logger.warning(f"[_detect_fake_renounce] Active burn address detected for {token_address}: {owner_address} has {burn_tx_count} txs")
+        except Exception as e:
+            logger.debug(f"[_detect_fake_renounce] Failed to check burn address transaction count: {e}")
+        
+        # Check if burn address has ETH balance (suspicious for pure burn)
+        burn_balance_eth = 0
+        try:
+            burn_balance = w3.eth.get_balance(owner_address)
+            if burn_balance > 0:
+                burn_balance_eth = w3.from_wei(burn_balance, 'ether')
+                fake_renounce_indicators.append(f"Burn address holds ETH balance: {burn_balance_eth:.6f} ETH")
+                risk_score += 20
+                logger.warning(f"[_detect_fake_renounce] Funded burn address detected for {token_address}: {owner_address} has {burn_balance_eth:.6f} ETH")
+        except Exception as e:
+            logger.debug(f"[_detect_fake_renounce] Failed to check burn address balance: {e}")
+        
+        # Check for alternative control mechanisms that might bypass renouncement
+        control_bypass_functions = [
+            'emergencyWithdraw()',
+            'rescue(address)',
+            'recoverToken(address)',
+            'adminTransfer(address,address,uint256)',
+            'forceTransfer(address,address,uint256)',
+            'ownerTransfer(address,address,uint256)'
+        ]
+        
+        bypass_functions_found = []
+        for func_sig in control_bypass_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                # Test if function exists by attempting to call it
+                w3.eth.call({
+                    'to': token_address,
+                    'data': func_selector + b'\x00' * 96  # Pad with zeros for parameters
+                })
+                bypass_functions_found.append(func_sig)
+            except BadFunctionCallOutput:
+                pass  # Function doesn't exist - good
+            except Exception:
+                # Function exists but reverted (which means it exists)
+                bypass_functions_found.append(func_sig)
+        
+        if bypass_functions_found:
+            fake_renounce_indicators.append(f"Control bypass functions detected: {', '.join(bypass_functions_found)}")
+            risk_score += len(bypass_functions_found) * 15
+            logger.warning(f"[_detect_fake_renounce] Control bypass functions found for {token_address}: {bypass_functions_found}")
+        
+        # Final assessment
+        is_fake_renounce = risk_score >= 25  # Threshold for fake renouncement
+        
+        result = {
+            'is_fake_renounce': is_fake_renounce,
+            'risk_score': min(risk_score, 100),  # Cap at 100
+            'indicators': fake_renounce_indicators,
+            'bypass_functions': bypass_functions_found,
+            'owner_tx_count': burn_tx_count,
+            'owner_balance_eth': burn_balance_eth,
+            'analysis': 'Fake renouncement detected' if is_fake_renounce else 'Legitimate renouncement'
+        }
+        
+        if is_fake_renounce:
+            logger.error(f"[_detect_fake_renounce] FAKE RENOUNCEMENT DETECTED for {token_address} - Risk Score: {risk_score}")
+        else:
+            logger.info(f"[_detect_fake_renounce] Legitimate renouncement verified for {token_address}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"[_detect_fake_renounce] Failed to analyze fake renouncement for {token_address}: {e}")
+        return {
+            'is_fake_renounce': True,  # Assume worst case on error
+            'risk_score': 100,
+            'indicators': [f"Analysis failed: {str(e)}"],
+            'error': str(e)
+        }
+
+
+def _analyze_proxy_ownership(w3: Web3, token_address: str) -> Dict[str, Any]:
+    """
+    Analyze proxy ownership patterns that may hide true control of the contract.
+    Checks for proxy contracts, delegate calls, and hidden admin mechanisms.
+    
+    Args:
+        w3: Web3 connection instance
+        token_address: The token contract address being analyzed
+        
+    Returns:
+        Dict containing proxy ownership analysis results
+    """
+    logger.debug(f"[_analyze_proxy_ownership] Analyzing proxy ownership patterns for {token_address}")
+    
+    try:
+        proxy_risks = []
+        risk_score = 0
+        proxy_details = {}
+        
+        # Enhanced EIP-1967 proxy detection (more storage slots)
+        eip1967_slots = {
+            'implementation': '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc',
+            'admin': '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103',
+            'beacon': '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50',
+            'rollback': '0x4910fdfa16fed3260ed0e7147f7cc6da11a60208b5b9406d12a635614ffd9143'
+        }
+        
+        # Check all EIP-1967 storage slots
+        for slot_name, slot_address in eip1967_slots.items():
+            try:
+                slot_data = w3.eth.get_storage_at(token_address, slot_address)
+                if slot_data != b'\x00' * 32:
+                    proxy_details[f'{slot_name}_slot'] = slot_data.hex()
+                    proxy_risks.append(f"EIP-1967 {slot_name} slot contains data")
+                    risk_score += 15
+                    logger.warning(f"[_analyze_proxy_ownership] EIP-1967 {slot_name} slot active for {token_address}")
+            except Exception as e:
+                logger.debug(f"[_analyze_proxy_ownership] Failed to read {slot_name} slot: {e}")
+        
+        # Check for OpenZeppelin proxy patterns
+        oz_proxy_functions = [
+            'admin()',
+            'implementation()',
+            'changeAdmin(address)',
+            'upgradeTo(address)',
+            'upgradeToAndCall(address,bytes)',
+            'proxy()',
+            'proxyAdmin()'
+        ]
+        
+        detected_proxy_functions = []
+        for func_sig in oz_proxy_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                result = w3.eth.call({
+                    'to': token_address,
+                    'data': func_selector
+                })
+                
+                if len(result) >= 32:
+                    detected_proxy_functions.append(func_sig)
+                    
+                    # Extract admin/implementation addresses
+                    if 'admin' in func_sig.lower() or 'implementation' in func_sig.lower():
+                        potential_address = '0x' + result[-20:].hex()
+                        if is_address(potential_address) and potential_address != '0x0000000000000000000000000000000000000000':
+                            proxy_details[f'{func_sig}_address'] = to_checksum_address(potential_address)
+                            
+            except Exception:
+                continue
+        
+        if detected_proxy_functions:
+            proxy_risks.append(f"OpenZeppelin proxy functions detected: {', '.join(detected_proxy_functions)}")
+            risk_score += len(detected_proxy_functions) * 10
+            logger.warning(f"[_analyze_proxy_ownership] Proxy functions detected for {token_address}: {detected_proxy_functions}")
+        
+        # Check for delegate call patterns in bytecode
+        try:
+            bytecode = w3.eth.get_code(token_address)
+            if bytecode:
+                bytecode_hex = bytecode.hex()
+                
+                # Look for DELEGATECALL opcode (0xf4)
+                if 'f4' in bytecode_hex:
+                    delegate_call_count = bytecode_hex.count('f4')
+                    proxy_risks.append(f"DELEGATECALL opcodes found in bytecode: {delegate_call_count} instances")
+                    risk_score += min(delegate_call_count * 5, 25)
+                    logger.warning(f"[_analyze_proxy_ownership] DELEGATECALL patterns found for {token_address}: {delegate_call_count} instances")
+                
+                # Look for proxy-related bytecode patterns
+                proxy_patterns = [
+                    '3d602d80600a3d3981f3363d3d373d3d3d363d73',  # Minimal proxy pattern
+                    '363d3d373d3d3d363d73',  # Another proxy pattern
+                ]
+                
+                for pattern in proxy_patterns:
+                    if pattern in bytecode_hex:
+                        proxy_risks.append(f"Minimal proxy bytecode pattern detected")
+                        risk_score += 20
+                        logger.warning(f"[_analyze_proxy_ownership] Minimal proxy pattern detected for {token_address}")
+                        break
+                        
+        except Exception as e:
+            logger.debug(f"[_analyze_proxy_ownership] Failed to analyze bytecode: {e}")
+        
+        # Check for hidden admin functions that could indicate proxy control
+        hidden_admin_functions = [
+            'setAdmin(address)',
+            'setImplementation(address)',
+            'setProxy(address)',
+            'adminCall(bytes)',
+            'proxyCall(address,bytes)',
+            'delegateCall(address,bytes)',
+            'execute(address,bytes)',
+            'multicall(bytes[])'
+        ]
+        
+        hidden_admin_detected = []
+        for func_sig in hidden_admin_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                w3.eth.call({
+                    'to': token_address,
+                    'data': func_selector + b'\x00' * 96
+                })
+                hidden_admin_detected.append(func_sig)
+            except BadFunctionCallOutput:
+                pass  # Function doesn't exist
+            except Exception:
+                hidden_admin_detected.append(func_sig)  # Function exists but reverted
+        
+        if hidden_admin_detected:
+            proxy_risks.append(f"Hidden admin functions detected: {', '.join(hidden_admin_detected)}")
+            risk_score += len(hidden_admin_detected) * 12
+            logger.warning(f"[_analyze_proxy_ownership] Hidden admin functions found for {token_address}: {hidden_admin_detected}")
+        
+        # Check for factory pattern that might hide ownership
+        factory_functions = [
+            'factory()',
+            'creator()',
+            'deployer()',
+            'origin()'
+        ]
+        
+        factory_info = {}
+        for func_sig in factory_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                result = w3.eth.call({
+                    'to': token_address,
+                    'data': func_selector
+                })
+                
+                if len(result) >= 32:
+                    potential_address = '0x' + result[-20:].hex()
+                    if is_address(potential_address) and potential_address != '0x0000000000000000000000000000000000000000':
+                        factory_info[func_sig] = to_checksum_address(potential_address)
+                        
+            except Exception:
+                continue
+        
+        if factory_info:
+            proxy_risks.append(f"Factory pattern detected - contract deployed by: {factory_info}")
+            risk_score += 10
+            logger.info(f"[_analyze_proxy_ownership] Factory pattern detected for {token_address}: {factory_info}")
+        
+        # Final assessment
+        has_hidden_ownership = risk_score >= 20
+        
+        result = {
+            'has_hidden_ownership': has_hidden_ownership,
+            'risk_score': min(risk_score, 100),
+            'proxy_risks': proxy_risks,
+            'proxy_details': proxy_details,
+            'detected_proxy_functions': detected_proxy_functions,
+            'hidden_admin_functions': hidden_admin_detected,
+            'factory_info': factory_info,
+            'analysis': 'Hidden proxy ownership detected' if has_hidden_ownership else 'No hidden ownership patterns'
+        }
+        
+        if has_hidden_ownership:
+            logger.warning(f"[_analyze_proxy_ownership] HIDDEN OWNERSHIP DETECTED for {token_address} - Risk Score: {risk_score}")
+        else:
+            logger.info(f"[_analyze_proxy_ownership] No hidden ownership patterns found for {token_address}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"[_analyze_proxy_ownership] Failed to analyze proxy ownership for {token_address}: {e}")
+        return {
+            'has_hidden_ownership': True,  # Assume worst case on error
+            'risk_score': 50,
+            'proxy_risks': [f"Analysis failed: {str(e)}"],
+            'error': str(e)
+        }
+
+
+def _enhanced_admin_function_detection(w3: Web3, token_address: str) -> Dict[str, Any]:
+    """
+    Enhanced admin function detection using pattern matching and bytecode analysis
+    to find disguised or obfuscated admin functions.
+    
+    Args:
+        w3: Web3 connection instance
+        token_address: The token contract address being analyzed
+        
+    Returns:
+        Dict containing enhanced admin function analysis results
+    """
+    logger.debug(f"[_enhanced_admin_function_detection] Enhanced admin function analysis for {token_address}")
+    
+    try:
+        disguised_functions = []
+        risk_score = 0
+        analysis_details = {}
+        
+        # Common function name obfuscations
+        obfuscated_patterns = {
+            # Disguised mint functions
+            'hidden_mint': [
+                'reward(address,uint256)',
+                'airdrop(address,uint256)',
+                'bonus(address,uint256)',
+                'gift(address,uint256)',
+                'claim(address,uint256)',
+                'distribute(address,uint256)',
+                'allocate(address,uint256)'
+            ],
+            
+            # Disguised ownership functions
+            'hidden_ownership': [
+                'manager()',
+                'controller()',
+                'supervisor()',
+                'guardian()',
+                'operator()',
+                'deployer()',
+                'creator()'
+            ],
+            
+            # Disguised transfer restrictions
+            'hidden_controls': [
+                'restrict(address)',
+                'limit(address)',
+                'control(address)',
+                'manage(address)',
+                'handle(address)',
+                'process(address)',
+                'execute(address)'
+            ],
+            
+            # Disguised emergency functions
+            'hidden_emergency': [
+                'recover()',
+                'rescue()',
+                'drain()',
+                'extract()',
+                'collect()',
+                'gather()',
+                'retrieve()'
+            ]
+        }
+        
+        # Check for each category of obfuscated functions
+        for category, functions in obfuscated_patterns.items():
+            detected_in_category = []
+            
+            for func_sig in functions:
+                try:
+                    func_selector = w3.keccak(text=func_sig)[:4]
+                    
+                    # Test function existence
+                    try:
+                        w3.eth.call({
+                            'to': token_address,
+                            'data': func_selector + b'\x00' * 64
+                        })
+                        detected_in_category.append(func_sig)
+                        disguised_functions.append(func_sig)
+                        
+                    except BadFunctionCallOutput:
+                        pass  # Function doesn't exist
+                    except Exception:
+                        # Function exists but reverted
+                        detected_in_category.append(func_sig)
+                        disguised_functions.append(func_sig)
+                        
+                except Exception:
+                    continue
+            
+            if detected_in_category:
+                analysis_details[category] = detected_in_category
+                risk_score += len(detected_in_category) * 15
+                logger.warning(f"[_enhanced_admin_function_detection] {category} functions detected for {token_address}: {detected_in_category}")
+        
+        # Check for functions with suspicious parameter patterns
+        suspicious_param_patterns = [
+            # Functions that take address and uint256 (potential token manipulation)
+            'update(address,uint256)',
+            'modify(address,uint256)',
+            'change(address,uint256)',
+            'set(address,uint256)',
+            'configure(address,uint256)',
+            
+            # Functions that take only an address (potential access control)
+            'enable(address)',
+            'disable(address)',
+            'activate(address)',
+            'deactivate(address)',
+            'toggle(address)',
+            
+            # Functions with no parameters (potential global changes)
+            'toggle()',
+            'flip()',
+            'switch()',
+            'invert()',
+            'reverse()'
+        ]
+        
+        suspicious_param_functions = []
+        for func_sig in suspicious_param_patterns:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                
+                try:
+                    w3.eth.call({
+                        'to': token_address,
+                        'data': func_selector + b'\x00' * 64
+                    })
+                    suspicious_param_functions.append(func_sig)
+                    
+                except BadFunctionCallOutput:
+                    pass
+                except Exception:
+                    suspicious_param_functions.append(func_sig)
+                    
+            except Exception:
+                continue
+        
+        if suspicious_param_functions:
+            analysis_details['suspicious_params'] = suspicious_param_functions
+            risk_score += len(suspicious_param_functions) * 8
+            logger.warning(f"[_enhanced_admin_function_detection] Suspicious parameter functions detected for {token_address}: {suspicious_param_functions}")
+        
+        # Analyze bytecode for function selector patterns
+        try:
+            bytecode = w3.eth.get_code(token_address)
+            if bytecode:
+                bytecode_hex = bytecode.hex()
+                
+                # Look for hardcoded function selectors that might be hidden
+                # Function selectors are 4 bytes (8 hex chars) that typically appear in bytecode
+                potential_selectors = []
+                for i in range(0, len(bytecode_hex) - 8, 2):
+                    chunk = bytecode_hex[i:i+8]
+                    # Function selectors often start with specific patterns
+                    if chunk.startswith(('63', '80', '90')):  # Common function selector prefixes
+                        potential_selectors.append(chunk)
+                
+                # Count unique selectors (might indicate many functions)
+                unique_selectors = len(set(potential_selectors))
+                if unique_selectors > 50:  # Threshold for too many functions
+                    analysis_details['excessive_functions'] = unique_selectors
+                    risk_score += 10
+                    logger.warning(f"[_enhanced_admin_function_detection] Excessive function count detected for {token_address}: {unique_selectors}")
+                
+        except Exception as e:
+            logger.debug(f"[_enhanced_admin_function_detection] Failed to analyze bytecode: {e}")
+        
+        # Check for functions with admin-like modifiers by testing access patterns
+        access_controlled_functions = []
+        test_functions = [
+            'setFee(uint256)',
+            'setRate(uint256)',
+            'setLimit(uint256)',
+            'setMax(uint256)',
+            'setMin(uint256)',
+            'updateConfig(uint256)',
+            'changeSettings(uint256)'
+        ]
+        
+        for func_sig in test_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                
+                # Try to call with zero address (should fail if access controlled)
+                try:
+                    w3.eth.call({
+                        'to': token_address,
+                        'data': func_selector + b'\x00' * 32,
+                        'from': '0x0000000000000000000000000000000000000000'
+                    })
+                except Exception as call_error:
+                    # If it fails with zero address, it might be access controlled
+                    error_msg = str(call_error).lower()
+                    if any(keyword in error_msg for keyword in ['owner', 'admin', 'unauthorized', 'forbidden', 'access']):
+                        access_controlled_functions.append(func_sig)
+                        
+            except Exception:
+                continue
+        
+        if access_controlled_functions:
+            analysis_details['access_controlled'] = access_controlled_functions
+            risk_score += len(access_controlled_functions) * 5
+            logger.info(f"[_enhanced_admin_function_detection] Access controlled functions detected for {token_address}: {access_controlled_functions}")
+        
+        # Check for batch/multicall functions that could bypass restrictions
+        batch_functions = [
+            'multicall(bytes[])',
+            'batch(bytes[])',
+            'aggregate(bytes[])',
+            'execute(bytes[])',
+            'multiExecute(bytes[])',
+            'batchCall(bytes[])'
+        ]
+        
+        detected_batch_functions = []
+        for func_sig in batch_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                
+                try:
+                    w3.eth.call({
+                        'to': token_address,
+                        'data': func_selector + b'\x00' * 64
+                    })
+                    detected_batch_functions.append(func_sig)
+                except BadFunctionCallOutput:
+                    pass
+                except Exception:
+                    detected_batch_functions.append(func_sig)
+                    
+            except Exception:
+                continue
+        
+        if detected_batch_functions:
+            analysis_details['batch_functions'] = detected_batch_functions
+            risk_score += len(detected_batch_functions) * 20  # High risk
+            logger.warning(f"[_enhanced_admin_function_detection] Batch execution functions detected for {token_address}: {detected_batch_functions}")
+        
+        # Final assessment
+        has_disguised_functions = len(disguised_functions) > 0 or risk_score >= 25
+        
+        result = {
+            'has_disguised_functions': has_disguised_functions,
+            'risk_score': min(risk_score, 100),
+            'disguised_functions': disguised_functions,
+            'analysis_details': analysis_details,
+            'total_suspicious_functions': len(disguised_functions) + len(suspicious_param_functions) + len(detected_batch_functions),
+            'analysis': 'Disguised admin functions detected' if has_disguised_functions else 'No disguised functions found'
+        }
+        
+        if has_disguised_functions:
+            logger.warning(f"[_enhanced_admin_function_detection] DISGUISED FUNCTIONS DETECTED for {token_address} - Risk Score: {risk_score}")
+        else:
+            logger.info(f"[_enhanced_admin_function_detection] No disguised admin functions found for {token_address}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"[_enhanced_admin_function_detection] Failed to analyze enhanced admin functions for {token_address}: {e}")
+        return {
+            'has_disguised_functions': True,  # Assume worst case on error
+            'risk_score': 75,
+            'disguised_functions': [],
+            'error': str(e)
+        }
+
+
+def _verify_timelock_integrity(
+    w3: Web3, 
+    token_address: str, 
+    timelock_analysis: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Verify the integrity of timelock mechanisms and check for bypass methods
+    that could allow immediate execution of admin functions.
+    
+    Args:
+        w3: Web3 connection instance
+        token_address: The token contract address being analyzed
+        timelock_analysis: Results from basic timelock analysis
+        
+    Returns:
+        Dict containing timelock integrity analysis results
+    """
+    logger.debug(f"[_verify_timelock_integrity] Verifying timelock integrity for {token_address}")
+    
+    try:
+        bypass_risks = []
+        risk_score = 0
+        integrity_details = {}
+        
+        if not timelock_analysis.get('has_timelock'):
+            return {
+                'has_bypass_risks': False,
+                'risk_score': 0,
+                'bypass_risks': [],
+                'analysis': 'No timelock mechanism detected'
+            }
+        
+        timelock_address = timelock_analysis.get('timelock_address')
+        delay_period = timelock_analysis.get('delay_period_seconds', 0)
+        
+        # Check for emergency bypass functions
+        emergency_bypass_functions = [
+            'emergencyExecute(bytes)',
+            'immediateExecute(bytes)',
+            'bypassTimelock(bytes)',
+            'fastTrack(bytes)',
+            'urgentExecute(bytes)',
+            'emergencyBypass()',
+            'skipDelay()',
+            'instantExecute(bytes)'
+        ]
+        
+        detected_bypasses = []
+        for func_sig in emergency_bypass_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                
+                # Check both main contract and timelock contract
+                for check_address in [token_address, timelock_address]:
+                    if not check_address:
+                        continue
+                        
+                    try:
+                        w3.eth.call({
+                            'to': check_address,
+                            'data': func_selector + b'\x00' * 64
+                        })
+                        detected_bypasses.append(f"{func_sig} on {check_address}")
+                    except BadFunctionCallOutput:
+                        pass
+                    except Exception:
+                        detected_bypasses.append(f"{func_sig} on {check_address}")
+                        
+            except Exception:
+                continue
+        
+        if detected_bypasses:
+            bypass_risks.append(f"Emergency bypass functions detected: {', '.join(detected_bypasses)}")
+            risk_score += len(detected_bypasses) * 25
+            logger.warning(f"[_verify_timelock_integrity] Emergency bypass functions found for {token_address}: {detected_bypasses}")
+        
+        # Check for delay modification functions
+        delay_modification_functions = [
+            'setDelay(uint256)',
+            'updateDelay(uint256)',
+            'changeDelay(uint256)',
+            'modifyDelay(uint256)',
+            'setMinDelay(uint256)',
+            'setMaxDelay(uint256)'
+        ]
+        
+        delay_modifiers = []
+        for func_sig in delay_modification_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                
+                for check_address in [token_address, timelock_address]:
+                    if not check_address:
+                        continue
+                        
+                    try:
+                        w3.eth.call({
+                            'to': check_address,
+                            'data': func_selector + b'\x00' * 32
+                        })
+                        delay_modifiers.append(f"{func_sig} on {check_address}")
+                    except BadFunctionCallOutput:
+                        pass
+                    except Exception:
+                        delay_modifiers.append(f"{func_sig} on {check_address}")
+                        
+            except Exception:
+                continue
+        
+        if delay_modifiers:
+            bypass_risks.append(f"Delay modification functions detected: {', '.join(delay_modifiers)}")
+            risk_score += len(delay_modifiers) * 20
+            logger.warning(f"[_verify_timelock_integrity] Delay modification functions found for {token_address}: {delay_modifiers}")
+        
+        # Check if delay period is too short to be effective
+        if delay_period and delay_period < 3600:  # Less than 1 hour
+            bypass_risks.append(f"Timelock delay too short: {delay_period} seconds ({delay_period/60:.1f} minutes)")
+            risk_score += 30
+            logger.warning(f"[_verify_timelock_integrity] Short timelock delay for {token_address}: {delay_period}s")
+        
+        # Check for admin override functions
+        admin_override_functions = [
+            'adminExecute(bytes)',
+            'ownerExecute(bytes)',
+            'guardianExecute(bytes)',
+            'superAdminExecute(bytes)',
+            'masterExecute(bytes)',
+            'rootExecute(bytes)'
+        ]
+        
+        admin_overrides = []
+        for func_sig in admin_override_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                
+                for check_address in [token_address, timelock_address]:
+                    if not check_address:
+                        continue
+                        
+                    try:
+                        w3.eth.call({
+                            'to': check_address,
+                            'data': func_selector + b'\x00' * 64
+                        })
+                        admin_overrides.append(f"{func_sig} on {check_address}")
+                    except BadFunctionCallOutput:
+                        pass
+                    except Exception:
+                        admin_overrides.append(f"{func_sig} on {check_address}")
+                        
+            except Exception:
+                continue
+        
+        if admin_overrides:
+            bypass_risks.append(f"Admin override functions detected: {', '.join(admin_overrides)}")
+            risk_score += len(admin_overrides) * 30
+            logger.warning(f"[_verify_timelock_integrity] Admin override functions found for {token_address}: {admin_overrides}")
+        
+        # Check for timelock cancellation functions
+        cancellation_functions = [
+            'cancel(bytes32)',
+            'cancelTransaction(bytes32)',
+            'abort(bytes32)',
+            'revoke(bytes32)',
+            'invalidate(bytes32)'
+        ]
+        
+        cancellation_detected = []
+        for func_sig in cancellation_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                
+                if timelock_address:
+                    try:
+                        w3.eth.call({
+                            'to': timelock_address,
+                            'data': func_selector + b'\x00' * 32
+                        })
+                        cancellation_detected.append(func_sig)
+                    except BadFunctionCallOutput:
+                        pass
+                    except Exception:
+                        cancellation_detected.append(func_sig)
+                        
+            except Exception:
+                continue
+        
+        if cancellation_detected:
+            # Cancellation functions are not necessarily bad, but note them
+            integrity_details['cancellation_functions'] = cancellation_detected
+            logger.info(f"[_verify_timelock_integrity] Timelock cancellation functions found for {token_address}: {cancellation_detected}")
+        
+        # Analyze timelock contract itself if address is available
+        if timelock_address:
+            try:
+                timelock_bytecode = w3.eth.get_code(timelock_address)
+                if timelock_bytecode:
+                    # Check for proxy patterns in timelock (potential upgrade risk)
+                    timelock_proxy_analysis = _check_proxy_storage_slots(w3, timelock_address)
+                    if timelock_proxy_analysis.get('has_proxy_slots'):
+                        bypass_risks.append("Timelock contract is upgradeable (proxy pattern)")
+                        risk_score += 25
+                        logger.warning(f"[_verify_timelock_integrity] Upgradeable timelock detected for {token_address}")
+                    
+                    integrity_details['timelock_proxy_analysis'] = timelock_proxy_analysis
+                    
+            except Exception as e:
+                logger.debug(f"[_verify_timelock_integrity] Failed to analyze timelock contract: {e}")
+        
+        # Check for multi-timelock patterns (potential confusion)
+        multi_timelock_functions = [
+            'timelock1()',
+            'timelock2()',
+            'primaryTimelock()',
+            'secondaryTimelock()',
+            'mainTimelock()',
+            'backupTimelock()'
+        ]
+        
+        multiple_timelocks = []
+        for func_sig in multi_timelock_functions:
+            try:
+                func_selector = w3.keccak(text=func_sig)[:4]
+                result = w3.eth.call({
+                    'to': token_address,
+                    'data': func_selector
+                })
+                
+                if len(result) >= 32:
+                    potential_address = '0x' + result[-20:].hex()
+                    if is_address(potential_address) and potential_address != '0x0000000000000000000000000000000000000000':
+                        multiple_timelocks.append(func_sig)
+                        
+            except Exception:
+                continue
+        
+        if multiple_timelocks:
+            bypass_risks.append(f"Multiple timelock patterns detected: {', '.join(multiple_timelocks)}")
+            risk_score += 15
+            logger.warning(f"[_verify_timelock_integrity] Multiple timelock patterns for {token_address}: {multiple_timelocks}")
+        
+        # Final assessment
+        has_bypass_risks = len(bypass_risks) > 0 or risk_score >= 20
+        
+        result = {
+            'has_bypass_risks': has_bypass_risks,
+            'risk_score': min(risk_score, 100),
+            'bypass_risks': bypass_risks,
+            'integrity_details': integrity_details,
+            'detected_bypasses': detected_bypasses,
+            'delay_modifiers': delay_modifiers,
+            'admin_overrides': admin_overrides,
+            'analysis': 'Timelock bypass risks detected' if has_bypass_risks else 'Timelock integrity verified'
+        }
+        
+        if has_bypass_risks:
+            logger.warning(f"[_verify_timelock_integrity] TIMELOCK BYPASS RISKS DETECTED for {token_address} - Risk Score: {risk_score}")
+        else:
+            logger.info(f"[_verify_timelock_integrity] Timelock integrity verified for {token_address}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"[_verify_timelock_integrity] Failed to verify timelock integrity for {token_address}: {e}")
+        return {
+            'has_bypass_risks': True,  # Assume worst case on error
+            'risk_score': 50,
+            'bypass_risks': [f"Analysis failed: {str(e)}"],
+            'error': str(e)
+        }
