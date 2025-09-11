@@ -62,3 +62,36 @@ wcwidth==0.2.13
 web3==7.13.0
 websockets==15.0.1
 yarl==1.20.1
+# Async Trading Engine Dependencies
+
+# Blockchain & Web3
+web3>=6.0.0
+eth-account>=0.8.0
+eth-utils>=2.0.0
+
+# Async HTTP & WebSocket
+aiohttp>=3.8.0
+websockets>=11.0.0
+aiofiles>=23.0.0
+
+# Data & Math
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Environment & Configuration
+python-decouple>=3.8
+
+# Logging & Monitoring
+structlog>=23.0.0
+
+# Development & Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.0.0
+
+# Optional: Performance monitoring (uncomment if needed)
+# prometheus-client>=0.16.0
+# opentelemetry-api>=1.15.0
+# opentelemetry-sdk>=1.15.0
