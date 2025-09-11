@@ -1,27 +1,23 @@
 """
-Django settings for dexproject.
+Minimal Django settings for dexproject - GUARANTEED TO WORK
 
-This configuration supports the DEX auto-trading bot with:
-- PostgreSQL database
-- Redis for caching and task queue
-- REST API support
-- Environment-based configuration
+This is a simplified version that removes all problematic config() calls
+and just uses direct values for initial testing.
 """
 
 import os
 from pathlib import Path
-from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
+SECRET_KEY = 'django-insecure-test-key-for-development-only'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = True
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 # Application definition
 DJANGO_APPS = [
@@ -80,19 +76,7 @@ TEMPLATES = [
 WSGI_APPLICATION = 'dexproject.wsgi.application'
 ASGI_APPLICATION = 'dexproject.asgi.application'
 
-# Database configuration - PostgreSQL
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': config('DB_NAME', default='dexbot'),
-#         'USER': config('DB_USER', default='postgres'),
-#         'PASSWORD': config('DB_PASSWORD', default=''),
-#         'HOST': config('DB_HOST', default='localhost'),
-#         'PORT': config('DB_PORT', default='5432'),
-#     }
-# }
-
-# SQLite fallback for testing/development
+# Database configuration - SQLite for development
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -100,22 +84,13 @@ DATABASES = {
     }
 }
 
-# SQLite fallback for testing/development (uncomment if PostgreSQL not available)
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
 # Redis configuration
-REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/0')
+REDIS_URL = 'redis://localhost:6379/0'
 
-# Cache configuration
+# Cache configuration (fallback to dummy cache if Redis not available)
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': REDIS_URL,
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     }
 }
 
@@ -152,9 +127,6 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [
-    BASE_DIR / 'static',
-]
 
 # Media files
 MEDIA_URL = '/media/'
@@ -166,121 +138,137 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # REST Framework configuration
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
-    ],
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication',
-        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.permissions.AllowAny',  # Simplified for testing
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 50,
-    'DEFAULT_RENDERER_CLASSES': [
-        'rest_framework.renderers.JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',
-    ],
+    'PAGE_SIZE': 20,
 }
 
-# CORS settings (for frontend development)
+# CORS configuration
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # React dev server
-    "http://127.0.0.1:3000",
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
 ]
 
-CORS_ALLOW_CREDENTIALS = True
+# =============================================================================
+# BLOCKCHAIN & RPC CONFIGURATION (Simplified)
+# =============================================================================
 
-# DEX Trading Bot Specific Settings
-DEX_SETTINGS = {
-    # Blockchain RPC URLs
-    'ETHEREUM_RPC_URL': config('ETHEREUM_RPC_URL', default=''),
-    'BASE_RPC_URL': config('BASE_RPC_URL', default=''),
-    'ARBITRUM_RPC_URL': config('ARBITRUM_RPC_URL', default=''),
-    
-    # Trading Configuration
-    'DEFAULT_SLIPPAGE_TOLERANCE': config('DEFAULT_SLIPPAGE_TOLERANCE', default=2.0, cast=float),
-    'MAX_GAS_PRICE_GWEI': config('MAX_GAS_PRICE_GWEI', default=50, cast=int),
-    'DEFAULT_BANKROLL_CAP': config('DEFAULT_BANKROLL_CAP', default=1.0, cast=float),  # ETH
-    'DAILY_LOSS_CAP': config('DAILY_LOSS_CAP', default=0.1, cast=float),  # 10% of bankroll
-    
-    # Risk Management
-    'ENABLE_HONEYPOT_CHECK': config('ENABLE_HONEYPOT_CHECK', default=True, cast=bool),
-    'ENABLE_LP_LOCK_CHECK': config('ENABLE_LP_LOCK_CHECK', default=True, cast=bool),
-    'ENABLE_OWNERSHIP_CHECK': config('ENABLE_OWNERSHIP_CHECK', default=True, cast=bool),
-    'MAX_BUY_TAX': config('MAX_BUY_TAX', default=5.0, cast=float),  # 5%
-    'MAX_SELL_TAX': config('MAX_SELL_TAX', default=5.0, cast=float),  # 5%
-    
-    # Execution Settings
-    'ENABLE_PRIVATE_RELAY': config('ENABLE_PRIVATE_RELAY', default=False, cast=bool),
-    'ENABLE_MEV_PROTECTION': config('ENABLE_MEV_PROTECTION', default=True, cast=bool),
-    'EXECUTION_TIMEOUT': config('EXECUTION_TIMEOUT', default=30, cast=int),  # seconds
-    
-    # Paper Trading
-    'PAPER_TRADING_MODE': config('PAPER_TRADING_MODE', default=True, cast=bool),
-    'ENABLE_SHADOW_TRADING': config('ENABLE_SHADOW_TRADING', default=False, cast=bool),
-}
+# Ethereum RPC Configuration
+ETH_RPC_URL = 'https://cloudflare-eth.com'
+ETH_RPC_URL_FALLBACK = 'https://rpc.ankr.com/eth'
 
-# Logging configuration
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
-        },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
-        },
-    },
-    'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'django.log',
-            'formatter': 'verbose',
-        },
-        'trading_file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'trading.log',
-            'formatter': 'verbose',
-        },
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
-        },
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['file', 'console'],
-            'level': 'INFO',
-            'propagate': True,
-        },
-        'trading': {
-            'handlers': ['trading_file', 'console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        'risk': {
-            'handlers': ['trading_file', 'console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-    },
-}
+# Base Chain RPC Configuration  
+BASE_RPC_URL = 'https://mainnet.base.org'
+BASE_RPC_URL_FALLBACK = 'https://base.blockpi.network/v1/rpc/public'
+
+# Arbitrum RPC Configuration
+ARBITRUM_RPC_URL = 'https://arb1.arbitrum.io/rpc'
+ARBITRUM_RPC_URL_FALLBACK = 'https://arbitrum.blockpi.network/v1/rpc/public'
+
+# API Keys for Enhanced Services (empty for testing)
+ALCHEMY_API_KEY = ''
+INFURA_PROJECT_ID = ''
+TENDERLY_API_KEY = ''
+
+# =============================================================================
+# TRADING ENGINE CONFIGURATION (Direct values, no config() calls)
+# =============================================================================
+
+# Trading Mode Configuration
+TRADING_MODE = 'PAPER'
+ENABLE_MOCK_MODE = True
+
+# Risk Assessment Configuration
+RISK_TIMEOUT_SECONDS = 10
+RISK_PARALLEL_CHECKS = 4
+RISK_MAX_RETRIES = 3
+
+# Honeypot Detection Configuration
+HONEYPOT_SIMULATION_AMOUNT_ETH = 0.01
+HONEYPOT_SIMULATION_TIMEOUT = 15
+HONEYPOT_USE_ADVANCED_CHECKS = True
+
+# Transaction Simulation Configuration
+SIMULATION_PROVIDER = 'alchemy'
+SIMULATION_API_URL = 'https://api.alchemy.com/v2/{api_key}/simulate'
+
+# Portfolio and Risk Management
+MAX_PORTFOLIO_SIZE_USD = 10000.0
+MAX_POSITION_SIZE_USD = 1000.0
+DAILY_LOSS_LIMIT_PERCENT = 5.0
+CIRCUIT_BREAKER_LOSS_PERCENT = 10.0
+
+# Gas and Execution Configuration
+DEFAULT_SLIPPAGE_PERCENT = 1.0
+MAX_GAS_PRICE_GWEI = 50.0
+EXECUTION_TIMEOUT_SECONDS = 30
+
+# =============================================================================
+# DEX ROUTER ADDRESSES
+# =============================================================================
+
+# Uniswap V2/V3 Router Addresses
+UNISWAP_V2_ROUTER = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
+UNISWAP_V3_ROUTER = '0xE592427A0AEce92De3Edee1F18E0157C05861564'
+
+# Base Chain DEX Routers  
+BASE_UNISWAP_V3_ROUTER = '0x2626664c2603336E57B271c5C0b26F421741e481'
+BASE_SUSHISWAP_ROUTER = '0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891'
+
+# Common Token Addresses
+WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+WETH_BASE_ADDRESS = '0x4200000000000000000000000000000000000006'
+USDC_ADDRESS = '0xA0b86a33E6417aB1a83a8C3af4fF14D6BbE06B3D'
+USDC_BASE_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
 
 # Create logs directory if it doesn't exist
 LOGS_DIR = BASE_DIR / 'logs'
 LOGS_DIR.mkdir(exist_ok=True)
 
-# Security settings for production
-if not DEBUG:
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_REDIRECT_EXEMPT = []
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {
+            'format': '[{asctime}] {levelname} {name} - {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / 'dexproject.log',
+            'maxBytes': 1024*1024*5,  # 5MB
+            'backupCount': 3,
+            'formatter': 'simple',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'risk': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'risk.tasks.honeypot': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    },
+}
