@@ -74,14 +74,14 @@ def assess_token_risk(
         
         # Get risk profile configuration
         risk_config = _get_risk_profile_config(risk_profile)
+        logger.debug(f"Using risk profile: {risk_profile}")
         
         # Create assessment record
         assessment_record = _create_assessment_record(
             token_address, pair_address, assessment_id, risk_profile
         )
-        assessment_id = assessment_record['assessment_id']
         
-        # Execute risk checks
+        # Execute risk checks (parallel or sequential)
         if parallel_execution:
             check_results = _execute_parallel_risk_checks(
                 token_address, pair_address, risk_config, include_advanced_checks
@@ -91,42 +91,295 @@ def assess_token_risk(
                 token_address, pair_address, risk_config, include_advanced_checks
             )
         
-        # Analyze results and make trading decision
-        final_assessment = _analyze_and_finalize_assessment(
-            assessment_id, token_address, pair_address, check_results, risk_config
+        # Filter out failed checks and log issues
+        successful_checks = []
+        failed_checks = []
+        
+        for result in check_results:
+            if result.get('status') in ['COMPLETED', 'WARNING']:
+                successful_checks.append(result)
+            else:
+                failed_checks.append(result)
+                logger.warning(f"Check {result.get('check_type')} failed: {result.get('error_message', 'Unknown error')}")
+        
+        # Calculate overall risk score
+        overall_risk_score = _calculate_overall_risk_score(successful_checks, risk_config)
+        
+        # Determine risk level and trading decision
+        risk_level = _determine_risk_level(overall_risk_score)
+        trading_decision = _make_trading_decision(
+            successful_checks, failed_checks, overall_risk_score, risk_config
         )
         
-        # Store final assessment in database
-        _store_final_assessment(final_assessment)
+        # Calculate confidence score
+        confidence_score = _calculate_confidence_score(successful_checks, failed_checks)
         
-        # Log completion
+        # Generate thought log (AI reasoning)
+        thought_log = _generate_thought_log(
+            successful_checks, failed_checks, overall_risk_score, 
+            trading_decision, risk_profile
+        )
+        
+        # Generate summary
+        summary = _generate_assessment_summary(
+            successful_checks, failed_checks, overall_risk_score, 
+            trading_decision, risk_profile
+        )
+        
         execution_time_ms = (time.time() - start_time) * 1000
-        final_assessment['execution_time_ms'] = execution_time_ms
         
-        logger.info(
-            f"Risk assessment completed for {token_address} - "
-            f"Risk Score: {final_assessment['overall_risk_score']}, "
-            f"Decision: {final_assessment['trading_decision']}, "
-            f"Time: {execution_time_ms:.1f}ms"
-        )
+        # Prepare final result
+        result = {
+            'assessment_id': assessment_record['assessment_id'],
+            'task_id': task_id,
+            'token_address': token_address,
+            'pair_address': pair_address,
+            'risk_profile': risk_profile,
+            'overall_risk_score': float(overall_risk_score),
+            'risk_level': risk_level,
+            'trading_decision': trading_decision,
+            'confidence_score': float(confidence_score),
+            'is_blocked': trading_decision == 'BLOCK',
+            'check_results': successful_checks,
+            'failed_checks': failed_checks,
+            'checks_completed': len(successful_checks),
+            'checks_failed': len(failed_checks),
+            'thought_log': thought_log,
+            'summary': summary,
+            'execution_time_ms': execution_time_ms,
+            'timestamp': timezone.now().isoformat(),
+            'status': 'completed'
+        }
         
-        return final_assessment
+        logger.info(f"Risk assessment completed for {token_address} in {execution_time_ms:.1f}ms - "
+                   f"Decision: {trading_decision}, Risk: {overall_risk_score:.1f}, "
+                   f"Confidence: {confidence_score:.1f}%")
+        
+        return result
         
     except Exception as exc:
         execution_time_ms = (time.time() - start_time) * 1000
         logger.error(f"Risk assessment failed for {token_address}: {exc} (task: {task_id})")
         
-        # Retry logic for transient failures
-        if self.request.retries < self.max_retries and _is_retryable_error(exc):
-            countdown = min(2 ** self.request.retries * 5, 60)  # Max 60 seconds
-            logger.warning(f"Retrying risk assessment for {token_address} in {countdown}s (attempt {self.request.retries + 1})")
-            raise self.retry(exc=exc, countdown=countdown)
+        if self.request.retries < self.max_retries:
+            logger.warning(f"Retrying risk assessment for {token_address} (attempt {self.request.retries + 1})")
+            raise self.retry(exc=exc, countdown=5 * (self.request.retries + 1))
         
-        # Final failure - return maximum risk assessment
-        return _create_failure_assessment(
-            token_address, pair_address, assessment_id, str(exc), execution_time_ms
-        )
+        # Return safe fallback result on final failure
+        return {
+            'assessment_id': assessment_record.get('assessment_id', 'unknown') if 'assessment_record' in locals() else 'unknown',
+            'task_id': task_id,
+            'token_address': token_address,
+            'pair_address': pair_address,
+            'risk_profile': risk_profile,
+            'overall_risk_score': 100.0,  # Maximum risk on failure
+            'risk_level': 'CRITICAL',
+            'trading_decision': 'BLOCK',
+            'confidence_score': 0.0,
+            'is_blocked': True,
+            'check_results': [],
+            'failed_checks': [],
+            'checks_completed': 0,
+            'checks_failed': 0,
+            'error_message': str(exc),
+            'execution_time_ms': execution_time_ms,
+            'timestamp': timezone.now().isoformat(),
+            'status': 'failed'
+        }
 
+
+@shared_task(
+    bind=True,
+    queue='risk.normal',
+    name='risk.tasks.quick_honeypot_check',
+    max_retries=2,
+    default_retry_delay=2
+)
+def quick_honeypot_check(
+    self,
+    token_address: str,
+    pair_address: str,
+    timeout_seconds: int = 5
+) -> Dict[str, Any]:
+    """
+    Perform a quick honeypot check for fast screening.
+    
+    This is a lightweight version of the full assessment that only
+    checks for honeypot status to quickly filter out obvious scams.
+    
+    Args:
+        token_address: The token contract address to check
+        pair_address: The trading pair address
+        timeout_seconds: Maximum time allowed for the check
+        
+    Returns:
+        Dict with quick honeypot check result
+    """
+    task_id = self.request.id
+    start_time = time.time()
+    
+    logger.info(f"Starting quick honeypot check for token {token_address} (task: {task_id})")
+    
+    try:
+        # Import honeypot module
+        from . import honeypot
+        
+        # Execute honeypot check with timeout
+        honeypot_result = honeypot.honeypot_check(
+            token_address=token_address,
+            pair_address=pair_address,
+            use_advanced_simulation=False,  # Quick check only
+            timeout_seconds=timeout_seconds
+        )
+        
+        execution_time_ms = (time.time() - start_time) * 1000
+        
+        # Extract key information
+        is_honeypot = honeypot_result.get('details', {}).get('is_honeypot', True)
+        can_sell = honeypot_result.get('details', {}).get('can_sell', False)
+        risk_score = honeypot_result.get('risk_score', 100)
+        
+        result = {
+            'task_id': task_id,
+            'token_address': token_address,
+            'pair_address': pair_address,
+            'is_honeypot': is_honeypot,
+            'can_sell': can_sell,
+            'risk_score': risk_score,
+            'decision': 'BLOCK' if is_honeypot else 'PROCEED',
+            'execution_time_ms': execution_time_ms,
+            'full_result': honeypot_result,
+            'timestamp': timezone.now().isoformat(),
+            'status': 'completed'
+        }
+        
+        logger.info(f"Quick honeypot check completed for {token_address} in {execution_time_ms:.1f}ms - "
+                   f"Honeypot: {is_honeypot}")
+        
+        return result
+        
+    except Exception as exc:
+        execution_time_ms = (time.time() - start_time) * 1000
+        logger.error(f"Quick honeypot check failed for {token_address}: {exc} (task: {task_id})")
+        
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=2)
+        
+        return {
+            'task_id': task_id,
+            'token_address': token_address,
+            'pair_address': pair_address,
+            'is_honeypot': True,  # Assume honeypot on failure for safety
+            'can_sell': False,
+            'risk_score': 100.0,
+            'decision': 'BLOCK',
+            'error_message': str(exc),
+            'execution_time_ms': execution_time_ms,
+            'timestamp': timezone.now().isoformat(),
+            'status': 'failed'
+        }
+
+
+@shared_task(
+    bind=True,
+    queue='risk.background',
+    name='risk.tasks.bulk_assessment',
+    max_retries=1,
+    default_retry_delay=30
+)
+def bulk_assessment(
+    self,
+    token_pairs: List[Tuple[str, str]],
+    risk_profile: str = 'Moderate',
+    batch_size: int = 10,
+    parallel_batches: bool = True
+) -> Dict[str, Any]:
+    """
+    Perform bulk risk assessment for multiple token pairs.
+    
+    Efficiently processes multiple tokens with batching and parallel execution
+    to avoid overwhelming the system while maintaining throughput.
+    
+    Args:
+        token_pairs: List of (token_address, pair_address) tuples
+        risk_profile: Risk profile to use for all assessments
+        batch_size: Number of tokens to process per batch
+        parallel_batches: Whether to process batches in parallel
+        
+    Returns:
+        Dict with bulk assessment results
+    """
+    task_id = self.request.id
+    start_time = time.time()
+    
+    logger.info(f"Starting bulk assessment for {len(token_pairs)} token pairs (task: {task_id})")
+    
+    try:
+        results = []
+        failed_assessments = []
+        
+        # Process in batches
+        for i in range(0, len(token_pairs), batch_size):
+            batch = token_pairs[i:i + batch_size]
+            batch_number = i // batch_size + 1
+            
+            logger.info(f"Processing batch {batch_number} with {len(batch)} tokens")
+            
+            # Process batch
+            batch_results = _process_assessment_batch(batch, risk_profile, parallel_batches)
+            
+            for result in batch_results:
+                if result.get('status') == 'completed':
+                    results.append(result)
+                else:
+                    failed_assessments.append(result)
+            
+            # Small delay between batches to prevent overwhelming
+            if i + batch_size < len(token_pairs):
+                time.sleep(0.1)
+        
+        execution_time_ms = (time.time() - start_time) * 1000
+        
+        # Generate bulk summary
+        summary = _generate_bulk_summary(results, failed_assessments)
+        
+        bulk_result = {
+            'task_id': task_id,
+            'total_tokens': len(token_pairs),
+            'successful_assessments': len(results),
+            'failed_assessments': len(failed_assessments),
+            'risk_profile': risk_profile,
+            'batch_size': batch_size,
+            'results': results,
+            'failed': failed_assessments,
+            'summary': summary,
+            'execution_time_ms': execution_time_ms,
+            'timestamp': timezone.now().isoformat(),
+            'status': 'completed'
+        }
+        
+        logger.info(f"Bulk assessment completed in {execution_time_ms:.1f}ms - "
+                   f"Success: {len(results)}, Failed: {len(failed_assessments)}")
+        
+        return bulk_result
+        
+    except Exception as exc:
+        execution_time_ms = (time.time() - start_time) * 1000
+        logger.error(f"Bulk assessment failed: {exc} (task: {task_id})")
+        
+        return {
+            'task_id': task_id,
+            'total_tokens': len(token_pairs),
+            'successful_assessments': 0,
+            'failed_assessments': len(token_pairs),
+            'error_message': str(exc),
+            'execution_time_ms': execution_time_ms,
+            'timestamp': timezone.now().isoformat(),
+            'status': 'failed'
+        }
+
+
+# Helper functions for risk assessment coordination
 
 def _get_risk_profile_config(risk_profile: str) -> Dict[str, Any]:
     """
@@ -248,17 +501,18 @@ def _execute_parallel_risk_checks(
         List of risk check results
     """
     try:
-        from . import honeypot, liquidity, ownership
+        from . import honeypot, liquidity, ownership, tax
         
         # Build list of required checks
         required_checks = risk_config.get('required_checks', [])
         optional_checks = risk_config.get('optional_checks', []) if include_advanced else []
+        all_checks = list(set(required_checks + optional_checks))
         
         # Create parallel task group
         task_list = []
         
-        # Add required checks
-        if 'HONEYPOT' in required_checks:
+        # Add checks based on configuration
+        if 'HONEYPOT' in all_checks:
             task_list.append(
                 honeypot.honeypot_check.s(
                     token_address, 
@@ -267,7 +521,7 @@ def _execute_parallel_risk_checks(
                 )
             )
         
-        if 'LIQUIDITY' in required_checks:
+        if 'LIQUIDITY' in all_checks:
             task_list.append(
                 liquidity.liquidity_check.s(
                     pair_address,
@@ -277,7 +531,7 @@ def _execute_parallel_risk_checks(
                 )
             )
         
-        if 'OWNERSHIP' in required_checks:
+        if 'OWNERSHIP' in all_checks:
             task_list.append(
                 ownership.ownership_check.s(
                     token_address,
@@ -287,19 +541,17 @@ def _execute_parallel_risk_checks(
                 )
             )
         
-        # Add optional checks if advanced mode enabled
-        if include_advanced:
-            if 'TAX_ANALYSIS' in optional_checks:
-                # Import taxation module when it's created
-                pass  # taxation.tax_analysis.s(token_address, pair_address)
-            
-            if 'CONTRACT_SECURITY' in optional_checks:
-                # Import security module when it's created
-                pass  # security.security_check.s(token_address)
-            
-            if 'HOLDER_ANALYSIS' in optional_checks:
-                # Import holders module when it's created  
-                pass  # holders.holder_analysis.s(token_address)
+        if 'TAX_ANALYSIS' in all_checks:
+            task_list.append(
+                tax.tax_analysis.s(
+                    token_address,
+                    pair_address,
+                    simulation_amount_usd=1000.0,
+                    check_reflection=include_advanced,
+                    check_antiwhale=include_advanced,
+                    check_blacklist=include_advanced
+                )
+            )
         
         # Execute parallel checks with timeout
         if task_list:
@@ -311,13 +563,22 @@ def _execute_parallel_risk_checks(
             result = parallel_job.apply_async()
             
             # Wait for results with timeout
-            check_results = result.get(timeout=timeout)
-            
-            # Filter out None results
-            check_results = [r for r in check_results if r is not None]
-            
-            logger.info(f"Completed {len(check_results)} parallel risk checks")
-            return check_results
+            try:
+                check_results = result.get(timeout=timeout)
+                # Filter out None results
+                check_results = [r for r in check_results if r is not None]
+                
+                logger.info(f"Completed {len(check_results)} parallel risk checks")
+                return check_results
+            except Exception as e:
+                logger.warning(f"Parallel execution timeout or error: {e}")
+                # Try to get partial results
+                try:
+                    check_results = result.get(timeout=5)  # Short timeout for partial results
+                    return [r for r in check_results if r is not None]
+                except:
+                    # Fall back to sequential execution
+                    return _execute_sequential_risk_checks(token_address, pair_address, risk_config, include_advanced)
         else:
             logger.warning("No risk checks configured to run")
             return []
@@ -351,158 +612,176 @@ def _execute_sequential_risk_checks(
     results = []
     
     try:
-        from . import honeypot, liquidity, ownership
+        from . import honeypot, liquidity, ownership, tax
         
         required_checks = risk_config.get('required_checks', [])
+        optional_checks = risk_config.get('optional_checks', []) if include_advanced else []
+        all_checks = list(set(required_checks + optional_checks))
         
-        # Execute each check individually
-        if 'HONEYPOT' in required_checks:
+        # Execute checks one by one with individual error handling
+        for check_type in all_checks:
             try:
-                result = honeypot.honeypot_check(
-                    token_address, pair_address, use_advanced_simulation=include_advanced
-                )
-                results.append(result)
+                if check_type == 'HONEYPOT':
+                    result = honeypot.honeypot_check(
+                        token_address, pair_address, use_advanced_simulation=include_advanced
+                    )
+                elif check_type == 'LIQUIDITY':
+                    result = liquidity.liquidity_check(
+                        pair_address, token_address,
+                        risk_config.get('min_liquidity_usd', 10000),
+                        risk_config.get('max_slippage_percent', 5.0)
+                    )
+                elif check_type == 'OWNERSHIP':
+                    result = ownership.ownership_check(
+                        token_address, check_admin_functions=True,
+                        check_timelock=include_advanced, check_multisig=include_advanced
+                    )
+                elif check_type == 'TAX_ANALYSIS':
+                    result = tax.tax_analysis(
+                        token_address, pair_address, simulation_amount_usd=1000.0,
+                        check_reflection=include_advanced, check_antiwhale=include_advanced,
+                        check_blacklist=include_advanced
+                    )
+                else:
+                    logger.warning(f"Unknown check type: {check_type}")
+                    continue
+                
+                if result:
+                    results.append(result)
+                    logger.debug(f"Completed {check_type} check")
+                
             except Exception as e:
-                logger.error(f"Honeypot check failed: {e}")
-                results.append(_create_failed_check_result('HONEYPOT', token_address, str(e)))
-        
-        if 'LIQUIDITY' in required_checks:
-            try:
-                result = liquidity.liquidity_check(
-                    pair_address, token_address,
-                    risk_config.get('min_liquidity_usd', 10000),
-                    risk_config.get('max_slippage_percent', 5.0)
+                logger.error(f"Sequential check {check_type} failed: {e}")
+                # Create error result for failed check
+                error_result = create_risk_check_result(
+                    task_id='sequential',
+                    check_type=check_type,
+                    token_address=token_address,
+                    pair_address=pair_address,
+                    risk_score=100,  # Max risk on failure
+                    status='FAILED',
+                    error_message=str(e),
+                    execution_time_ms=0
                 )
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Liquidity check failed: {e}")
-                results.append(_create_failed_check_result('LIQUIDITY', token_address, str(e)))
-        
-        if 'OWNERSHIP' in required_checks:
-            try:
-                result = ownership.ownership_check(
-                    token_address,
-                    check_admin_functions=True,
-                    check_timelock=include_advanced,
-                    check_multisig=include_advanced
-                )
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Ownership check failed: {e}")
-                results.append(_create_failed_check_result('OWNERSHIP', token_address, str(e)))
+                results.append(error_result)
         
         logger.info(f"Completed {len(results)} sequential risk checks")
         return results
         
     except Exception as e:
         logger.error(f"Sequential risk check execution failed: {e}")
-        return results  # Return partial results
+        return []
 
 
-def _analyze_and_finalize_assessment(
-    assessment_id: str,
-    token_address: str,
-    pair_address: str,
-    check_results: List[Dict[str, Any]],
-    risk_config: Dict[str, Any]
-) -> Dict[str, Any]:
+def _calculate_overall_risk_score(check_results: List[Dict[str, Any]], risk_config: Dict[str, Any]) -> Decimal:
     """
-    Analyze check results and create final assessment.
+    Calculate overall risk score from individual check results.
+    
+    Uses weighted scoring based on check importance and risk profile.
     
     Args:
-        assessment_id: Assessment ID
-        token_address: Token contract address
-        pair_address: Trading pair address
         check_results: List of individual check results
         risk_config: Risk profile configuration
         
     Returns:
-        Dict with final assessment
+        Overall risk score (0-100)
     """
-    try:
-        # Calculate overall risk score
-        overall_risk_score, risk_level = calculate_weighted_risk_score(check_results)
+    if not check_results:
+        return Decimal('100')  # Maximum risk if no checks completed
+    
+    # Weight factors for different check types
+    check_weights = {
+        'HONEYPOT': Decimal('0.35'),      # Highest weight - critical for scam detection
+        'LIQUIDITY': Decimal('0.25'),     # High weight - affects trade execution
+        'TAX_ANALYSIS': Decimal('0.20'),  # Medium weight - affects profitability
+        'OWNERSHIP': Decimal('0.15'),     # Lower weight - affects long-term risk
+        'CONTRACT_SECURITY': Decimal('0.05'),  # Lowest weight - additional security
+    }
+    
+    total_weighted_score = Decimal('0')
+    total_weight = Decimal('0')
+    
+    for result in check_results:
+        check_type = result.get('check_type', 'UNKNOWN')
+        risk_score = Decimal(str(result.get('risk_score', 100)))
+        weight = check_weights.get(check_type, Decimal('0.1'))
         
-        # Determine if trading should be blocked
-        should_block, blocking_reasons = should_block_trading(check_results)
-        
-        # Apply risk profile specific rules
-        profile_blocking = _apply_risk_profile_rules(check_results, risk_config)
-        if profile_blocking['should_block']:
-            should_block = True
-            blocking_reasons.extend(profile_blocking['reasons'])
-        
-        # Determine trading decision
-        max_acceptable_risk = risk_config.get('max_acceptable_risk', 30)
-        
-        if should_block:
-            trading_decision = 'BLOCK'
-            decision_reason = f"Blocked due to: {', '.join(blocking_reasons)}"
-        elif overall_risk_score > max_acceptable_risk:
-            trading_decision = 'SKIP'
-            decision_reason = f"Risk score ({overall_risk_score}) exceeds maximum acceptable ({max_acceptable_risk})"
-        else:
-            trading_decision = 'APPROVE'
-            decision_reason = f"Risk score ({overall_risk_score}) within acceptable range"
-        
-        # Calculate confidence score
-        confidence_score = _calculate_confidence_score(check_results)
-        
-        # Generate AI thought log entry
-        thought_log = _generate_thought_log_entry(
-            token_address, check_results, overall_risk_score, trading_decision, decision_reason
-        )
-        
-        # Compile final assessment
-        final_assessment = {
-            'assessment_id': assessment_id,
-            'token_address': token_address,
-            'pair_address': pair_address,
-            'timestamp': timezone.now().isoformat(),
-            
-            # Overall results
-            'overall_risk_score': float(overall_risk_score),
-            'risk_level': risk_level,
-            'confidence_score': confidence_score,
-            
-            # Trading decision
-            'trading_decision': trading_decision,
-            'decision_reason': decision_reason,
-            'is_blocked': should_block,
-            'blocking_reasons': blocking_reasons,
-            
-            # Individual check results
-            'check_results': check_results,
-            'checks_completed': len([r for r in check_results if r.get('status') == 'COMPLETED']),
-            'checks_failed': len([r for r in check_results if r.get('status') == 'FAILED']),
-            'checks_total': len(check_results),
-            
-            # Risk profile and configuration
-            'risk_profile': risk_config,
-            'profile_rules_applied': profile_blocking,
-            
-            # AI Thought Log
-            'thought_log': thought_log,
-            
-            # Summary metrics
-            'summary': _generate_assessment_summary(check_results, overall_risk_score, trading_decision)
-        }
-        
-        return final_assessment
-        
-    except Exception as e:
-        logger.error(f"Failed to analyze assessment results: {e}")
-        return _create_failure_assessment(
-            token_address, pair_address, assessment_id, f"Analysis failed: {str(e)}", 0
-        )
+        total_weighted_score += risk_score * weight
+        total_weight += weight
+    
+    # Calculate weighted average
+    if total_weight > 0:
+        overall_score = total_weighted_score / total_weight
+    else:
+        overall_score = Decimal('100')
+    
+    return min(overall_score, Decimal('100'))
 
 
-def _apply_risk_profile_rules(
-    check_results: List[Dict[str, Any]], 
+def _determine_risk_level(overall_risk_score: Decimal) -> str:
+    """Determine risk level based on overall score."""
+    if overall_risk_score >= 80:
+        return 'CRITICAL'
+    elif overall_risk_score >= 60:
+        return 'HIGH'
+    elif overall_risk_score >= 40:
+        return 'MEDIUM'
+    elif overall_risk_score >= 20:
+        return 'LOW'
+    else:
+        return 'MINIMAL'
+
+
+def _make_trading_decision(
+    successful_checks: List[Dict[str, Any]], 
+    failed_checks: List[Dict[str, Any]], 
+    overall_risk_score: Decimal, 
     risk_config: Dict[str, Any]
-) -> Dict[str, Any]:
+) -> str:
     """
-    Apply risk profile specific blocking rules.
+    Make final trading decision based on all available information.
+    
+    Args:
+        successful_checks: List of successful check results
+        failed_checks: List of failed check results
+        overall_risk_score: Overall calculated risk score
+        risk_config: Risk profile configuration
+        
+    Returns:
+        Trading decision: 'APPROVE', 'SKIP', or 'BLOCK'
+    """
+    max_acceptable_risk = risk_config.get('max_acceptable_risk', 50)
+    
+    # Check for critical failures first
+    for check in successful_checks:
+        check_type = check.get('check_type')
+        if check_type == 'HONEYPOT':
+            details = check.get('details', {})
+            if details.get('is_honeypot', False):
+                return 'BLOCK'  # Always block honeypots
+    
+    # Check profile-specific blocking rules
+    blocking_decision = _apply_profile_blocking_rules(successful_checks, risk_config)
+    if blocking_decision.get('should_block', False):
+        return 'BLOCK'
+    
+    # Check if too many critical checks failed
+    critical_checks_failed = len([c for c in failed_checks if c.get('check_type') in ['HONEYPOT', 'LIQUIDITY']])
+    if critical_checks_failed >= 2:
+        return 'BLOCK'  # Block if multiple critical checks failed
+    
+    # Make decision based on overall risk score
+    if overall_risk_score >= 80:
+        return 'BLOCK'
+    elif overall_risk_score > max_acceptable_risk:
+        return 'SKIP'  # Skip high-risk tokens
+    else:
+        return 'APPROVE'
+
+
+def _apply_profile_blocking_rules(check_results: List[Dict[str, Any]], risk_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply profile-specific blocking rules.
     
     Args:
         check_results: List of risk check results
@@ -568,486 +847,346 @@ def _apply_risk_profile_rules(
         return {'should_block': False, 'reasons': [], 'error': str(e)}
 
 
-def _calculate_confidence_score(check_results: List[Dict[str, Any]]) -> float:
+def _calculate_confidence_score(successful_checks: List[Dict[str, Any]], failed_checks: List[Dict[str, Any]]) -> Decimal:
     """
     Calculate confidence score based on check completion and reliability.
     
     Args:
-        check_results: List of risk check results
+        successful_checks: List of successful check results
+        failed_checks: List of failed check results
         
     Returns:
-        Confidence score from 0-100
+        Confidence score (0-100)
     """
-    if not check_results:
-        return 0.0
+    total_checks = len(successful_checks) + len(failed_checks)
+    if total_checks == 0:
+        return Decimal('0')
     
     # Base confidence from completion rate
-    completed_checks = len([r for r in check_results if r.get('status') == 'COMPLETED'])
-    completion_rate = completed_checks / len(check_results)
+    completion_rate = len(successful_checks) / total_checks
+    base_confidence = Decimal(str(completion_rate * 80))  # Max 80 from completion
     
-    # Adjust for execution time (faster = more reliable)
-    avg_execution_time = sum(r.get('execution_time_ms', 0) for r in check_results) / len(check_results)
-    time_factor = max(0.5, 1.0 - (avg_execution_time / 10000))  # Reduce confidence if checks took >10s
+    # Bonus confidence for critical checks completing successfully
+    critical_checks = ['HONEYPOT', 'LIQUIDITY']
+    critical_completed = len([c for c in successful_checks if c.get('check_type') in critical_checks])
+    critical_bonus = Decimal(str(critical_completed * 10))  # Max 20 bonus
     
-    # Adjust for critical check completion
-    critical_checks = ['HONEYPOT', 'LIQUIDITY', 'OWNERSHIP']
-    critical_completed = len([
-        r for r in check_results 
-        if r.get('check_type') in critical_checks and r.get('status') == 'COMPLETED'
-    ])
-    critical_factor = critical_completed / len(critical_checks)
+    # Penalty for failed critical checks
+    critical_failed = len([c for c in failed_checks if c.get('check_type') in critical_checks])
+    critical_penalty = Decimal(str(critical_failed * 15))  # 15 point penalty per failed critical check
     
-    # Calculate overall confidence
-    confidence = (completion_rate * 0.4 + time_factor * 0.3 + critical_factor * 0.3) * 100
-    
-    return min(100.0, max(0.0, confidence))
+    final_confidence = base_confidence + critical_bonus - critical_penalty
+    return max(Decimal('0'), min(final_confidence, Decimal('100')))
 
 
-def _generate_thought_log_entry(
-    token_address: str,
-    check_results: List[Dict[str, Any]],
-    overall_risk_score: Decimal,
-    trading_decision: str,
-    decision_reason: str
+def _generate_thought_log(
+    successful_checks: List[Dict[str, Any]], 
+    failed_checks: List[Dict[str, Any]], 
+    overall_risk_score: Decimal, 
+    trading_decision: str, 
+    risk_profile: str
 ) -> Dict[str, Any]:
     """
-    Generate AI Thought Log entry for explainable decision making.
+    Generate AI thought log explaining the reasoning behind the decision.
     
     Args:
-        token_address: Token contract address
-        check_results: List of risk check results
+        successful_checks: Successful check results
+        failed_checks: Failed check results
         overall_risk_score: Overall risk score
         trading_decision: Final trading decision
-        decision_reason: Reason for the decision
+        risk_profile: Risk profile used
         
     Returns:
-        Dict with thought log entry
+        Dict with thought log
     """
-    try:
-        # Extract key signals from check results
-        signals = []
+    # Analyze key signals
+    signals = []
+    
+    # Honeypot analysis
+    honeypot_result = next((c for c in successful_checks if c.get('check_type') == 'HONEYPOT'), None)
+    if honeypot_result:
+        details = honeypot_result.get('details', {})
+        if details.get('is_honeypot', False):
+            signals.append("🚨 HONEYPOT DETECTED - Cannot sell tokens")
+        elif details.get('can_sell', True):
+            signals.append("✅ Can buy and sell - Not a honeypot")
         
-        for result in check_results:
-            check_type = result.get('check_type')
-            status = result.get('status')
-            risk_score = result.get('risk_score', 0)
-            details = result.get('details', {})
-            
-            if status == 'COMPLETED':
-                # Extract meaningful signals from each check
-                if check_type == 'HONEYPOT':
-                    if details.get('is_honeypot'):
-                        signals.append(f"🚨 HONEYPOT DETECTED: Cannot sell after buying")
-                    else:
-                        sell_tax = details.get('sell_tax_percent', 0)
-                        signals.append(f"✅ Not a honeypot, sell tax: {sell_tax}%")
-                
-                elif check_type == 'LIQUIDITY':
-                    liquidity_usd = details.get('total_liquidity_usd', 0)
-                    max_slippage = details.get('price_impact', {}).get('max_slippage', 0)
-                    signals.append(f"💧 Liquidity: ${liquidity_usd:,.0f}, Max slippage: {max_slippage:.1f}%")
-                
-                elif check_type == 'OWNERSHIP':
-                    ownership = details.get('ownership', {})
-                    if ownership.get('is_renounced'):
-                        signals.append(f"🔒 Ownership renounced")
-                    else:
-                        signals.append(f"⚠️ Owner: {ownership.get('owner_address', 'Unknown')}")
-                
-                elif check_type == 'TAX_ANALYSIS':
-                    buy_tax = details.get('buy_tax_percent', 0)
-                    sell_tax = details.get('sell_tax_percent', 0)
-                    signals.append(f"💰 Taxes: Buy {buy_tax}%, Sell {sell_tax}%")
-            
-            elif status == 'FAILED':
-                signals.append(f"❌ {check_type} check failed")
+        buy_tax = details.get('buy_tax_percent', 0)
+        sell_tax = details.get('sell_tax_percent', 0)
+        if buy_tax > 10 or sell_tax > 10:
+            signals.append(f"⚠️ High taxes: Buy {buy_tax}%, Sell {sell_tax}%")
+    
+    # Liquidity analysis
+    liquidity_result = next((c for c in successful_checks if c.get('check_type') == 'LIQUIDITY'), None)
+    if liquidity_result:
+        details = liquidity_result.get('details', {})
+        total_liquidity = details.get('total_liquidity_usd', 0)
+        if total_liquidity >= 100000:
+            signals.append(f"✅ Strong liquidity: ${total_liquidity:,.0f}")
+        elif total_liquidity >= 50000:
+            signals.append(f"✅ Good liquidity: ${total_liquidity:,.0f}")
+        elif total_liquidity >= 10000:
+            signals.append(f"⚠️ Medium liquidity: ${total_liquidity:,.0f}")
+        else:
+            signals.append(f"🚨 Low liquidity: ${total_liquidity:,.0f}")
+    
+    # Ownership analysis
+    ownership_result = next((c for c in successful_checks if c.get('check_type') == 'OWNERSHIP'), None)
+    if ownership_result:
+        details = ownership_result.get('details', {})
+        ownership = details.get('ownership', {})
+        if ownership.get('is_renounced', False):
+            signals.append("✅ Ownership renounced - Reduced rug risk")
+        elif ownership.get('has_owner', False):
+            signals.append("⚠️ Owner can still control contract")
+    
+    # Tax analysis
+    tax_result = next((c for c in successful_checks if c.get('check_type') == 'TAX_ANALYSIS'), None)
+    if tax_result:
+        details = tax_result.get('details', {})
+        if details.get('has_transfer_restrictions', False):
+            signals.append("⚠️ Transfer restrictions detected")
         
-        # Generate narrative summary
-        if trading_decision == 'APPROVE':
-            narrative = f"Token passes safety checks with {overall_risk_score:.1f}/100 risk score. "
-        elif trading_decision == 'SKIP':
-            narrative = f"Token has elevated risk ({overall_risk_score:.1f}/100) but no critical issues. "
-        else:  # BLOCK
-            narrative = f"Token BLOCKED due to critical safety issues. "
-        
-        narrative += f"Key factors: {decision_reason}"
-        
-        # Generate counterfactuals
-        counterfactuals = []
-        
-        for result in check_results:
-            check_type = result.get('check_type')
-            risk_score = result.get('risk_score', 0)
-            details = result.get('details', {})
-            
-            if check_type == 'LIQUIDITY' and risk_score > 30:
-                required_liquidity = details.get('min_required_usd', 0)
-                current_liquidity = details.get('total_liquidity_usd', 0)
-                if current_liquidity < required_liquidity:
-                    counterfactuals.append(
-                        f"Would trade if liquidity > ${required_liquidity:,.0f} "
-                        f"(currently ${current_liquidity:,.0f})"
-                    )
-            
-            if check_type == 'OWNERSHIP' and risk_score > 40:
-                ownership = details.get('ownership', {})
-                if not ownership.get('is_renounced'):
-                    counterfactuals.append("Would trade if ownership was renounced")
-        
-        return {
-            'timestamp': timezone.now().isoformat(),
-            'token_address': token_address,
-            'decision': trading_decision,
-            'risk_score': float(overall_risk_score),
-            'signals': signals,
-            'narrative': narrative,
-            'counterfactuals': counterfactuals,
-            'reasoning_chain': [
-                f"1. Executed {len(check_results)} risk checks",
-                f"2. Calculated weighted risk score: {overall_risk_score:.1f}/100",
-                f"3. Applied trading rules: {decision_reason}",
-                f"4. Final decision: {trading_decision}"
-            ]
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to generate thought log: {e}")
-        return {
-            'timestamp': timezone.now().isoformat(),
-            'token_address': token_address,
-            'decision': trading_decision,
-            'error': str(e)
-        }
+        max_tax = details.get('max_tax_percent', 0)
+        if max_tax > 20:
+            signals.append(f"🚨 Very high taxes: {max_tax}%")
+        elif max_tax > 10:
+            signals.append(f"⚠️ High taxes: {max_tax}%")
+    
+    # Generate narrative
+    narrative_parts = []
+    
+    if trading_decision == 'APPROVE':
+        narrative_parts.append(f"✅ APPROVED for trading under {risk_profile} profile.")
+        narrative_parts.append(f"Risk score of {overall_risk_score:.1f} is within acceptable range.")
+    elif trading_decision == 'SKIP':
+        narrative_parts.append(f"⚠️ SKIPPING token due to elevated risk.")
+        narrative_parts.append(f"Risk score of {overall_risk_score:.1f} exceeds {risk_profile} profile limits.")
+    else:  # BLOCK
+        narrative_parts.append(f"🚨 BLOCKING token due to critical risks detected.")
+        narrative_parts.append(f"Risk score of {overall_risk_score:.1f} indicates unsafe trading conditions.")
+    
+    if failed_checks:
+        narrative_parts.append(f"Note: {len(failed_checks)} checks failed to complete.")
+    
+    return {
+        'timestamp': timezone.now().isoformat(),
+        'decision': trading_decision,
+        'risk_score': float(overall_risk_score),
+        'risk_profile': risk_profile,
+        'signals': signals,
+        'narrative': ' '.join(narrative_parts),
+        'checks_completed': len(successful_checks),
+        'checks_failed': len(failed_checks)
+    }
 
 
 def _generate_assessment_summary(
-    check_results: List[Dict[str, Any]], 
+    successful_checks: List[Dict[str, Any]], 
+    failed_checks: List[Dict[str, Any]], 
     overall_risk_score: Decimal, 
-    trading_decision: str
+    trading_decision: str, 
+    risk_profile: str
 ) -> Dict[str, Any]:
     """
-    Generate a summary of the assessment for quick review.
+    Generate summary of the assessment results.
     
     Args:
-        check_results: List of risk check results
+        successful_checks: Successful check results
+        failed_checks: Failed check results
         overall_risk_score: Overall risk score
         trading_decision: Final trading decision
+        risk_profile: Risk profile used
         
     Returns:
         Dict with assessment summary
     """
-    try:
-        # Count check outcomes
-        completed = len([r for r in check_results if r.get('status') == 'COMPLETED'])
-        failed = len([r for r in check_results if r.get('status') == 'FAILED'])
-        warnings = len([r for r in check_results if r.get('status') == 'WARNING'])
-        
-        # Identify highest risk areas
-        risk_areas = []
-        for result in check_results:
-            risk_score = result.get('risk_score', 0)
-            if risk_score >= 70:
-                risk_areas.append(f"{result.get('check_type')} ({risk_score:.0f})")
-        
-        # Generate recommendation
-        if trading_decision == 'APPROVE':
-            recommendation = "Safe to trade"
-        elif trading_decision == 'SKIP':
-            recommendation = "Consider manual review"
-        else:
-            recommendation = "Do not trade"
-        
-        return {
-            'checks_summary': {
-                'total': len(check_results),
-                'completed': completed,
-                'failed': failed,
-                'warnings': warnings,
-                'success_rate': f"{(completed / len(check_results) * 100):.1f}%" if check_results else "0%"
-            },
-            'risk_summary': {
-                'overall_score': float(overall_risk_score),
-                'risk_level': _score_to_risk_level(overall_risk_score),
-                'high_risk_areas': risk_areas
-            },
-            'recommendation': recommendation,
-            'key_points': _extract_key_points(check_results),
-            'trade_readiness': trading_decision in ['APPROVE']
+    # Summarize checks
+    checks_summary = {}
+    for check in successful_checks:
+        check_type = check.get('check_type')
+        checks_summary[check_type] = {
+            'status': check.get('status', 'UNKNOWN'),
+            'risk_score': check.get('risk_score', 0),
+            'execution_time_ms': check.get('execution_time_ms', 0)
         }
-        
-    except Exception as e:
-        logger.error(f"Failed to generate assessment summary: {e}")
-        return {'error': str(e)}
-
-
-def _extract_key_points(check_results: List[Dict[str, Any]]) -> List[str]:
-    """Extract key points from check results for summary."""
-    points = []
     
-    try:
-        for result in check_results:
-            check_type = result.get('check_type')
-            details = result.get('details', {})
-            
-            if check_type == 'HONEYPOT' and details.get('is_honeypot'):
-                points.append("❌ Token is a honeypot")
-            elif check_type == 'LIQUIDITY':
-                liquidity = details.get('total_liquidity_usd', 0)
-                if liquidity < 10000:
-                    points.append(f"⚠️ Low liquidity: ${liquidity:,.0f}")
-                else:
-                    points.append(f"✅ Good liquidity: ${liquidity:,.0f}")
-            elif check_type == 'OWNERSHIP':
-                ownership = details.get('ownership', {})
-                if ownership.get('is_renounced'):
-                    points.append("✅ Ownership renounced")
-                else:
-                    points.append("⚠️ Owner still has control")
-        
-        return points[:5]  # Limit to top 5 points
-        
-    except Exception as e:
-        logger.warning(f"Failed to extract key points: {e}")
-        return []
-
-
-def _score_to_risk_level(score: Decimal) -> str:
-    """Convert risk score to risk level."""
-    if score >= 80:
-        return 'CRITICAL'
-    elif score >= 60:
-        return 'HIGH'
-    elif score >= 30:
-        return 'MEDIUM'
-    else:
-        return 'LOW'
-
-
-def _create_failed_check_result(check_type: str, token_address: str, error_message: str) -> Dict[str, Any]:
-    """Create a failed check result."""
-    return create_risk_check_result(
-        check_type=check_type,
-        token_address=token_address,
-        status='FAILED',
-        risk_score=Decimal('100'),  # Maximum risk on failure
-        error_message=error_message,
-        execution_time_ms=0
-    )
-
-
-def _create_failure_assessment(
-    token_address: str, 
-    pair_address: str, 
-    assessment_id: Optional[str], 
-    error_message: str,
-    execution_time_ms: float
-) -> Dict[str, Any]:
-    """Create a failure assessment when the entire process fails."""
-    return {
-        'assessment_id': assessment_id or 'failed',
-        'token_address': token_address,
-        'pair_address': pair_address,
-        'timestamp': timezone.now().isoformat(),
-        'overall_risk_score': 100.0,
-        'risk_level': 'CRITICAL',
-        'confidence_score': 0.0,
-        'trading_decision': 'BLOCK',
-        'decision_reason': f"Assessment failed: {error_message}",
-        'is_blocked': True,
-        'blocking_reasons': ['Assessment failure'],
-        'check_results': [],
-        'checks_completed': 0,
-        'checks_failed': 0,
-        'checks_total': 0,
-        'execution_time_ms': execution_time_ms,
-        'error': error_message,
-        'thought_log': {
-            'timestamp': timezone.now().isoformat(),
-            'token_address': token_address,
-            'decision': 'BLOCK',
-            'narrative': f"Risk assessment failed with error: {error_message}",
-            'signals': ['❌ Assessment system failure']
+    for check in failed_checks:
+        check_type = check.get('check_type')
+        checks_summary[check_type] = {
+            'status': 'FAILED',
+            'error': check.get('error_message', 'Unknown error'),
+            'execution_time_ms': check.get('execution_time_ms', 0)
         }
+    
+    # Risk summary
+    risk_level = _determine_risk_level(overall_risk_score)
+    risk_summary = {
+        'overall_score': float(overall_risk_score),
+        'risk_level': risk_level,
+        'profile_used': risk_profile,
+        'within_tolerance': overall_risk_score <= 50,  # General tolerance
+    }
+    
+    # Recommendation
+    recommendation = {
+        'action': trading_decision,
+        'confidence': 'HIGH' if len(failed_checks) == 0 else 'MEDIUM' if len(failed_checks) <= 1 else 'LOW',
+        'reasoning': _get_decision_reasoning(trading_decision, overall_risk_score, successful_checks)
+    }
+    
+    return {
+        'checks_summary': checks_summary,
+        'risk_summary': risk_summary,
+        'recommendation': recommendation,
+        'total_checks': len(successful_checks) + len(failed_checks),
+        'successful_checks': len(successful_checks),
+        'failed_checks': len(failed_checks)
     }
 
 
-def _is_retryable_error(error: Exception) -> bool:
-    """Determine if an error is worth retrying."""
-    retryable_errors = [
-        'ConnectionError',
-        'TimeoutError',
-        'TemporaryFailure',
-        'RateLimitExceeded'
-    ]
-    
-    error_type = type(error).__name__
-    return any(retryable in error_type for retryable in retryable_errors)
+def _get_decision_reasoning(trading_decision: str, overall_risk_score: Decimal, successful_checks: List[Dict[str, Any]]) -> str:
+    """Get human-readable reasoning for the trading decision."""
+    if trading_decision == 'APPROVE':
+        return f"Low risk score ({overall_risk_score:.1f}) and no critical issues detected. Safe to trade."
+    elif trading_decision == 'SKIP':
+        return f"Moderate risk score ({overall_risk_score:.1f}) suggests caution. Consider manual review."
+    else:  # BLOCK
+        # Find specific blocking reasons
+        honeypot_check = next((c for c in successful_checks if c.get('check_type') == 'HONEYPOT'), None)
+        if honeypot_check and honeypot_check.get('details', {}).get('is_honeypot', False):
+            return "Honeypot detected - tokens cannot be sold. Avoid trading."
+        
+        return f"High risk score ({overall_risk_score:.1f}) indicates dangerous trading conditions. Do not trade."
 
 
-def _store_final_assessment(assessment: Dict[str, Any]) -> None:
-    """
-    Store the final assessment in the database.
+def _process_assessment_batch(
+    token_pairs: List[Tuple[str, str]], 
+    risk_profile: str, 
+    parallel_batches: bool
+) -> List[Dict[str, Any]]:
+    """Process a batch of token assessments."""
+    batch_results = []
     
-    Args:
-        assessment: Final assessment dictionary
-    """
     try:
-        with transaction.atomic():
-            # In production, this would:
-            # 1. Create/update RiskAssessment model
-            # 2. Store individual RiskCheckResult records
-            # 3. Create RiskEvent if needed
-            # 4. Update any related models
-            
-            assessment_id = assessment['assessment_id']
-            token_address = assessment['token_address']
-            
-            logger.info(
-                f"Storing assessment {assessment_id} for token {token_address} - "
-                f"Decision: {assessment['trading_decision']}, "
-                f"Risk: {assessment['overall_risk_score']}"
-            )
-            
-            # Store check results
-            for check_result in assessment.get('check_results', []):
-                logger.debug(f"Storing {check_result.get('check_type')} result")
-            
-            # Store thought log entry
-            thought_log = assessment.get('thought_log', {})
-            if thought_log:
-                logger.debug(f"Storing thought log entry")
-            
-    except Exception as e:
-        logger.error(f"Failed to store final assessment: {e}")
-        # Don't raise exception - assessment is complete even if storage fails
-
-
-# Additional helper tasks for specific workflows
-
-@shared_task(
-    bind=True,
-    queue='risk.urgent',
-    name='risk.tasks.quick_honeypot_check',
-    max_retries=2,
-    default_retry_delay=1
-)
-def quick_honeypot_check(self, token_address: str, pair_address: str) -> Dict[str, Any]:
-    """
-    Quick honeypot-only check for time-critical decisions.
-    
-    Args:
-        token_address: Token contract address
-        pair_address: Trading pair address
-        
-    Returns:
-        Dict with honeypot check result
-    """
-    try:
-        from . import honeypot
-        
-        result = honeypot.honeypot_check(
-            token_address, 
-            pair_address, 
-            use_advanced_simulation=False  # Skip advanced checks for speed
-        )
-        
-        return {
-            'check_type': 'QUICK_HONEYPOT',
-            'token_address': token_address,
-            'pair_address': pair_address,
-            'is_honeypot': result.get('details', {}).get('is_honeypot', True),
-            'risk_score': result.get('risk_score', 100),
-            'status': result.get('status', 'FAILED'),
-            'timestamp': timezone.now().isoformat()
-        }
-        
-    except Exception as exc:
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc, countdown=1)
-        
-        return {
-            'check_type': 'QUICK_HONEYPOT',
-            'token_address': token_address,
-            'pair_address': pair_address,
-            'is_honeypot': True,  # Assume honeypot on failure
-            'risk_score': 100,
-            'status': 'FAILED',
-            'error': str(exc),
-            'timestamp': timezone.now().isoformat()
-        }
-
-
-@shared_task(
-    bind=True,
-    queue='analytics.background',
-    name='risk.tasks.bulk_assessment',
-    max_retries=1
-)
-def bulk_assessment(
-    self, 
-    token_pair_list: List[Tuple[str, str]], 
-    risk_profile: str = 'Conservative'
-) -> Dict[str, Any]:
-    """
-    Perform bulk risk assessment for multiple token pairs.
-    
-    Args:
-        token_pair_list: List of (token_address, pair_address) tuples
-        risk_profile: Risk profile to use for all assessments
-        
-    Returns:
-        Dict with bulk assessment results
-    """
-    try:
-        logger.info(f"Starting bulk assessment of {len(token_pair_list)} token pairs")
-        
-        results = []
-        successful = 0
-        failed = 0
-        
-        for token_address, pair_address in token_pair_list:
-            try:
-                # Call main assessment task
-                result = assess_token_risk(
+        if parallel_batches and len(token_pairs) > 1:
+            # Process batch in parallel
+            assessment_tasks = []
+            for token_address, pair_address in token_pairs:
+                task = assess_token_risk.s(
                     token_address=token_address,
                     pair_address=pair_address,
                     risk_profile=risk_profile,
-                    parallel_execution=True,
-                    include_advanced_checks=False  # Skip advanced for bulk processing
+                    parallel_execution=False,  # Avoid nested parallelism
+                    include_advanced_checks=False  # Quick assessment for bulk
                 )
-                
-                results.append(result)
-                
-                if result.get('trading_decision') != 'BLOCK':
-                    successful += 1
-                else:
-                    failed += 1
-                    
-            except Exception as e:
-                logger.error(f"Bulk assessment failed for {token_address}: {e}")
-                failed += 1
-                results.append({
-                    'token_address': token_address,
-                    'pair_address': pair_address,
-                    'trading_decision': 'BLOCK',
-                    'error': str(e)
-                })
-        
+                assessment_tasks.append(task)
+            
+            # Execute batch
+            batch_job = group(assessment_tasks)
+            results = batch_job.apply_async()
+            batch_results = results.get(timeout=60)  # 1 minute timeout per batch
+            
+        else:
+            # Process batch sequentially
+            for token_address, pair_address in token_pairs:
+                try:
+                    result = assess_token_risk(
+                        token_address=token_address,
+                        pair_address=pair_address,
+                        risk_profile=risk_profile,
+                        parallel_execution=False,
+                        include_advanced_checks=False
+                    )
+                    batch_results.append(result)
+                except Exception as e:
+                    # Create error result for failed assessment
+                    error_result = {
+                        'token_address': token_address,
+                        'pair_address': pair_address,
+                        'status': 'failed',
+                        'error_message': str(e),
+                        'overall_risk_score': 100.0,
+                        'trading_decision': 'BLOCK'
+                    }
+                    batch_results.append(error_result)
+    
+    except Exception as e:
+        logger.error(f"Batch processing failed: {e}")
+        # Create error results for all tokens in batch
+        for token_address, pair_address in token_pairs:
+            error_result = {
+                'token_address': token_address,
+                'pair_address': pair_address,
+                'status': 'failed',
+                'error_message': str(e),
+                'overall_risk_score': 100.0,
+                'trading_decision': 'BLOCK'
+            }
+            batch_results.append(error_result)
+    
+    return batch_results
+
+
+def _generate_bulk_summary(results: List[Dict[str, Any]], failed_assessments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Generate summary for bulk assessment results."""
+    total_tokens = len(results) + len(failed_assessments)
+    
+    if not results:
         return {
-            'total_assessed': len(token_pair_list),
-            'successful': successful,
-            'failed': failed,
-            'success_rate': f"{(successful / len(token_pair_list) * 100):.1f}%",
-            'results': results,
-            'timestamp': timezone.now().isoformat()
+            'total_processed': total_tokens,
+            'success_rate': 0.0,
+            'trading_decisions': {'BLOCK': total_tokens},
+            'risk_distribution': {'CRITICAL': total_tokens},
+            'average_risk_score': 100.0
         }
+    
+    # Analyze trading decisions
+    decisions = {}
+    for result in results:
+        decision = result.get('trading_decision', 'BLOCK')
+        decisions[decision] = decisions.get(decision, 0) + 1
+    
+    # Add failed assessments as BLOCK
+    decisions['BLOCK'] = decisions.get('BLOCK', 0) + len(failed_assessments)
+    
+    # Analyze risk distribution
+    risk_levels = {}
+    total_risk_score = 0
+    
+    for result in results:
+        risk_score = result.get('overall_risk_score', 100)
+        total_risk_score += risk_score
         
-    except Exception as exc:
-        logger.error(f"Bulk assessment failed: {exc}")
-        return {
-            'total_assessed': len(token_pair_list),
-            'successful': 0,
-            'failed': len(token_pair_list),
-            'error': str(exc),
-            'timestamp': timezone.now().isoformat()
-        }
+        if risk_score >= 80:
+            level = 'CRITICAL'
+        elif risk_score >= 60:
+            level = 'HIGH'
+        elif risk_score >= 40:
+            level = 'MEDIUM'
+        elif risk_score >= 20:
+            level = 'LOW'
+        else:
+            level = 'MINIMAL'
+        
+        risk_levels[level] = risk_levels.get(level, 0) + 1
+    
+    # Add failed assessments as CRITICAL
+    risk_levels['CRITICAL'] = risk_levels.get('CRITICAL', 0) + len(failed_assessments)
+    total_risk_score += len(failed_assessments) * 100
+    
+    average_risk_score = total_risk_score / total_tokens if total_tokens > 0 else 100.0
+    success_rate = len(results) / total_tokens if total_tokens > 0 else 0.0
+    
+    return {
+        'total_processed': total_tokens,
+        'successful_assessments': len(results),
+        'failed_assessments': len(failed_assessments),
+        'success_rate': success_rate,
+        'trading_decisions': decisions,
+        'risk_distribution': risk_levels,
+        'average_risk_score': average_risk_score,
+        'approved_tokens': decisions.get('APPROVE', 0),
+        'blocked_tokens': decisions.get('BLOCK', 0),
+        'skipped_tokens': decisions.get('SKIP', 0)
+    }
