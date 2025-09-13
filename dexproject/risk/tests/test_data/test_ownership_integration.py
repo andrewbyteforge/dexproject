@@ -9,11 +9,12 @@ Tests end-to-end ownership analysis workflow.
 
 import time
 from django.test import TestCase
+from shared.tests.base import BaseDexTestCase
 from unittest.mock import patch, Mock
 from decimal import Decimal
 
 
-class OwnershipIntegrationTests(TestCase):
+class OwnershipIntegrationTests(BaseDexTestCase):
     """Integration tests for ownership analysis."""
     
     def setUp(self):
@@ -168,7 +169,7 @@ class OwnershipIntegrationTests(TestCase):
             self.assertIsInstance(details, dict)
 
 
-class DatabaseIntegrationTests(TestCase):
+class DatabaseIntegrationTests(BaseDexTestCase):
     """Tests for database integration."""
     
     def test_create_risk_check_result_function(self):
@@ -194,7 +195,7 @@ class DatabaseIntegrationTests(TestCase):
         self.assertIn('timestamp', result)
 
 
-class Web3IntegrationTests(TestCase):
+class Web3IntegrationTests(BaseDexTestCase):
     """Tests for Web3 integration capabilities."""
     
     def test_web3_connection_helper(self):

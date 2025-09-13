@@ -14,7 +14,8 @@ from decimal import Decimal
 from typing import Dict, Any, List
 
 import django
-from django.test import TestCase, override_settings
+from django.test import TestCase
+from shared.tests.base import BaseDexTestCase, override_settings
 from django.conf import settings
 
 # Import test data
@@ -42,7 +43,7 @@ TEST_SETTINGS = {
 }
 
 
-class BaseOwnershipTestCase(TestCase):
+class BaseOwnershipTestCase(BaseDexTestCase):
     """Base test case for ownership analysis tests."""
     
     def setUp(self):

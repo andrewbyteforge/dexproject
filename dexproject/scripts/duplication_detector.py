@@ -108,7 +108,9 @@ class EnhancedDuplicationDetector:
             'migrations',
             '.pytest_cache',
             'htmlcov',
-            '*.egg-info'
+            '*.egg-info',
+            'backups',  # Exclude backup directories
+            'backup'    # Common backup folder names
         ]
         
         # File encodings to try

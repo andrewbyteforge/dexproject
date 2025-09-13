@@ -10,12 +10,14 @@ from decimal import Decimal
 from typing import Dict, Any, List, Optional
 import uuid
 
+from shared.constants import RISK_LEVELS
 from django.db import models
+from shared.models.mixins import TimestampMixin, UUIDMixin
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 
 
-class RiskCheckType(models.Model):
+class RiskCheckType(TimestampMixin):
     """
     Defines the types of risk checks that can be performed.
     
@@ -27,7 +29,7 @@ class RiskCheckType(models.Model):
         LOW = 'LOW', 'Low'
         MEDIUM = 'MEDIUM', 'Medium'
         HIGH = 'HIGH', 'High'
-        CRITICAL = 'CRITICAL', 'Critical'
+        , 'Critical'
     
     class CheckCategory(models.TextChoices):
         HONEYPOT = 'HONEYPOT', 'Honeypot Detection'
@@ -86,9 +88,6 @@ class RiskCheckType(models.Model):
         blank=True,
         help_text="Check-specific configuration parameters"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         ordering = ['category', 'name']
 
@@ -96,7 +95,7 @@ class RiskCheckType(models.Model):
         return f"{self.name} ({self.category})"
 
 
-class RiskAssessment(models.Model):
+class RiskAssessment(TimestampMixin):
     """
     Represents a complete risk assessment for a trading pair or token.
     
@@ -117,7 +116,7 @@ class RiskAssessment(models.Model):
         MEDIUM = 'MEDIUM', 'Medium'
         HIGH = 'HIGH', 'High'
         VERY_HIGH = 'VERY_HIGH', 'Very High'
-        CRITICAL = 'CRITICAL', 'Critical'
+        , 'Critical'
     
     class Recommendation(models.TextChoices):
         STRONG_BUY = 'STRONG_BUY', 'Strong Buy'
@@ -270,7 +269,7 @@ class RiskAssessment(models.Model):
         return False
 
 
-class RiskCheckResult(models.Model):
+class RiskCheckResult(TimestampMixin):
     """
     Represents the result of a single risk check within an assessment.
     
@@ -402,7 +401,7 @@ class RiskCheckResult(models.Model):
         super().save(*args, **kwargs)
 
 
-class RiskProfile(models.Model):
+class RiskProfile(TimestampMixin):
     """
     Defines risk tolerance and configuration for strategies or users.
     
@@ -481,9 +480,6 @@ class RiskProfile(models.Model):
         default=True,
         help_text="Whether this risk profile is active"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         ordering = ['name']
 
@@ -491,7 +487,7 @@ class RiskProfile(models.Model):
         return self.name
 
 
-class RiskProfileCheckConfig(models.Model):
+class RiskProfileCheckConfig(TimestampMixin):
     """
     Configuration for specific risk checks within a risk profile.
     
@@ -540,10 +536,6 @@ class RiskProfileCheckConfig(models.Model):
         blank=True,
         help_text="Check-specific configuration overrides"
     )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         unique_together = ['risk_profile', 'check_type']
         ordering = ['risk_profile', 'check_type__category', 'check_type__name']
@@ -567,7 +559,7 @@ class RiskProfileCheckConfig(models.Model):
         return self.timeout_seconds if self.timeout_seconds is not None else self.check_type.timeout_seconds
 
 
-class RiskEvent(models.Model):
+class RiskEvent(TimestampMixin):
     """
     Records significant risk events and alerts.
     
@@ -588,7 +580,7 @@ class RiskEvent(models.Model):
         INFO = 'INFO', 'Info'
         WARNING = 'WARNING', 'Warning'
         ERROR = 'ERROR', 'Error'
-        CRITICAL = 'CRITICAL', 'Critical'
+        , 'Critical'
     
     # Identification
     event_id = models.UUIDField(

@@ -9,14 +9,16 @@ from decimal import Decimal
 from typing import Dict, Any, List, Optional
 import uuid
 
+from shared.constants import RISK_LEVELS
 from django.db import models
+from shared.models.mixins import TimestampMixin, UUIDMixin
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
 
-class UserProfile(models.Model):
+class UserProfile(TimestampMixin):
     """
     Extended user profile for trading bot users.
     
@@ -158,10 +160,6 @@ class UserProfile(models.Model):
         blank=True,
         help_text="When user accepted terms of service"
     )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         indexes = [
             models.Index(fields=['profile_id']),
@@ -174,7 +172,7 @@ class UserProfile(models.Model):
         return f"{self.user.username} Profile"
 
 
-class BotConfiguration(models.Model):
+class BotConfiguration(TimestampMixin):
     """
     Represents a trading bot configuration profile.
     
@@ -325,10 +323,7 @@ class BotConfiguration(models.Model):
         help_text="Whether this is the user's default configuration"
     )
     
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    last_used_at = models.DateTimeField(
+    # Timestamps    last_used_at = models.DateTimeField(
         null=True,
         blank=True,
         help_text="Last time this configuration was used"
@@ -356,7 +351,7 @@ class BotConfiguration(models.Model):
             raise ValidationError("Max position size cannot exceed total bankroll")
 
 
-class TokenWhitelistEntry(models.Model):
+class TokenWhitelistEntry(TimestampMixin):
     """
     Represents a token whitelist entry for a bot configuration.
     
@@ -419,7 +414,7 @@ class TokenWhitelistEntry(models.Model):
         return f"{self.token.symbol} whitelisted in {self.config.name}"
 
 
-class TokenBlacklistEntry(models.Model):
+class TokenBlacklistEntry(TimestampMixin):
     """
     Represents a token blacklist entry for a bot configuration.
     
@@ -526,7 +521,7 @@ class TokenBlacklistEntry(models.Model):
         return True
 
 
-class TradingSession(models.Model):
+class TradingSession(TimestampMixin):
     """
     Represents an active or completed trading session.
     
@@ -744,7 +739,7 @@ class TradingSession(models.Model):
         return None
 
 
-class Alert(models.Model):
+class Alert(TimestampMixin):
     """
     Represents system alerts and notifications for users.
     
@@ -770,7 +765,7 @@ class Alert(models.Model):
         INFO = 'INFO', 'Info'
         WARNING = 'WARNING', 'Warning'
         ERROR = 'ERROR', 'Error'
-        CRITICAL = 'CRITICAL', 'Critical'
+        , 'Critical'
     
     class AlertStatus(models.TextChoices):
         UNREAD = 'UNREAD', 'Unread'
@@ -914,7 +909,7 @@ class Alert(models.Model):
         return False
 
 
-class SystemStatus(models.Model):
+class SystemStatus(TimestampMixin):
     """
     Tracks overall system status and health metrics.
     

@@ -9,7 +9,8 @@ import logging
 from decimal import Decimal
 from typing import Dict, List
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
+from shared.management.commands.base import BaseDexCommand, CommandError
 from django.db import transaction
 
 from ...models import RiskProfile, RiskCheckType, RiskProfileCheckConfig
@@ -18,7 +19,7 @@ from ...models import RiskProfile, RiskCheckType, RiskProfileCheckConfig
 logger = logging.getLogger(__name__)
 
 
-class Command(BaseCommand):
+class Command(BaseDexCommand):
     """Management command to create risk profiles."""
     
     help = 'Create initial risk profiles for the trading bot'
@@ -373,15 +374,7 @@ class Command(BaseCommand):
             }
         }
         
-        return base_configs.get(profile_name, {})
-    
-    def _log_info(self, message: str) -> None:
-        """Log info message based on verbosity."""
-        if self.verbosity >= 1:
-            self.stdout.write(message)
-        logger.info(message)
-    
-    def _log_success(self, message: str) -> None:
+        return base_configs.get(profile_name, {})    def _log_success(self, message: str) -> None:
         """Log success message."""
         if self.verbosity >= 1:
             self.stdout.write(self.style.SUCCESS(message))

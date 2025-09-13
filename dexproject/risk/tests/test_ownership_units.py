@@ -8,11 +8,12 @@ Tests specific functions with controlled inputs and mocked dependencies.
 """
 
 from django.test import TestCase
+from shared.tests.base import BaseDexTestCase
 from unittest.mock import Mock, patch, MagicMock
 from decimal import Decimal
 
 
-class OwnershipStructureUnitTests(TestCase):
+class OwnershipStructureUnitTests(BaseDexTestCase):
     """Unit tests for ownership structure analysis functions."""
     
     def setUp(self):
@@ -77,7 +78,7 @@ class OwnershipStructureUnitTests(TestCase):
                 self.assertEqual(result, expected_type)
 
 
-class AdminFunctionUnitTests(TestCase):
+class AdminFunctionUnitTests(BaseDexTestCase):
     """Unit tests for admin function analysis."""
     
     def setUp(self):
@@ -140,7 +141,7 @@ class AdminFunctionUnitTests(TestCase):
             self.assertTrue(any(keyword in test_function.lower() for keyword in ['pause', 'blacklist', 'fee', 'tax']))
 
 
-class TimelockAnalysisUnitTests(TestCase):
+class TimelockAnalysisUnitTests(BaseDexTestCase):
     """Unit tests for timelock analysis functions."""
     
     def setUp(self):
@@ -181,7 +182,7 @@ class TimelockAnalysisUnitTests(TestCase):
             self.assertIn('has_bytecode', result)
 
 
-class MultisigAnalysisUnitTests(TestCase):
+class MultisigAnalysisUnitTests(BaseDexTestCase):
     """Unit tests for multisig analysis functions."""
     
     def setUp(self):
@@ -242,7 +243,7 @@ class MultisigAnalysisUnitTests(TestCase):
                 self.assertEqual(result['security_level'], expected_security)
 
 
-class UpgradeabilityUnitTests(TestCase):
+class UpgradeabilityUnitTests(BaseDexTestCase):
     """Unit tests for contract upgradeability analysis."""
     
     def setUp(self):
@@ -282,7 +283,7 @@ class UpgradeabilityUnitTests(TestCase):
             self.assertIn('has_proxy_slots', result)
 
 
-class RiskScoringUnitTests(TestCase):
+class RiskScoringUnitTests(BaseDexTestCase):
     """Unit tests for risk scoring calculations."""
     
     def test_calculate_ownership_risk_score(self):
@@ -350,7 +351,7 @@ class RiskScoringUnitTests(TestCase):
         self.assertLessEqual(float(score), 100)
 
 
-class HelperFunctionUnitTests(TestCase):
+class HelperFunctionUnitTests(BaseDexTestCase):
     """Unit tests for helper functions."""
     
     def test_web3_connection_helper(self):
@@ -392,7 +393,7 @@ class HelperFunctionUnitTests(TestCase):
             self.assertFalse(is_address(addr))
 
 
-class ErrorHandlingUnitTests(TestCase):
+class ErrorHandlingUnitTests(BaseDexTestCase):
     """Unit tests for error handling in ownership functions."""
     
     def test_web3_connection_error_handling(self):

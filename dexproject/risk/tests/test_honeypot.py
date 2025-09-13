@@ -9,7 +9,8 @@ Comprehensive unit tests for honeypot detection functionality.
 import unittest
 from unittest.mock import patch, MagicMock
 from decimal import Decimal
-from django.test import TestCase, override_settings
+from django.test import TestCase
+from shared.tests.base import BaseDexTestCase, override_settings
 
 from risk.tasks.honeypot import honeypot_check
 from risk.tests import BaseRiskTestCase, TestDataFactory, TEST_SETTINGS

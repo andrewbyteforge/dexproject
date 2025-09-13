@@ -10,12 +10,13 @@ from typing import Dict, Any, Optional
 import uuid
 
 from django.db import models
+from shared.models.mixins import TimestampMixin, UUIDMixin
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 
 
-class Chain(models.Model):
+class Chain(TimestampMixin):
     """
     Represents a blockchain network (e.g., Ethereum, Base, Arbitrum).
     
@@ -60,9 +61,6 @@ class Chain(models.Model):
         default=True,
         help_text="Whether trading is enabled on this chain"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         ordering = ['chain_id']
         indexes = [
@@ -74,7 +72,7 @@ class Chain(models.Model):
         return f"{self.name} (Chain ID: {self.chain_id})"
 
 
-class DEX(models.Model):
+class DEX(TimestampMixin):
     """
     Represents a decentralized exchange (e.g., Uniswap V2, Uniswap V3).
     
@@ -109,9 +107,6 @@ class DEX(models.Model):
         default=True,
         help_text="Whether trading is enabled on this DEX"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         unique_together = ['name', 'chain']
         ordering = ['chain', 'name']
@@ -125,7 +120,7 @@ class DEX(models.Model):
         return f"{self.name} on {self.chain.name}"
 
 
-class Token(models.Model):
+class Token(TimestampMixin):
     """
     Represents an ERC-20 token with metadata and safety information.
     
@@ -180,9 +175,6 @@ class Token(models.Model):
         blank=True,
         help_text="Additional token metadata (website, social links, etc.)"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         unique_together = ['address', 'chain']
         ordering = ['chain', 'symbol']
@@ -198,7 +190,7 @@ class Token(models.Model):
         return f"{self.symbol or 'Unknown'} ({self.address[:10]}...)"
 
 
-class TradingPair(models.Model):
+class TradingPair(TimestampMixin):
     """
     Represents a trading pair on a specific DEX (e.g., WETH/USDC on Uniswap V2).
     
@@ -278,7 +270,7 @@ class TradingPair(models.Model):
         return f"{self.token0.symbol}/{self.token1.symbol} on {self.dex.name}"
 
 
-class Strategy(models.Model):
+class Strategy(TimestampMixin):
     """
     Represents a trading strategy configuration.
     
@@ -362,10 +354,6 @@ class Strategy(models.Model):
         blank=True,
         help_text="Additional strategy configuration parameters"
     )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         ordering = ['name']
         verbose_name_plural = "Strategies"
@@ -374,7 +362,7 @@ class Strategy(models.Model):
         return self.name
 
 
-class Trade(models.Model):
+class Trade(TimestampMixin):
     """
     Represents a completed trade transaction.
     
@@ -542,7 +530,7 @@ class Trade(models.Model):
         return None
 
 
-class Position(models.Model):
+class Position(TimestampMixin):
     """
     Represents an open or closed trading position.
     

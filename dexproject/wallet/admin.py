@@ -3,6 +3,7 @@ Django admin configuration for the wallet app.
 """
 
 from django.contrib import admin
+from shared.admin.base import BaseModelAdmin
 from django.utils.html import format_html
 from .models import (
     Wallet, WalletBalance, Transaction, TransactionReceipt,
@@ -10,7 +11,7 @@ from .models import (
 )
 
 @admin.register(Wallet)
-class WalletAdmin(admin.ModelAdmin):
+class WalletAdmin(BaseModelAdmin):
     list_display = ['name', 'wallet_type', 'address_short', 'chain', 'status', 'is_trading_enabled', 'daily_limit_usd', 'last_used_at']
     list_filter = ['wallet_type', 'status', 'chain', 'is_trading_enabled', 'created_at']
     search_fields = ['name', 'address', 'user__username']
@@ -18,10 +19,7 @@ class WalletAdmin(admin.ModelAdmin):
     ordering = ['-last_used_at', '-created_at']
     actions = ['enable_trading', 'disable_trading', 'lock_wallets']
     
-    def address_short(self, obj):
-        return f"{obj.address[:10]}...{obj.address[-8:]}"
-    address_short.short_description = 'Address'
-    
+        
     def enable_trading(self, request, queryset):
         queryset.update(is_trading_enabled=True)
         self.message_user(request, f"Enabled trading for {queryset.count()} wallets.")
@@ -38,7 +36,7 @@ class WalletAdmin(admin.ModelAdmin):
     lock_wallets.short_description = "Lock wallets"
 
 @admin.register(WalletBalance)
-class WalletBalanceAdmin(admin.ModelAdmin):
+class WalletBalanceAdmin(BaseModelAdmin):
     list_display = ['wallet', 'token', 'balance', 'balance_usd', 'available_balance', 'locked_balance', 'is_active', 'last_updated']
     list_filter = ['token__symbol', 'wallet__chain', 'is_active', 'last_updated']
     search_fields = ['wallet__name', 'token__symbol', 'wallet__address']
@@ -46,7 +44,7 @@ class WalletBalanceAdmin(admin.ModelAdmin):
     ordering = ['-balance_usd', 'token__symbol']
 
 @admin.register(Transaction)
-class TransactionAdmin(admin.ModelAdmin):
+class TransactionAdmin(BaseModelAdmin):
     list_display = ['transaction_id_short', 'wallet', 'transaction_type', 'status', 'to_address_short', 'value_eth', 'gas_used', 'submitted_at']
     list_filter = ['transaction_type', 'status', 'wallet__chain', 'submitted_at']
     search_fields = ['transaction_id', 'transaction_hash', 'wallet__name', 'to_address']
@@ -68,7 +66,7 @@ class TransactionAdmin(admin.ModelAdmin):
     value_eth.short_description = 'Value (ETH)'
 
 @admin.register(TransactionReceipt)
-class TransactionReceiptAdmin(admin.ModelAdmin):
+class TransactionReceiptAdmin(BaseModelAdmin):
     list_display = ['receipt_id_short', 'transaction', 'status', 'cumulative_gas_used', 'effective_gas_price', 'created_at']
     list_filter = ['status', 'created_at']
     search_fields = ['receipt_id', 'transaction__transaction_hash']
@@ -79,7 +77,7 @@ class TransactionReceiptAdmin(admin.ModelAdmin):
     receipt_id_short.short_description = 'Receipt ID'
 
 @admin.register(WalletAuthorization)
-class WalletAuthorizationAdmin(admin.ModelAdmin):
+class WalletAuthorizationAdmin(BaseModelAdmin):
     list_display = ['authorization_id_short', 'wallet', 'user', 'authorization_type', 'status', 'is_valid_display', 'spending_limit_usd', 'created_at']
     list_filter = ['authorization_type', 'status', 'created_at']
     search_fields = ['authorization_id', 'wallet__name', 'user__username']
@@ -98,7 +96,7 @@ class WalletAuthorizationAdmin(admin.ModelAdmin):
     is_valid_display.short_description = 'Valid'
 
 @admin.register(WalletActivity)
-class WalletActivityAdmin(admin.ModelAdmin):
+class WalletActivityAdmin(BaseModelAdmin):
     list_display = ['activity_id_short', 'wallet', 'user', 'activity_type', 'description', 'was_successful', 'created_at']
     list_filter = ['activity_type', 'was_successful', 'created_at']
     search_fields = ['activity_id', 'wallet__name', 'user__username', 'description']

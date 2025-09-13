@@ -10,13 +10,14 @@ from typing import Dict, Any, List, Optional
 import uuid
 
 from django.db import models
+from shared.models.mixins import TimestampMixin, UUIDMixin
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
 
-class Wallet(models.Model):
+class Wallet(TimestampMixin):
     """
     Represents a wallet used for trading operations.
     
@@ -132,10 +133,7 @@ class Wallet(models.Model):
         help_text="Additional wallet configuration"
     )
     
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    last_used_at = models.DateTimeField(
+    # Timestamps    last_used_at = models.DateTimeField(
         null=True,
         blank=True,
         help_text="Last time this wallet was used"
@@ -163,7 +161,7 @@ class Wallet(models.Model):
                 raise ValidationError("Required signatures cannot exceed total signers")
 
 
-class WalletBalance(models.Model):
+class WalletBalance(TimestampMixin):
     """
     Tracks token balances for wallets.
     
@@ -264,7 +262,7 @@ class WalletBalance(models.Model):
         return self.available_balance + self.locked_balance
 
 
-class Transaction(models.Model):
+class Transaction(TimestampMixin):
     """
     Represents a blockchain transaction initiated by the trading bot.
     
@@ -464,10 +462,6 @@ class Transaction(models.Model):
         blank=True,
         help_text="Additional transaction metadata"
     )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -506,7 +500,7 @@ class Transaction(models.Model):
         return None
 
 
-class TransactionReceipt(models.Model):
+class TransactionReceipt(TimestampMixin):
     """
     Stores detailed transaction receipt information from the blockchain.
     
@@ -579,7 +573,7 @@ class TransactionReceipt(models.Model):
         return f"Receipt for {self.transaction.transaction_hash}"
 
 
-class WalletAuthorization(models.Model):
+class WalletAuthorization(TimestampMixin):
     """
     Manages authorizations and permissions for wallet operations.
     
@@ -715,7 +709,7 @@ class WalletAuthorization(models.Model):
             raise ValidationError("Valid until must be after valid from")
 
 
-class WalletActivity(models.Model):
+class WalletActivity(TimestampMixin):
     """
     Logs wallet activity for audit and monitoring purposes.
     

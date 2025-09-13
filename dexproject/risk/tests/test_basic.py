@@ -5,10 +5,11 @@ Basic Risk Assessment Tests
 import unittest
 from unittest.mock import patch, MagicMock
 from django.test import TestCase
+from shared.tests.base import BaseDexTestCase
 from . import TestDataFactory, MockWeb3
 
 
-class BasicRiskTests(TestCase):
+class BasicRiskTests(BaseDexTestCase):
     """Basic tests for risk assessment functionality."""
     
     def test_token_address_creation(self):
@@ -120,7 +121,7 @@ class BasicRiskTests(TestCase):
         self.assertEqual(make_decision(85), 'BLOCK')    # High risk
 
 
-class BasicIntegrationTest(TestCase):
+class BasicIntegrationTest(BaseDexTestCase):
     """Basic integration tests."""
     
     def test_assessment_workflow(self):

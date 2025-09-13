@@ -3,10 +3,11 @@ Django admin configuration for the trading app.
 """
 
 from django.contrib import admin
+from shared.admin.base import BaseModelAdmin
 from .models import Chain, DEX, Token, TradingPair, Strategy, Trade, Position
 
 @admin.register(Chain)
-class ChainAdmin(admin.ModelAdmin):
+class ChainAdmin(BaseModelAdmin):
     list_display = ['name', 'chain_id', 'rpc_url_short', 'gas_price_gwei', 'is_active', 'created_at']
     list_filter = ['is_active', 'created_at']
     search_fields = ['name', 'chain_id']
@@ -19,7 +20,7 @@ class ChainAdmin(admin.ModelAdmin):
     rpc_url_short.short_description = 'RPC URL'
 
 @admin.register(DEX)  
-class DEXAdmin(admin.ModelAdmin):
+class DEXAdmin(BaseModelAdmin):
     list_display = ['name', 'chain', 'router_address_short', 'fee_percentage', 'is_active', 'created_at']
     list_filter = ['chain', 'is_active', 'created_at']
     search_fields = ['name', 'router_address', 'factory_address']
@@ -30,17 +31,14 @@ class DEXAdmin(admin.ModelAdmin):
     router_address_short.short_description = 'Router'
 
 @admin.register(Token)
-class TokenAdmin(admin.ModelAdmin):
+class TokenAdmin(BaseModelAdmin):
     list_display = ['symbol', 'name', 'chain', 'address_short', 'decimals', 'is_verified', 'is_honeypot', 'is_blacklisted']
     list_filter = ['chain', 'is_verified', 'is_honeypot', 'is_blacklisted', 'decimals']
     search_fields = ['symbol', 'name', 'address']
     readonly_fields = ['created_at', 'updated_at']
     actions = ['mark_as_verified', 'mark_as_honeypot', 'mark_as_blacklisted']
     
-    def address_short(self, obj):
-        return f"{obj.address[:10]}...{obj.address[-8:]}"
-    address_short.short_description = 'Address'
-    
+        
     def mark_as_verified(self, request, queryset):
         queryset.update(is_verified=True)
         self.message_user(request, f"Marked {queryset.count()} tokens as verified.")
@@ -57,7 +55,7 @@ class TokenAdmin(admin.ModelAdmin):
     mark_as_blacklisted.short_description = "Mark as blacklisted"
 
 @admin.register(TradingPair)
-class TradingPairAdmin(admin.ModelAdmin):
+class TradingPairAdmin(BaseModelAdmin):
     list_display = ['pair_name', 'dex', 'pair_address_short', 'liquidity_usd', 'volume_24h_usd', 'is_active', 'discovered_at']
     list_filter = ['dex', 'is_active', 'discovered_at']
     search_fields = ['token0__symbol', 'token1__symbol', 'pair_address']
@@ -73,14 +71,14 @@ class TradingPairAdmin(admin.ModelAdmin):
     pair_address_short.short_description = 'Address'
 
 @admin.register(Strategy)
-class StrategyAdmin(admin.ModelAdmin):
+class StrategyAdmin(BaseModelAdmin):
     list_display = ['name', 'is_active', 'max_position_size_eth', 'max_slippage_percent', 'take_profit_percent', 'stop_loss_percent']
     list_filter = ['is_active', 'created_at']
     search_fields = ['name', 'description']
     readonly_fields = ['created_at', 'updated_at']
 
 @admin.register(Trade)
-class TradeAdmin(admin.ModelAdmin):
+class TradeAdmin(BaseModelAdmin):
     list_display = ['trade_id_short', 'trade_type', 'pair', 'amount_in', 'price_usd', 'status', 'slippage_percent', 'created_at']
     list_filter = ['trade_type', 'status', 'pair__dex', 'created_at']
     search_fields = ['trade_id', 'transaction_hash', 'pair__token0__symbol', 'pair__token1__symbol']
@@ -92,7 +90,7 @@ class TradeAdmin(admin.ModelAdmin):
     trade_id_short.short_description = 'Trade ID'
 
 @admin.register(Position)
-class PositionAdmin(admin.ModelAdmin):
+class PositionAdmin(BaseModelAdmin):
     list_display = ['position_id_short', 'pair', 'status', 'total_amount_in', 'current_amount', 'total_pnl_usd_display', 'opened_at']
     list_filter = ['status', 'pair__dex', 'opened_at']
     search_fields = ['position_id', 'pair__token0__symbol', 'pair__token1__symbol']

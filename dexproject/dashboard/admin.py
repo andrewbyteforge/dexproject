@@ -3,6 +3,7 @@ Django admin configuration for the dashboard app.
 """
 
 from django.contrib import admin
+from shared.admin.base import BaseModelAdmin
 from django.utils.html import format_html
 from .models import (
     UserProfile, BotConfiguration, TokenWhitelistEntry,
@@ -10,7 +11,7 @@ from .models import (
 )
 
 @admin.register(UserProfile)
-class UserProfileAdmin(admin.ModelAdmin):
+class UserProfileAdmin(BaseModelAdmin):
     list_display = ['user', 'display_name', 'experience_level', 'risk_tolerance', 'onboarding_completed', 'two_factor_enabled', 'created_at']
     list_filter = ['experience_level', 'risk_tolerance', 'onboarding_completed', 'two_factor_enabled', 'api_access_enabled', 'created_at']
     search_fields = ['user__username', 'display_name', 'user__email']
@@ -18,7 +19,7 @@ class UserProfileAdmin(admin.ModelAdmin):
     ordering = ['-created_at']
 
 @admin.register(BotConfiguration)
-class BotConfigurationAdmin(admin.ModelAdmin):
+class BotConfigurationAdmin(BaseModelAdmin):
     list_display = ['name', 'user', 'status', 'trading_mode', 'strategy', 'max_position_size_usd', 'is_default', 'last_used_at']
     list_filter = ['status', 'trading_mode', 'is_default', 'auto_execution_enabled', 'require_manual_approval', 'created_at']
     search_fields = ['name', 'description', 'user__username']
@@ -26,7 +27,7 @@ class BotConfigurationAdmin(admin.ModelAdmin):
     ordering = ['-last_used_at', '-updated_at']
 
 @admin.register(TokenWhitelistEntry)
-class TokenWhitelistEntryAdmin(admin.ModelAdmin):
+class TokenWhitelistEntryAdmin(BaseModelAdmin):
     list_display = ['config', 'token', 'max_position_size_usd', 'max_slippage_percent', 'added_by', 'added_at']
     list_filter = ['config', 'token__chain', 'added_at']
     search_fields = ['token__symbol', 'token__name', 'config__name']
@@ -34,7 +35,7 @@ class TokenWhitelistEntryAdmin(admin.ModelAdmin):
     ordering = ['-added_at']
 
 @admin.register(TokenBlacklistEntry)
-class TokenBlacklistEntryAdmin(admin.ModelAdmin):
+class TokenBlacklistEntryAdmin(BaseModelAdmin):
     list_display = ['config', 'token', 'reason', 'is_permanent', 'is_active_display', 'risk_score', 'added_at']
     list_filter = ['reason', 'is_permanent', 'config', 'token__chain', 'added_at']
     search_fields = ['token__symbol', 'token__name', 'description']
@@ -49,7 +50,7 @@ class TokenBlacklistEntryAdmin(admin.ModelAdmin):
     is_active_display.short_description = 'Status'
 
 @admin.register(TradingSession)
-class TradingSessionAdmin(admin.ModelAdmin):
+class TradingSessionAdmin(BaseModelAdmin):
     list_display = ['session_id_short', 'name', 'user', 'status', 'trading_mode', 'success_rate_display', 'total_pnl_usd', 'started_at']
     list_filter = ['status', 'trading_mode', 'daily_limit_hit', 'emergency_stop_triggered', 'started_at']
     search_fields = ['session_id', 'name', 'user__username']
@@ -57,18 +58,8 @@ class TradingSessionAdmin(admin.ModelAdmin):
     ordering = ['-started_at']
     actions = ['emergency_stop_sessions', 'pause_sessions']
     
-    def session_id_short(self, obj):
-        return str(obj.session_id)[:8] + '...'
-    session_id_short.short_description = 'Session ID'
-    
-    def success_rate_display(self, obj):
-        rate = obj.success_rate_percent
-        if rate is not None:
-            color = 'green' if rate >= 70 else 'orange' if rate >= 50 else 'red'
-            return format_html('<span style="color: {};">{:.1f}%</span>', color, rate)
-        return '-'
-    success_rate_display.short_description = 'Success Rate'
-    
+        
+        
     def emergency_stop_sessions(self, request, queryset):
         queryset.update(status='EMERGENCY_STOP', emergency_stop_triggered=True)
         self.message_user(request, f"Emergency stopped {queryset.count()} sessions.")
@@ -81,7 +72,7 @@ class TradingSessionAdmin(admin.ModelAdmin):
     pause_sessions.short_description = "Pause sessions"
 
 @admin.register(Alert)
-class AlertAdmin(admin.ModelAdmin):
+class AlertAdmin(BaseModelAdmin):
     list_display = ['alert_id_short', 'user', 'alert_type', 'severity', 'title', 'status', 'action_required', 'created_at']
     list_filter = ['alert_type', 'severity', 'status', 'action_required', 'email_sent', 'sms_sent', 'push_sent', 'created_at']
     search_fields = ['alert_id', 'title', 'message', 'user__username']
@@ -111,7 +102,7 @@ class AlertAdmin(admin.ModelAdmin):
     mark_as_unread.short_description = "Mark as unread"
 
 @admin.register(SystemStatus)
-class SystemStatusAdmin(admin.ModelAdmin):
+class SystemStatusAdmin(BaseModelAdmin):
     list_display = ['status_id_short', 'overall_status_display', 'trading_engine_status', 'active_sessions', 'active_users', 'uptime_percent', 'created_at']
     list_filter = ['trading_engine_status', 'risk_engine_status', 'wallet_service_status', 'api_service_status', 'created_at']
     search_fields = ['status_id', 'status_message', 'incident_id']

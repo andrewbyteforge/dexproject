@@ -10,6 +10,7 @@ import os
 import sys
 import django
 from django.test import TestCase
+from shared.tests.base import BaseDexTestCase
 from unittest.mock import Mock, patch
 
 # Add the project root to the Python path if needed
@@ -18,7 +19,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
-class SimpleOwnershipTests(TestCase):
+class SimpleOwnershipTests(BaseDexTestCase):
     """Simple ownership analysis tests."""
     
     def test_ownership_check_import(self):
@@ -123,7 +124,7 @@ class SimpleOwnershipTests(TestCase):
             pass
 
 
-class OwnershipHelperTests(TestCase):
+class OwnershipHelperTests(BaseDexTestCase):
     """Tests for ownership analysis helper functions."""
     
     def test_risk_score_calculation(self):

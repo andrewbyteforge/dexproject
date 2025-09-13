@@ -10,12 +10,13 @@ from typing import Dict, Any, List, Optional
 import uuid
 
 from django.db import models
+from shared.models.mixins import TimestampMixin, UUIDMixin
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 
 
-class DecisionContext(models.Model):
+class DecisionContext(TimestampMixin):
     """
     Represents the context in which a trading decision was made.
     
@@ -125,302 +126,6 @@ class DecisionContext(models.Model):
         blank=True,
         help_text="Portfolio state at decision time"
     )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['context_id']),
-            models.Index(fields=['decision_type']),
-            models.Index(fields=['pair', 'created_at']),
-            models.Index(fields=['token', 'created_at']),
-            models.Index(fields=['strategy']),
-            models.Index(fields=['created_at']),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.decision_type} Context - {self.pair}"
-
-
-class DecisionFeature(models.Model):
-    """
-    Represents individual features/signals used in decision-making.
-    
-    Stores feature values, weights, and transformations that
-    contribute to the AI's decision-making process.
-    """
-    
-    class FeatureCategory(models.TextChoices):
-        RISK_SIGNAL = 'RISK_SIGNAL', 'Risk Signal'
-        MARKET_SIGNAL = 'MARKET_SIGNAL', 'Market Signal'
-        LIQUIDITY_SIGNAL = 'LIQUIDITY_SIGNAL', 'Liquidity Signal'
-        TECHNICAL_SIGNAL = 'TECHNICAL_SIGNAL', 'Technical Signal'
-        SOCIAL_SIGNAL = 'SOCIAL_SIGNAL', 'Social Signal'
-        PORTFOLIO_SIGNAL = 'PORTFOLIO_SIGNAL', 'Portfolio Signal'
-        TIMING_SIGNAL = 'TIMING_SIGNAL', 'Timing Signal'
-    
-    class DataType(models.TextChoices):
-        NUMERIC = 'NUMERIC', 'Numeric'
-        BOOLEAN = 'BOOLEAN', 'Boolean'
-        CATEGORICAL = 'CATEGORICAL', 'Categorical'
-        TEXT = 'TEXT', 'Text'
-    
-    # Identification
-    feature_id = models.UUIDField(
-        default=uuid.uuid4,
-        unique=True,
-        help_text="Unique feature identifier"
-    )
-    context = models.ForeignKey(
-        DecisionContext,
-        on_delete=models.CASCADE,
-        related_name='features'
-    )
-    
-    # Feature Definition
-    name = models.CharField(
-        max_length=100,
-        help_text="Feature name (e.g., 'honeypot_score', 'liquidity_depth')"
-    )
-    category = models.CharField(
-        max_length=20,
-        choices=FeatureCategory.choices
-    )
-    data_type = models.CharField(
-        max_length=15,
-        choices=DataType.choices
-    )
-    
-    # Feature Values
-    raw_value = models.JSONField(
-        help_text="Raw feature value before processing"
-    )
-    processed_value = models.JSONField(
-        null=True,
-        blank=True,
-        help_text="Processed/normalized feature value"
-    )
-    weight = models.DecimalField(
-        max_digits=8,
-        decimal_places=4,
-        default=Decimal('1.0'),
-        help_text="Weight applied to this feature"
-    )
-    contribution_score = models.DecimalField(
-        max_digits=10,
-        decimal_places=6,
-        null=True,
-        blank=True,
-        help_text="This feature's contribution to the final decision"
-    )
-    
-    # Feature Metadata
-    confidence = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="Confidence in this feature value (0-100)"
-    )
-    source = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Data source for this feature"
-    )
-    processing_time_ms = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Time taken to compute this feature (ms)"
-    )
-    
-    # Thresholds and Boundaries
-    threshold_values = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Threshold values for this feature (e.g., min, max, optimal)"
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ['context', 'name']
-        ordering = ['context', 'category', 'name']
-        indexes = [
-            models.Index(fields=['feature_id']),
-            models.Index(fields=['context', 'category']),
-            models.Index(fields=['name']),
-            models.Index(fields=['category']),
-            models.Index(fields=['created_at']),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.name} ({self.category})"
-
-    @property
-    def weighted_contribution(self) -> Optional[Decimal]:
-        """Calculate weighted contribution score."""
-        if self.contribution_score is not None:
-            return self.contribution_score * self.weight
-        return None
-
-
-class ThoughtLog(models.Model):
-    """
-    Represents the AI's thought process and reasoning for a decision.
-    
-    This is the core model for explainable AI, storing the complete
-    reasoning chain, alternative considerations, and decision rationale.
-    """
-    
-    class DecisionOutcome(models.TextChoices):
-        EXECUTE_BUY = 'EXECUTE_BUY', 'Execute Buy'
-        EXECUTE_SELL = 'EXECUTE_SELL', 'Execute Sell'
-        HOLD_POSITION = 'HOLD_POSITION', 'Hold Position'
-        SKIP_OPPORTUNITY = 'SKIP_OPPORTUNITY', 'Skip Opportunity'
-        BLOCK_TRADE = 'BLOCK_TRADE', 'Block Trade'
-        EMERGENCY_EXIT = 'EMERGENCY_EXIT', 'Emergency Exit'
-    
-    # Identification
-    thought_id = models.UUIDField(
-        default=uuid.uuid4,
-        unique=True,
-        help_text="Unique thought log identifier"
-    )
-    context = models.OneToOneField(
-        DecisionContext,
-        on_delete=models.CASCADE,
-        related_name='thought_log'
-    )
-    
-    # Decision Summary
-    decision_outcome = models.CharField(
-        max_length=20,
-        choices=DecisionOutcome.choices
-    )
-    confidence_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="AI's confidence in this decision (0-100)"
-    )
-    overall_score = models.DecimalField(
-        max_digits=8,
-        decimal_places=4,
-        help_text="Overall decision score computed by the AI"
-    )
-    
-    # Reasoning
-    primary_reasoning = models.TextField(
-        help_text="Primary reasoning for the decision (1-3 sentences)"
-    )
-    detailed_analysis = models.TextField(
-        blank=True,
-        help_text="Detailed analysis and reasoning chain"
-    )
-    key_factors = models.JSONField(
-        default=list,
-        help_text="List of key factors that influenced the decision"
-    )
-    risk_factors = models.JSONField(
-        default=list,
-        help_text="Risk factors considered"
-    )
-    positive_signals = models.JSONField(
-        default=list,
-        help_text="Positive signals identified"
-    )
-    negative_signals = models.JSONField(
-        default=list,
-        help_text="Negative signals identified"
-    )
-    
-    # Alternative Scenarios
-    alternative_outcomes = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Alternative decisions that were considered"
-    )
-    counterfactuals = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="What would change the decision (counterfactual reasoning)"
-    )
-    
-    # Execution Parameters
-    recommended_amount = models.DecimalField(
-        max_digits=50,
-        decimal_places=18,
-        null=True,
-        blank=True,
-        help_text="Recommended trade amount"
-    )
-    max_slippage_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Recommended maximum slippage"
-    )
-    max_gas_price_gwei = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Recommended maximum gas price"
-    )
-    priority_level = models.CharField(
-        max_length=20,
-        choices=[
-            ('LOW', 'Low'),
-            ('MEDIUM', 'Medium'),
-            ('HIGH', 'High'),
-            ('URGENT', 'Urgent'),
-        ],
-        default='MEDIUM',
-        help_text="Execution priority level"
-    )
-    
-    # Related Actions
-    trade = models.ForeignKey(
-        'trading.Trade',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='thought_logs',
-        help_text="Trade that resulted from this decision"
-    )
-    
-    # Learning and Feedback
-    feedback_score = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(Decimal('-100')), MaxValueValidator(Decimal('100'))],
-        help_text="Feedback score on decision quality (-100 to 100)"
-    )
-    outcome_evaluation = models.TextField(
-        blank=True,
-        help_text="Post-execution evaluation of the decision"
-    )
-    
-    # Model Version
-    model_version = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Version of the decision model used"
-    )
-    feature_version = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Version of the feature engineering pipeline"
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -444,7 +149,7 @@ class ThoughtLog(models.Model):
         return None
 
 
-class DecisionMetrics(models.Model):
+class DecisionMetrics(TimestampMixin):
     """
     Stores quantitative metrics and performance data for decisions.
     
@@ -598,10 +303,6 @@ class DecisionMetrics(models.Model):
         blank=True,
         help_text="Last time metrics were updated"
     )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -616,7 +317,7 @@ class DecisionMetrics(models.Model):
         return f"Metrics for {self.thought_log.thought_id}"
 
 
-class LearningSession(models.Model):
+class LearningSession(TimestampMixin):
     """
     Represents a learning/training session for the AI model.
     
@@ -755,7 +456,7 @@ class LearningSession(models.Model):
         return None
 
 
-class ModelPerformance(models.Model):
+class ModelPerformance(TimestampMixin):
     """
     Tracks model performance metrics over time.
     
@@ -908,7 +609,7 @@ class ModelPerformance(models.Model):
         return f"Performance {self.model_version} - {self.time_window} {self.period_start.date()}"
 
 
-class FeatureImportance(models.Model):
+class FeatureImportance(TimestampMixin):
     """
     Tracks the importance and contribution of different features over time.
     

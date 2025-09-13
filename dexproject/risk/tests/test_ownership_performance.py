@@ -10,11 +10,12 @@ Tests execution time, memory usage, and concurrent execution capabilities.
 import time
 import threading
 from django.test import TestCase
+from shared.tests.base import BaseDexTestCase
 from unittest.mock import patch, Mock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import decimal 
 
-class OwnershipPerformanceTests(TestCase):
+class OwnershipPerformanceTests(BaseDexTestCase):
     """Performance tests for ownership analysis."""
     
     def setUp(self):
@@ -212,7 +213,7 @@ class OwnershipPerformanceTests(TestCase):
                 self.assertGreater(throughput, 0.1, "Throughput too low")  # At least 0.1 checks/second
 
 
-class OwnershipStressTests(TestCase):
+class OwnershipStressTests(BaseDexTestCase):
     """Stress tests for ownership analysis under load."""
     
     def test_rapid_succession_checks(self):
@@ -292,7 +293,7 @@ class OwnershipStressTests(TestCase):
             self.assertIn('check_type', result)
 
 
-class OwnershipBenchmarkTests(TestCase):
+class OwnershipBenchmarkTests(BaseDexTestCase):
     """Benchmark tests for ownership analysis performance."""
     
     def test_function_level_benchmarks(self):
