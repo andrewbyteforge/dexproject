@@ -18,6 +18,10 @@ class WalletAdmin(BaseModelAdmin):
     readonly_fields = ['wallet_id', 'created_at', 'updated_at', 'last_used_at']
     ordering = ['-last_used_at', '-created_at']
     actions = ['enable_trading', 'disable_trading', 'lock_wallets']
+
+    def address_short(self, obj):
+        return f"{obj.address[:10]}...{obj.address[-8:]}"
+    address_short.short_description = 'Address'
     
         
     def enable_trading(self, request, queryset):

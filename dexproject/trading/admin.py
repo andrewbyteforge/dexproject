@@ -38,6 +38,10 @@ class TokenAdmin(BaseModelAdmin):
     readonly_fields = ['created_at', 'updated_at']
     actions = ['mark_as_verified', 'mark_as_honeypot', 'mark_as_blacklisted']
     
+
+    def address_short(self, obj):
+        return f"{obj.address[:10]}...{obj.address[-8:]}"
+    address_short.short_description = 'Address'
         
     def mark_as_verified(self, request, queryset):
         queryset.update(is_verified=True)

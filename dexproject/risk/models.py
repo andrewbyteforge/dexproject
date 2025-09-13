@@ -29,7 +29,7 @@ class RiskCheckType(TimestampMixin):
         LOW = 'LOW', 'Low'
         MEDIUM = 'MEDIUM', 'Medium'
         HIGH = 'HIGH', 'High'
-        , 'Critical'
+       
     
     class CheckCategory(models.TextChoices):
         HONEYPOT = 'HONEYPOT', 'Honeypot Detection'
@@ -116,7 +116,7 @@ class RiskAssessment(TimestampMixin):
         MEDIUM = 'MEDIUM', 'Medium'
         HIGH = 'HIGH', 'High'
         VERY_HIGH = 'VERY_HIGH', 'Very High'
-        , 'Critical'
+        
     
     class Recommendation(models.TextChoices):
         STRONG_BUY = 'STRONG_BUY', 'Strong Buy'
@@ -580,7 +580,7 @@ class RiskEvent(TimestampMixin):
         INFO = 'INFO', 'Info'
         WARNING = 'WARNING', 'Warning'
         ERROR = 'ERROR', 'Error'
-        , 'Critical'
+        
     
     # Identification
     event_id = models.UUIDField(

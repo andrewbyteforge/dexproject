@@ -9,7 +9,7 @@ class TimestampMixin(models.Model):
     """
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-ECHO is off.
+
     class Meta:
         abstract = True
 
@@ -23,7 +23,7 @@ class UUIDMixin(models.Model):
         default=uuid.uuid4,
         editable=False
     )
-ECHO is off.
+
     class Meta:
         abstract = True
 
@@ -34,18 +34,18 @@ class SoftDeleteMixin(models.Model):
     """
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
-ECHO is off.
+
     def soft_delete(self):
         """Mark the object as deleted."""
         self.is_deleted = True
         self.deleted_at = timezone.now()
         self.save()
-ECHO is off.
+
     def restore(self):
         """Restore a soft-deleted object."""
         self.is_deleted = False
         self.deleted_at = None
         self.save()
-ECHO is off.
+
     class Meta:
         abstract = True

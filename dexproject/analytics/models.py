@@ -126,6 +126,306 @@ class DecisionContext(TimestampMixin):
         blank=True,
         help_text="Portfolio state at decision time"
     )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['context_id']),  # Fixed: was 'thought_id'
+            models.Index(fields=['decision_type']),  # Fixed: was 'decision_outcome'
+            models.Index(fields=['pair']),  # Fixed: was 'context'
+            models.Index(fields=['token']),  # Fixed: was 'trade'
+            models.Index(fields=['strategy']),  # Fixed: was 'confidence_percent'
+            models.Index(fields=['created_at']),  # This one was correct
+            # Removed 'model_version' since DecisionContext doesn't have this field
+        ]
+
+    def __str__(self) -> str:
+        return f"Decision Context {self.context_id} - {self.decision_type}"  # Fixed: was thought_id
+
+    @property
+    def total_analysis_time_ms(self) -> Optional[int]:
+        """Calculate total analysis time."""
+        if self.analysis_duration_ms:
+            return self.analysis_duration_ms
+        return None
+
+
+# Add these missing models to your analytics/models.py file
+# Place them after the DecisionContext class but before DecisionMetrics
+
+class DecisionFeature(TimestampMixin):
+    """
+    Represents individual features that influenced a trading decision.
+    
+    Stores feature values, weights, and contribution scores for
+    explainable AI and feature importance analysis.
+    """
+    
+    class FeatureCategory(models.TextChoices):
+        RISK_SIGNAL = 'RISK_SIGNAL', 'Risk Signal'
+        MARKET_SIGNAL = 'MARKET_SIGNAL', 'Market Signal'
+        LIQUIDITY_SIGNAL = 'LIQUIDITY_SIGNAL', 'Liquidity Signal'
+        TECHNICAL_SIGNAL = 'TECHNICAL_SIGNAL', 'Technical Signal'
+        SOCIAL_SIGNAL = 'SOCIAL_SIGNAL', 'Social Signal'
+        PORTFOLIO_SIGNAL = 'PORTFOLIO_SIGNAL', 'Portfolio Signal'
+        TIMING_SIGNAL = 'TIMING_SIGNAL', 'Timing Signal'
+    
+    class DataType(models.TextChoices):
+        NUMERIC = 'NUMERIC', 'Numeric'
+        BOOLEAN = 'BOOLEAN', 'Boolean'
+        CATEGORICAL = 'CATEGORICAL', 'Categorical'
+        TEXT = 'TEXT', 'Text'
+    
+    # Identification
+    feature_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        help_text="Unique feature identifier"
+    )
+    context = models.ForeignKey(
+        DecisionContext,
+        on_delete=models.CASCADE,
+        related_name='features'
+    )
+    
+    # Feature Definition
+    name = models.CharField(
+        max_length=100,
+        help_text="Feature name (e.g., 'honeypot_score', 'liquidity_depth')"
+    )
+    category = models.CharField(
+        max_length=20,
+        choices=FeatureCategory.choices
+    )
+    data_type = models.CharField(
+        max_length=15,
+        choices=DataType.choices
+    )
+    
+    # Feature Values
+    raw_value = models.JSONField(
+        help_text="Raw feature value before processing"
+    )
+    processed_value = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Processed/normalized feature value"
+    )
+    
+    # Feature Importance
+    weight = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        default=Decimal('1.0'),
+        help_text="Weight applied to this feature"
+    )
+    contribution_score = models.DecimalField(
+        max_digits=10,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="This feature's contribution to the final decision"
+    )
+    confidence = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Confidence in this feature value (0-100)"
+    )
+    
+    # Metadata
+    source = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Data source for this feature"
+    )
+    processing_time_ms = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Time taken to compute this feature (ms)"
+    )
+    threshold_values = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Threshold values for this feature (e.g., min, max, optimal)"
+    )
+
+    class Meta:
+        ordering = ['context', 'category', 'name']
+        unique_together = ['context', 'name']
+        indexes = [
+            models.Index(fields=['feature_id']),
+            models.Index(fields=['context', 'category']),
+            models.Index(fields=['name']),
+            models.Index(fields=['category']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.category})"
+
+
+class ThoughtLog(TimestampMixin):
+    """
+    Represents the AI's reasoning process for a specific decision.
+    
+    Stores the complete thought process, reasoning chain, and
+    decision rationale for transparency and explainability.
+    """
+    
+    class DecisionOutcome(models.TextChoices):
+        EXECUTE_BUY = 'EXECUTE_BUY', 'Execute Buy'
+        EXECUTE_SELL = 'EXECUTE_SELL', 'Execute Sell'
+        HOLD_POSITION = 'HOLD_POSITION', 'Hold Position'
+        SKIP_OPPORTUNITY = 'SKIP_OPPORTUNITY', 'Skip Opportunity'
+        BLOCK_TRADE = 'BLOCK_TRADE', 'Block Trade'
+        EMERGENCY_EXIT = 'EMERGENCY_EXIT', 'Emergency Exit'
+    
+    class PriorityLevel(models.TextChoices):
+        LOW = 'LOW', 'Low'
+        MEDIUM = 'MEDIUM', 'Medium'
+        HIGH = 'HIGH', 'High'
+        URGENT = 'URGENT', 'Urgent'
+    
+    # Identification
+    thought_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        help_text="Unique thought log identifier"
+    )
+    context = models.OneToOneField(
+        DecisionContext,
+        on_delete=models.CASCADE,
+        related_name='thought_log'
+    )
+    
+    # Decision Outcome
+    decision_outcome = models.CharField(
+        max_length=20,
+        choices=DecisionOutcome.choices
+    )
+    confidence_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="AI's confidence in this decision (0-100)"
+    )
+    overall_score = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        help_text="Overall decision score computed by the AI"
+    )
+    
+    # Reasoning Content
+    primary_reasoning = models.TextField(
+        help_text="Primary reasoning for the decision (1-3 sentences)"
+    )
+    detailed_analysis = models.TextField(
+        blank=True,
+        help_text="Detailed analysis and reasoning chain"
+    )
+    
+    # Decision Factors
+    key_factors = models.JSONField(
+        default=list,
+        help_text="List of key factors that influenced the decision"
+    )
+    risk_factors = models.JSONField(
+        default=list,
+        help_text="Risk factors considered"
+    )
+    positive_signals = models.JSONField(
+        default=list,
+        help_text="Positive signals identified"
+    )
+    negative_signals = models.JSONField(
+        default=list,
+        help_text="Negative signals identified"
+    )
+    
+    # Alternative Analysis
+    alternative_outcomes = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Alternative decisions that were considered"
+    )
+    counterfactuals = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="What would change the decision (counterfactual reasoning)"
+    )
+    
+    # Execution Parameters
+    recommended_amount = models.DecimalField(
+        max_digits=50,
+        decimal_places=18,
+        null=True,
+        blank=True,
+        help_text="Recommended trade amount"
+    )
+    max_slippage_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Recommended maximum slippage"
+    )
+    max_gas_price_gwei = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Recommended maximum gas price"
+    )
+    priority_level = models.CharField(
+        max_length=20,
+        choices=PriorityLevel.choices,
+        default=PriorityLevel.MEDIUM,
+        help_text="Execution priority level"
+    )
+    
+    # Related Objects
+    trade = models.ForeignKey(
+        'trading.Trade',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='thought_logs',
+        help_text="Trade that resulted from this decision"
+    )
+    
+    # Feedback and Evaluation
+    feedback_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('-100')), MaxValueValidator(Decimal('100'))],
+        help_text="Feedback score on decision quality (-100 to 100)"
+    )
+    outcome_evaluation = models.TextField(
+        blank=True,
+        help_text="Post-execution evaluation of the decision"
+    )
+    
+    # Model Metadata
+    model_version = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Version of the decision model used"
+    )
+    feature_version = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Version of the feature engineering pipeline"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -147,6 +447,7 @@ class DecisionContext(TimestampMixin):
         if self.context.analysis_duration_ms:
             return self.context.analysis_duration_ms
         return None
+
 
 
 class DecisionMetrics(TimestampMixin):

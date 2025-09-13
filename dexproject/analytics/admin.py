@@ -71,6 +71,17 @@ class LearningSessionAdmin(BaseModelAdmin):
     search_fields = ['session_id', 'name']
     readonly_fields = ['session_id', 'started_at', 'ended_at']
     ordering = ['-started_at']
+
+
+
+
+
+
+
+
+
+
+    
     
         
     
@@ -97,3 +108,46 @@ class FeatureImportanceAdmin(BaseModelAdmin):
     def importance_id_short(self, obj):
         return str(obj.importance_id)[:8] + '...'
     importance_id_short.short_description = 'Importance ID'
+
+
+# These are the missing methods that need to be added to the admin files
+
+# 1. For analytics/admin.py - Add these methods to LearningSessionAdmin:
+
+def session_id_short(self, obj):
+    return str(obj.session_id)[:8] + '...'
+session_id_short.short_description = 'Session ID'
+
+def success_rate_display(self, obj):
+    if obj.total_decisions > 0:
+        rate = (obj.successful_decisions / obj.total_decisions) * 100
+        color = 'green' if rate >= 70 else 'orange' if rate >= 50 else 'red'
+        return format_html('<span style="color: {};">{:.1f}%</span>', color, rate)
+    return '-'
+success_rate_display.short_description = 'Success Rate'
+
+# 2. For dashboard/admin.py - Add these methods to TradingSessionAdmin:
+
+def session_id_short(self, obj):
+    return str(obj.session_id)[:8] + '...'
+session_id_short.short_description = 'Session ID'
+
+def success_rate_display(self, obj):
+    success_rate = obj.success_rate_percent
+    if success_rate is not None:
+        color = 'green' if success_rate >= 70 else 'orange' if success_rate >= 50 else 'red'
+        return format_html('<span style="color: {};">{:.1f}%</span>', color, success_rate)
+    return '-'
+success_rate_display.short_description = 'Success Rate'
+
+# 3. For trading/admin.py - Add this method to TokenAdmin:
+
+def address_short(self, obj):
+    return f"{obj.address[:10]}...{obj.address[-8:]}"
+address_short.short_description = 'Address'
+
+# 4. For wallet/admin.py - Add this method to WalletAdmin:
+
+def address_short(self, obj):
+    return f"{obj.address[:10]}...{obj.address[-8:]}"
+address_short.short_description = 'Address'

@@ -133,11 +133,12 @@ class Wallet(TimestampMixin):
         help_text="Additional wallet configuration"
     )
     
-    # Timestamps    last_used_at = models.DateTimeField(
+    last_used_at = models.DateTimeField(
         null=True,
         blank=True,
         help_text="Last time this wallet was used"
     )
+
 
     class Meta:
         ordering = ['-last_used_at', '-created_at']

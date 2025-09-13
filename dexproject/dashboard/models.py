@@ -323,7 +323,7 @@ class BotConfiguration(TimestampMixin):
         help_text="Whether this is the user's default configuration"
     )
     
-    # Timestamps    last_used_at = models.DateTimeField(
+    last_used_at = models.DateTimeField(
         null=True,
         blank=True,
         help_text="Last time this configuration was used"
@@ -765,7 +765,8 @@ class Alert(TimestampMixin):
         INFO = 'INFO', 'Info'
         WARNING = 'WARNING', 'Warning'
         ERROR = 'ERROR', 'Error'
-        , 'Critical'
+        CRITICAL = 'CRITICAL', 'Critical'
+        
     
     class AlertStatus(models.TextChoices):
         UNREAD = 'UNREAD', 'Unread'

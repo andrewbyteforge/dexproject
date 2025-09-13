@@ -1,1069 +1,911 @@
 """
-Liquidity analysis task module.
+Real Liquidity Analysis Implementation
 
-Implements comprehensive liquidity analysis for trading pairs including
-depth analysis, slippage calculations, LP lock verification, and
-liquidity quality assessment.
+This module performs actual liquidity analysis by connecting to DEX contracts,
+analyzing LP tokens, and calculating real slippage for different trade sizes.
 
-This module provides critical risk assessment for trade execution
-by ensuring sufficient liquidity exists before trading.
+File: dexproject/risk/tasks/liquidity.py
 """
 
 import logging
+import asyncio
 import time
-from typing import Dict, Any, Optional, Tuple, List
-from decimal import Decimal, getcontext
-from celery import shared_task
-from django.utils import timezone
-from django.db import transaction
-from django.core.exceptions import ValidationError
-
+from typing import Dict, Any, List, Tuple, Optional
+from decimal import Decimal
 from web3 import Web3
-from web3.exceptions import ContractLogicError, BadFunctionCallOutput
+from web3.exceptions import Web3Exception
 from eth_utils import is_address, to_checksum_address
-
-from ..models import RiskAssessment, RiskCheckResult, RiskCheckType
-from . import create_risk_check_result
+import requests
+import math
 
 logger = logging.getLogger(__name__)
 
-# Set decimal precision for accurate calculations
-getcontext().prec = 28
 
-# Common burn addresses for LP tokens
-BURN_ADDRESSES = [
-    '0x000000000000000000000000000000000000dEaD',  # Common burn address
-    '0x0000000000000000000000000000000000000000',  # Zero address
-    '0x0000000000000000000000000000000000000001',  # Alternative burn
-]
-
-# Known LP locker contract addresses (Ethereum mainnet)
-KNOWN_LOCKERS = {
-    '0x663A5C229c09b049E36dCc11a9B0d4a8Eb9db214': 'Unicrypt V2',
-    '0x71B5759d73262FBb223956913ecF4ecC51057641': 'Unicrypt V3',
-    '0xDba68f07d1b7Ca219f78ae8582C213d975c25cAf': 'Unicrypt Old',
-    '0xe2fE530C047f2d85298b07D9333C05737f1435fB': 'TrustSwap',
-    '0x7ee9A5aB7E45F04E2e8e14D0D1b32b3B4F1f8b7f': 'Team Finance',
-    '0x4Ee2A9de2dfbeD64F8D7eB0E1E7C7A78AfEF7C50': 'DXSale',
-}
-
-
-@shared_task(
-    bind=True,
-    queue='risk.urgent',
-    name='risk.tasks.liquidity_check',
-    max_retries=3,
-    default_retry_delay=1
-)
-def liquidity_check(
-    self,
-    pair_address: str,
-    token_address: str = None,
-    min_liquidity_usd: float = 10000.0,
-    max_slippage_percent: float = 5.0,
-    test_trade_sizes: List[float] = None
-) -> Dict[str, Any]:
-    """
-    Perform comprehensive liquidity analysis for a trading pair.
+class LiquidityAnalyzer:
+    """Real liquidity analysis for trading pairs."""
     
-    Analyzes liquidity depth, calculates slippage impact, verifies LP locks,
-    and assesses overall liquidity quality for safe trading.
-    
-    Args:
-        pair_address: The trading pair contract address
-        token_address: The token contract address (optional)
-        min_liquidity_usd: Minimum required liquidity in USD
-        max_slippage_percent: Maximum acceptable slippage percentage
-        test_trade_sizes: List of trade sizes in USD to test slippage
+    def __init__(self, web3_provider: Web3, chain_id: int):
+        """
+        Initialize liquidity analyzer.
         
-    Returns:
-        Dict with comprehensive liquidity analysis results
-    """
-    task_id = self.request.id
-    start_time = time.time()
-    
-    logger.info(f"Starting liquidity analysis for pair {pair_address} (task: {task_id})")
-    
-    try:
-        # Validate inputs
-        if not is_address(pair_address):
-            raise ValueError(f"Invalid pair address: {pair_address}")
+        Args:
+            web3_provider: Web3 instance with RPC connection
+            chain_id: Chain ID for network-specific analysis
+        """
+        self.w3 = web3_provider
+        self.chain_id = chain_id
+        self.logger = logger.getChild(self.__class__.__name__)
         
-        # Set default test trade sizes if not provided
-        if test_trade_sizes is None:
-            test_trade_sizes = [1000, 5000, 10000, 25000, 50000]  # USD amounts
-        
-        # Get Web3 connection (simulated for now)
-        w3 = _get_web3_connection()
-        
-        # Get pair information
-        pair_info = _get_pair_information(w3, pair_address)
-        
-        # Analyze liquidity depth
-        liquidity_analysis = _analyze_liquidity_depth(w3, pair_address, pair_info)
-        
-        # Calculate slippage impact for various trade sizes
-        slippage_analysis = _calculate_slippage_impact(
-            w3, pair_address, pair_info, test_trade_sizes
-        )
-        
-        # Check LP token locks and burns
-        lp_analysis = _analyze_lp_tokens(w3, pair_address, pair_info)
-        
-        # Get historical liquidity trends
-        history_analysis = _analyze_liquidity_history(w3, pair_address, pair_info)
-        
-        # Calculate overall risk score
-        risk_score = _calculate_liquidity_risk_score(
-            liquidity_analysis, slippage_analysis, lp_analysis, min_liquidity_usd, max_slippage_percent
-        )
-        
-        # Prepare detailed results
-        details = {
-            'pair_info': pair_info,
-            'total_liquidity_usd': liquidity_analysis['total_liquidity_usd'],
-            'token0_liquidity_usd': liquidity_analysis['token0_liquidity_usd'],
-            'token1_liquidity_usd': liquidity_analysis['token1_liquidity_usd'],
-            'reserves': liquidity_analysis['reserves'],
-            'price_impact': slippage_analysis,
-            'lp_analysis': lp_analysis,
-            'liquidity_history': history_analysis,
-            'min_required_usd': min_liquidity_usd,
-            'meets_minimum': liquidity_analysis['total_liquidity_usd'] >= min_liquidity_usd,
-            'max_acceptable_slippage': max_slippage_percent,
-            'slippage_acceptable': slippage_analysis.get('max_slippage', 100) <= max_slippage_percent,
-            'quality_metrics': _calculate_liquidity_quality_metrics(liquidity_analysis, slippage_analysis),
-            'warnings': _generate_liquidity_warnings(liquidity_analysis, slippage_analysis, lp_analysis)
+        # Network-specific addresses
+        self.factory_addresses = {
+            1: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",     # Ethereum Uniswap V2
+            8453: "0x8909dc15e40173ff4699343b6eb8132c65e18ec6",   # Base Uniswap V2
         }
         
-        execution_time_ms = (time.time() - start_time) * 1000
+        self.router_addresses = {
+            1: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",     # Ethereum Uniswap V2
+            8453: "0x327df1e6de05895d2ab08513aadd9313fe505d86",   # Base Uniswap V2
+        }
         
-        # Determine status based on analysis
-        if risk_score >= 80:
-            status = 'FAILED'  # High risk - fail the check
-        elif risk_score >= 50:
-            status = 'WARNING'  # Medium risk - warn but proceed
-        else:
-            status = 'COMPLETED'  # Low risk - pass
+        self.weth_addresses = {
+            1: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",     # Ethereum WETH
+            8453: "0x4200000000000000000000000000000000000006",   # Base WETH
+        }
         
-        result = create_risk_check_result(
-            task_id=task_id,
-            check_type='LIQUIDITY',
-            token_address=token_address,
-            pair_address=pair_address,
-            risk_score=float(risk_score),
-            status=status,
-            details=details,
-            execution_time_ms=execution_time_ms
-        )
-        
-        logger.info(f"Liquidity check completed for {pair_address} in {execution_time_ms:.1f}ms - "
-                   f"Risk: {risk_score:.1f}, Liquidity: ${details['total_liquidity_usd']:,.2f}")
-        
-        return result
-        
-    except Exception as exc:
-        execution_time_ms = (time.time() - start_time) * 1000
-        logger.error(f"Liquidity check failed for {pair_address}: {exc} (task: {task_id})")
-        
-        if self.request.retries < self.max_retries:
-            logger.warning(f"Retrying liquidity check for {pair_address} (attempt {self.request.retries + 1})")
-            raise self.retry(exc=exc, countdown=2 ** self.request.retries)
-        
-        return create_risk_check_result(
-            task_id=task_id,
-            check_type='LIQUIDITY',
-            token_address=token_address,
-            pair_address=pair_address,
-            risk_score=100,  # Max risk on failure
-            status='FAILED',
-            error_message=str(exc),
-            execution_time_ms=execution_time_ms
-        )
-
-
-def _get_web3_connection() -> Web3:
-    """Get Web3 connection (placeholder for now)."""
-    # In production, this would return an actual Web3 connection
-    # For now, return a mock object that won't cause errors
-    from unittest.mock import MagicMock
-    mock_w3 = MagicMock()
-    mock_w3.eth.block_number = 18500000  # Mock current block
-    return mock_w3
-
-
-def _get_pair_information(w3: Web3, pair_address: str) -> Dict[str, Any]:
-    """
-    Get basic pair information including tokens and reserves.
+        # Price feed APIs for USD conversion
+        self.price_apis = [
+            "https://api.coingecko.com/api/v3/simple/price",
+            "https://api.coinbase.com/v2/exchange-rates"
+        ]
     
-    Args:
-        w3: Web3 connection
-        pair_address: Trading pair address
+    async def analyze_liquidity(
+        self, 
+        token_address: str, 
+        pair_address: str
+    ) -> Dict[str, Any]:
+        """
+        Perform comprehensive liquidity analysis.
         
-    Returns:
-        Dict with pair information
-    """
-    try:
-        logger.debug(f"Getting pair information for {pair_address}")
+        Args:
+            token_address: Token contract address
+            pair_address: Trading pair address
+            
+        Returns:
+            Dict with liquidity analysis results
+        """
+        start_time = time.time()
         
-        # In production, this would use the actual Uniswap V2 pair ABI
-        # For now, simulate the data structure
-        pair_info = {
-            'pair_address': pair_address,
-            'token0': {
-                'address': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # WETH
-                'symbol': 'WETH',
-                'decimals': 18,
-                'name': 'Wrapped Ether'
-            },
-            'token1': {
-                'address': '0xA0b86a33E6441e94B6b0bFb4E6E7C8c8E7c8E7c8',  # Mock token
-                'symbol': 'TOKEN',
-                'decimals': 18,
-                'name': 'Mock Token'
-            },
-            'reserves': {
-                'reserve0': 50 * 10**18,  # 50 ETH
-                'reserve1': 1000000 * 10**18,  # 1M tokens
-                'block_timestamp_last': int(time.time())
-            },
-            'factory': _detect_dex_factory(w3, pair_address),
-            'fee_tier': 3000  # 0.3% for Uniswap V3, or standard V2
-        }
-        
-        return pair_info
-        
-    except Exception as e:
-        logger.error(f"Failed to get pair information for {pair_address}: {e}")
-        raise ValueError(f"Could not retrieve pair information: {e}")
-
-
-def _analyze_liquidity_depth(w3: Web3, pair_address: str, pair_info: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Analyze liquidity depth and calculate USD values.
-    
-    Args:
-        w3: Web3 connection
-        pair_address: Trading pair address
-        pair_info: Pair information from _get_pair_information
-        
-    Returns:
-        Dict with liquidity depth analysis
-    """
-    try:
-        logger.debug(f"Analyzing liquidity depth for {pair_address}")
-        
-        reserves = pair_info['reserves']
-        token0 = pair_info['token0']
-        token1 = pair_info['token1']
-        
-        # Get token prices in USD
-        token0_price_usd = _get_token_price_usd(w3, token0['address'])
-        token1_price_usd = _get_token_price_usd(w3, token1['address'])
-        
-        # Calculate liquidity values in USD
-        token0_liquidity_usd = (reserves['reserve0'] / 10**token0['decimals']) * token0_price_usd
-        token1_liquidity_usd = (reserves['reserve1'] / 10**token1['decimals']) * token1_price_usd
-        total_liquidity_usd = token0_liquidity_usd + token1_liquidity_usd
-        
-        # Calculate liquidity metrics
-        liquidity_metrics = {
-            'imbalance': abs(token0_liquidity_usd - token1_liquidity_usd) / max(token0_liquidity_usd, token1_liquidity_usd, 1),
-            'depth_score': _calculate_depth_score(total_liquidity_usd),
-            'reserve_ratio': reserves['reserve0'] / max(reserves['reserve1'], 1)
-        }
-        
-        return {
-            'total_liquidity_usd': total_liquidity_usd,
-            'token0_liquidity_usd': token0_liquidity_usd,
-            'token1_liquidity_usd': token1_liquidity_usd,
-            'reserves': reserves,
-            'token_prices_usd': {
-                'token0': token0_price_usd,
-                'token1': token1_price_usd
-            },
-            'liquidity_metrics': liquidity_metrics
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to analyze liquidity depth for {pair_address}: {e}")
-        return {
-            'total_liquidity_usd': 0,
-            'token0_liquidity_usd': 0,
-            'token1_liquidity_usd': 0,
-            'error': str(e)
-        }
-
-
-def _calculate_slippage_impact(
-    w3: Web3, 
-    pair_address: str, 
-    pair_info: Dict[str, Any], 
-    test_trade_sizes: List[float]
-) -> Dict[str, Any]:
-    """
-    Calculate slippage impact for various trade sizes.
-    
-    Args:
-        w3: Web3 connection
-        pair_address: Trading pair address
-        pair_info: Pair information
-        test_trade_sizes: List of trade sizes in USD to test
-        
-    Returns:
-        Dict with slippage analysis
-    """
-    try:
-        logger.debug(f"Calculating slippage impact for {pair_address}")
-        
-        reserves = pair_info['reserves']
-        slippage_data = []
-        
-        for trade_size_usd in test_trade_sizes:
-            # Calculate slippage for buy order (ETH -> Token)
-            buy_slippage = _calculate_buy_slippage(
-                reserves['reserve0'], reserves['reserve1'], trade_size_usd, pair_info
+        try:
+            # Validate inputs
+            if not self._validate_addresses(token_address, pair_address):
+                return self._create_error_result("Invalid addresses provided")
+            
+            token_address = to_checksum_address(token_address)
+            pair_address = to_checksum_address(pair_address)
+            
+            # Get pair contract
+            pair_contract = self._get_pair_contract(pair_address)
+            
+            # Analyze pair reserves
+            reserves_analysis = await self._analyze_reserves(pair_contract, token_address)
+            
+            # Analyze LP token distribution
+            lp_analysis = await self._analyze_lp_distribution(pair_contract)
+            
+            # Calculate slippage for different trade sizes
+            slippage_analysis = await self._analyze_slippage_curve(
+                token_address, pair_address, reserves_analysis
             )
             
-            # Calculate slippage for sell order (Token -> ETH)
-            sell_slippage = _calculate_sell_slippage(
-                reserves['reserve0'], reserves['reserve1'], trade_size_usd, pair_info
+            # Check for liquidity locks
+            lock_analysis = await self._analyze_liquidity_locks(pair_contract)
+            
+            # Get historical liquidity data
+            historical_analysis = await self._analyze_historical_liquidity(pair_address)
+            
+            # Calculate overall liquidity metrics
+            overall_metrics = self._calculate_overall_metrics(
+                reserves_analysis, lp_analysis, slippage_analysis, 
+                lock_analysis, historical_analysis
             )
             
-            slippage_data.append({
-                'trade_size_usd': trade_size_usd,
-                'buy_slippage_percent': buy_slippage,
-                'sell_slippage_percent': sell_slippage,
-                'max_slippage_percent': max(buy_slippage, sell_slippage)
-            })
-        
-        # Find maximum slippage across all test sizes
-        max_slippage = max(item['max_slippage_percent'] for item in slippage_data) if slippage_data else 100
-        
-        # Analyze slippage curve
-        slippage_curve_analysis = _analyze_slippage_curve(slippage_data)
-        
-        # Calculate liquidity efficiency
-        efficiency = _calculate_liquidity_efficiency(slippage_data)
-        
-        return {
-            'slippage_data': slippage_data,
-            'max_slippage': max_slippage,
-            'curve_analysis': slippage_curve_analysis,
-            'liquidity_efficiency': efficiency
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to calculate slippage for {pair_address}: {e}")
-        return {
-            'slippage_data': [],
-            'max_slippage': 100,
-            'liquidity_efficiency': 0,
-            'error': str(e)
-        }
-
-
-def _analyze_lp_tokens(w3: Web3, pair_address: str, pair_info: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Analyze LP token distribution, locks, and burns.
-    
-    Comprehensive analysis of LP token security including:
-    - Total supply and circulating tokens
-    - Burned tokens (sent to burn addresses)
-    - Locked tokens (in locker contracts)
-    - Distribution security score
-    
-    Args:
-        w3: Web3 connection
-        pair_address: Trading pair address
-        pair_info: Pair information
-        
-    Returns:
-        Dict with LP token analysis
-    """
-    try:
-        logger.debug(f"Analyzing LP tokens for pair {pair_address}")
-        
-        # Simulate LP token contract interaction
-        # In production, this would use the actual pair contract ABI
-        total_supply = 1000000 * 10**18  # Mock total supply
-        
-        # Check burned tokens
-        burned_amount = _check_burned_tokens(w3, pair_address, total_supply)
-        
-        # Check locked tokens in known locker contracts
-        locked_amount = _check_lp_locks(w3, pair_address, total_supply)
-        
-        # Calculate distribution metrics
-        circulating_supply = total_supply - burned_amount - locked_amount
-        burn_percentage = (burned_amount / total_supply * 100) if total_supply > 0 else 0
-        lock_percentage = (locked_amount / total_supply * 100) if total_supply > 0 else 0
-        circulating_percentage = (circulating_supply / total_supply * 100) if total_supply > 0 else 0
-        
-        # Calculate security score
-        security_score = _calculate_lp_security_score(burn_percentage, lock_percentage)
-        
-        return {
-            'total_supply': total_supply,
-            'burned_amount': burned_amount,
-            'locked_amount': locked_amount,
-            'circulating_supply': circulating_supply,
-            'burn_percentage': burn_percentage,
-            'lock_percentage': lock_percentage,
-            'circulating_percentage': circulating_percentage,
-            'is_majority_locked_burned': (burn_percentage + lock_percentage) > 80,
-            'security_score': security_score,
-            'locker_details': _get_locker_details(w3, pair_address)
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to analyze LP tokens for {pair_address}: {e}")
-        return {
-            'total_supply': 0,
-            'burned_amount': 0,
-            'locked_amount': 0,
-            'circulating_supply': 0,
-            'burn_percentage': 0,
-            'lock_percentage': 0,
-            'circulating_percentage': 100,
-            'is_majority_locked_burned': False,
-            'security_score': 0,
-            'error': str(e)
-        }
-
-
-def _check_burned_tokens(w3: Web3, pair_address: str, total_supply: int) -> int:
-    """
-    Check for LP tokens sent to burn addresses.
-    
-    Args:
-        w3: Web3 connection
-        pair_address: LP token contract address
-        total_supply: Total LP token supply
-        
-    Returns:
-        Amount of burned tokens
-    """
-    burned_amount = 0
-    
-    try:
-        # In production, this would check actual balances
-        # For now, simulate common burn scenarios
-        
-        # Simulate 70% of tokens burned (common for legitimate projects)
-        burned_amount = int(total_supply * 0.70)
-        
-        logger.debug(f"Found {burned_amount / 10**18:.2f} burned LP tokens for {pair_address}")
-        
-    except Exception as e:
-        logger.warning(f"Could not check burned tokens for {pair_address}: {e}")
-    
-    return burned_amount
-
-
-def _check_lp_locks(w3: Web3, pair_address: str, total_supply: int) -> int:
-    """
-    Check for LP tokens locked in known locker contracts.
-    
-    Checks major LP locker services like Unicrypt, TrustSwap, Team Finance,
-    and DXSale for locked LP tokens.
-    
-    Args:
-        w3: Web3 connection
-        pair_address: LP token contract address
-        total_supply: Total LP token supply
-        
-    Returns:
-        Amount of locked tokens
-    """
-    locked_amount = 0
-    
-    try:
-        # In production, this would check balances in known locker contracts
-        # For now, simulate locked tokens (15% locked is common)
-        locked_amount = int(total_supply * 0.15)
-        
-        logger.debug(f"Found {locked_amount / 10**18:.2f} locked LP tokens for {pair_address}")
-        
-        # Would implement actual locker contract checks like:
-        # for locker_address, locker_name in KNOWN_LOCKERS.items():
-        #     try:
-        #         balance = pair_contract.functions.balanceOf(locker_address).call()
-        #         if balance > 0:
-        #             locked_amount += balance
-        #             logger.info(f"Found {balance / 10**18:.2f} LP tokens locked in {locker_name}")
-        #     except Exception as e:
-        #         logger.debug(f"Could not check {locker_name}: {e}")
-        
-    except Exception as e:
-        logger.warning(f"Could not check LP locks for {pair_address}: {e}")
-    
-    return locked_amount
-
-
-def _get_locker_details(w3: Web3, pair_address: str) -> List[Dict[str, Any]]:
-    """Get details about LP token locks."""
-    # In production, this would return actual lock details
-    return [
-        {
-            'locker_name': 'Unicrypt V3',
-            'locker_address': '0x71B5759d73262FBb223956913ecF4ecC51057641',
-            'locked_amount': 150000 * 10**18,
-            'lock_percentage': 15.0,
-            'unlock_date': '2025-12-31T23:59:59Z',
-            'is_verified': True
-        }
-    ]
-
-
-def _analyze_liquidity_history(w3: Web3, pair_address: str, pair_info: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Analyze historical liquidity trends (simplified implementation).
-    
-    Args:
-        w3: Web3 connection
-        pair_address: Trading pair address
-        pair_info: Pair information
-        
-    Returns:
-        Dict with historical analysis
-    """
-    try:
-        # In a full implementation, this would query historical data
-        # For now, return basic trend analysis
-        
-        current_block = getattr(w3.eth, 'block_number', 18500000)
-        blocks_per_day = 7200  # Approximate for Ethereum
-        
-        # Simulate trend analysis
-        return {
-            'current_block': current_block,
-            'trend_analysis': 'stable',  # Placeholder
-            'volume_24h': 250000,  # Mock daily volume in USD
-            'liquidity_changes': [
-                {'block': current_block - 7200, 'liquidity_usd': 95000},
-                {'block': current_block - 3600, 'liquidity_usd': 98000},
-                {'block': current_block, 'liquidity_usd': 100000}
-            ],
-            'analysis_period_blocks': blocks_per_day,
-            'volatility_score': 25.0  # Low volatility
-        }
-        
-    except Exception as e:
-        logger.warning(f"Could not analyze liquidity history for {pair_address}: {e}")
-        return {'error': str(e)}
-
-
-def _calculate_liquidity_risk_score(
-    liquidity_analysis: Dict[str, Any],
-    slippage_analysis: Dict[str, Any],
-    lp_analysis: Dict[str, Any],
-    min_liquidity_usd: float,
-    max_slippage_percent: float
-) -> Decimal:
-    """
-    Calculate overall liquidity risk score.
-    
-    Combines multiple factors to produce a comprehensive risk score:
-    - Liquidity depth vs minimum requirements
-    - Slippage impact vs acceptable thresholds
-    - LP token security (burns/locks)
-    - Liquidity imbalance
-    
-    Args:
-        liquidity_analysis: Results from liquidity depth analysis
-        slippage_analysis: Results from slippage impact analysis
-        lp_analysis: Results from LP token analysis
-        min_liquidity_usd: Minimum required liquidity
-        max_slippage_percent: Maximum acceptable slippage
-        
-    Returns:
-        Risk score as Decimal (0-100, where 0 is lowest risk)
-    """
-    score = Decimal('0')
-    
-    # Liquidity amount scoring (0-50 points)
-    total_liquidity = liquidity_analysis.get('total_liquidity_usd', 0)
-    if total_liquidity < min_liquidity_usd:
-        if total_liquidity == 0:
-            score += Decimal('50')  # Maximum penalty for no liquidity
-        else:
-            shortage_ratio = (min_liquidity_usd - total_liquidity) / min_liquidity_usd
-            score += Decimal(str(shortage_ratio * 50))
-    
-    # Slippage scoring (0-30 points)
-    max_slippage = slippage_analysis.get('max_slippage', 100)
-    if max_slippage > max_slippage_percent:
-        excess_slippage = max_slippage - max_slippage_percent
-        score += Decimal(str(min(excess_slippage * 2, 30)))
-    
-    # LP security scoring (0-15 points)
-    lp_security = lp_analysis.get('security_score', 0)
-    if lp_security < 50:  # Low security
-        score += Decimal(str((50 - lp_security) / 50 * 15))
-    
-    # Liquidity imbalance scoring (0-5 points)
-    imbalance = liquidity_analysis.get('liquidity_metrics', {}).get('imbalance', 0)
-    if imbalance > 0.5:  # High imbalance
-        score += Decimal(str(imbalance * 5))
-    
-    return min(score, Decimal('100'))
-
-
-def _calculate_liquidity_quality_metrics(
-    liquidity_analysis: Dict[str, Any],
-    slippage_analysis: Dict[str, Any]
-) -> Dict[str, float]:
-    """
-    Calculate quality metrics for liquidity assessment.
-    
-    Args:
-        liquidity_analysis: Results from liquidity depth analysis
-        slippage_analysis: Results from slippage analysis
-        
-    Returns:
-        Dict with quality metrics (0-100 scale)
-    """
-    metrics = {}
-    
-    # Depth quality (based on total liquidity)
-    total_liquidity = liquidity_analysis.get('total_liquidity_usd', 0)
-    if total_liquidity > 100000:
-        metrics['depth_quality'] = 100
-    elif total_liquidity > 50000:
-        metrics['depth_quality'] = 80
-    elif total_liquidity > 10000:
-        metrics['depth_quality'] = 60
-    else:
-        metrics['depth_quality'] = max(0, total_liquidity / 10000 * 60)
-    
-    # Slippage quality (inverse of max slippage)
-    max_slippage = slippage_analysis.get('max_slippage', 100)
-    if max_slippage < 1:
-        metrics['slippage_quality'] = 100
-    elif max_slippage < 3:
-        metrics['slippage_quality'] = 80
-    elif max_slippage < 5:
-        metrics['slippage_quality'] = 60
-    else:
-        metrics['slippage_quality'] = max(0, 100 - max_slippage * 10)
-    
-    # Efficiency quality
-    efficiency = slippage_analysis.get('liquidity_efficiency', 0)
-    metrics['efficiency_quality'] = efficiency
-    
-    # Overall quality (weighted average)
-    metrics['overall_quality'] = (
-        metrics['depth_quality'] * 0.4 + 
-        metrics['slippage_quality'] * 0.4 + 
-        metrics['efficiency_quality'] * 0.2
-    )
-    
-    return metrics
-
-
-def _generate_liquidity_warnings(
-    liquidity_analysis: Dict[str, Any],
-    slippage_analysis: Dict[str, Any],
-    lp_analysis: Dict[str, Any]
-) -> List[str]:
-    """
-    Generate warning messages for liquidity issues.
-    
-    Args:
-        liquidity_analysis: Results from liquidity analysis
-        slippage_analysis: Results from slippage analysis
-        lp_analysis: Results from LP analysis
-        
-    Returns:
-        List of warning messages
-    """
-    warnings = []
-    
-    # Check total liquidity
-    total_liquidity = liquidity_analysis.get('total_liquidity_usd', 0)
-    if total_liquidity < 10000:
-        warnings.append(f"Low liquidity: ${total_liquidity:,.2f}")
-    elif total_liquidity < 50000:
-        warnings.append(f"Medium liquidity: ${total_liquidity:,.2f} - consider larger trades carefully")
-    
-    # Check slippage
-    max_slippage = slippage_analysis.get('max_slippage', 0)
-    if max_slippage > 15:
-        warnings.append(f"Very high slippage: {max_slippage:.1f}%")
-    elif max_slippage > 10:
-        warnings.append(f"High slippage: {max_slippage:.1f}%")
-    
-    # Check LP security
-    circulating_percentage = lp_analysis.get('circulating_percentage', 100)
-    if circulating_percentage > 50:
-        warnings.append(f"High LP circulation: {circulating_percentage:.1f}% - rug pull risk")
-    
-    security_score = lp_analysis.get('security_score', 0)
-    if security_score < 30:
-        warnings.append("Poor LP security - most tokens not locked/burned")
-    
-    # Check liquidity imbalance
-    imbalance = liquidity_analysis.get('liquidity_metrics', {}).get('imbalance', 0)
-    if imbalance > 0.8:
-        warnings.append("Severe liquidity imbalance - price manipulation risk")
-    elif imbalance > 0.5:
-        warnings.append("Moderate liquidity imbalance")
-    
-    return warnings
-
-
-# Helper functions for calculations
-
-def _calculate_buy_slippage(reserve0: int, reserve1: int, trade_size_usd: float, pair_info: Dict) -> float:
-    """
-    Calculate slippage for a buy order using constant product formula.
-    
-    Implements the Uniswap V2 constant product formula: x * y = k
-    to calculate price impact for a given trade size.
-    
-    Args:
-        reserve0: Reserve of token0 (usually ETH)
-        reserve1: Reserve of token1 (the token being analyzed)
-        trade_size_usd: Size of trade in USD
-        pair_info: Pair information including token prices
-        
-    Returns:
-        Slippage percentage for buy order
-    """
-    try:
-        # Get ETH price to convert USD to ETH amount
-        eth_price = pair_info.get('token_prices_usd', {}).get('token0', 2500)
-        trade_size_eth = trade_size_usd / eth_price
-        trade_size_wei = int(trade_size_eth * 10**18)
-        
-        # Constant product formula: (x + dx) * (y - dy) = x * y
-        # dy = (y * dx) / (x + dx)
-        # Price impact = dy / y
-        
-        if reserve0 == 0 or reserve1 == 0:
-            return 50.0  # High slippage for empty pools
-        
-        dy = (reserve1 * trade_size_wei) // (reserve0 + trade_size_wei)
-        slippage_percent = (dy / reserve1) * 100
-        
-        return min(slippage_percent, 50.0)  # Cap at 50%
-        
-    except Exception as e:
-        logger.warning(f"Error calculating buy slippage: {e}")
-        return 50.0  # Default high slippage on error
-
-
-def _calculate_sell_slippage(reserve0: int, reserve1: int, trade_size_usd: float, pair_info: Dict) -> float:
-    """
-    Calculate slippage for a sell order.
-    
-    Similar to buy slippage but calculates the impact of selling tokens for ETH.
-    
-    Args:
-        reserve0: Reserve of token0 (usually ETH)
-        reserve1: Reserve of token1 (the token being analyzed)
-        trade_size_usd: Size of trade in USD
-        pair_info: Pair information including token prices
-        
-    Returns:
-        Slippage percentage for sell order
-    """
-    try:
-        # Get token price to convert USD to token amount
-        token_price = pair_info.get('token_prices_usd', {}).get('token1', 0.001)
-        if token_price == 0:
-            return 50.0
+            execution_time = (time.time() - start_time) * 1000
             
-        trade_size_tokens = trade_size_usd / token_price
-        trade_size_wei = int(trade_size_tokens * 10**18)
-        
-        if reserve0 == 0 or reserve1 == 0:
-            return 50.0
-        
-        # For sell: selling token1 for token0
-        dx = (reserve0 * trade_size_wei) // (reserve1 + trade_size_wei)
-        slippage_percent = (dx / reserve0) * 100
-        
-        return min(slippage_percent, 50.0)
-        
-    except Exception as e:
-        logger.warning(f"Error calculating sell slippage: {e}")
-        return 50.0
-
-
-def _analyze_slippage_curve(slippage_data: List[Dict]) -> Dict[str, Any]:
-    """
-    Analyze the slippage curve for patterns.
-    
-    Determines if slippage increases linearly or exponentially with trade size,
-    which can indicate liquidity quality and potential manipulation risks.
-    
-    Args:
-        slippage_data: List of slippage data points
-        
-    Returns:
-        Dict with curve analysis
-    """
-    if not slippage_data or len(slippage_data) < 2:
-        return {
-            'curve_type': 'unknown',
-            'steepness': 0,
-            'linearity': 0
-        }
-    
-    try:
-        # Extract slippages and trade sizes
-        slippages = [item['max_slippage_percent'] for item in slippage_data]
-        sizes = [item['trade_size_usd'] for item in slippage_data]
-        
-        # Calculate steepness (slope of first and last points)
-        steepness = (slippages[-1] - slippages[0]) / (sizes[-1] - sizes[0]) if len(sizes) > 1 else 0
-        
-        # Determine curve type based on growth pattern
-        if len(slippages) >= 3:
-            # Check if exponential growth (each step increases more than previous)
-            growth_rates = []
-            for i in range(1, len(slippages)):
-                if slippages[i-1] > 0:
-                    growth_rate = slippages[i] / slippages[i-1]
-                    growth_rates.append(growth_rate)
+            return {
+                'check_type': 'LIQUIDITY',
+                'token_address': token_address,
+                'pair_address': pair_address,
+                'status': 'COMPLETED',
+                'risk_score': overall_metrics['risk_score'],
+                'liquidity_score': overall_metrics['liquidity_score'],
+                'details': {
+                    'total_liquidity_usd': overall_metrics['total_liquidity_usd'],
+                    'total_liquidity_eth': overall_metrics['total_liquidity_eth'],
+                    'reserves_analysis': reserves_analysis,
+                    'lp_analysis': lp_analysis,
+                    'slippage_analysis': slippage_analysis,
+                    'lock_analysis': lock_analysis,
+                    'historical_analysis': historical_analysis,
+                    'risk_factors': overall_metrics['risk_factors'],
+                    'liquidity_rating': overall_metrics['rating'],
+                },
+                'execution_time_ms': execution_time,
+                'chain_id': self.chain_id
+            }
             
-            if growth_rates:
-                avg_growth = sum(growth_rates) / len(growth_rates)
-                if avg_growth > 2.0:
-                    curve_type = 'exponential'
-                elif avg_growth > 1.5:
-                    curve_type = 'steep_linear'
-                else:
-                    curve_type = 'linear'
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            self.logger.error(f"Liquidity analysis failed for {token_address}: {e}")
+            
+            return {
+                'check_type': 'LIQUIDITY',
+                'token_address': token_address,
+                'pair_address': pair_address,
+                'status': 'FAILED',
+                'error_message': str(e),
+                'execution_time_ms': execution_time,
+                'risk_score': 100.0,  # Maximum risk on failure
+                'chain_id': self.chain_id
+            }
+    
+    async def _analyze_reserves(
+        self, 
+        pair_contract, 
+        token_address: str
+    ) -> Dict[str, Any]:
+        """
+        Analyze pair reserves and calculate USD values.
+        
+        Args:
+            pair_contract: Pair contract instance
+            token_address: Token address to analyze
+            
+        Returns:
+            Dict with reserves analysis
+        """
+        try:
+            # Get basic pair info
+            token0 = pair_contract.functions.token0().call()
+            token1 = pair_contract.functions.token1().call()
+            reserves = pair_contract.functions.getReserves().call()
+            
+            reserve0, reserve1, _ = reserves
+            
+            # Determine which token is WETH
+            weth_address = self.weth_addresses.get(self.chain_id)
+            
+            if token0.lower() == weth_address.lower():
+                eth_reserve = reserve0
+                token_reserve = reserve1
+                token_is_token1 = True
+            elif token1.lower() == weth_address.lower():
+                eth_reserve = reserve1
+                token_reserve = reserve0
+                token_is_token1 = False
             else:
-                curve_type = 'linear'
-        else:
-            curve_type = 'linear'
+                # Neither is WETH - try to find which is more liquid
+                return await self._analyze_non_eth_pair(pair_contract, token_address)
+            
+            # Get token decimals
+            token_decimals = await self._get_token_decimals(token_address)
+            eth_decimals = 18
+            
+            # Convert to decimal amounts
+            eth_amount = Decimal(eth_reserve) / (10 ** eth_decimals)
+            token_amount = Decimal(token_reserve) / (10 ** token_decimals)
+            
+            # Get ETH price in USD
+            eth_price_usd = await self._get_eth_price_usd()
+            
+            # Calculate USD values
+            eth_value_usd = eth_amount * eth_price_usd
+            total_liquidity_usd = eth_value_usd * 2  # Assume symmetric pool
+            
+            # Calculate token price
+            if token_amount > 0:
+                token_price_eth = eth_amount / token_amount
+                token_price_usd = token_price_eth * eth_price_usd
+            else:
+                token_price_eth = Decimal('0')
+                token_price_usd = Decimal('0')
+            
+            return {
+                'token0': token0,
+                'token1': token1,
+                'reserve0': reserve0,
+                'reserve1': reserve1,
+                'eth_reserve': int(eth_reserve),
+                'token_reserve': int(token_reserve),
+                'eth_amount': str(eth_amount),
+                'token_amount': str(token_amount),
+                'eth_value_usd': str(eth_value_usd),
+                'total_liquidity_usd': str(total_liquidity_usd),
+                'token_price_eth': str(token_price_eth),
+                'token_price_usd': str(token_price_usd),
+                'token_is_token1': token_is_token1,
+                'has_eth_pair': True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Reserves analysis failed: {e}")
+            return {
+                'error': str(e),
+                'has_eth_pair': False,
+                'total_liquidity_usd': '0'
+            }
+    
+    async def _analyze_non_eth_pair(
+        self, 
+        pair_contract, 
+        token_address: str
+    ) -> Dict[str, Any]:
+        """Analyze pair that doesn't have ETH as one of the tokens."""
+        try:
+            token0 = pair_contract.functions.token0().call()
+            token1 = pair_contract.functions.token1().call()
+            reserves = pair_contract.functions.getReserves().call()
+            
+            reserve0, reserve1, _ = reserves
+            
+            # Get token decimals
+            token0_decimals = await self._get_token_decimals(token0)
+            token1_decimals = await self._get_token_decimals(token1)
+            
+            # Convert to decimal amounts
+            token0_amount = Decimal(reserve0) / (10 ** token0_decimals)
+            token1_amount = Decimal(reserve1) / (10 ** token1_decimals)
+            
+            # Try to get USD prices for both tokens
+            token0_price_usd = await self._get_token_price_usd(token0)
+            token1_price_usd = await self._get_token_price_usd(token1)
+            
+            # Calculate USD values
+            token0_value_usd = token0_amount * token0_price_usd
+            token1_value_usd = token1_amount * token1_price_usd
+            total_liquidity_usd = token0_value_usd + token1_value_usd
+            
+            return {
+                'token0': token0,
+                'token1': token1,
+                'reserve0': reserve0,
+                'reserve1': reserve1,
+                'token0_amount': str(token0_amount),
+                'token1_amount': str(token1_amount),
+                'token0_value_usd': str(token0_value_usd),
+                'token1_value_usd': str(token1_value_usd),
+                'total_liquidity_usd': str(total_liquidity_usd),
+                'has_eth_pair': False
+            }
+            
+        except Exception as e:
+            return {
+                'error': str(e),
+                'has_eth_pair': False,
+                'total_liquidity_usd': '0'
+            }
+    
+    async def _analyze_lp_distribution(self, pair_contract) -> Dict[str, Any]:
+        """
+        Analyze LP token distribution to assess centralization risk.
         
-        # Calculate linearity score (how close to linear)
-        linearity = max(0, 100 - abs(steepness - 1) * 50)
+        Args:
+            pair_contract: Pair contract instance
+            
+        Returns:
+            Dict with LP distribution analysis
+        """
+        try:
+            # Get total supply of LP tokens
+            total_supply = pair_contract.functions.totalSupply().call()
+            
+            # Check common burn addresses
+            burn_addresses = [
+                "0x000000000000000000000000000000000000dead",
+                "0x0000000000000000000000000000000000000000",
+            ]
+            
+            burned_amount = 0
+            for burn_addr in burn_addresses:
+                try:
+                    balance = pair_contract.functions.balanceOf(burn_addr).call()
+                    burned_amount += balance
+                except:
+                    continue
+            
+            # Calculate percentages
+            burned_percent = (burned_amount / total_supply * 100) if total_supply > 0 else 0
+            
+            # Check for locked LP tokens (this would require more complex analysis)
+            locked_amount, locked_percent = await self._estimate_locked_lp(pair_contract)
+            
+            # Calculate security score
+            security_score = self._calculate_lp_security_score(
+                burned_percent, locked_percent
+            )
+            
+            return {
+                'total_supply': total_supply,
+                'burned_amount': burned_amount,
+                'burned_percent': burned_percent,
+                'locked_amount': locked_amount,
+                'locked_percent': locked_percent,
+                'circulating_percent': 100 - burned_percent - locked_percent,
+                'security_score': security_score,
+                'risk_level': self._get_lp_risk_level(security_score)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"LP distribution analysis failed: {e}")
+            return {
+                'error': str(e),
+                'security_score': 0,
+                'risk_level': 'CRITICAL'
+            }
+    
+    async def _analyze_slippage_curve(
+        self, 
+        token_address: str, 
+        pair_address: str, 
+        reserves_analysis: Dict
+    ) -> Dict[str, Any]:
+        """
+        Calculate slippage for different trade sizes.
+        
+        Args:
+            token_address: Token address
+            pair_address: Pair address
+            reserves_analysis: Results from reserves analysis
+            
+        Returns:
+            Dict with slippage analysis
+        """
+        try:
+            if not reserves_analysis.get('has_eth_pair'):
+                return {'error': 'Cannot calculate slippage for non-ETH pairs'}
+            
+            # Get router contract
+            router_address = self.router_addresses.get(self.chain_id)
+            router_contract = self._get_router_contract(router_address)
+            
+            # Test different trade sizes in ETH
+            test_sizes_eth = [0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]
+            slippage_data = []
+            
+            weth_address = self.weth_addresses.get(self.chain_id)
+            path = [weth_address, token_address]
+            
+            for size_eth in test_sizes_eth:
+                try:
+                    amount_in_wei = int(size_eth * 10**18)
+                    
+                    # Get expected output
+                    amounts_out = router_contract.functions.getAmountsOut(
+                        amount_in_wei, path
+                    ).call()
+                    
+                    tokens_out = amounts_out[-1]
+                    
+                    # Calculate effective price
+                    effective_price = amount_in_wei / tokens_out if tokens_out > 0 else 0
+                    
+                    # Calculate slippage vs current price
+                    current_price = self._calculate_current_price(reserves_analysis)
+                    slippage_percent = ((effective_price - current_price) / current_price * 100) if current_price > 0 else 0
+                    
+                    slippage_data.append({
+                        'trade_size_eth': size_eth,
+                        'trade_size_usd': size_eth * float(await self._get_eth_price_usd()),
+                        'tokens_out': tokens_out,
+                        'effective_price': effective_price,
+                        'slippage_percent': slippage_percent
+                    })
+                    
+                except Exception as e:
+                    # If trade size is too large, mark as high slippage
+                    slippage_data.append({
+                        'trade_size_eth': size_eth,
+                        'trade_size_usd': size_eth * float(await self._get_eth_price_usd()),
+                        'error': str(e),
+                        'slippage_percent': 100.0  # Maximum slippage
+                    })
+            
+            # Analyze slippage curve
+            curve_analysis = self._analyze_slippage_curve_pattern(slippage_data)
+            
+            return {
+                'slippage_data': slippage_data,
+                'curve_analysis': curve_analysis,
+                'max_reasonable_trade_eth': self._find_max_reasonable_trade(slippage_data),
+                'liquidity_depth_score': self._calculate_liquidity_depth_score(slippage_data)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Slippage analysis failed: {e}")
+            return {
+                'error': str(e),
+                'liquidity_depth_score': 0
+            }
+    
+    async def _analyze_liquidity_locks(self, pair_contract) -> Dict[str, Any]:
+        """
+        Analyze liquidity locks and time-based restrictions.
+        
+        Args:
+            pair_contract: Pair contract instance
+            
+        Returns:
+            Dict with lock analysis
+        """
+        try:
+            # Check known liquidity locker contracts
+            known_lockers = [
+                "0x663A5C229c09b049E36dCc11a9B0d4a8Eb9db214",  # Unicrypt
+                "0x17e00383A843A9922bCA3B280C0ADE9f8BA48449",  # Team Finance
+                "0x7ee058420e5937496F5a2096f04caA7721cF70cc",  # Pinksale
+            ]
+            
+            pair_address = pair_contract.address
+            locked_info = []
+            total_locked_percent = 0
+            
+            for locker_address in known_lockers:
+                try:
+                    # Check if this locker has LP tokens
+                    balance = pair_contract.functions.balanceOf(locker_address).call()
+                    if balance > 0:
+                        # Get additional lock info if possible
+                        lock_info = await self._get_lock_details(locker_address, pair_address)
+                        locked_info.append({
+                            'locker_address': locker_address,
+                            'locked_amount': balance,
+                            'lock_details': lock_info
+                        })
+                        
+                        # Calculate percentage
+                        total_supply = pair_contract.functions.totalSupply().call()
+                        percent = (balance / total_supply * 100) if total_supply > 0 else 0
+                        total_locked_percent += percent
+                        
+                except Exception as e:
+                    continue
+            
+            return {
+                'locked_info': locked_info,
+                'total_locked_percent': total_locked_percent,
+                'has_locks': len(locked_info) > 0,
+                'lock_security_rating': self._rate_lock_security(total_locked_percent)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Lock analysis failed: {e}")
+            return {
+                'error': str(e),
+                'total_locked_percent': 0,
+                'has_locks': False
+            }
+    
+    async def _analyze_historical_liquidity(self, pair_address: str) -> Dict[str, Any]:
+        """
+        Analyze historical liquidity trends.
+        
+        Args:
+            pair_address: Pair contract address
+            
+        Returns:
+            Dict with historical analysis
+        """
+        try:
+            # This would typically involve querying historical data
+            # For now, we'll implement a basic version
+            
+            # Get current block
+            current_block = self.w3.eth.block_number
+            
+            # Sample liquidity at different historical points
+            historical_points = []
+            blocks_to_check = [
+                current_block - 100,    # ~20 minutes ago
+                current_block - 500,    # ~2 hours ago  
+                current_block - 2400,   # ~8 hours ago
+                current_block - 7200,   # ~24 hours ago
+            ]
+            
+            pair_contract = self._get_pair_contract(pair_address)
+            
+            for block_num in blocks_to_check:
+                try:
+                    if block_num > 0:
+                        reserves = pair_contract.functions.getReserves().call(
+                            block_identifier=block_num
+                        )
+                        historical_points.append({
+                            'block': block_num,
+                            'reserve0': reserves[0],
+                            'reserve1': reserves[1],
+                            'timestamp': reserves[2]
+                        })
+                except:
+                    continue
+            
+            # Analyze trends
+            trend_analysis = self._analyze_liquidity_trends(historical_points)
+            
+            return {
+                'historical_points': historical_points,
+                'trend_analysis': trend_analysis,
+                'stability_score': trend_analysis.get('stability_score', 50)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Historical analysis failed: {e}")
+            return {
+                'error': str(e),
+                'stability_score': 50
+            }
+    
+    # Helper methods
+    
+    def _validate_addresses(self, token_address: str, pair_address: str) -> bool:
+        """Validate Ethereum addresses."""
+        return (is_address(token_address) and 
+                is_address(pair_address) and
+                token_address != pair_address)
+    
+    def _get_pair_contract(self, pair_address: str):
+        """Get pair contract instance."""
+        pair_abi = self._get_pair_abi()
+        return self.w3.eth.contract(
+            address=to_checksum_address(pair_address),
+            abi=pair_abi
+        )
+    
+    def _get_router_contract(self, router_address: str):
+        """Get router contract instance."""
+        router_abi = self._get_router_abi()
+        return self.w3.eth.contract(
+            address=to_checksum_address(router_address),
+            abi=router_abi
+        )
+    
+    async def _get_token_decimals(self, token_address: str) -> int:
+        """Get token decimals."""
+        try:
+            token_abi = [
+                {
+                    "constant": True,
+                    "inputs": [],
+                    "name": "decimals",
+                    "outputs": [{"name": "", "type": "uint8"}],
+                    "type": "function"
+                }
+            ]
+            
+            token_contract = self.w3.eth.contract(
+                address=to_checksum_address(token_address),
+                abi=token_abi
+            )
+            
+            return token_contract.functions.decimals().call()
+            
+        except:
+            return 18  # Default to 18 decimals
+    
+    async def _get_eth_price_usd(self) -> Decimal:
+        """Get current ETH price in USD."""
+        try:
+            response = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={"ids": "ethereum", "vs_currencies": "usd"},
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return Decimal(str(data["ethereum"]["usd"]))
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get ETH price: {e}")
+        
+        return Decimal("2500")  # Fallback price
+    
+    async def _get_token_price_usd(self, token_address: str) -> Decimal:
+        """Get token price in USD (simplified implementation)."""
+        # This would typically require more sophisticated price discovery
+        return Decimal("1")  # Placeholder
+    
+    async def _estimate_locked_lp(self, pair_contract) -> Tuple[int, float]:
+        """Estimate locked LP tokens."""
+        # This is a simplified implementation
+        # Real implementation would check known locker contracts
+        return 0, 0.0
+    
+    def _calculate_lp_security_score(
+        self, 
+        burned_percent: float, 
+        locked_percent: float
+    ) -> float:
+        """Calculate LP security score based on burned/locked percentages."""
+        total_secured = burned_percent + locked_percent
+        
+        if total_secured >= 95:
+            return 100
+        elif total_secured >= 80:
+            return 85
+        elif total_secured >= 60:
+            return 70
+        elif total_secured >= 40:
+            return 50
+        else:
+            return max(0, total_secured)
+    
+    def _get_lp_risk_level(self, security_score: float) -> str:
+        """Get risk level based on security score."""
+        if security_score >= 90:
+            return "LOW"
+        elif security_score >= 70:
+            return "MEDIUM"
+        elif security_score >= 40:
+            return "HIGH"
+        else:
+            return "CRITICAL"
+    
+    def _calculate_current_price(self, reserves_analysis: Dict) -> float:
+        """Calculate current token price from reserves."""
+        try:
+            eth_amount = float(reserves_analysis.get('eth_amount', 0))
+            token_amount = float(reserves_analysis.get('token_amount', 0))
+            
+            if token_amount > 0:
+                return eth_amount / token_amount
+            return 0
+            
+        except:
+            return 0
+    
+    def _analyze_slippage_curve_pattern(self, slippage_data: List[Dict]) -> Dict[str, Any]:
+        """Analyze slippage curve pattern."""
+        valid_points = [p for p in slippage_data if 'error' not in p]
+        
+        if len(valid_points) < 2:
+            return {'pattern': 'insufficient_data', 'quality': 'poor'}
+        
+        # Calculate average slippage increase
+        slippages = [p['slippage_percent'] for p in valid_points]
+        
+        if max(slippages) < 5:
+            return {'pattern': 'linear', 'quality': 'excellent'}
+        elif max(slippages) < 15:
+            return {'pattern': 'moderate', 'quality': 'good'}
+        else:
+            return {'pattern': 'exponential', 'quality': 'poor'}
+    
+    def _find_max_reasonable_trade(self, slippage_data: List[Dict]) -> float:
+        """Find maximum reasonable trade size (under 10% slippage)."""
+        for point in slippage_data:
+            if point.get('slippage_percent', 100) > 10:
+                return max(0.01, point['trade_size_eth'] - 0.01)
+        
+        return 10.0  # If all trades are reasonable
+    
+    def _calculate_liquidity_depth_score(self, slippage_data: List[Dict]) -> float:
+        """Calculate liquidity depth score."""
+        max_reasonable = self._find_max_reasonable_trade(slippage_data)
+        
+        if max_reasonable >= 5.0:
+            return 100
+        elif max_reasonable >= 1.0:
+            return 80
+        elif max_reasonable >= 0.5:
+            return 60
+        elif max_reasonable >= 0.1:
+            return 40
+        else:
+            return 20
+    
+    async def _get_lock_details(self, locker_address: str, pair_address: str) -> Dict:
+        """Get details about liquidity locks."""
+        # This would query the locker contract for lock details
+        return {'lock_time': 'unknown', 'unlock_date': 'unknown'}
+    
+    def _rate_lock_security(self, locked_percent: float) -> str:
+        """Rate lock security based on percentage locked."""
+        if locked_percent >= 80:
+            return "EXCELLENT"
+        elif locked_percent >= 60:
+            return "GOOD"
+        elif locked_percent >= 40:
+            return "FAIR"
+        else:
+            return "POOR"
+    
+    def _analyze_liquidity_trends(self, historical_points: List[Dict]) -> Dict[str, Any]:
+        """Analyze liquidity trends from historical data."""
+        if len(historical_points) < 2:
+            return {'stability_score': 50, 'trend': 'unknown'}
+        
+        # Calculate variance in reserves
+        reserve0_values = [p['reserve0'] for p in historical_points]
+        reserve1_values = [p['reserve1'] for p in historical_points]
+        
+        # Simple stability calculation
+        if len(set(reserve0_values)) <= 2:  # Very stable
+            stability_score = 90
+        else:
+            # Calculate coefficient of variation
+            import statistics
+            try:
+                cv = statistics.stdev(reserve0_values) / statistics.mean(reserve0_values)
+                stability_score = max(0, 100 - (cv * 100))
+            except:
+                stability_score = 50
         
         return {
-            'curve_type': curve_type,
-            'steepness': steepness,
-            'linearity': linearity,
-            'max_slippage_tested': max(slippages),
-            'growth_pattern': 'healthy' if curve_type == 'linear' else 'concerning'
+            'stability_score': stability_score,
+            'trend': 'stable' if stability_score > 70 else 'volatile'
         }
-        
-    except Exception as e:
-        logger.warning(f"Error analyzing slippage curve: {e}")
-        return {
-            'curve_type': 'unknown',
-            'steepness': 0,
-            'linearity': 0,
-            'error': str(e)
-        }
-
-
-def _calculate_liquidity_efficiency(slippage_data: List[Dict]) -> float:
-    """
-    Calculate efficiency score based on slippage performance.
     
-    Higher efficiency means lower slippage for given trade sizes,
-    indicating better liquidity utilization.
-    
-    Args:
-        slippage_data: List of slippage data points
+    def _calculate_overall_metrics(
+        self, 
+        reserves_analysis: Dict, 
+        lp_analysis: Dict, 
+        slippage_analysis: Dict,
+        lock_analysis: Dict, 
+        historical_analysis: Dict
+    ) -> Dict[str, Any]:
+        """Calculate overall liquidity metrics and risk score."""
         
-    Returns:
-        Efficiency score (0-100, higher is better)
-    """
-    if not slippage_data:
-        return 0.0
-    
-    try:
-        # Calculate weighted efficiency based on trade sizes
-        total_weight = 0
-        weighted_efficiency = 0
+        # Extract key values
+        total_liquidity_usd = float(reserves_analysis.get('total_liquidity_usd', 0))
+        lp_security_score = lp_analysis.get('security_score', 0)
+        liquidity_depth_score = slippage_analysis.get('liquidity_depth_score', 0)
+        stability_score = historical_analysis.get('stability_score', 50)
+        lock_security_rating = lock_analysis.get('lock_security_rating', 'POOR')
         
-        for data_point in slippage_data:
-            trade_size = data_point['trade_size_usd']
-            max_slippage = data_point['max_slippage_percent']
-            
-            # Weight larger trades more heavily
-            weight = trade_size / 1000  # Normalize by $1000
-            
-            # Calculate efficiency for this trade size (inverse of slippage)
-            efficiency = max(0, 100 - max_slippage * 5)  # 5% slippage = 75% efficiency
-            
-            weighted_efficiency += efficiency * weight
-            total_weight += weight
+        # Calculate risk factors
+        risk_factors = []
+        risk_score = 0
         
-        # Calculate average weighted efficiency
-        if total_weight > 0:
-            avg_efficiency = weighted_efficiency / total_weight
+        # Liquidity amount risk
+        if total_liquidity_usd < 10000:
+            risk_factors.append('very_low_liquidity')
+            risk_score += 40
+        elif total_liquidity_usd < 50000:
+            risk_factors.append('low_liquidity')
+            risk_score += 25
+        
+        # LP security risk
+        if lp_security_score < 40:
+            risk_factors.append('insecure_lp_distribution')
+            risk_score += 30
+        elif lp_security_score < 70:
+            risk_factors.append('moderate_lp_risk')
+            risk_score += 15
+        
+        # Slippage risk
+        if liquidity_depth_score < 40:
+            risk_factors.append('high_slippage_risk')
+            risk_score += 20
+        
+        # Stability risk
+        if stability_score < 50:
+            risk_factors.append('volatile_liquidity')
+            risk_score += 10
+        
+        # Overall liquidity score (inverse of risk)
+        liquidity_score = max(0, 100 - risk_score)
+        
+        # Rating
+        if liquidity_score >= 80:
+            rating = "EXCELLENT"
+        elif liquidity_score >= 60:
+            rating = "GOOD"
+        elif liquidity_score >= 40:
+            rating = "FAIR"
         else:
-            # Fallback to simple average
-            avg_slippage = sum(item['max_slippage_percent'] for item in slippage_data) / len(slippage_data)
-            avg_efficiency = max(0, 100 - avg_slippage * 5)
+            rating = "POOR"
         
-        return min(100.0, max(0.0, avg_efficiency))
-        
-    except Exception as e:
-        logger.warning(f"Error calculating liquidity efficiency: {e}")
-        return 0.0
+        return {
+            'total_liquidity_usd': str(total_liquidity_usd),
+            'total_liquidity_eth': reserves_analysis.get('eth_amount', '0'),
+            'risk_score': min(risk_score, 100),
+            'liquidity_score': liquidity_score,
+            'risk_factors': risk_factors,
+            'rating': rating
+        }
+    
+    def _get_pair_abi(self) -> List[Dict]:
+        """Get Uniswap V2 Pair ABI (simplified)."""
+        return [
+            {
+                "constant": True,
+                "inputs": [],
+                "name": "getReserves",
+                "outputs": [
+                    {"internalType": "uint112", "name": "_reserve0", "type": "uint112"},
+                    {"internalType": "uint112", "name": "_reserve1", "type": "uint112"},
+                    {"internalType": "uint32", "name": "_blockTimestampLast", "type": "uint32"}
+                ],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "constant": True,
+                "inputs": [],
+                "name": "token0",
+                "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "constant": True,
+                "inputs": [],
+                "name": "token1",
+                "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "constant": True,
+                "inputs": [],
+                "name": "totalSupply",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "constant": True,
+                "inputs": [{"internalType": "address", "name": "", "type": "address"}],
+                "name": "balanceOf",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ]
+    
+    def _get_router_abi(self) -> List[Dict]:
+        """Get Uniswap V2 Router ABI (simplified)."""
+        return [
+            {
+                "inputs": [
+                    {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                    {"internalType": "address[]", "name": "path", "type": "address[]"}
+                ],
+                "name": "getAmountsOut",
+                "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ]
+    
+    def _create_error_result(self, error_message: str) -> Dict[str, Any]:
+        """Create standardized error result."""
+        return {
+            'check_type': 'LIQUIDITY',
+            'status': 'FAILED',
+            'error_message': error_message,
+            'risk_score': 100.0,
+            'liquidity_score': 0
+        }
 
 
-def _calculate_depth_score(total_liquidity_usd: float) -> float:
+# Celery task wrapper
+async def perform_liquidity_check(
+    web3_provider: Web3,
+    token_address: str,
+    pair_address: str,
+    chain_id: int
+) -> Dict[str, Any]:
     """
-    Calculate depth score based on total liquidity.
+    Perform real liquidity analysis.
     
     Args:
-        total_liquidity_usd: Total liquidity in USD
-        
-    Returns:
-        Depth score (0-100)
-    """
-    if total_liquidity_usd >= 1000000:  # $1M+
-        return 100.0
-    elif total_liquidity_usd >= 500000:  # $500K+
-        return 90.0
-    elif total_liquidity_usd >= 100000:  # $100K+
-        return 80.0
-    elif total_liquidity_usd >= 50000:   # $50K+
-        return 70.0
-    elif total_liquidity_usd >= 10000:   # $10K+
-        return 60.0
-    elif total_liquidity_usd >= 5000:    # $5K+
-        return 40.0
-    elif total_liquidity_usd >= 1000:    # $1K+
-        return 20.0
-    else:
-        return max(0.0, total_liquidity_usd / 1000 * 20)
-
-
-def _calculate_lp_security_score(burn_percentage: float, lock_percentage: float) -> float:
-    """
-    Calculate LP security score based on burns and locks.
-    
-    Args:
-        burn_percentage: Percentage of LP tokens burned
-        lock_percentage: Percentage of LP tokens locked
-        
-    Returns:
-        Security score (0-100)
-    """
-    total_secured = burn_percentage + lock_percentage
-    
-    if total_secured >= 95:
-        return 100.0
-    elif total_secured >= 90:
-        return 95.0
-    elif total_secured >= 80:
-        return 85.0
-    elif total_secured >= 70:
-        return 70.0
-    elif total_secured >= 50:
-        return 50.0
-    elif total_secured >= 30:
-        return 30.0
-    else:
-        return total_secured  # Direct mapping for low values
-
-
-def _get_token_price_usd(w3: Web3, token_address: str) -> float:
-    """
-    Get token price in USD (simplified implementation).
-    
-    In production, this would use price feeds like Chainlink oracles,
-    CoinGecko API, or DEX aggregators.
-    
-    Args:
-        w3: Web3 connection
+        web3_provider: Web3 instance
         token_address: Token contract address
-        
-    Returns:
-        Token price in USD
-    """
-    # Mock prices for common tokens
-    token_address_lower = token_address.lower()
-    
-    # Common token addresses and their approximate prices
-    known_prices = {
-        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': 2500.0,  # WETH
-        '0xa0b86a33e6441eab62d8b8bb7e5c9d47b6b0bfb4': 2500.0,  # Alternative WETH
-        '0xa0b86a33e6441e94b6b0bfb4e6e7c8c8e7c8e7c8': 0.001,   # Mock token
-        '0x6b175474e89094c44da98b954eedeac495271d0f': 1.0,     # DAI
-        '0xa0b86a33e6441eab62d8b8bb7e5c9d47b6b0bfb5': 1.0,     # USDC mock
-    }
-    
-    # Check for known addresses
-    for known_addr, price in known_prices.items():
-        if known_addr in token_address_lower:
-            return price
-    
-    # Check for stablecoin patterns
-    if any(pattern in token_address_lower for pattern in ['usdc', 'usdt', 'dai', 'busd']):
-        return 1.0
-    
-    # Default price for unknown tokens
-    return 0.001
-
-
-def _detect_dex_factory(w3: Web3, pair_address: str) -> str:
-    """
-    Detect which DEX factory created this pair.
-    
-    Args:
-        w3: Web3 connection
         pair_address: Trading pair address
+        chain_id: Blockchain chain ID
         
     Returns:
-        Factory name/type
+        Dict with liquidity analysis results
     """
-    # In production, this would check the actual factory address
-    # For now, return Uniswap V2 as default
-    return 'Uniswap V2'
-
-
-def _get_uniswap_pair_abi() -> List[Dict]:
-    """Get minimal Uniswap V2 pair ABI for essential functions."""
-    return [
-        {
-            "inputs": [],
-            "name": "totalSupply",
-            "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-            "stateMutability": "view",
-            "type": "function"
-        },
-        {
-            "inputs": [{"internalType": "address", "name": "owner", "type": "address"}],
-            "name": "balanceOf",
-            "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-            "stateMutability": "view",
-            "type": "function"
-        },
-        {
-            "inputs": [],
-            "name": "getReserves",
-            "outputs": [
-                {"internalType": "uint112", "name": "reserve0", "type": "uint112"},
-                {"internalType": "uint112", "name": "reserve1", "type": "uint112"},
-                {"internalType": "uint32", "name": "blockTimestampLast", "type": "uint32"}
-            ],
-            "stateMutability": "view",
-            "type": "function"
-        },
-        {
-            "inputs": [],
-            "name": "token0",
-            "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-            "stateMutability": "view",
-            "type": "function"
-        },
-        {
-            "inputs": [],
-            "name": "token1",
-            "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-            "stateMutability": "view",
-            "type": "function"
-        }
-    ]
+    analyzer = LiquidityAnalyzer(web3_provider, chain_id)
+    return await analyzer.analyze_liquidity(token_address, pair_address)

@@ -58,6 +58,29 @@ class TradingSessionAdmin(BaseModelAdmin):
     ordering = ['-started_at']
     actions = ['emergency_stop_sessions', 'pause_sessions']
     
+    def session_id_short(self, obj):
+        return str(obj.session_id)[:8] + '...'
+    session_id_short.short_description = 'Session ID'
+    
+    def success_rate_display(self, obj):
+        success_rate = obj.success_rate_percent
+        if success_rate is not None:
+            color = 'green' if success_rate >= 70 else 'orange' if success_rate >= 50 else 'red'
+            return format_html('<span style="color: {};">{:.1f}%</span>', color, success_rate)
+        return '-'
+    success_rate_display.short_description = 'Success Rate'
+    
+    def emergency_stop_sessions(self, request, queryset):
+        queryset.update(status='EMERGENCY_STOP', emergency_stop_triggered=True)
+        self.message_user(request, f"Emergency stopped {queryset.count()} sessions.")
+    emergency_stop_sessions.short_description = "Emergency stop sessions"
+    
+    def pause_sessions(self, request, queryset):
+        from django.utils import timezone
+        queryset.update(status='PAUSED', paused_at=timezone.now())
+        self.message_user(request, f"Paused {queryset.count()} sessions.")
+    pause_sessions.short_description = "Pause sessions"
+    
         
         
     def emergency_stop_sessions(self, request, queryset):
