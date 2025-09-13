@@ -1,93 +1,60 @@
 """
-Enhanced Engine Configuration Management
+Enhanced Engine Configuration Management - Django Models as SSOT
 
-Real blockchain integration with robust RPC provider management,
-failover handling, and production-ready Web3 infrastructure.
-Supports paid providers (Alchemy/Infura) with public fallbacks.
+Uses Django Chain/DEX models as the single source of truth for chain configuration,
+eliminating duplication and ensuring consistency across the system.
 
 File: dexproject/engine/config.py
 """
 
 import os
 import logging
+import asyncio
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
 from decimal import Decimal
 
+# Import shared components for Django integration
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from shared.chain_config_bridge import (
+    ChainConfigBridge, ChainConfig, RPCProvider, 
+    get_engine_chain_configs
+)
+from shared.redis_client import RedisClient
+
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RPCProvider:
-    """RPC provider configuration with enhanced features."""
-    name: str
-    url: str
-    websocket_url: Optional[str] = None
-    api_key: Optional[str] = None
-    priority: int = 1  # Lower = higher priority
-    max_requests_per_second: int = 10
-    timeout_seconds: int = 10
-    is_paid: bool = False  # Track if this is a paid provider
-    supports_debug: bool = False  # For transaction simulation
-    supports_trace: bool = False  # For advanced tracing
-    
-    def __post_init__(self):
-        """Validate provider configuration."""
-        if not self.url:
-            raise ValueError(f"Provider {self.name} must have a URL")
-        if not self.url.startswith(('http://', 'https://', 'wss://', 'ws://')):
-            raise ValueError(f"Provider {self.name} URL must include protocol")
-
-
-@dataclass
-class ChainConfig:
-    """Enhanced per-chain configuration."""
-    chain_id: int
-    name: str
-    rpc_providers: List[RPCProvider]
-    uniswap_v3_factory: str
-    uniswap_v3_router: str
-    uniswap_v2_factory: str  # Add V2 support
-    uniswap_v2_router: str
-    weth_address: str
-    usdc_address: str
-    block_time_ms: int = 12000
-    gas_limit_buffer: float = 1.2  # 20% buffer on gas estimates
-    max_gas_price_multiplier: float = 2.0  # Max 2x current gas price
-    confirmations_required: int = 1  # Blocks to wait for confirmation
-    
-    # DEX-specific settings
-    pair_creation_events: Dict[str, List[str]] = field(default_factory=dict)
-    
-    def __post_init__(self):
-        """Initialize DEX event configurations."""
-        if not self.pair_creation_events:
-            self.pair_creation_events = {
-                'uniswap_v3': [
-                    '0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118'  # PoolCreated
-                ],
-                'uniswap_v2': [
-                    '0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9'  # PairCreated
-                ]
-            }
 
 
 class EngineConfig:
     """
     Enhanced configuration management for the trading engine.
     
-    Provides robust RPC provider management, failover handling,
-    and comprehensive validation for production deployment.
+    Now uses Django Chain/DEX models as single source of truth for chain configuration,
+    while maintaining engine-specific settings via environment variables.
     """
     
     def __init__(self):
-        """Initialize configuration from environment variables."""
-        self.load_config()
+        """Initialize configuration from environment and Django models."""
+        self.logger = logger
+        self._redis_client = None
+        self._chain_config_bridge = None
+        
+        # Load engine-specific configuration first
+        self.load_engine_config()
+        
+        # Initialize Django integration
+        self._setup_django_integration()
+        
+        # Load chain configurations from Django
+        self.chains = {}  # Will be populated asynchronously
+        
+        # Validate engine configuration
         self.validate_config()
         self._log_configuration_summary()
     
-    def load_config(self) -> None:
-        """Load all configuration from environment variables."""
+    def load_engine_config(self) -> None:
+        """Load engine-specific configuration from environment variables."""
         
         # Engine Core Settings
         self.trading_mode = os.getenv("TRADING_MODE", "PAPER").upper()
@@ -107,7 +74,7 @@ class EngineConfig:
         self.event_batch_size = int(os.getenv("EVENT_BATCH_SIZE", "50"))
         
         # Risk Assessment Settings
-        self.risk_timeout = int(os.getenv("RISK_TIMEOUT", "15"))  # Increased for real checks
+        self.risk_timeout = int(os.getenv("RISK_TIMEOUT", "15"))
         self.risk_parallel_checks = int(os.getenv("RISK_PARALLEL_CHECKS", "4"))
         self.min_liquidity_usd = Decimal(os.getenv("MIN_LIQUIDITY_USD", "10000"))
         self.max_buy_tax_percent = Decimal(os.getenv("MAX_BUY_TAX_PERCENT", "5.0"))
@@ -133,164 +100,145 @@ class EngineConfig:
         # Provider Management Settings
         self.provider_health_check_interval = int(os.getenv("PROVIDER_HEALTH_CHECK_INTERVAL", "30"))
         self.provider_failover_threshold = int(os.getenv("PROVIDER_FAILOVER_THRESHOLD", "3"))
-        self.provider_recovery_time = int(os.getenv("PROVIDER_RECOVERY_TIME", "300"))  # 5 minutes
+        self.provider_recovery_time = int(os.getenv("PROVIDER_RECOVERY_TIME", "300"))
         
         # Database & Queue Settings
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.django_db_url = os.getenv("DATABASE_URL", "sqlite:///db.sqlite3")
         
-        # Load chain configurations
-        self.chains = self._load_chain_configs()
-        
-        logger.info(f"Configuration loaded for {len(self.target_chains)} chains in {self.trading_mode} mode")
+        logger.info(f"Engine configuration loaded for {len(self.target_chains)} target chains in {self.trading_mode} mode")
     
-    def _load_chain_configs(self) -> Dict[int, ChainConfig]:
-        """Load enhanced per-chain configurations with robust provider setup."""
-        chains = {}
+    def _setup_django_integration(self) -> None:
+        """Set up Django integration for chain configuration."""
+        try:
+            # Initialize Redis client for caching Django data
+            if self.redis_url:
+                self._redis_client = RedisClient(self.redis_url)
+                self._chain_config_bridge = ChainConfigBridge(self._redis_client)
+                logger.info("Django integration initialized with Redis caching")
+            else:
+                self._chain_config_bridge = ChainConfigBridge()
+                logger.warning("Django integration initialized without Redis caching")
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize Django integration: {e}")
+            self._chain_config_bridge = None
+    
+    async def initialize_chain_configs(self) -> None:
+        """
+        Asynchronously load chain configurations from Django models.
         
-        # Base (8453) configuration
+        This must be called after the engine starts to load chain data.
+        """
+        try:
+            if self._redis_client and not self._redis_client.is_connected():
+                await self._redis_client.connect()
+            
+            if self._chain_config_bridge:
+                logger.info("Loading chain configurations from Django models...")
+                self.chains = await self._chain_config_bridge.get_chain_configs()
+                
+                # Filter to only target chains
+                filtered_chains = {
+                    chain_id: config for chain_id, config in self.chains.items()
+                    if chain_id in self.target_chains
+                }
+                self.chains = filtered_chains
+                
+                logger.info(f"Loaded {len(self.chains)} chain configurations from Django")
+                
+                # Log chain details
+                for chain_id, config in self.chains.items():
+                    logger.info(f"  {config.name} (ID: {chain_id}): {len(config.rpc_providers)} providers")
+            else:
+                logger.warning("Django integration not available, using fallback configurations")
+                self.chains = self._get_fallback_chain_configs()
+                
+        except Exception as e:
+            logger.error(f"Failed to load chain configurations: {e}")
+            logger.warning("Using fallback configurations")
+            self.chains = self._get_fallback_chain_configs()
+    
+    async def refresh_chain_configs(self) -> None:
+        """Refresh chain configurations from Django models."""
+        if self._chain_config_bridge:
+            try:
+                await self._chain_config_bridge.refresh_cache()
+                await self.initialize_chain_configs()
+                logger.info("Chain configurations refreshed from Django")
+            except Exception as e:
+                logger.error(f"Failed to refresh chain configurations: {e}")
+    
+    def _get_fallback_chain_configs(self) -> Dict[int, ChainConfig]:
+        """Get fallback chain configurations when Django is not available."""
+        from shared.chain_config_bridge import ChainConfig, RPCProvider
+        
+        logger.warning("Using fallback chain configurations - ensure Django models are properly configured!")
+        
+        configs = {}
+        
+        # Base (8453) - only if in target chains
         if 8453 in self.target_chains:
-            base_providers = self._load_rpc_providers("BASE")
-            chains[8453] = ChainConfig(
+            configs[8453] = ChainConfig(
                 chain_id=8453,
                 name="Base",
-                rpc_providers=base_providers,
+                rpc_providers=[
+                    RPCProvider(
+                        name="base_primary",
+                        url="https://base-mainnet.g.alchemy.com/v2/demo",
+                        priority=1,
+                        is_paid=True,
+                    ),
+                    RPCProvider(
+                        name="base_fallback",
+                        url="https://mainnet.base.org",
+                        priority=2,
+                        is_paid=False,
+                    ),
+                ],
                 uniswap_v3_factory="0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
                 uniswap_v3_router="0x2626664c2603336E57B271c5C0b26F421741e481",
-                uniswap_v2_factory="0x8909dc15e40173ff4699343b6eb8132c65e18ec6",  # BaseSwap
+                uniswap_v2_factory="0x8909dc15e40173ff4699343b6eb8132c65e18ec6",
                 uniswap_v2_router="0x327df1e6de05895d2ab08513aadd9313fe505d86",
                 weth_address="0x4200000000000000000000000000000000000006",
                 usdc_address="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-                block_time_ms=2000,  # Base ~2s blocks
+                block_time_ms=2000,
                 confirmations_required=1,
-                gas_limit_buffer=1.1  # Lower buffer for Base
             )
-            logger.info(f"Configured Base chain with {len(base_providers)} providers")
         
-        # Ethereum (1) configuration
+        # Ethereum (1) - only if in target chains
         if 1 in self.target_chains:
-            eth_providers = self._load_rpc_providers("ETH")
-            chains[1] = ChainConfig(
+            configs[1] = ChainConfig(
                 chain_id=1,
                 name="Ethereum",
-                rpc_providers=eth_providers,
+                rpc_providers=[
+                    RPCProvider(
+                        name="ethereum_primary",
+                        url="https://eth-mainnet.g.alchemy.com/v2/demo",
+                        priority=1,
+                        is_paid=True,
+                    ),
+                    RPCProvider(
+                        name="ethereum_fallback",
+                        url="https://ethereum.publicnode.com",
+                        priority=2,
+                        is_paid=False,
+                    ),
+                ],
                 uniswap_v3_factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
                 uniswap_v3_router="0xE592427A0AEce92De3Edee1F18E0157C05861564",
                 uniswap_v2_factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
                 uniswap_v2_router="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
                 weth_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
                 usdc_address="0xA0b86a33E6E67c6e2B2EB44630b58cf95e5e7d77",
-                block_time_ms=12000,  # Ethereum ~12s blocks
-                confirmations_required=2,  # More confirmations for Ethereum
-                gas_limit_buffer=1.3  # Higher buffer for Ethereum
+                block_time_ms=12000,
+                confirmations_required=2,
             )
-            logger.info(f"Configured Ethereum chain with {len(eth_providers)} providers")
         
-        return chains
-    
-    def _load_rpc_providers(self, chain_prefix: str) -> List[RPCProvider]:
-        """Load RPC provider configurations with paid + fallback support."""
-        providers = []
-        
-        # Primary paid provider (Alchemy/Infura)
-        primary_url = os.getenv(f"{chain_prefix}_RPC_URL")
-        primary_ws = os.getenv(f"{chain_prefix}_WS_URL")
-        primary_key = os.getenv(f"{chain_prefix}_API_KEY")
-        
-        if primary_url:
-            # Detect provider type for enhanced features
-            is_alchemy = 'alchemy' in primary_url.lower()
-            is_infura = 'infura' in primary_url.lower()
-            is_quicknode = 'quicknode' in primary_url.lower()
-            
-            providers.append(RPCProvider(
-                name=f"{chain_prefix}_PRIMARY",
-                url=primary_url,
-                websocket_url=primary_ws,
-                api_key=primary_key,
-                priority=1,
-                max_requests_per_second=25 if (is_alchemy or is_infura) else 10,
-                is_paid=True,
-                supports_debug=is_alchemy or is_quicknode,  # Alchemy/QuickNode support debug
-                supports_trace=is_alchemy or is_quicknode,
-                timeout_seconds=10
-            ))
-            logger.info(f"Added primary provider for {chain_prefix}: {primary_url[:50]}...")
-        
-        # Secondary paid provider
-        secondary_url = os.getenv(f"{chain_prefix}_RPC_URL_2")
-        secondary_ws = os.getenv(f"{chain_prefix}_WS_URL_2")
-        secondary_key = os.getenv(f"{chain_prefix}_API_KEY_2")
-        
-        if secondary_url:
-            is_alchemy = 'alchemy' in secondary_url.lower()
-            is_infura = 'infura' in secondary_url.lower()
-            is_quicknode = 'quicknode' in secondary_url.lower()
-            
-            providers.append(RPCProvider(
-                name=f"{chain_prefix}_SECONDARY",
-                url=secondary_url,
-                websocket_url=secondary_ws,
-                api_key=secondary_key,
-                priority=2,
-                max_requests_per_second=25 if (is_alchemy or is_infura) else 10,
-                is_paid=True,
-                supports_debug=is_alchemy or is_quicknode,
-                supports_trace=is_alchemy or is_quicknode,
-                timeout_seconds=10
-            ))
-            logger.info(f"Added secondary provider for {chain_prefix}")
-        
-        # Public fallback providers
-        if chain_prefix == "BASE":
-            providers.extend([
-                RPCProvider(
-                    name="BASE_PUBLIC_1",
-                    url="https://mainnet.base.org",
-                    priority=3,
-                    max_requests_per_second=5,
-                    is_paid=False,
-                    timeout_seconds=15
-                ),
-                RPCProvider(
-                    name="BASE_PUBLIC_2", 
-                    url="https://base.blockpi.network/v1/rpc/public",
-                    priority=4,
-                    max_requests_per_second=3,
-                    is_paid=False,
-                    timeout_seconds=20
-                )
-            ])
-        elif chain_prefix == "ETH":
-            providers.extend([
-                RPCProvider(
-                    name="ETH_PUBLIC_1",
-                    url="https://cloudflare-eth.com",
-                    priority=3,
-                    max_requests_per_second=5,
-                    is_paid=False,
-                    timeout_seconds=15
-                ),
-                RPCProvider(
-                    name="ETH_PUBLIC_2",
-                    url="https://ethereum.publicnode.com",
-                    priority=4,
-                    max_requests_per_second=3,
-                    is_paid=False,
-                    timeout_seconds=20
-                )
-            ])
-        
-        if not providers:
-            logger.warning(f"No RPC providers configured for {chain_prefix}!")
-        else:
-            paid_count = sum(1 for p in providers if p.is_paid)
-            logger.info(f"Loaded {len(providers)} providers for {chain_prefix} ({paid_count} paid, {len(providers)-paid_count} public)")
-        
-        return providers
+        return configs
     
     def validate_config(self) -> None:
-        """Enhanced configuration validation."""
+        """Validate engine configuration (chain configs validated after async load)."""
         errors = []
         
         # Validate trading mode
@@ -298,17 +246,9 @@ class EngineConfig:
         if self.trading_mode not in valid_modes:
             errors.append(f"Invalid trading mode: {self.trading_mode}. Must be one of {valid_modes}")
         
-        # Validate chains have providers
-        for chain_id in self.target_chains:
-            if chain_id not in self.chains:
-                errors.append(f"No configuration found for chain ID: {chain_id}")
-            elif not self.chains[chain_id].rpc_providers:
-                errors.append(f"No RPC providers configured for chain ID: {chain_id}")
-            else:
-                # Check for at least one working provider
-                chain_config = self.chains[chain_id]
-                if not any(p.url for p in chain_config.rpc_providers):
-                    errors.append(f"No valid provider URLs for chain ID: {chain_id}")
+        # Validate target chains
+        if not self.target_chains:
+            errors.append("At least one target chain must be specified")
         
         # Validate numeric ranges
         if self.risk_timeout <= 0:
@@ -333,7 +273,27 @@ class EngineConfig:
         if errors:
             raise ValueError(f"Configuration validation failed: {', '.join(errors)}")
         
-        logger.info(f"Configuration validated successfully for {len(self.target_chains)} chains")
+        logger.info("Engine configuration validated successfully")
+    
+    async def validate_chain_configs(self) -> None:
+        """Validate chain configurations (called after async initialization)."""
+        errors = []
+        
+        # Check that all target chains have configurations
+        for chain_id in self.target_chains:
+            if chain_id not in self.chains:
+                errors.append(f"No configuration found for target chain ID: {chain_id}")
+            else:
+                chain_config = self.chains[chain_id]
+                if not chain_config.rpc_providers:
+                    errors.append(f"No RPC providers configured for chain ID: {chain_id}")
+                elif not any(p.url for p in chain_config.rpc_providers):
+                    errors.append(f"No valid provider URLs for chain ID: {chain_id}")
+        
+        if errors:
+            raise ValueError(f"Chain configuration validation failed: {', '.join(errors)}")
+        
+        logger.info(f"Chain configurations validated successfully for {len(self.chains)} chains")
     
     def _log_configuration_summary(self) -> None:
         """Log a summary of the current configuration."""
@@ -343,13 +303,15 @@ class EngineConfig:
             "discovery_enabled": self.discovery_enabled,
             "risk_timeout": self.risk_timeout,
             "max_portfolio_size_usd": str(self.max_portfolio_size_usd),
-            "provider_count_by_chain": {
-                chain_id: len(config.rpc_providers) 
-                for chain_id, config in self.chains.items()
-            }
+            "django_integration": self._chain_config_bridge is not None,
+            "redis_caching": self._redis_client is not None,
         }
         
         logger.info(f"Engine configuration summary: {summary}")
+    
+    # =========================================================================
+    # CHAIN CONFIGURATION ACCESS METHODS
+    # =========================================================================
     
     def get_chain_config(self, chain_id: int) -> Optional[ChainConfig]:
         """Get configuration for a specific chain."""
@@ -380,6 +342,10 @@ class EngineConfig:
         
         return [p for p in chain_config.rpc_providers if not p.is_paid]
     
+    # =========================================================================
+    # UTILITY METHODS
+    # =========================================================================
+    
     def is_paper_mode(self) -> bool:
         """Check if engine is in paper trading mode."""
         return self.trading_mode == "PAPER"
@@ -394,7 +360,7 @@ class EngineConfig:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary for logging/debugging."""
-        return {
+        config_dict = {
             "trading_mode": self.trading_mode,
             "target_chains": self.target_chains,
             "discovery_enabled": self.discovery_enabled,
@@ -403,9 +369,64 @@ class EngineConfig:
             "max_position_size_usd": str(self.max_position_size_usd),
             "provider_failover_threshold": self.provider_failover_threshold,
             "paper_mode": self.is_paper_mode(),
-            "live_mode": self.is_live_mode()
+            "live_mode": self.is_live_mode(),
+            "django_integration": self._chain_config_bridge is not None,
         }
+        
+        # Add chain configuration summary
+        if self.chains:
+            config_dict["chains"] = {
+                chain_id: {
+                    "name": config.name,
+                    "provider_count": len(config.rpc_providers),
+                    "block_time_ms": config.block_time_ms,
+                }
+                for chain_id, config in self.chains.items()
+            }
+        
+        return config_dict
+    
+    async def shutdown(self) -> None:
+        """Shutdown configuration and cleanup resources."""
+        if self._redis_client and self._redis_client.is_connected():
+            await self._redis_client.disconnect()
+            logger.info("Configuration Redis client disconnected")
 
 
-# Global configuration instance
-config = EngineConfig()
+# ============================================================================= 
+# ASYNC CONFIGURATION FACTORY
+# =============================================================================
+
+async def create_engine_config() -> EngineConfig:
+    """
+    Create and initialize engine configuration asynchronously.
+    
+    This factory function handles the async initialization of chain configurations
+    from Django models.
+    
+    Returns:
+        Fully initialized EngineConfig instance
+    """
+    # Create config instance
+    config = EngineConfig()
+    
+    # Initialize chain configurations from Django
+    await config.initialize_chain_configs()
+    
+    # Validate chain configurations
+    await config.validate_chain_configs()
+    
+    logger.info("Engine configuration fully initialized from Django models")
+    return config
+
+
+# Global configuration instance (will be set by main.py)
+config: Optional[EngineConfig] = None
+
+
+async def get_config() -> EngineConfig:
+    """Get the global engine configuration, initializing if necessary."""
+    global config
+    if config is None:
+        config = await create_engine_config()
+    return config
