@@ -1,236 +1,303 @@
-# DEX Auto-Trading Bot – Project Overview
+# DEX Auto-Trading Bot – Project Overview (Control Framework Edition)
 
 ---
 
-## Vision
-<!-- Project high-level vision and differentiator -->
+## Vision & Control Philosophy
+<!-- Project high-level vision with delivery discipline -->
 The goal of this project is to develop a **DEX auto-trading / sniping bot** that operates with industrial-grade risk controls and professional-level intelligence, while remaining explainable and user-friendly.
 
-The system is designed to:
+**Control Principle:** Every component has a **Definition of Done (DoD)**, clear **risk if ignored**, and **MVP specification** to prevent feature creep and ensure controlled delivery.
 
+The system is designed to:
 * Monitor and analyze **new token launches** on decentralized exchanges (DEXs).
 * Automatically decide whether to buy, hold, or skip opportunities based on advanced risk checks and intelligence scoring.
 * Provide **explainable reasoning** for every decision in the form of an **AI Thought Log**.
 * Compete with commercial sniping bots in terms of speed, safety, and profit potential.
 
-The project begins as **single-user** (for the author), but is designed with future multi-user expansion in mind.
+---
+
+## Architecture Decisions (LOCKED)
+<!-- Foundational choices that drive implementation -->
+
+### Database & Infrastructure
+**Decision:** SQLite → PostgreSQL + Redis migration later  
+**Rationale:** Fastest MVP path without DevOps overhead  
+**Migration Checkpoint:** Migrate before production deployment (defined in Phase 6)
+
+### Trading Engine Process Model  
+**Decision:** Django management command (`python manage.py run_trading_engine`)  
+**Rationale:** Lowest friction, Django ecosystem integration, dashboard control  
+**Evolution Path:** Option to separate async service once stability proven
+
+### Frontend Strategy
+**Decision:** Hybrid - Django templates + REST API foundation  
+**Rationale:** Immediate visibility via templates, future-proofed with APIs  
+**API Requirement:** Minimum one working API endpoint per app (even if unused initially)
+
+### Security Boundaries
+**Decision:** Testnet-only + environment variables for keys/endpoints  
+**Hard Rule:** **NO MAINNET TRADES** until all DoD criteria met and reviewed  
+**Key Management:** Environment variables for MVP, keystore evolution later
 
 ---
 
-## Core Goals
-<!-- What success means at the core of the system -->
-1. **Speed** – Respond to new opportunities with low latency (sub-second reaction times on L1/L2 where possible).  
-2. **Safety** – Industrial-grade risk management to minimize exposure to scams, rugs, and honeypots.  
-3. **Transparency** – An **AI Thought Log** that explains every decision with structured signals and human-readable rationale.  
-4. **Profitability** – Execute trades with strategies that mirror professional traders, with strong portfolio and bankroll management.  
+## Control Framework Implementation Plan
+
+### **Phase 1: Foundation URLs & Views**
+**Priority:** CRITICAL PATH - Everything downstream blocked until complete
+
+**Definition of Done:**
+- [ ] All 5 apps have at least one working view + API endpoint
+- [ ] URL routing complete for: `/dashboard/`, `/trading/`, `/risk/`, `/wallet/`, `/analytics/`
+- [ ] Health check endpoint per app returns 200 OK
+- [ ] Django admin accessible for all models
+
+**Risk if Ignored:** No way to interact with system → development paralyzed
+
+**MVP Implementation:**
+- Basic health check endpoints (`/app/api/health/`)
+- Simple list views for core models (using Django generic views)
+- Placeholder templates with "Coming Soon" messaging
+- REST API skeleton with at least one GET endpoint per app
+
+**Control Check:** Can navigate to each app URL without 404 errors
+
+**Files to Create/Update:**
+- `dexproject/dexproject/urls.py` - Add app URL includes
+- `dashboard/urls.py` + `views.py` - Dashboard routes and views
+- `trading/urls.py` + `views.py` - Trading API endpoints
+- `risk/urls.py` + `views.py` - Risk assessment endpoints
+- `wallet/urls.py` + `views.py` - Wallet status endpoints
+- `analytics/urls.py` + `views.py` - Analytics/reporting endpoints
 
 ---
 
-## Key Components
-<!-- Major system modules and their responsibilities -->
+### **Phase 2: Minimal Dashboard (IMMEDIATE FEEDBACK)**
+**Priority:** HIGH - Provides external visibility into system state
 
-### 1. Control Plane (Django Backend)
-* Provides the **dashboard** to start/stop the bot and monitor activity.  
-* Stores **trade history, risk findings, intelligence scores, and thought logs** in Postgres.  
-* Exposes APIs for configuration, telemetry, and reporting.  
-* Displays portfolio performance (PnL, positions, exposure).  
-* Implements user wallet connection and policy controls (spend caps, blacklists/whitelists).  
+**Definition of Done:**
+- [ ] Django template with bot start/stop controls
+- [ ] System status display (engine running/stopped, queue health)
+- [ ] Basic portfolio display (positions, P&L placeholder)
+- [ ] Real-time status updates (polling or WebSocket)
+- [ ] Navigation to other app sections
 
-### 2. Trading Engine (Async Worker)
-* Always-on async service optimized for **latency-critical paths**.  
-* Responsibilities:  
-  * **Discovery**: listen for new pairs (factory events, liquidity adds, mempool).  
-  * **Risk**: pre-trade simulation (honeypot, taxes, LP lock, ownership).  
-  * **Intelligence**: risk-adjusted scoring and decision-making.  
-  * **Execution**: submit transactions via private relays, apply slippage/gas strategies, manage sell exits.  
-  * **Portfolio**: enforce bankroll limits, daily loss caps, and circuit breakers.  
-* Communicates with the Django backend via event streaming (e.g., Redis).  
+**Risk if Ignored:** No external visibility → flying blind during development/testing
 
-### 3. AI Thought Log
-* Every decision is logged with:  
-  * **Signals** (raw values, weights, pass/fail checks).  
-  * **Narrative summary** (1–3 sentences of rationale).  
-  * **Verdict** (buy/sell/skip with context).  
-  * **Counterfactuals** (e.g., “Would trade if top_holder_concentration < 20%”).  
-* Serves as both an **audit trail** and an **educational tool** for understanding decisions.  
+**MVP Implementation:**
+- Single dashboard template with status cards
+- Manual bot start/stop buttons (POST endpoints)
+- Simple JavaScript polling for status updates
+- Bootstrap/Tailwind for basic styling
+- Integration with Django management command controls
 
----
+**Control Check:** Can start/stop trading engine from web interface, see current status
 
-## Risk & Intelligence System
-<!-- Risk management design with hard blocks, soft penalties, and execution safety -->
-
-An **industrial-grade risk system** to compete with professional bots:
-
-* **Hard Blocks**: honeypot detection, LP not locked, ownership not renounced, excessive buy/sell taxes, proxy contracts with no timelock.  
-* **Soft Penalties**: holder concentration too high, dev wallet funded by mixers, no verified source code, bytecode similarity to scams.  
-* **Market Microstructure**: pool depth, expected slippage, impact analysis.  
-* **Execution Safety**: gas strategy, max slippage enforcement, relay preference.  
-* **Post-trade Guards**: automatic stop-losses, profit-taking ladders, and circuit breakers.  
+**Files to Create/Update:**
+- `templates/dashboard/index.html` - Main dashboard template
+- `dashboard/views.py` - Dashboard view logic
+- `dashboard/static/dashboard/` - CSS/JS assets
+- `dashboard/management/commands/run_trading_engine.py` - Engine command
 
 ---
 
-## Competitive Landscape
-<!-- Market positioning vs existing bots -->
+### **Phase 3: Blockchain Connectivity (INTEGRATION PROOF)**
+**Priority:** CRITICAL - Proves external integration works
 
-Current leaders: **Maestro Bot, Banana Gun, Unibot**.  
-They focus on: Telegram UX, high execution speed, private mempool, basic risk checks, copy trading.  
+**Definition of Done:**
+- [ ] Web3 provider connects to testnet (Sepolia recommended)
+- [ ] Can query ETH balance for configured wallet
+- [ ] Can listen to PairCreated events on one DEX (Uniswap V2)
+- [ ] Events logged to Django models
+- [ ] Dashboard displays connection status and latest event
 
-**Our differentiators**:  
-* Rich **AI Thought Log** (transparent, auditable reasoning).  
-* Stronger **risk intelligence** with industrial-grade checks.  
-* Safer custody model (non-custodial default, optional vaults).  
-* **Professional dashboard** (Django-based) instead of Telegram-only.  
+**Risk if Ignored:** Trading engine has no live data → entire system useless
 
----
+**MVP Implementation:**
+- Single RPC provider connection (Alchemy/Infura)
+- Environment variable configuration for RPC URL and private key
+- Basic Web3 service class for blockchain interactions
+- Event listener for Uniswap V2 PairCreated events (testnet only)
+- Simple event storage in `TradingPair` model
 
-## Security Principles
-<!-- Security baselines: custody, auditability, separation -->
+**Control Check:** Dashboard shows current ETH balance + latest pair creation event
 
-* **Non-custodial default**: user connects wallet, grants limited permissions.  
-* **Optional custody mode**: hot wallet with strict spend limits, encrypted storage, instant withdrawal.  
-* **Auditability**: every decision, config, and risk check logged.  
-* **Separation of concerns**: secrets and signing isolated from web tier.  
-
----
-
-## Deployment & Operations
-<!-- Infra and deployment strategy -->
-
-* Services: Django backend, async engine, Postgres, Redis.  
-* Deployment: local dev, Docker Compose for staging, future k8s for production.  
-* Observability: engine latency metrics, provider health, trade success/failure, circuit breaker/error reporting.  
-* Backups: regular Postgres dumps, configuration versioning.  
+**Files to Create/Update:**
+- `trading/services/web3_service.py` - Blockchain interaction service
+- `trading/services/event_listener.py` - DEX event monitoring
+- `dexproject/settings.py` - Add Web3 configuration
+- `.env.example` - Document required environment variables
 
 ---
 
-## Extended Architecture
-<!-- All deeper architecture choices and clarifications -->
+### **Phase 4: Discovery System (DATA PIPELINE)**
+**Priority:** HIGH - Enables opportunity detection
 
-### Event Bus & Task Queue
-* **Celery + Redis** for retries, back-pressure, task chaining, and DLQs.  
-* Independent queues for `risk.urgent`, `execution.critical`, and `analytics.background`.  
-* DLQ convention (`*.dlq`) for failed tasks with monitoring/alerting.
+**Definition of Done:**
+- [ ] Captures new pair events from testnet DEX
+- [ ] Stores events in `TradingPair` model with metadata
+- [ ] Triggers risk assessment task for new pairs
+- [ ] Dashboard shows recent discoveries
+- [ ] Event processing latency < 30 seconds
 
-### Feature Store
-* Persist **decision-time feature vectors** for replay, learning, and explainability.  
-* Versioned and tied to config hash for reproducibility.
+**Risk if Ignored:** No opportunity detection → bot sits idle forever
 
-### Strategy Registry
-* Versioned **strategy presets** with export/import (YAML/JSON).  
-* Immutable past configs linked to trades/backtests; promote presets to live.
+**MVP Implementation:**
+- WebSocket or HTTP polling event listener
+- Celery task triggered on new pair discovery
+- Basic pair metadata extraction (tokens, liquidity)
+- Integration with existing risk assessment system
+- Simple discovery feed in dashboard
 
-### Learning Ops (Self-Learning Loop)
-* Persist features + actions.  
-* Evaluate after 5m/30m/24h windows (PnL, slippage, drawdown).  
-* Label decisions as good/neutral/bad.  
-* Methods: weight tuning (bandits), Bayesian optimization, later ML classifiers.  
-* Guardrails: staged rollout, paper testing first, drift caps.  
-* Changelog + explainability surfaced in UI.
+**Control Check:** New testnet pairs appear in Django admin within 30 seconds
 
-### Paper Trading & Replay
-* **Live Mirror**: simulate orders with live pool quotes.  
-* **Historical Replay**: run strategies against archived data.  
-* **Shadow Trading**: parallel paper/live comparison.  
-* Includes slippage/fee modeling, latency injection.  
-* Outputs: backtest runs, KPIs, comparative reports.  
-
-### Provider Manager
-* Pool of RPC/relay providers with latency metrics + failover.  
-* Auto-fallback and circuit-breaking per chain.  
-
-### Execution Guards
-* Enforce max slippage, gas ceilings, nonce handling, dry-run validation.  
-* Circuit-break on repeated failures.  
-
-### Wallet & Signing
-* **Phase 1:** Local encrypted keystore (path in env, password in keyring/vault).  
-* **Phase 2:** Hardware wallet integration (Ledger/Trezor).  
-* **Phase 3:** WalletConnect in dashboard.  
-* No secrets in code/images; vault-managed in production.  
-
-### Panic Button
-* Halts new decisions + cancels pending orders.  
-* Places protective exits (market-out or trailing stops).  
-* Freezes learning updates for the session.  
-* Auto-saves logs, trades, provider latency, config snapshot.  
-
-### Observability
-* **Prometheus + Grafana** baseline.  
-* Structured logging + OpenTelemetry tracing.  
-* Sentry/Rollbar for error aggregation.  
-* Critical alerts for execution failures; soft alerts for risk timeouts.  
-
-### Feature Flags & Circuit Breakers
-* Runtime toggles: paper mode, shadow trading, panic, model staging.  
-* Supports safe rollouts + instant kill-switches.  
-
-### Permissions & Auth (Future-Proof)
-* Minimal role model (execution, config promotion, panic).  
-* Single-user now; multi-user ready later.  
-
-### Frontend UX
-* Strategy diff viewer.  
-* Paper vs live A/B comparison charts.  
-* Provider/queue health panel.  
-* Desktop notifications for panic + circuit breaker events.  
+**Files to Create/Update:**
+- `trading/tasks/discovery.py` - Pair discovery tasks
+- `trading/models.py` - Update TradingPair model if needed
+- `dashboard/templates/` - Add discovery feed section
 
 ---
 
-## Technical Architecture Clarifications
-<!-- Direct answers to critical design choices -->
+### **Phase 5: Trading Engine MVP (END-TO-END PROOF)**
+**Priority:** CRITICAL - Proves complete execution pipeline
 
-* **Chains & DEXs (MVP):** Ethereum mainnet + Base. Uniswap V2/V3 on Ethereum; Uniswap V3 on Base.  
-* **Discovery:** WebSocket subscriptions via Alchemy/Infura/Ankr; HTTP fallback; archive nodes added later.  
-* **Engine separation:** Django for control; async engine for hot path; Redis + Celery for queues.  
-* **Risk checks:** Parallelized with per-check timeouts + provider failover.  
-* **DB strategy:** Django ORM for admin/API; asyncpg for engine.  
-* **Indexing:** General GIN + targeted indexes for hot JSONB keys.  
-* **Wallet security:** Env path for keystore, secrets in Vault/keyring, hardware wallet support later.  
-* **Monitoring:** Prometheus/Grafana baseline, with optional cloud observability later.  
-* **Latency SLAs:**  
-  - Discovery → risk start ≤ 150 ms  
-  - Risk eval ≤ 1200 ms (P95)  
-  - Decision → tx submit ≤ 300 ms  
-  - End-to-end ≤ 2s on L1, ≤ 1.2s on Base.  
+**Definition of Done:**
+- [ ] Django management command runs trading engine loop
+- [ ] Can execute one buy trade on testnet when manually triggered
+- [ ] Transaction appears on testnet block explorer
+- [ ] Trade recorded in Django models
+- [ ] Dashboard shows trade execution status
+- [ ] Engine can be started/stopped from dashboard
+
+**Risk if Ignored:** No execution capability → risk analysis without action is useless
+
+**MVP Implementation:**
+- Django management command with main trading loop
+- Manual trade trigger via dashboard button
+- Basic buy order execution (no automated decisions yet)
+- Transaction signing and submission
+- Trade result storage and status tracking
+
+**Control Check:** Can click "Test Trade" → see transaction on testnet Etherscan
+
+**Files to Create/Update:**
+- `trading/management/commands/run_trading_engine.py` - Main engine
+- `trading/services/execution_service.py` - Trade execution logic
+- `trading/tasks/execution.py` - Execution Celery tasks
+- Dashboard views for manual trade triggering
+
+---
+
+### **Phase 6: Risk + AI Thought Log Integration**
+**Priority:** MEDIUM - Provides transparency and debugging capability
+
+**Definition of Done:**
+- [ ] Risk assessment runs before any trade execution
+- [ ] AI Thought Log generated for each trading decision
+- [ ] Dashboard panel displays recent assessments and reasoning
+- [ ] Risk assessment results stored in analytics models
+- [ ] Clear pass/fail indicators with explanatory text
+
+**Risk if Ignored:** "Black box" trading → can't debug failures or improve decisions
+
+**MVP Implementation:**
+- Integration between discovery → risk assessment → trading decision
+- Thought log generation using existing analytics models
+- Dashboard panel showing last 10 risk assessments
+- Simple reasoning display (structured data + narrative)
+- Risk check result visualization
+
+**Control Check:** Every trade attempt shows corresponding risk assessment + thought log
+
+**Files to Create/Update:**
+- Update existing risk assessment integration
+- `analytics/services/thought_log_service.py` - Thought log generation
+- Dashboard templates for risk assessment display
 
 ---
 
-## Roadmap (MVP First Steps)
-<!-- Implementation order, not calendar -->
+### **Phase 7: Production Migration Checkpoint**
+**Priority:** BLOCKING - Required before any mainnet deployment
 
-1. Event bus + task queue foundation.  
-2. Discovery listeners (PairCreated, LiquidityAdded).  
-3. Risk v1: ownership, LP lock, honeypot, taxes, concentration.  
-4. Execution v1: private relay buy, slippage guard, gas strategy.  
-5. Sell v1: TP/SL exits.  
-6. AI Thought Log with structured features + rationale.  
-7. Dashboard: start/stop, portfolio view, Thought Log panel.  
-8. Safety defaults: bankroll cap, daily loss cap, blacklist.  
-9. Paper trading mirror.  
+**Definition of Done:**
+- [ ] PostgreSQL + Redis migration completed
+- [ ] Environment configuration for production
+- [ ] **Mainnet readiness checklist:** RPC redundancy, gas strategy, key rotation
+- [ ] Security review of key management
+- [ ] Performance testing of complete pipeline
+- [ ] Backup and monitoring setup
+
+**Risk if Ignored:** SQLite performance issues, data loss risk, security vulnerabilities
+
+**⚠️ Control Notes:**
+- Mainnet checklist required: Cannot flip to mainnet without explicit security review
+- Database migration: Full data migration plan with rollback procedures
+- Key management: Production-grade private key handling before mainnet access
+
+**Control Gate:** Complete review required before mainnet authorization
 
 ---
-DEX Auto-Trading Bot - Current Project Overview
-You have built a sophisticated Django-based DEX auto-trading bot designed for automated cryptocurrency trading on decentralized exchanges like Uniswap. The project is architected as a multi-app Django system with distinct modules handling different aspects of automated trading, risk management, wallet operations, and analytics.
-Core Architecture & Apps
-The project follows a modular Django structure with five main applications:
 
-trading/ - Handles trade execution, order management, and DEX interactions
-risk/ - Comprehensive risk assessment system (your main focus area)
-wallet/ - Wallet management, key storage, and transaction signing
-analytics/ - Performance tracking, reporting, and ML-based insights
-dashboard/ - Web interface for monitoring and control
+## Control Mechanisms
 
-The system uses PostgreSQL for data persistence, Redis for caching and task queues, Celery for asynchronous task processing, and REST APIs for external integrations. It's designed to handle high-frequency trading decisions with real-time risk assessment.
-Advanced Risk Management System
-The risk management module is the heart of the project and what we just completed. It implements an industrial-grade risk assessment pipeline that evaluates tokens before any trades are executed. The system performs multiple parallel checks including:
+### **Pre-Implementation Controls**
+- **DoD Lock-in:** Each phase DoD approved before coding starts
+- **Architecture Alignment:** All implementation must match locked architecture decisions
+- **Scope Discipline:** No features beyond MVP specification until DoD met
 
-Honeypot Detection - Identifies scam tokens that prevent selling
-Liquidity Analysis - Ensures sufficient liquidity and reasonable slippage
-Ownership Analysis - Checks contract ownership and admin functions
-Tax Analysis - Detects buy/sell taxes and transfer restrictions
-LP Token Security - Verifies liquidity provider token locks/burns
+### **Implementation Controls**
+- **DoD-First Development:** Hit DoD criteria then STOP - no gold-plating
+- **Control Check Gates:** Test each control check before proceeding to next phase
+- **Risk Escalation:** If "Risk if Ignored" materializes → immediate backtrack
 
-Each risk check runs as an independent Celery task that can execute in parallel, with a coordinator module that aggregates results and makes final trading decisions based on configurable risk profiles (Conservative/Moderate/Aggressive).
-Production-Ready Trading Engine
-The project is built for production deployment with comprehensive error handling, retry mechanisms, logging, and monitoring. It supports multiple risk profiles allowing different trading strategies, bulk token assessment for portfolio management, and real-time decision making with sub-second response times for critical checks.
-The codebase follows enterprise standards with proper type annotations, comprehensive docstrings, full test coverage, and Django best practices. It's designed to scale horizontally with multiple worker processes and can be deployed across multiple environments with environment-based configuration. The system is currently ready to integrate with actual Web3 providers and start live trading operations once RPC endpoints and private keys are configured.
+### **Security Controls**
+- **Hard Testnet Rule:** NO mainnet configuration until Phase 7 complete
+- **Environment Discipline:** All secrets in environment variables, no hardcoding
+- **Review Gates:** Manual approval required for any mainnet-related changes
+
+### **Quality Controls**
+- **File Structure:** Follow project instructions (800 lines max, docstrings, annotations)
+- **Error Handling:** Comprehensive error handling and logging per project standards
+- **Code Review:** VS Code + Pylance + flake8 compliance required
+
+---
+
+## Success Metrics
+
+### **Phase Completion Tracking**
+- [ ] Phase 1: Foundation (URLs/Views working)
+- [ ] Phase 2: Dashboard (Visual control interface)
+- [ ] Phase 3: Blockchain (Live data integration)
+- [ ] Phase 4: Discovery (Opportunity detection)
+- [ ] Phase 5: Execution (End-to-end trading)
+- [ ] Phase 6: Intelligence (Risk + reasoning)
+- [ ] Phase 7: Production (Migration + security)
+
+### **Control Health Indicators**
+- **Scope Creep:** Zero features implemented beyond current phase MVP
+- **Architecture Drift:** Zero deviations from locked architecture decisions
+- **Security Compliance:** Zero mainnet access before Phase 7 completion
+- **Quality Gates:** All code passes flake8, has docstrings, proper error handling
+
+---
+
+## Emergency Controls
+
+### **Project Halt Conditions**
+- Any security breach or mainnet exposure before Phase 7
+- Architecture decisions prove fundamentally flawed (requires co-PM review)
+- DoD criteria cannot be met within reasonable effort (scope too aggressive)
+
+### **Rollback Triggers**
+- Control checks failing consistently
+- Implementation diverging from MVP specifications
+- "Risk if Ignored" scenarios materializing
+
+### **Escalation Path**
+- Technical blockers: Document in project issues, seek co-PM guidance
+- Scope questions: Refer to this document, default to MVP approach
+- Architecture changes: Requires explicit co-PM approval and document update
+
+---
+
+*This document serves as the implementation contract. All development must align with these control frameworks and success criteria.*
