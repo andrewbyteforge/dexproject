@@ -90,14 +90,17 @@ class ProviderMetrics:
         self.consecutive_failures = 0
         self.last_success = datetime.now(timezone.utc)
         self.last_latency_ms = latency_ms
-        
+    
         # Update rolling average latency
         if self.average_latency_ms == 0:
             self.average_latency_ms = latency_ms
         else:
-            # Run synchronous operation in thread pool
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, operation, w3)
+            # Exponential moving average (alpha = 0.1)
+            self.average_latency_ms = 0.9 * self.average_latency_ms + 0.1 * latency_ms
+    
+        # Update uptime percentage
+        if self.total_requests > 0:
+            self.uptime_percentage = (self.successful_requests / self.total_requests) * 100
     
     async def http_request(self, method: str, url: str, **kwargs) -> Optional[Any]:
         """Make HTTP request with provider authentication and failover."""
@@ -356,21 +359,22 @@ async def get_latest_block(provider_manager: ProviderManager) -> Optional[int]:
 # Async context manager for provider lifecycle
 class ProviderManagerContext:
     """Context manager for ProviderManager lifecycle."""
-    
+   
     def __init__(self, chain_config: ChainConfig):
         self.chain_config = chain_config
         self.provider_manager: Optional[ProviderManager] = None
-    
+   
     async def __aenter__(self) -> ProviderManager:
         self.provider_manager = ProviderManager(self.chain_config)
         return self.provider_manager
-    
+   
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.provider_manager:
             await self.provider_manager.close()
- Exponential moving average (alpha = 0.1)
-            self.average_latency_ms = 0.9 * self.average_latency_ms + 0.1 * latency_ms
-        
+            
+        # Exponential moving average (alpha = 0.1)
+        self.average_latency_ms = 0.9 * self.average_latency_ms + 0.1 * latency_ms
+       
         # Update uptime percentage
         if self.total_requests > 0:
             self.uptime_percentage = (self.successful_requests / self.total_requests) * 100
