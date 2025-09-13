@@ -2,6 +2,63 @@
 
 ---
 
+## Market Positioning Strategy
+
+### **Primary Value Proposition**
+**"The Intelligent Trading Assistant That Can Also Snipe When Needed"**
+
+Not positioning as "fastest sniping bot" but as "smartest trading system with competitive speed"
+
+### **Target User Segments**
+
+**Primary Target - Smart Money Traders (Segments 3-4):**
+- Risk-conscious traders burned by honeypots and rugs
+- Professional traders needing transparency and compliance  
+- Educational users learning DeFi trading with guided intelligence
+- Portfolio managers requiring sophisticated risk controls
+
+**Secondary Target - Speed-Conscious Users (Segment 2):**
+- Users seeking "fast enough" execution with superior risk management
+- Traders wanting hybrid approach: speed when needed, intelligence when possible
+- Users dissatisfied with Telegram-only interfaces of commercial bots
+
+**Tertiary Target - Advanced Users:**
+- Developers wanting API access and customization
+- Institutional users requiring compliance and reporting
+- Multi-user teams needing professional features
+
+### **Competitive Differentiation Strategy**
+
+**Don't Compete On:** Pure execution speed (we'll lose)
+**Do Compete On:** 
+- Intelligence and educational value
+- Risk management and safety
+- Professional interface and features
+- Transparency and explainability
+- Customization and integration capabilities
+
+### **Go-to-Market Approach**
+
+**Phase 1 (Months 1-6): Prove Intelligence Value**
+- Focus entirely on smart lane superiority
+- Demonstrate measurable risk-adjusted return improvements
+- Build educational content around AI Thought Log insights
+- Target users already burned by commercial bot losses
+
+**Phase 2 (Months 6-12): Add Speed Competitiveness** 
+- Launch fast lane for time-sensitive opportunities
+- Market hybrid approach to users wanting "both"
+- Capture overflow from commercial bot capacity limits
+- Expand feature parity where ROI is clear
+
+**Phase 3 (Months 12+): Scale and Institutionalize**
+- Target institutional and professional users
+- Build network effects through user strategy sharing
+- Develop ecosystem of integrations and tools
+- Establish market leadership in intelligent trading segment
+
+---
+
 ## Vision & Competitive Positioning
 <!-- Project high-level vision with competitive reality -->
 The goal of this project is to develop a **dual-mode DEX auto-trading bot** that competes directly with commercial sniping services while providing superior intelligence and risk management.
