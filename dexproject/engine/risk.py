@@ -303,39 +303,122 @@ class LiquidityLockChecker:
         result.execution_time_ms = (time.time() - start_time) * 1000
         return result
     
-    async def _check_lp_lock_status(self, web3: Web3, pair_event: NewPairEvent) -> Dict[str, Any]:
+    async def _check_lp_lock_status(self, web3: Web3, pair_event: "NewPairEvent") -> Dict[str, Any]:
         """Check the status of LP token locks."""
         try:
-            # Basic ERC20 ABI for balance checking
+            # Basic ERC20 ABI for balance + supply
             erc20_abi = [
-                {"constant": True, "inputs": [{"name": "_owner", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "balance", "type": "uint256"}], "type": "function"},
-                {"constant": True, "inputs": [], "name": "totalSupply", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}
+                {
+                    "constant": True,
+                    "inputs": [{"name": "_owner", "type": "address"}],
+                    "name": "balanceOf",
+                    "outputs": [{"name": "balance", "type": "uint256"}],
+                    "type": "function",
+                },
+                {
+                    "constant": True,
+                    "inputs": [],
+                    "name": "totalSupply",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "type": "function",
+                },
             ]
             
-            # Get pool contract (LP token)
             pool_contract = web3.eth.contract(address=pair_event.pool_address, abi=erc20_abi)
             
-            # Check total supply
-            total_supply = pool_contract.functions.totalSupply().call()
+            # Run blocking calls in a thread
+            total_supply = await asyncio.to_thread(pool_contract.functions.totalSupply().call)
             
-            # Check if tokens are burned (sent to zero address)
-            zero_address = '0x0000000000000000000000000000000000000000'
-            burned_balance = pool_contract.functions.balanceOf(zero_address).call()
+            zero_address = "0x0000000000000000000000000000000000000000"
+            burned_balance = await asyncio.to_thread(pool_contract.functions.balanceOf(zero_address).call)
             
-            # Check common lock contract addresses (simplified)
-            known_lockers = [
-                '0x663A5C229c09b049E36dCc11a9B0d4a8Eb9db214',  # Unicrypt
-                '0x71B5759d73262FBb223956913ecF4ecC51057641',  # Team.finance
-            ]
+            known_lockers = {
+                "Unicrypt": "0x663A5C229c09b049E36dCc11a9B0d4a8Eb9db214",
+                "TeamFinance": "0x71B5759d73262FBb223956913ecF4ecC51057641",
+            }
             
             locked_balance = 0
-            lock_details = {}
+            lock_details: Dict[str, int] = {}
             
-            for locker in known_lockers:
+            for name, locker in known_lockers.items():
                 try:
-                    balance = pool_contract.functions.balanceOf(locker).call()
+                    balance = await asyncio.to_thread(pool_contract.functions.balanceOf(locker).call)
                     if balance > 0:
                         locked_balance += balance
-                        lock_details[locker] = balance
-                except:
-                    continue
+                        lock_details[name] = balance
+                except Exception as e:
+                    self.logger.debug(f"Failed to query locker {locker}: {e}")
+            
+            locked_pct = (locked_balance / total_supply * 100) if total_supply > 0 else 0
+            burned_pct = (burned_balance / total_supply * 100) if total_supply > 0 else 0
+            
+            return {
+                "total_supply": total_supply,
+                "burned_balance": burned_balance,
+                "burned_pct": burned_pct,
+                "locked_balance": locked_balance,
+                "locked_pct": locked_pct,
+                "lock_details": lock_details,
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error checking LP lock status for {pair_event.pool_address}: {e}", exc_info=True)
+            return {
+                "error": str(e),
+                "total_supply": 0,
+                "burned_balance": 0,
+                "burned_pct": 0,
+                "locked_balance": 0,
+                "locked_pct": 0,
+                "lock_details": {},
+            }
+
+    def _evaluate_lock_safety(self, lock_info: Dict[str, Any]) -> bool:
+        """Evaluate if liquidity lock is safe based on lock information."""
+        try:
+            # Check for errors in lock info
+            if "error" in lock_info:
+                self.logger.warning(f"Lock check had errors: {lock_info['error']}")
+                return False
+            
+            total_supply = lock_info.get("total_supply", 0)
+            if total_supply == 0:
+                self.logger.warning("Total supply is 0, cannot evaluate lock safety")
+                return False
+            
+            burned_pct = lock_info.get("burned_pct", 0)
+            locked_pct = lock_info.get("locked_pct", 0)
+            
+            # Calculate total secured percentage (burned + locked)
+            total_secured_pct = burned_pct + locked_pct
+            
+            # Safety thresholds
+            MIN_SECURED_PCT = 80.0  # At least 80% should be burned or locked
+            MIN_BURNED_PCT = 50.0   # Prefer at least 50% burned
+            
+            # Log the lock analysis
+            self.logger.info(
+                f"Lock analysis - Total secured: {total_secured_pct:.1f}%, "
+                f"Burned: {burned_pct:.1f}%, Locked: {locked_pct:.1f}%"
+            )
+            
+            # Primary check: total secured percentage
+            if total_secured_pct >= MIN_SECURED_PCT:
+                self.logger.info("Liquidity lock check PASSED - sufficient security")
+                return True
+            
+            # Secondary check: high burn rate can compensate for lower total
+            if burned_pct >= MIN_BURNED_PCT and total_secured_pct >= 70.0:
+                self.logger.info("Liquidity lock check PASSED - high burn rate")
+                return True
+            
+            # Failed safety checks
+            self.logger.warning(
+                f"Liquidity lock check FAILED - only {total_secured_pct:.1f}% secured "
+                f"(minimum required: {MIN_SECURED_PCT:.1f}%)"
+            )
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error evaluating lock safety: {e}")
+            return False
