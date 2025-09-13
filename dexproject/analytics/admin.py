@@ -5,7 +5,7 @@ This module configures Django admin interfaces for analytics models including
 decision contexts, features, thought logs, metrics, learning sessions,
 model performance tracking, and feature importance analysis.
 """
-
+from django.contrib import admin
 import logging
 from typing import Optional
 from django.contrib import admin
@@ -48,7 +48,7 @@ class DecisionContextAdmin(BaseModelAdmin):
     
     context_id_short.short_description = 'Context ID'
 
-
+@admin.display(description='Session ID')
 @admin.register(DecisionFeature)
 class DecisionFeatureAdmin(BaseModelAdmin):
     """
