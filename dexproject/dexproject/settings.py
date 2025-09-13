@@ -9,6 +9,15 @@ File: dexproject/dexproject/settings.py
 
 import os
 from pathlib import Path
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not installed - environment variables must be set manually
+    pass
+
 from decimal import Decimal
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
