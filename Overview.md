@@ -1,303 +1,316 @@
-# DEX Auto-Trading Bot – Project Overview (Control Framework Edition)
+# DEX Auto-Trading Bot – Project Overview (Competitive Hybrid Architecture)
 
 ---
 
-## Vision & Control Philosophy
-<!-- Project high-level vision with delivery discipline -->
-The goal of this project is to develop a **DEX auto-trading / sniping bot** that operates with industrial-grade risk controls and professional-level intelligence, while remaining explainable and user-friendly.
+## Vision & Competitive Positioning
+<!-- Project high-level vision with competitive reality -->
+The goal of this project is to develop a **dual-mode DEX auto-trading bot** that competes directly with commercial sniping services while providing superior intelligence and risk management.
 
-**Control Principle:** Every component has a **Definition of Done (DoD)**, clear **risk if ignored**, and **MVP specification** to prevent feature creep and ensure controlled delivery.
+**Core Competitive Strategy: Hybrid Approach**
+- **Fast Lane:** Sub-500ms execution for speed-critical sniping opportunities
+- **Smart Lane:** Comprehensive analysis for medium-term intelligent trades
+- **User Choice:** Risk/speed preference selection per strategy
 
 The system is designed to:
-* Monitor and analyze **new token launches** on decentralized exchanges (DEXs).
-* Automatically decide whether to buy, hold, or skip opportunities based on advanced risk checks and intelligence scoring.
-* Provide **explainable reasoning** for every decision in the form of an **AI Thought Log**.
-* Compete with commercial sniping bots in terms of speed, safety, and profit potential.
+* **Compete on speed** with commercial bots (Maestro, Banana Gun, Unibot) for pure sniping
+* **Differentiate on intelligence** with industrial-grade risk analysis and explainable reasoning
+* **Provide market coverage** across both high-frequency and intelligent trading segments
+* **Scale from single-user** to multi-user commercial deployment
 
 ---
 
-## Architecture Decisions (LOCKED)
-<!-- Foundational choices that drive implementation -->
+## Competitive Analysis & Market Reality
 
-### Database & Infrastructure
-**Decision:** SQLite → PostgreSQL + Redis migration later  
-**Rationale:** Fastest MVP path without DevOps overhead  
-**Migration Checkpoint:** Migrate before production deployment (defined in Phase 6)
+### **Commercial Competition Benchmarks:**
+- **Maestro Bot:** <200ms execution, private mempool, basic risk checks
+- **Banana Gun:** <150ms execution, MEV protection, Telegram-focused UX  
+- **Unibot:** <300ms execution, copy trading, social features
 
-### Trading Engine Process Model  
-**Decision:** Django management command (`python manage.py run_trading_engine`)  
-**Rationale:** Lowest friction, Django ecosystem integration, dashboard control  
-**Evolution Path:** Option to separate async service once stability proven
+### **Market Requirements for Competitiveness:**
+- **Discovery Latency:** <100ms for mempool monitoring
+- **Risk Assessment:** <300ms for fast lane, unlimited for smart lane
+- **Execution Latency:** <500ms total end-to-end
+- **Infrastructure:** Private relays, gas optimization, MEV protection
 
-### Frontend Strategy
-**Decision:** Hybrid - Django templates + REST API foundation  
-**Rationale:** Immediate visibility via templates, future-proofed with APIs  
-**API Requirement:** Minimum one working API endpoint per app (even if unused initially)
-
-### Security Boundaries
-**Decision:** Testnet-only + environment variables for keys/endpoints  
-**Hard Rule:** **NO MAINNET TRADES** until all DoD criteria met and reviewed  
-**Key Management:** Environment variables for MVP, keystore evolution later
+### **Our Competitive Advantages:**
+- **Dual-mode architecture** serves both speed and intelligence markets
+- **Transparent reasoning** via AI Thought Log (unique differentiator)
+- **Industrial risk management** prevents costly mistakes
+- **Professional dashboard** vs Telegram-only interfaces
+- **Open architecture** allows customization and integration
 
 ---
 
-## Control Framework Implementation Plan
+## Critical Architecture: Hybrid Execution Engine
+
+### **Fast Lane Architecture (Speed-Critical Path)**
+```
+Mempool Monitor → Fast Risk Cache → Direct Execution
+Target: <500ms end-to-end
+```
+
+**Components:**
+- **Mempool WebSocket Streams:** Real-time pending transaction monitoring
+- **Fast Risk Engine:** Pre-computed risk scores, cached contract analysis
+- **Direct Execution:** Bypass Django ORM, direct Web3 calls
+- **Private Relay Integration:** Flashbots/MEV protection
+- **Gas Optimization Engine:** Dynamic gas pricing and nonce management
+
+### **Smart Lane Architecture (Intelligence-First Path)**  
+```
+Discovery → Full Risk Analysis → Strategic Decision → Execution
+Target: <5s end-to-end with comprehensive analysis
+```
+
+**Components:**
+- **Comprehensive Risk Assessment:** All 8 risk check categories
+- **AI Thought Log Generation:** Full reasoning and explainability
+- **Strategic Position Sizing:** Portfolio optimization and risk management
+- **Multi-timeframe Analysis:** 5min, 30min, 4hr technical analysis
+- **Advanced Exit Strategies:** Trailing stops, profit ladders, market structure
+
+### **Shared Infrastructure**
+- **Provider Manager:** Multi-RPC failover with latency optimization
+- **Wallet Security:** Hardware wallet integration, keystore management
+- **Dashboard Control:** Unified interface for both execution modes
+- **Analytics Engine:** Performance tracking across both lanes
+
+---
+
+## Core Goals (Updated for Competitiveness)
+
+1. **Speed (Fast Lane)** – Sub-500ms execution for sniping opportunities
+2. **Intelligence (Smart Lane)** – Comprehensive analysis for strategic positions  
+3. **Safety (Both Lanes)** – Industrial-grade risk management prevents losses
+4. **Transparency** – AI Thought Log explains every decision with full reasoning
+5. **Profitability** – Optimized execution across speed/intelligence spectrum
+
+---
+
+## Critical Missing Components (Implementation Required)
+
+### **1. Mempool Integration Module**
+**Priority: CRITICAL for Fast Lane**
+
+**Implementation Plan:**
+- WebSocket mempool monitoring via Alchemy/Ankr
+- Pending transaction analysis and filtering
+- Front-running detection and protection
+- Private relay routing (Flashbots integration)
+
+**Files to Create:**
+- `engine/mempool/monitor.py` - Real-time mempool streaming
+- `engine/mempool/analyzer.py` - Transaction analysis and filtering  
+- `engine/mempool/relay.py` - Private relay integration
+- `engine/mempool/protection.py` - MEV and sandwich attack protection
+
+### **2. High-Frequency Execution Engine**
+**Priority: CRITICAL for Fast Lane**
+
+**Implementation Plan:**
+- Async engine in pure Python (asyncio) for <500ms targets
+- In-memory risk caching for fast decisions
+- Direct Web3 connectivity bypassing Django ORM
+- Optimized gas strategies and nonce management
+
+**Files to Create:**
+- `engine/execution/fast_engine.py` - High-speed execution loop
+- `engine/execution/gas_optimizer.py` - Dynamic gas pricing
+- `engine/execution/nonce_manager.py` - Transaction sequencing
+- `engine/cache/risk_cache.py` - In-memory risk data
+
+### **3. Market Making & Advanced Strategies**
+**Priority: HIGH for differentiation**
+
+**Implementation Plan:**
+- Cross-DEX arbitrage detection
+- Liquidity provision strategies
+- Copy trading engine for social features
+- Advanced technical analysis integration
+
+**Files to Create:**
+- `engine/strategies/arbitrage.py` - Cross-DEX opportunity detection
+- `engine/strategies/market_making.py` - Liquidity provision logic
+- `engine/strategies/copy_trading.py` - Social trading features
+- `engine/analysis/technical.py` - Advanced TA indicators
+
+### **4. Real-time Analytics & Monitoring**
+**Priority: MEDIUM for competitive UX**
+
+**Implementation Plan:**
+- Real-time P&L tracking
+- Performance benchmarking vs market
+- Live execution metrics and latency monitoring
+- Mobile-responsive dashboard for monitoring
+
+**Files to Create:**
+- `analytics/realtime/pnl_tracker.py` - Live profit/loss calculation
+- `analytics/realtime/performance.py` - Benchmark tracking
+- `dashboard/realtime/websockets.py` - Live dashboard updates
+- `dashboard/mobile/responsive.py` - Mobile interface optimization
+
+---
+
+## Updated Architecture Decisions (Hybrid-Optimized)
+
+### **Execution Engine Architecture**
+**Decision:** Dual-mode hybrid system
+- **Fast Lane:** Async Python engine with direct Web3 calls
+- **Smart Lane:** Django management command with full analysis
+- **Shared:** Common infrastructure for both modes
+
+### **Database Strategy**  
+**Decision:** Hybrid data storage
+- **Fast Lane:** In-memory caching + minimal DB writes
+- **Smart Lane:** Full Django ORM with comprehensive logging
+- **Shared:** PostgreSQL for persistence, Redis for caching
+
+### **Frontend Strategy**
+**Decision:** Progressive Web App (PWA)
+- Real-time dashboard with WebSocket updates
+- Mobile-responsive design for monitoring
+- REST API foundation for future native apps
+
+### **Risk Management Strategy**
+**Decision:** Tiered risk system
+- **Fast Lane:** 2-3 critical checks (<300ms)
+- **Smart Lane:** Full 8-category analysis (<5s)
+- **Shared:** Risk score caching and learning system
+
+---
+
+## Implementation Phases (Updated for Competitiveness)
+
+### **Phase 0: Architecture Foundation (NEW)**
+**Priority:** CRITICAL - Establishes competitive architecture
+
+**Definition of Done:**
+- [ ] Hybrid engine architecture designed and documented
+- [ ] Fast lane vs smart lane execution paths defined
+- [ ] Mempool integration strategy finalized
+- [ ] Performance benchmarks established vs commercial competitors
 
 ### **Phase 1: Foundation URLs & Views**
-**Priority:** CRITICAL PATH - Everything downstream blocked until complete
+**Priority:** CRITICAL PATH (unchanged from original)
+
+### **Phase 2: Dashboard with Mode Selection**
+**Priority:** HIGH - User interface for hybrid approach
 
 **Definition of Done:**
-- [ ] All 5 apps have at least one working view + API endpoint
-- [ ] URL routing complete for: `/dashboard/`, `/trading/`, `/risk/`, `/wallet/`, `/analytics/`
-- [ ] Health check endpoint per app returns 200 OK
-- [ ] Django admin accessible for all models
+- [ ] Dashboard with Fast Lane / Smart Lane toggle
+- [ ] Real-time execution metrics for both modes
+- [ ] Performance comparison dashboard (fast vs smart trades)
+- [ ] Mode-specific configuration panels
 
-**Risk if Ignored:** No way to interact with system → development paralyzed
-
-**MVP Implementation:**
-- Basic health check endpoints (`/app/api/health/`)
-- Simple list views for core models (using Django generic views)
-- Placeholder templates with "Coming Soon" messaging
-- REST API skeleton with at least one GET endpoint per app
-
-**Control Check:** Can navigate to each app URL without 404 errors
-
-**Files to Create/Update:**
-- `dexproject/dexproject/urls.py` - Add app URL includes
-- `dashboard/urls.py` + `views.py` - Dashboard routes and views
-- `trading/urls.py` + `views.py` - Trading API endpoints
-- `risk/urls.py` + `views.py` - Risk assessment endpoints
-- `wallet/urls.py` + `views.py` - Wallet status endpoints
-- `analytics/urls.py` + `views.py` - Analytics/reporting endpoints
-
----
-
-### **Phase 2: Minimal Dashboard (IMMEDIATE FEEDBACK)**
-**Priority:** HIGH - Provides external visibility into system state
+### **Phase 3: Mempool Integration (NEW)**
+**Priority:** CRITICAL for Fast Lane competitiveness
 
 **Definition of Done:**
-- [ ] Django template with bot start/stop controls
-- [ ] System status display (engine running/stopped, queue health)
-- [ ] Basic portfolio display (positions, P&L placeholder)
-- [ ] Real-time status updates (polling or WebSocket)
-- [ ] Navigation to other app sections
+- [ ] WebSocket mempool monitoring operational
+- [ ] Pending transaction filtering and analysis
+- [ ] Private relay integration (Flashbots)
+- [ ] MEV protection mechanisms active
 
-**Risk if Ignored:** No external visibility → flying blind during development/testing
-
-**MVP Implementation:**
-- Single dashboard template with status cards
-- Manual bot start/stop buttons (POST endpoints)
-- Simple JavaScript polling for status updates
-- Bootstrap/Tailwind for basic styling
-- Integration with Django management command controls
-
-**Control Check:** Can start/stop trading engine from web interface, see current status
-
-**Files to Create/Update:**
-- `templates/dashboard/index.html` - Main dashboard template
-- `dashboard/views.py` - Dashboard view logic
-- `dashboard/static/dashboard/` - CSS/JS assets
-- `dashboard/management/commands/run_trading_engine.py` - Engine command
-
----
-
-### **Phase 3: Blockchain Connectivity (INTEGRATION PROOF)**
-**Priority:** CRITICAL - Proves external integration works
+### **Phase 4: Fast Lane Execution Engine (NEW)**
+**Priority:** CRITICAL for competitive speed
 
 **Definition of Done:**
-- [ ] Web3 provider connects to testnet (Sepolia recommended)
-- [ ] Can query ETH balance for configured wallet
-- [ ] Can listen to PairCreated events on one DEX (Uniswap V2)
-- [ ] Events logged to Django models
-- [ ] Dashboard displays connection status and latest event
+- [ ] Sub-500ms execution capability demonstrated
+- [ ] In-memory risk caching operational
+- [ ] Direct Web3 execution bypassing Django
+- [ ] Gas optimization and nonce management
 
-**Risk if Ignored:** Trading engine has no live data → entire system useless
-
-**MVP Implementation:**
-- Single RPC provider connection (Alchemy/Infura)
-- Environment variable configuration for RPC URL and private key
-- Basic Web3 service class for blockchain interactions
-- Event listener for Uniswap V2 PairCreated events (testnet only)
-- Simple event storage in `TradingPair` model
-
-**Control Check:** Dashboard shows current ETH balance + latest pair creation event
-
-**Files to Create/Update:**
-- `trading/services/web3_service.py` - Blockchain interaction service
-- `trading/services/event_listener.py` - DEX event monitoring
-- `dexproject/settings.py` - Add Web3 configuration
-- `.env.example` - Document required environment variables
-
----
-
-### **Phase 4: Discovery System (DATA PIPELINE)**
-**Priority:** HIGH - Enables opportunity detection
+### **Phase 5: Smart Lane Integration (ENHANCED)**
+**Priority:** HIGH for differentiation
 
 **Definition of Done:**
-- [ ] Captures new pair events from testnet DEX
-- [ ] Stores events in `TradingPair` model with metadata
-- [ ] Triggers risk assessment task for new pairs
-- [ ] Dashboard shows recent discoveries
-- [ ] Event processing latency < 30 seconds
+- [ ] Full risk assessment pipeline (<5s)
+- [ ] AI Thought Log generation for smart trades
+- [ ] Strategic position sizing and portfolio management
+- [ ] Advanced exit strategies and risk controls
 
-**Risk if Ignored:** No opportunity detection → bot sits idle forever
-
-**MVP Implementation:**
-- WebSocket or HTTP polling event listener
-- Celery task triggered on new pair discovery
-- Basic pair metadata extraction (tokens, liquidity)
-- Integration with existing risk assessment system
-- Simple discovery feed in dashboard
-
-**Control Check:** New testnet pairs appear in Django admin within 30 seconds
-
-**Files to Create/Update:**
-- `trading/tasks/discovery.py` - Pair discovery tasks
-- `trading/models.py` - Update TradingPair model if needed
-- `dashboard/templates/` - Add discovery feed section
-
----
-
-### **Phase 5: Trading Engine MVP (END-TO-END PROOF)**
-**Priority:** CRITICAL - Proves complete execution pipeline
+### **Phase 6: Performance Optimization & Competitive Testing**
+**Priority:** HIGH for market readiness
 
 **Definition of Done:**
-- [ ] Django management command runs trading engine loop
-- [ ] Can execute one buy trade on testnet when manually triggered
-- [ ] Transaction appears on testnet block explorer
-- [ ] Trade recorded in Django models
-- [ ] Dashboard shows trade execution status
-- [ ] Engine can be started/stopped from dashboard
+- [ ] Speed benchmarking vs commercial competitors
+- [ ] Latency optimization and performance tuning
+- [ ] A/B testing between fast and smart lane strategies
+- [ ] Competitive feature parity assessment
 
-**Risk if Ignored:** No execution capability → risk analysis without action is useless
-
-**MVP Implementation:**
-- Django management command with main trading loop
-- Manual trade trigger via dashboard button
-- Basic buy order execution (no automated decisions yet)
-- Transaction signing and submission
-- Trade result storage and status tracking
-
-**Control Check:** Can click "Test Trade" → see transaction on testnet Etherscan
-
-**Files to Create/Update:**
-- `trading/management/commands/run_trading_engine.py` - Main engine
-- `trading/services/execution_service.py` - Trade execution logic
-- `trading/tasks/execution.py` - Execution Celery tasks
-- Dashboard views for manual trade triggering
-
----
-
-### **Phase 6: Risk + AI Thought Log Integration**
-**Priority:** MEDIUM - Provides transparency and debugging capability
+### **Phase 7: Production Deployment (ENHANCED)**
+**Priority:** BLOCKING for mainnet operation
 
 **Definition of Done:**
-- [ ] Risk assessment runs before any trade execution
-- [ ] AI Thought Log generated for each trading decision
-- [ ] Dashboard panel displays recent assessments and reasoning
-- [ ] Risk assessment results stored in analytics models
-- [ ] Clear pass/fail indicators with explanatory text
-
-**Risk if Ignored:** "Black box" trading → can't debug failures or improve decisions
-
-**MVP Implementation:**
-- Integration between discovery → risk assessment → trading decision
-- Thought log generation using existing analytics models
-- Dashboard panel showing last 10 risk assessments
-- Simple reasoning display (structured data + narrative)
-- Risk check result visualization
-
-**Control Check:** Every trade attempt shows corresponding risk assessment + thought log
-
-**Files to Create/Update:**
-- Update existing risk assessment integration
-- `analytics/services/thought_log_service.py` - Thought log generation
-- Dashboard templates for risk assessment display
+- [ ] Full infrastructure migration (PostgreSQL + Redis)
+- [ ] Comprehensive monitoring and alerting
+- [ ] Security review for both execution paths
+- [ ] Performance validation under load
+- [ ] Mainnet readiness with competitive safeguards
 
 ---
 
-### **Phase 7: Production Migration Checkpoint**
-**Priority:** BLOCKING - Required before any mainnet deployment
+## Control Framework (Enhanced for Competitive Requirements)
 
-**Definition of Done:**
-- [ ] PostgreSQL + Redis migration completed
-- [ ] Environment configuration for production
-- [ ] **Mainnet readiness checklist:** RPC redundancy, gas strategy, key rotation
-- [ ] Security review of key management
-- [ ] Performance testing of complete pipeline
-- [ ] Backup and monitoring setup
+### **Speed Performance Gates**
+- **Fast Lane SLA:** <500ms end-to-end execution (P95)
+- **Smart Lane SLA:** <5s comprehensive analysis (P95)
+- **Discovery SLA:** <100ms mempool event processing (P95)
+- **Risk Cache SLA:** <50ms cached risk score retrieval (P95)
 
-**Risk if Ignored:** SQLite performance issues, data loss risk, security vulnerabilities
+### **Competitive Benchmarking Requirements**
+- **Weekly speed tests** against Maestro Bot, Banana Gun, Unibot
+- **Monthly feature gap analysis** vs commercial competitors
+- **Quarterly market share assessment** in target user segments
+- **Continuous monitoring** of competitor updates and new features
 
-**⚠️ Control Notes:**
-- Mainnet checklist required: Cannot flip to mainnet without explicit security review
-- Database migration: Full data migration plan with rollback procedures
-- Key management: Production-grade private key handling before mainnet access
-
-**Control Gate:** Complete review required before mainnet authorization
-
----
-
-## Control Mechanisms
-
-### **Pre-Implementation Controls**
-- **DoD Lock-in:** Each phase DoD approved before coding starts
-- **Architecture Alignment:** All implementation must match locked architecture decisions
-- **Scope Discipline:** No features beyond MVP specification until DoD met
-
-### **Implementation Controls**
-- **DoD-First Development:** Hit DoD criteria then STOP - no gold-plating
-- **Control Check Gates:** Test each control check before proceeding to next phase
-- **Risk Escalation:** If "Risk if Ignored" materializes → immediate backtrack
-
-### **Security Controls**
-- **Hard Testnet Rule:** NO mainnet configuration until Phase 7 complete
-- **Environment Discipline:** All secrets in environment variables, no hardcoding
-- **Review Gates:** Manual approval required for any mainnet-related changes
-
-### **Quality Controls**
-- **File Structure:** Follow project instructions (800 lines max, docstrings, annotations)
-- **Error Handling:** Comprehensive error handling and logging per project standards
-- **Code Review:** VS Code + Pylance + flake8 compliance required
+### **Quality Gates**
+- **Fast Lane:** Maximum 2 critical risk checks, optimized for speed
+- **Smart Lane:** Full 8-category risk analysis, optimized for accuracy
+- **Shared:** No degradation of either mode when both active
+- **Failover:** Smart lane backup if fast lane fails or overloaded
 
 ---
 
-## Success Metrics
+## Success Metrics (Competitive-Focused)
 
-### **Phase Completion Tracking**
-- [ ] Phase 1: Foundation (URLs/Views working)
-- [ ] Phase 2: Dashboard (Visual control interface)
-- [ ] Phase 3: Blockchain (Live data integration)
-- [ ] Phase 4: Discovery (Opportunity detection)
-- [ ] Phase 5: Execution (End-to-end trading)
-- [ ] Phase 6: Intelligence (Risk + reasoning)
-- [ ] Phase 7: Production (Migration + security)
+### **Speed Competitiveness**
+- Fast Lane execution <500ms (vs competitor <300ms benchmark)
+- Mempool discovery latency <100ms (market requirement)
+- Gas optimization saves >10% vs naive strategies
+- MEV protection prevents >95% of detected attacks
 
-### **Control Health Indicators**
-- **Scope Creep:** Zero features implemented beyond current phase MVP
-- **Architecture Drift:** Zero deviations from locked architecture decisions
-- **Security Compliance:** Zero mainnet access before Phase 7 completion
-- **Quality Gates:** All code passes flake8, has docstrings, proper error handling
+### **Intelligence Differentiation**  
+- Smart Lane win rate >70% (vs market average 50-60%)
+- Risk system prevents >90% of honeypot/rug pulls
+- AI Thought Log provides actionable insights rated >4/5 by users
+- Portfolio management reduces drawdowns >30% vs pure sniping
 
----
-
-## Emergency Controls
-
-### **Project Halt Conditions**
-- Any security breach or mainnet exposure before Phase 7
-- Architecture decisions prove fundamentally flawed (requires co-PM review)
-- DoD criteria cannot be met within reasonable effort (scope too aggressive)
-
-### **Rollback Triggers**
-- Control checks failing consistently
-- Implementation diverging from MVP specifications
-- "Risk if Ignored" scenarios materializing
-
-### **Escalation Path**
-- Technical blockers: Document in project issues, seek co-PM guidance
-- Scope questions: Refer to this document, default to MVP approach
-- Architecture changes: Requires explicit co-PM approval and document update
+### **Market Positioning**
+- Capture >5% of testnet sniping opportunities (speed validation)
+- Demonstrate >20% better risk-adjusted returns vs competitors
+- User retention >80% after 30-day trial period
+- Feature parity with top 3 commercial competitors
 
 ---
 
-*This document serves as the implementation contract. All development must align with these control frameworks and success criteria.*
+## Risk Mitigation (Competitive Reality)
+
+### **Speed Development Risks**
+- **Risk:** Fast lane targets prove technically infeasible
+- **Mitigation:** Smart lane provides fallback positioning
+- **Escalation:** Monthly speed benchmarking with competitor analysis
+
+### **Feature Gap Risks**
+- **Risk:** Competitors release features faster than we can match
+- **Mitigation:** Hybrid approach allows rapid feature deployment in appropriate lane
+- **Escalation:** Quarterly competitive analysis with feature roadmap updates
+
+### **Market Positioning Risks**
+- **Risk:** Hybrid approach confuses users vs simple fast-only bots
+- **Mitigation:** Clear mode selection with performance guarantees
+- **Escalation:** User feedback integration and UX optimization
+
+---
+
+*This document serves as the competitive implementation contract, ensuring we build a system capable of competing with commercial sniping bots while providing superior intelligence and risk management.*
