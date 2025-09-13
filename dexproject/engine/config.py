@@ -12,6 +12,8 @@ import logging
 import asyncio
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
+import django
+from django.conf import settings
 
 # Import shared components for Django integration
 import sys
@@ -62,7 +64,16 @@ class EngineConfig:
         self.log_level = os.getenv("LOG_LEVEL", "INFO").upper()
         
         # Target Chains (comma-separated chain IDs)
-        chain_ids_str = os.getenv("TARGET_CHAINS", "8453,1")  # Base + Ethereum
+        # Get target chains from Django settings, with environment override
+        if hasattr(settings, 'SUPPORTED_CHAINS'):
+            default_chains = ",".join(str(chain_id) for chain_id in settings.SUPPORTED_CHAINS)
+        elif hasattr(settings, 'DEFAULT_CHAIN_ID'):
+            default_chains = str(settings.DEFAULT_CHAIN_ID)
+        else:
+            # Ultimate fallback for testnet mode
+            default_chains = "84532" if os.getenv('TESTNET_MODE', 'True').lower() == 'true' else "8453,1"
+
+        chain_ids_str = os.getenv("TARGET_CHAINS", default_chains)  # Base + Ethereum
         self.target_chains = [int(cid.strip()) for cid in chain_ids_str.split(",")]
         
         # Discovery Settings
@@ -108,6 +119,19 @@ class EngineConfig:
         
         logger.info(f"Engine configuration loaded for {len(self.target_chains)} target chains in {self.trading_mode} mode")
     
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _setup_django_integration(self) -> None:
         """Set up Django integration for chain configuration."""
         try:
