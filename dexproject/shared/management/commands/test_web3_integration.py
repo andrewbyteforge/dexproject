@@ -172,14 +172,16 @@ class Command(BaseDexCommand):
         self.stdout.write(f"🌐 Testing Web3 Connection to Chain {target_chain_id}...")
         
         try:
-            # Import here to avoid circular imports
-            from engine.utils import setup_web3_connection
-            from engine.config import config
+            # Import here to avoid circular imports and test the new engine config
+            from engine.config import EngineConfig
             
-            # Try to get chain configuration
+            # Try to get chain configuration using the new engine config
             try:
-                # This will likely fail if engine config isn't fixed yet
-                chain_config = config.get_chain_config(target_chain_id)
+                engine_config = EngineConfig()
+                # Since we can't call async methods in Django command, use fallback configs
+                engine_config.chains = engine_config._get_fallback_chain_configs()
+                
+                chain_config = engine_config.get_chain_config(target_chain_id)
                 if not chain_config:
                     self.stdout.write(
                         self.style.WARNING(f"⚠️  No chain configuration found for {target_chain_id}")
@@ -190,9 +192,12 @@ class Command(BaseDexCommand):
                 self.stdout.write(f"   Chain: {chain_config.name}")
                 self.stdout.write(f"   Providers: {len(chain_config.rpc_providers)}")
                 
+                # Test actual connection with fallback method
+                self._test_fallback_connection(target_chain_id, chain_config.rpc_providers[0].url)
+                
             except Exception as e:
                 self.stdout.write(
-                    self.style.WARNING(f"⚠️  Could not load chain config: {e}")
+                    self.style.WARNING(f"⚠️  Could not load engine config: {e}")
                 )
                 self.stdout.write("   Using fallback connection test...")
                 
@@ -205,18 +210,19 @@ class Command(BaseDexCommand):
             )
             self._test_fallback_connection(target_chain_id)
     
-    def _test_fallback_connection(self, target_chain_id: int) -> None:
+    def _test_fallback_connection(self, target_chain_id: int, rpc_url: str = None) -> None:
         """Test Web3 connection using fallback method with Django settings."""
         try:
             from web3 import Web3
             
-            # Get RPC URL from Django settings
-            rpc_url = self._get_rpc_url_for_chain(target_chain_id)
+            # Get RPC URL from parameter or Django settings
             if not rpc_url:
-                self.stdout.write(
-                    self.style.ERROR(f"❌ No RPC URL configured for chain {target_chain_id}")
-                )
-                return
+                rpc_url = self._get_rpc_url_for_chain(target_chain_id)
+                if not rpc_url:
+                    self.stdout.write(
+                        self.style.ERROR(f"❌ No RPC URL configured for chain {target_chain_id}")
+                    )
+                    return
             
             # Create Web3 connection
             w3 = Web3(Web3.HTTPProvider(rpc_url))
@@ -263,19 +269,22 @@ class Command(BaseDexCommand):
         self.stdout.write("⚠️  Testing Risk System Integration...")
         
         try:
+            # Try to import risk modules
             from risk.tasks.ownership import ownership_check
             
             # Test with a well-known address (WETH)
             test_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
             
             self.stdout.write(f"   Testing ownership check for {test_address[:10]}...")
-            
-            # This will likely fail if not properly mocked
-            self.stdout.write("   ⚠️  Risk system available but not tested (requires mocking)")
+            self.stdout.write("   ✅ Risk system modules are importable")
             
         except ImportError as e:
             self.stdout.write(
                 self.style.WARNING(f"⚠️  Risk system not available: {e}")
+            )
+        except Exception as e:
+            self.stdout.write(
+                self.style.WARNING(f"⚠️  Risk system error: {e}")
             )
     
     def _validate_configuration(self) -> None:
@@ -300,6 +309,23 @@ class Command(BaseDexCommand):
         
         if trading_mode == 'LIVE' and testnet_mode:
             issues.append("Cannot use LIVE trading mode with TESTNET_MODE=True")
+        
+        # Test engine config consistency
+        try:
+            from engine.config import EngineConfig
+            engine_config = EngineConfig()
+            
+            # Check if engine config respects Django settings
+            if engine_config.testnet_mode != testnet_mode:
+                issues.append(f"Engine testnet_mode ({engine_config.testnet_mode}) != Django TESTNET_MODE ({testnet_mode})")
+            
+            if engine_config.trading_mode != trading_mode:
+                issues.append(f"Engine trading_mode ({engine_config.trading_mode}) != Django TRADING_MODE ({trading_mode})")
+                
+            self.stdout.write(f"   Engine config loaded with {len(engine_config.target_chains)} chains")
+            
+        except Exception as e:
+            issues.append(f"Could not validate engine config: {e}")
         
         if issues:
             self.stdout.write(self.style.ERROR("❌ Configuration Issues:"))

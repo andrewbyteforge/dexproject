@@ -166,58 +166,125 @@ class ChainConfigBridge:
         return {}
     
     async def _fetch_via_models(self) -> Dict[int, ChainConfig]:
-        """Fetch configurations via direct Django model access."""
-        try:
-            # Import Django models (only when needed)
-            import django
-            import os
+            """Fetch configurations via direct Django model access."""
+            from asgiref.sync import sync_to_async
             
-            # Configure Django if not already configured
-            if not django.conf.settings.configured:
-                os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'dexproject.settings')
-                django.setup()
+            @sync_to_async
+            def get_chains_from_django():
+                """Synchronous function to get chains from Django models."""
+                try:
+                    from trading.models import Chain, DEX
+                    chains = Chain.objects.filter(is_active=True)
+                    results = []
+                    for chain in chains:
+                        dexes = DEX.objects.filter(chain=chain, is_active=True)
+                        results.append({
+                            'chain_id': chain.chain_id,
+                            'name': chain.name,
+                            'rpc_url': chain.rpc_url,
+                            'fallback_rpc_urls': chain.fallback_rpc_urls or [],
+                            'block_time_seconds': chain.block_time_seconds,
+                            'dexes': list(dexes.values(
+                                'name', 'router_address', 'factory_address', 'fee_percentage'
+                            ))
+                        })
+                    return results
+                except Exception as e:
+                    self.logger.error(f"Django model access error: {e}")
+                    raise
             
-            from trading.models import Chain, DEX
-            
-            configs = {}
-            
-            # Get all active chains
-            chains = Chain.objects.filter(is_active=True)
-            
-            for chain in chains:
-                # Get DEXes for this chain
-                dexes = DEX.objects.filter(chain=chain, is_active=True)
+            try:
+                # Use sync_to_async to access Django models
+                django_chains = await get_chains_from_django()
+                configs = {}
                 
-                # Build RPC providers list
-                rpc_providers = self._build_rpc_providers(chain)
+                for chain_data in django_chains:
+                    # Build RPC providers from chain data
+                    rpc_providers = [
+                        RPCProvider(
+                            name=f"{chain_data['name'].lower().replace(' ', '_')}_primary",
+                            url=chain_data['rpc_url'],
+                            priority=1,
+                            is_paid=False,
+                        )
+                    ]
+                    
+                    # Add fallback URLs if available
+                    for i, fallback_url in enumerate(chain_data.get('fallback_rpc_urls', [])):
+                        if fallback_url:
+                            rpc_providers.append(
+                                RPCProvider(
+                                    name=f"{chain_data['name'].lower().replace(' ', '_')}_fallback_{i+1}",
+                                    url=fallback_url,
+                                    priority=i+2,
+                                    is_paid=False,
+                                )
+                            )
+                    
+                    # Extract DEX information (get first available DEX for addresses)
+                    uniswap_v3_factory = ''
+                    uniswap_v3_router = ''
+                    uniswap_v2_factory = ''
+                    uniswap_v2_router = ''
+                    weth_address = ''
+                    usdc_address = ''
+                    
+                    for dex in chain_data['dexes']:
+                        if 'v3' in dex['name'].lower():
+                            uniswap_v3_factory = dex.get('factory_address', '')
+                            uniswap_v3_router = dex.get('router_address', '')
+                            # Extract WETH/USDC from metadata if available
+                            metadata = dex.get('dex_metadata') or {}
+                            if isinstance(metadata, dict):
+                                weth_address = metadata.get('weth_address', weth_address)
+                                usdc_address = metadata.get('usdc_address', usdc_address)
+                        elif 'v2' in dex['name'].lower():
+                            uniswap_v2_factory = dex.get('factory_address', '')
+                            uniswap_v2_router = dex.get('router_address', '')
+                            # Extract WETH/USDC from metadata if available
+                            metadata = dex.get('dex_metadata') or {}
+                            if isinstance(metadata, dict):
+                                weth_address = metadata.get('weth_address', weth_address)
+                                usdc_address = metadata.get('usdc_address', usdc_address)
+                    
+                    # Create ChainConfig
+                    configs[chain_data['chain_id']] = ChainConfig(
+                        chain_id=chain_data['chain_id'],
+                        name=chain_data['name'],
+                        rpc_providers=rpc_providers,
+                        uniswap_v3_factory=uniswap_v3_factory,
+                        uniswap_v3_router=uniswap_v3_router,
+                        uniswap_v2_factory=uniswap_v2_factory,
+                        uniswap_v2_router=uniswap_v2_router,
+                        weth_address=weth_address,
+                        usdc_address=usdc_address,
+                        block_time_ms=chain_data['block_time_seconds'] * 1000,
+                        confirmations_required=1 if chain_data['chain_id'] in [8453, 84532, 42161, 421614] else 2,
+                    )
                 
-                # Get DEX addresses
-                dex_addresses = self._extract_dex_addresses(dexes)
+                self.logger.info(f"Successfully loaded {len(configs)} chain configurations from Django models")
+                return configs
                 
-                # Create ChainConfig
-                config = ChainConfig(
-                    chain_id=chain.chain_id,
-                    name=chain.name,
-                    rpc_providers=rpc_providers,
-                    uniswap_v3_factory=dex_addresses.get('uniswap_v3_factory', ''),
-                    uniswap_v3_router=dex_addresses.get('uniswap_v3_router', ''),
-                    uniswap_v2_factory=dex_addresses.get('uniswap_v2_factory', ''),
-                    uniswap_v2_router=dex_addresses.get('uniswap_v2_router', ''),
-                    weth_address=dex_addresses.get('weth_address', ''),
-                    usdc_address=dex_addresses.get('usdc_address', ''),
-                    block_time_ms=chain.block_time_seconds * 1000,
-                    confirmations_required=1 if chain.chain_id == 8453 else 2,  # Base vs Ethereum
-                )
-                
-                configs[chain.chain_id] = config
-                
-            self.logger.info(f"Loaded {len(configs)} chain configurations from Django models")
-            return configs
-            
-        except Exception as e:
-            self.logger.error(f"Failed to fetch from Django models: {e}")
-            raise
-    
+            except Exception as e:
+                self.logger.error(f"Failed to fetch from Django models: {e}")
+                raise
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _build_rpc_providers(self, chain) -> List[RPCProvider]:
         """Build RPC providers list from Django Chain model."""
         providers = []
