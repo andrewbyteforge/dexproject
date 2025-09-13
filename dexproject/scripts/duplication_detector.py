@@ -1,493 +1,660 @@
+#!/usr/bin/env python3
 """
-Duplication Detection Tools for DEX Auto-Trading Bot
+Enhanced Duplication Detection Script with Unicode Support
 
-Automated tools to detect and prevent code duplication across the project.
-These tools help maintain the Single Source of Truth (SSOT) principle.
+Detects various types of code duplication across the Django project
+with proper encoding handling for all Python files.
 
-File: dexproject/scripts/duplication_detector.py
+Features:
+- Constant duplication detection
+- Function signature duplication
+- Import statement analysis
+- Code block similarity detection
+- Proper Unicode file handling
+- Comprehensive error handling and logging
+
+Usage:
+    python scripts/duplication_detector.py [--fix] [--verbose]
 """
 
-import ast
 import os
-import re
-import json
+import sys
 import logging
-from typing import Dict, List, Set, Tuple, Optional
+import argparse
+import ast
+import difflib
 from pathlib import Path
+from typing import Dict, List, Set, Tuple, Optional, Any
+from collections import defaultdict, Counter
 from dataclasses import dataclass
-from collections import defaultdict
+import hashlib
+import re
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('duplication_detection.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DuplicationIssue:
-    """Represents a duplication issue found in the codebase."""
+class DuplicationResult:
+    """Represents a detected duplication."""
     
-    issue_type: str
-    severity: str  # 'critical', 'high', 'medium', 'low'
+    type: str
     description: str
     files: List[str]
-    details: Dict
-    suggestion: str
+    line_numbers: List[int]
+    content: str
+    severity: str  # LOW, MEDIUM, HIGH, CRITICAL
+    suggested_fix: Optional[str] = None
 
 
-class DuplicationDetector:
-    """
-    Automated duplication detection for the DEX trading bot project.
+@dataclass
+class FileProcessingStats:
+    """Statistics for file processing."""
     
-    Detects various types of duplication including:
-    - Configuration duplication
-    - Business logic duplication
-    - Import violations
-    - SSOT violations
+    total_files: int = 0
+    processed_files: int = 0
+    skipped_files: int = 0
+    encoding_errors: int = 0
+    syntax_errors: int = 0
+    skipped_file_list: List[str] = None
+    
+    def __post_init__(self):
+        if self.skipped_file_list is None:
+            self.skipped_file_list = []
+
+
+class EnhancedDuplicationDetector:
+    """
+    Enhanced duplication detector with proper Unicode support.
+    
+    Detects various types of code duplication while handling
+    encoding issues gracefully.
     """
     
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str, fix_mode: bool = False, verbose: bool = False):
         """
-        Initialize duplication detector.
+        Initialize the duplication detector.
         
         Args:
-            project_root: Root directory of the project
+            project_root: Root directory of the Django project
+            fix_mode: Whether to attempt automatic fixes
+            verbose: Enable verbose logging
         """
         self.project_root = Path(project_root)
-        self.issues: List[DuplicationIssue] = []
-        self.logger = logging.getLogger(__name__)
+        self.fix_mode = fix_mode
+        self.verbose = verbose
         
-        # Configuration patterns to detect
-        self.config_patterns = {
-            'chain_ids': r'chain_id\s*[=:]\s*(\d+)',
-            'chain_names': r'["\']name["\']\s*[=:]\s*["\']([^"\']+)["\']',
-            'addresses': r'0x[a-fA-F0-9]{40}',
-            'rpc_urls': r'https?://[^\s\'"]+',
-        }
+        # Processing statistics
+        self.stats = FileProcessingStats()
         
-        # Import direction rules
-        self.import_rules = {
-            'shared': {
-                'cannot_import': ['engine', 'trading', 'risk', 'wallet', 'analytics', 'dashboard'],
-                'can_import': ['typing', 'datetime', 'decimal', 'enum']
-            },
-            'engine': {
-                'cannot_import': ['trading', 'risk', 'wallet', 'analytics', 'dashboard'],
-                'can_import': ['shared']
-            },
-            'django_apps': {
-                'can_import': ['shared', 'django', 'celery', 'rest_framework']
-            }
-        }
-    
-    def detect_all_duplications(self) -> List[DuplicationIssue]:
-        """
-        Run all duplication detection checks.
+        # Detection results
+        self.duplications: List[DuplicationResult] = []
         
-        Returns:
-            List of duplication issues found
-        """
-        self.issues = []
-        
-        self.logger.info("🔍 Starting comprehensive duplication detection...")
-        
-        # Run different types of checks
-        self._detect_configuration_duplication()
-        self._detect_business_logic_duplication()
-        self._detect_import_violations()
-        self._detect_ssot_violations()
-        self._detect_constant_duplication()
-        
-        # Sort issues by severity
-        severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
-        self.issues.sort(key=lambda x: severity_order.get(x.severity, 4))
-        
-        self.logger.info(f"✅ Detection complete. Found {len(self.issues)} issues.")
-        return self.issues
-    
-    def _detect_configuration_duplication(self) -> None:
-        """Detect duplicated configuration across files."""
-        self.logger.info("🔍 Checking for configuration duplication...")
-        
-        config_occurrences = defaultdict(list)
-        
-        # Scan relevant files for configuration patterns
-        files_to_scan = [
-            'engine/config.py',
-            'shared/constants.py',
-            'trading/models.py',
-            'trading/management/commands/populate_chains_and_dexes.py'
+        # Exclusion patterns
+        self.exclude_patterns = [
+            '__pycache__',
+            '.git',
+            '.venv',
+            'venv',
+            'node_modules',
+            'migrations',
+            '.pytest_cache',
+            'htmlcov',
+            '*.egg-info'
         ]
         
-        for file_path in files_to_scan:
-            full_path = self.project_root / file_path
-            if full_path.exists():
-                content = full_path.read_text()
-                
-                # Check for chain IDs
-                chain_ids = re.findall(self.config_patterns['chain_ids'], content)
-                for chain_id in chain_ids:
-                    config_occurrences[f'chain_id_{chain_id}'].append(str(file_path))
-                
-                # Check for contract addresses
-                addresses = re.findall(self.config_patterns['addresses'], content)
-                for addr in addresses:
-                    config_occurrences[f'address_{addr}'].append(str(file_path))
+        # File encodings to try
+        self.encodings = ['utf-8', 'utf-8-sig', 'latin1', 'cp1252', 'ascii']
         
-        # Report duplicated configurations
-        for config_item, files in config_occurrences.items():
-            if len(files) > 1:
-                self.issues.append(DuplicationIssue(
-                    issue_type="configuration_duplication",
-                    severity="high" if "chain_id" in config_item else "medium",
-                    description=f"Configuration item '{config_item}' found in multiple files",
-                    files=files,
-                    details={"config_item": config_item},
-                    suggestion="Move to Django models as Single Source of Truth"
-                ))
+        if self.verbose:
+            logger.setLevel(logging.DEBUG)
+        
+        logger.info(f"Initialized duplication detector for: {self.project_root}")
     
-    def _detect_business_logic_duplication(self) -> None:
-        """Detect duplicated business logic across modules."""
-        self.logger.info("🔍 Checking for business logic duplication...")
-        
-        # Look for similar function names that might indicate duplication
-        function_patterns = [
-            'honeypot.*check',
-            'liquidity.*check',
-            'ownership.*check',
-            'tax.*analysis',
-            'execute.*trade',
-        ]
-        
-        for pattern in function_patterns:
-            occurrences = self._find_function_pattern(pattern)
-            if len(occurrences) > 1:
-                # Check if these are in different modules (potential duplication)
-                modules = set(os.path.dirname(f) for f in occurrences)
-                if len(modules) > 1:
-                    self.issues.append(DuplicationIssue(
-                        issue_type="business_logic_duplication",
-                        severity="medium",
-                        description=f"Similar function pattern '{pattern}' found in multiple modules",
-                        files=list(occurrences),
-                        details={"pattern": pattern, "modules": list(modules)},
-                        suggestion="Extract common logic to shared/risk_utils.py or shared/trading_utils.py"
-                    ))
-    
-    def _detect_import_violations(self) -> None:
-        """Detect import direction violations."""
-        self.logger.info("🔍 Checking for import violations...")
-        
-        # Scan Python files for imports
-        for py_file in self.project_root.rglob("*.py"):
-            if py_file.name == "__init__.py":
-                continue
-                
-            rel_path = py_file.relative_to(self.project_root)
-            module_type = self._get_module_type(str(rel_path))
-            
-            if module_type:
-                violations = self._check_import_rules(py_file, module_type)
-                for violation in violations:
-                    self.issues.append(DuplicationIssue(
-                        issue_type="import_violation",
-                        severity="high",
-                        description=violation['description'],
-                        files=[str(rel_path)],
-                        details=violation,
-                        suggestion="Restructure imports to follow dependency direction rules"
-                    ))
-    
-    def _detect_ssot_violations(self) -> None:
-        """Detect Single Source of Truth violations."""
-        self.logger.info("🔍 Checking for SSOT violations...")
-        
-        # Check for hardcoded values that should come from Django
-        ssot_patterns = {
-            'chain_configurations': {
-                'pattern': r'ChainConfig\s*\(',
-                'files': ['engine/config.py'],
-                'should_be_in': 'Django Chain models'
-            },
-            'dex_addresses': {
-                'pattern': r'uniswap.*factory.*=.*0x[a-fA-F0-9]{40}',
-                'files': ['engine/config.py', 'shared/constants.py'],
-                'should_be_in': 'Django DEX models'
-            }
-        }
-        
-        for violation_type, config in ssot_patterns.items():
-            violations = []
-            for file_pattern in config['files']:
-                for file_path in self.project_root.rglob(file_pattern):
-                    if file_path.exists():
-                        content = file_path.read_text()
-                        if re.search(config['pattern'], content, re.IGNORECASE):
-                            violations.append(str(file_path.relative_to(self.project_root)))
-            
-            if violations:
-                self.issues.append(DuplicationIssue(
-                    issue_type="ssot_violation",
-                    severity="critical",
-                    description=f"SSOT violation: {violation_type} should only be defined in {config['should_be_in']}",
-                    files=violations,
-                    details={"violation_type": violation_type, "should_be_in": config['should_be_in']},
-                    suggestion=f"Move configuration to {config['should_be_in']} and access via Django bridge"
-                ))
-    
-    def _detect_constant_duplication(self) -> None:
-        """Detect duplicated constants across files."""
-        self.logger.info("🔍 Checking for constant duplication...")
-        
-        # Look for common constant patterns
-        constant_patterns = [
-            r'CHAIN_IDS\s*=',
-            r'CHAIN_NAMES\s*=',
-            r'WRAPPED_NATIVE\s*=',
-            r'STABLECOINS\s*=',
-        ]
-        
-        for pattern in constant_patterns:
-            occurrences = []
-            for py_file in self.project_root.rglob("*.py"):
-                content = py_file.read_text()
-                if re.search(pattern, content):
-                    occurrences.append(str(py_file.relative_to(self.project_root)))
-            
-            if len(occurrences) > 1:
-                constant_name = pattern.split('\\s')[0]
-                self.issues.append(DuplicationIssue(
-                    issue_type="constant_duplication",
-                    severity="medium",
-                    description=f"Constant '{constant_name}' defined in multiple files",
-                    files=occurrences,
-                    details={"constant_name": constant_name},
-                    suggestion="Define constants in shared/constants.py only"
-                ))
-    
-    def _find_function_pattern(self, pattern: str) -> List[str]:
-        """Find files containing functions matching the pattern."""
-        occurrences = []
-        
-        for py_file in self.project_root.rglob("*.py"):
-            try:
-                with open(py_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # Look for function definitions matching pattern
-                if re.search(rf'def\s+[^(]*{pattern}[^(]*\(', content, re.IGNORECASE):
-                    occurrences.append(str(py_file.relative_to(self.project_root)))
-                    
-            except Exception:
-                continue
-        
-        return occurrences
-    
-    def _get_module_type(self, file_path: str) -> Optional[str]:
-        """Determine the module type based on file path."""
-        if file_path.startswith('shared/'):
-            return 'shared'
-        elif file_path.startswith('engine/'):
-            return 'engine'
-        elif file_path.startswith(('trading/', 'risk/', 'wallet/', 'analytics/', 'dashboard/')):
-            return 'django_apps'
-        return None
-    
-    def _check_import_rules(self, file_path: Path, module_type: str) -> List[Dict]:
-        """Check import rules for a specific file."""
-        violations = []
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Parse imports
-            tree = ast.parse(content)
-            imports = []
-            
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for name in node.names:
-                        imports.append(name.name)
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        imports.append(node.module)
-            
-            # Check against rules
-            rules = self.import_rules.get(module_type, {})
-            cannot_import = rules.get('cannot_import', [])
-            
-            for imp in imports:
-                for forbidden in cannot_import:
-                    if imp.startswith(forbidden):
-                        violations.append({
-                            'description': f"Module {module_type} cannot import from {forbidden}",
-                            'import': imp,
-                            'rule_violated': f"{module_type} -> {forbidden}"
-                        })
-        
-        except Exception:
-            pass
-        
-        return violations
-    
-    def generate_report(self, output_file: Optional[str] = None) -> str:
+    def _safe_read_file(self, file_path: Path) -> Optional[str]:
         """
-        Generate a human-readable duplication report.
+        Safely read file content with proper encoding handling.
         
         Args:
-            output_file: Optional file path to save the report
+            file_path: Path to the file to read
             
         Returns:
-            Report content as string
+            File content as string, or None if reading failed
         """
-        report_lines = [
-            "🔍 DEX Auto-Trading Bot - Duplication Detection Report",
-            "=" * 60,
-            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"Total Issues Found: {len(self.issues)}",
-            ""
-        ]
+        for encoding in self.encodings:
+            try:
+                return file_path.read_text(encoding=encoding)
+            except UnicodeDecodeError:
+                continue
+            except Exception as e:
+                logger.debug(f"Error reading {file_path} with {encoding}: {e}")
+                continue
         
-        # Group issues by severity
-        by_severity = defaultdict(list)
-        for issue in self.issues:
-            by_severity[issue.severity].append(issue)
-        
-        # Report by severity
-        for severity in ['critical', 'high', 'medium', 'low']:
-            issues = by_severity[severity]
-            if issues:
-                report_lines.append(f"\n🔴 {severity.upper()} ISSUES ({len(issues)})")
-                report_lines.append("-" * 40)
-                
-                for i, issue in enumerate(issues, 1):
-                    report_lines.extend([
-                        f"\n{i}. {issue.description}",
-                        f"   Type: {issue.issue_type}",
-                        f"   Files: {', '.join(issue.files)}",
-                        f"   💡 Suggestion: {issue.suggestion}"
-                    ])
-        
-        # Summary recommendations
-        report_lines.extend([
-            "\n" + "=" * 60,
-            "📋 SUMMARY RECOMMENDATIONS",
-            "=" * 60,
-            "",
-            "1. 🔧 IMMEDIATE ACTIONS (Critical/High):",
-            "   - Fix SSOT violations by moving config to Django models",
-            "   - Resolve import direction violations",
-            "   - Eliminate configuration duplication",
-            "",
-            "2. 🛠️ MEDIUM PRIORITY:",
-            "   - Extract shared business logic to shared/ modules",
-            "   - Consolidate duplicate constants",
-            "",
-            "3. 🔍 PREVENTION:",
-            "   - Run this tool in pre-commit hooks",
-            "   - Add SSOT validation to CI/CD pipeline",
-            "   - Document import direction rules"
-        ])
-        
-        report_content = "\n".join(report_lines)
-        
-        if output_file:
-            with open(output_file, 'w') as f:
-                f.write(report_content)
-            print(f"📄 Report saved to: {output_file}")
-        
-        return report_content
-
-
-class PreCommitHook:
-    """Pre-commit hook to prevent duplication."""
+        # If all encodings failed, log and skip
+        logger.warning(f"Could not decode file {file_path} with any supported encoding")
+        self.stats.encoding_errors += 1
+        self.stats.skipped_file_list.append(str(file_path))
+        return None
     
-    @staticmethod
-    def check_staged_files() -> bool:
+    def _get_python_files(self) -> List[Path]:
         """
-        Check staged files for duplication issues.
+        Get all Python files in the project, excluding specified patterns.
         
         Returns:
-            True if no critical issues found, False otherwise
+            List of Python file paths
         """
-        import subprocess
+        python_files = []
         
-        # Get staged Python files
-        result = subprocess.run(
-            ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACM'],
-            capture_output=True, text=True
-        )
+        for py_file in self.project_root.rglob("*.py"):
+            # Skip files matching exclusion patterns
+            if any(pattern in str(py_file) for pattern in self.exclude_patterns):
+                continue
+            
+            python_files.append(py_file)
         
-        if result.returncode != 0:
-            return True  # No git repo or no staged files
+        self.stats.total_files = len(python_files)
+        logger.info(f"Found {len(python_files)} Python files")
+        return python_files
+    
+    def _parse_ast_safely(self, content: str, file_path: Path) -> Optional[ast.AST]:
+        """
+        Safely parse Python file content into AST.
         
-        staged_files = [f for f in result.stdout.split('\n') if f.endswith('.py')]
+        Args:
+            content: File content as string
+            file_path: Path to the file (for error reporting)
+            
+        Returns:
+            AST node or None if parsing failed
+        """
+        try:
+            return ast.parse(content, filename=str(file_path))
+        except SyntaxError as e:
+            logger.debug(f"Syntax error in {file_path}: {e}")
+            self.stats.syntax_errors += 1
+            return None
+        except Exception as e:
+            logger.debug(f"Error parsing {file_path}: {e}")
+            return None
+    
+    def detect_all_duplications(self) -> List[DuplicationResult]:
+        """
+        Run all duplication detection methods.
         
-        if not staged_files:
-            return True  # No Python files staged
+        Returns:
+            List of detected duplications
+        """
+        logger.info("Starting comprehensive duplication detection...")
         
-        # Run quick duplication check on staged files
-        detector = DuplicationDetector('.')
-        issues = detector.detect_all_duplications()
+        # Get all Python files
+        python_files = self._get_python_files()
         
-        # Check if any critical/high issues involve staged files
-        blocking_issues = [
-            issue for issue in issues 
-            if issue.severity in ['critical', 'high'] 
-            and any(f in staged_files for f in issue.files)
-        ]
+        # Run detection methods
+        self._detect_constant_duplication(python_files)
+        self._detect_function_duplication(python_files)
+        self._detect_import_duplication(python_files)
+        self._detect_code_block_duplication(python_files)
         
-        if blocking_issues:
-            print("🚫 COMMIT BLOCKED: Critical duplication issues found!")
-            for issue in blocking_issues:
-                print(f"   ❌ {issue.description}")
-                print(f"      💡 {issue.suggestion}")
-            print("\nPlease fix these issues before committing.")
-            return False
+        # Log statistics
+        self._log_processing_stats()
         
-        return True
+        # Sort by severity
+        self.duplications.sort(key=lambda x: {'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}[x.severity], reverse=True)
+        
+        logger.info(f"Detection complete. Found {len(self.duplications)} duplications")
+        return self.duplications
+    
+    def _detect_constant_duplication(self, python_files: List[Path]) -> None:
+        """
+        Detect duplicate constants across files.
+        
+        Args:
+            python_files: List of Python files to analyze
+        """
+        logger.info("Detecting constant duplications...")
+        
+        constants_map = defaultdict(list)
+        
+        for py_file in python_files:
+            try:
+                # Safely read file content
+                content = self._safe_read_file(py_file)
+                if content is None:
+                    self.stats.skipped_files += 1
+                    continue
+                
+                # Parse AST
+                tree = self._parse_ast_safely(content, py_file)
+                if tree is None:
+                    self.stats.skipped_files += 1
+                    continue
+                
+                self.stats.processed_files += 1
+                
+                # Extract constants
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            if isinstance(target, ast.Name) and target.id.isupper():
+                                if isinstance(node.value, (ast.Constant, ast.Str, ast.Num)):
+                                    value = self._get_constant_value(node.value)
+                                    if value is not None:
+                                        constants_map[f"{target.id}={value}"].append({
+                                            'file': str(py_file),
+                                            'line': node.lineno,
+                                            'name': target.id,
+                                            'value': value
+                                        })
+                
+            except Exception as e:
+                logger.debug(f"Error processing {py_file} for constants: {e}")
+                self.stats.skipped_files += 1
+                continue
+        
+        # Find duplicates
+        for constant_key, occurrences in constants_map.items():
+            if len(occurrences) > 1:
+                files = [occ['file'] for occ in occurrences]
+                line_numbers = [occ['line'] for occ in occurrences]
+                
+                severity = self._determine_constant_severity(occurrences)
+                
+                duplication = DuplicationResult(
+                    type="CONSTANT_DUPLICATION",
+                    description=f"Constant '{constant_key}' defined in {len(occurrences)} files",
+                    files=files,
+                    line_numbers=line_numbers,
+                    content=constant_key,
+                    severity=severity,
+                    suggested_fix=f"Consider moving to a shared constants.py file"
+                )
+                
+                self.duplications.append(duplication)
+        
+        logger.info(f"Found {sum(1 for d in self.duplications if d.type == 'CONSTANT_DUPLICATION')} constant duplications")
+    
+    def _detect_function_duplication(self, python_files: List[Path]) -> None:
+        """
+        Detect duplicate function signatures across files.
+        
+        Args:
+            python_files: List of Python files to analyze
+        """
+        logger.info("Detecting function duplications...")
+        
+        functions_map = defaultdict(list)
+        
+        for py_file in python_files:
+            try:
+                # Safely read file content
+                content = self._safe_read_file(py_file)
+                if content is None:
+                    continue
+                
+                # Parse AST
+                tree = self._parse_ast_safely(content, py_file)
+                if tree is None:
+                    continue
+                
+                # Extract function signatures
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.FunctionDef):
+                        signature = self._get_function_signature(node)
+                        functions_map[signature].append({
+                            'file': str(py_file),
+                            'line': node.lineno,
+                            'name': node.name,
+                            'signature': signature
+                        })
+                
+            except Exception as e:
+                logger.debug(f"Error processing {py_file} for functions: {e}")
+                continue
+        
+        # Find duplicates
+        for signature, occurrences in functions_map.items():
+            if len(occurrences) > 1:
+                files = [occ['file'] for occ in occurrences]
+                line_numbers = [occ['line'] for occ in occurrences]
+                
+                severity = self._determine_function_severity(occurrences)
+                
+                duplication = DuplicationResult(
+                    type="FUNCTION_DUPLICATION",
+                    description=f"Function signature '{signature}' found in {len(occurrences)} files",
+                    files=files,
+                    line_numbers=line_numbers,
+                    content=signature,
+                    severity=severity,
+                    suggested_fix="Consider extracting to a shared utility module"
+                )
+                
+                self.duplications.append(duplication)
+        
+        logger.info(f"Found {sum(1 for d in self.duplications if d.type == 'FUNCTION_DUPLICATION')} function duplications")
+    
+    def _detect_import_duplication(self, python_files: List[Path]) -> None:
+        """
+        Detect redundant import patterns across files.
+        
+        Args:
+            python_files: List of Python files to analyze
+        """
+        logger.info("Detecting import duplications...")
+        
+        import_patterns = defaultdict(list)
+        
+        for py_file in python_files:
+            try:
+                # Safely read file content
+                content = self._safe_read_file(py_file)
+                if content is None:
+                    continue
+                
+                # Parse AST
+                tree = self._parse_ast_safely(content, py_file)
+                if tree is None:
+                    continue
+                
+                # Extract imports
+                imports = []
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            imports.append(f"import {alias.name}")
+                    elif isinstance(node, ast.ImportFrom):
+                        module = node.module or ""
+                        for alias in node.names:
+                            imports.append(f"from {module} import {alias.name}")
+                
+                # Group similar import patterns
+                import_hash = hashlib.md5("\n".join(sorted(imports)).encode()).hexdigest()
+                import_patterns[import_hash].append({
+                    'file': str(py_file),
+                    'imports': imports,
+                    'import_count': len(imports)
+                })
+                
+            except Exception as e:
+                logger.debug(f"Error processing {py_file} for imports: {e}")
+                continue
+        
+        # Find suspicious patterns
+        for pattern_hash, occurrences in import_patterns.items():
+            if len(occurrences) > 3:  # Many files with identical imports
+                files = [occ['file'] for occ in occurrences]
+                
+                duplication = DuplicationResult(
+                    type="IMPORT_DUPLICATION",
+                    description=f"Identical import pattern found in {len(occurrences)} files",
+                    files=files,
+                    line_numbers=[1] * len(files),  # Imports typically at top
+                    content=f"{len(occurrences[0]['imports'])} imports",
+                    severity="MEDIUM",
+                    suggested_fix="Consider creating a shared imports module"
+                )
+                
+                self.duplications.append(duplication)
+        
+        logger.info(f"Found {sum(1 for d in self.duplications if d.type == 'IMPORT_DUPLICATION')} import duplications")
+    
+    def _detect_code_block_duplication(self, python_files: List[Path]) -> None:
+        """
+        Detect similar code blocks across files.
+        
+        Args:
+            python_files: List of Python files to analyze
+        """
+        logger.info("Detecting code block duplications...")
+        
+        code_blocks = []
+        
+        for py_file in python_files:
+            try:
+                # Safely read file content
+                content = self._safe_read_file(py_file)
+                if content is None:
+                    continue
+                
+                # Split into logical blocks
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if len(line.strip()) > 20:  # Meaningful lines only
+                        # Get surrounding context
+                        start = max(0, i - 2)
+                        end = min(len(lines), i + 3)
+                        block = '\n'.join(lines[start:end])
+                        
+                        # Normalize for comparison
+                        normalized = self._normalize_code_block(block)
+                        if len(normalized) > 50:  # Skip very small blocks
+                            code_blocks.append({
+                                'file': str(py_file),
+                                'line': i + 1,
+                                'content': block,
+                                'normalized': normalized
+                            })
+                
+            except Exception as e:
+                logger.debug(f"Error processing {py_file} for code blocks: {e}")
+                continue
+        
+        # Find similar blocks
+        similar_groups = defaultdict(list)
+        
+        for block in code_blocks:
+            # Use normalized content as key for grouping
+            key = hashlib.md5(block['normalized'].encode()).hexdigest()
+            similar_groups[key].append(block)
+        
+        # Report significant duplications
+        for group_key, blocks in similar_groups.items():
+            if len(blocks) > 1:
+                files = [block['file'] for block in blocks]
+                line_numbers = [block['line'] for block in blocks]
+                
+                # Check if files are different (not just different lines in same file)
+                unique_files = set(files)
+                if len(unique_files) > 1:
+                    duplication = DuplicationResult(
+                        type="CODE_BLOCK_DUPLICATION",
+                        description=f"Similar code block found in {len(unique_files)} files",
+                        files=list(unique_files),
+                        line_numbers=line_numbers,
+                        content=blocks[0]['content'][:100] + "...",
+                        severity="HIGH",
+                        suggested_fix="Extract common logic to shared function"
+                    )
+                    
+                    self.duplications.append(duplication)
+        
+        logger.info(f"Found {sum(1 for d in self.duplications if d.type == 'CODE_BLOCK_DUPLICATION')} code block duplications")
+    
+    def _get_constant_value(self, node: ast.AST) -> Optional[str]:
+        """Extract constant value from AST node."""
+        try:
+            if isinstance(node, ast.Constant):
+                return str(node.value)
+            elif isinstance(node, ast.Str):  # Python < 3.8 compatibility
+                return f"'{node.s}'"
+            elif isinstance(node, ast.Num):  # Python < 3.8 compatibility
+                return str(node.n)
+            else:
+                return None
+        except Exception:
+            return None
+    
+    def _get_function_signature(self, node: ast.FunctionDef) -> str:
+        """Extract function signature from AST node."""
+        try:
+            args = []
+            for arg in node.args.args:
+                args.append(arg.arg)
+            
+            return f"{node.name}({', '.join(args)})"
+        except Exception:
+            return f"{node.name}(...)"
+    
+    def _normalize_code_block(self, code: str) -> str:
+        """Normalize code block for comparison."""
+        # Remove comments and excessive whitespace
+        lines = []
+        for line in code.split('\n'):
+            line = re.sub(r'#.*$', '', line)  # Remove comments
+            line = re.sub(r'\s+', ' ', line)  # Normalize whitespace
+            line = line.strip()
+            if line:
+                lines.append(line)
+        
+        return '\n'.join(lines)
+    
+    def _determine_constant_severity(self, occurrences: List[Dict]) -> str:
+        """Determine severity of constant duplication."""
+        count = len(occurrences)
+        if count >= 5:
+            return "CRITICAL"
+        elif count >= 3:
+            return "HIGH"
+        else:
+            return "MEDIUM"
+    
+    def _determine_function_severity(self, occurrences: List[Dict]) -> str:
+        """Determine severity of function duplication."""
+        count = len(occurrences)
+        if count >= 4:
+            return "HIGH"
+        elif count >= 2:
+            return "MEDIUM"
+        else:
+            return "LOW"
+    
+    def _log_processing_stats(self) -> None:
+        """Log file processing statistics."""
+        logger.info(f"Processing Statistics:")
+        logger.info(f"  Total files found: {self.stats.total_files}")
+        logger.info(f"  Successfully processed: {self.stats.processed_files}")
+        logger.info(f"  Skipped files: {self.stats.skipped_files}")
+        logger.info(f"  Encoding errors: {self.stats.encoding_errors}")
+        logger.info(f"  Syntax errors: {self.stats.syntax_errors}")
+        
+        if self.stats.skipped_file_list and self.verbose:
+            logger.info(f"Skipped files: {', '.join(self.stats.skipped_file_list[:10])}")
+            if len(self.stats.skipped_file_list) > 10:
+                logger.info(f"... and {len(self.stats.skipped_file_list) - 10} more")
+    
+    def generate_report(self) -> str:
+        """
+        Generate comprehensive duplication report.
+        
+        Returns:
+            Formatted report as string
+        """
+        report = []
+        report.append("=" * 80)
+        report.append("DUPLICATION DETECTION REPORT")
+        report.append("=" * 80)
+        report.append("")
+        
+        # Summary
+        report.append(f"Total duplications found: {len(self.duplications)}")
+        
+        # Group by severity
+        by_severity = defaultdict(list)
+        for dup in self.duplications:
+            by_severity[dup.severity].append(dup)
+        
+        for severity in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
+            count = len(by_severity[severity])
+            if count > 0:
+                report.append(f"{severity}: {count}")
+        
+        report.append("")
+        
+        # Detailed results
+        for i, dup in enumerate(self.duplications, 1):
+            report.append(f"{i}. {dup.type} [{dup.severity}]")
+            report.append(f"   Description: {dup.description}")
+            report.append(f"   Files affected: {len(dup.files)}")
+            
+            for j, file in enumerate(dup.files[:3]):  # Show first 3 files
+                line_info = f" (line {dup.line_numbers[j]})" if j < len(dup.line_numbers) else ""
+                report.append(f"     - {file}{line_info}")
+            
+            if len(dup.files) > 3:
+                report.append(f"     ... and {len(dup.files) - 3} more files")
+            
+            if dup.suggested_fix:
+                report.append(f"   Suggested fix: {dup.suggested_fix}")
+            
+            report.append("")
+        
+        # Processing statistics
+        report.append("PROCESSING STATISTICS")
+        report.append("-" * 40)
+        report.append(f"Total files: {self.stats.total_files}")
+        report.append(f"Processed: {self.stats.processed_files}")
+        report.append(f"Skipped: {self.stats.skipped_files}")
+        report.append(f"Encoding errors: {self.stats.encoding_errors}")
+        report.append(f"Syntax errors: {self.stats.syntax_errors}")
+        
+        return "\n".join(report)
+    
+    def save_report(self, filename: str = "duplication_report.txt") -> None:
+        """Save report to file."""
+        report = self.generate_report()
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(report)
+        
+        logger.info(f"Report saved to: {filename}")
 
 
 def main():
-    """Main entry point for duplication detection."""
-    import argparse
-    from datetime import datetime
-    
-    parser = argparse.ArgumentParser(description='Detect code duplication in DEX trading bot')
-    parser.add_argument('--project-root', default='.', help='Project root directory')
-    parser.add_argument('--output', help='Output file for report')
-    parser.add_argument('--pre-commit', action='store_true', help='Run as pre-commit hook')
-    parser.add_argument('--quick', action='store_true', help='Quick check (subset of rules)')
+    """Main entry point for the duplication detector."""
+    parser = argparse.ArgumentParser(description="Detect code duplications in Django project")
+    parser.add_argument("--project-root", default=".", help="Project root directory")
+    parser.add_argument("--fix", action="store_true", help="Attempt automatic fixes")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    parser.add_argument("--report", default="duplication_report.txt", help="Report output file")
     
     args = parser.parse_args()
     
-    if args.pre_commit:
-        # Pre-commit hook mode
-        if not PreCommitHook.check_staged_files():
-            exit(1)
-        print("✅ No critical duplication issues in staged files")
-        return
+    # Initialize detector
+    detector = EnhancedDuplicationDetector(
+        project_root=args.project_root,
+        fix_mode=args.fix,
+        verbose=args.verbose
+    )
     
-    # Full detection mode
-    detector = DuplicationDetector(args.project_root)
-    
-    if args.quick:
-        # Quick mode - only critical checks
-        detector._detect_ssot_violations()
-        detector._detect_import_violations()
-    else:
-        # Full detection
-        detector.detect_all_duplications()
-    
-    # Generate report
-    report = detector.generate_report(args.output)
-    
-    if not args.output:
-        print(report)
-    
-    # Exit with error code if critical issues found
-    critical_issues = [i for i in detector.issues if i.severity == 'critical']
-    if critical_issues:
-        print(f"\n🚨 {len(critical_issues)} critical issues found!")
-        exit(1)
-    else:
-        print("\n✅ No critical duplication issues found")
+    try:
+        # Run detection
+        duplications = detector.detect_all_duplications()
+        
+        # Generate and save report
+        detector.save_report(args.report)
+        
+        # Print summary
+        print(f"\nDuplication Detection Complete!")
+        print(f"Found {len(duplications)} duplications")
+        print(f"Report saved to: {args.report}")
+        
+        # Return appropriate exit code
+        critical_count = sum(1 for d in duplications if d.severity == 'CRITICAL')
+        if critical_count > 0:
+            print(f"WARNING: {critical_count} critical duplications found!")
+            sys.exit(1)
+        
+    except Exception as e:
+        logger.error(f"Detection failed: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

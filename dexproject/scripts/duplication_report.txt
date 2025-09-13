@@ -1,0 +1,13 @@
+================================================================================
+DUPLICATION DETECTION REPORT
+================================================================================
+
+Total duplications found: 0
+
+PROCESSING STATISTICS
+----------------------------------------
+Total files: 1
+Processed: 1
+Skipped: 0
+Encoding errors: 0
+Syntax errors: 0
