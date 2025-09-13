@@ -15,7 +15,7 @@ from decimal import Decimal
 from enum import Enum
 import time
 import random
-
+from typing import Dict, List, Optional, Any, Tuple  # Add Tuple here
 from .config import config, ChainConfig
 from .utils import ProviderManager, safe_decimal, format_currency, calculate_slippage
 from .risk import RiskAssessmentResult
