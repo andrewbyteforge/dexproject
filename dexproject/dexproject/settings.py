@@ -272,6 +272,7 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'level': LOG_LEVEL,
             'formatter': 'verbose',
+            'stream': 'ext://sys.stdout',
         },
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
@@ -280,6 +281,7 @@ LOGGING = {
             'filename': BASE_DIR / 'logs' / 'django.log',
             'maxBytes': 10485760,  # 10MB
             'backupCount': 10,
+            'encoding': 'utf-8',
         },
     },
     'loggers': {

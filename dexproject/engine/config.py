@@ -257,7 +257,7 @@ class EngineConfig:
                     self.chains = filtered_chains
                     
                     if self.chains:
-                        logger.info(f"✅ Loaded {len(self.chains)} chain configurations from Django models")
+                        logger.info(f"[OK] Loaded {len(self.chains)} chain configurations from Django models")
                         
                         # Log chain details
                         for chain_id, config in self.chains.items():
