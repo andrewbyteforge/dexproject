@@ -303,11 +303,10 @@ def handle_configuration_update(request, mode: str, mode_display: str):
         
         # Mode-specific validation
         if mode == 'fast_lane':
-            # Execution timeout validation - FIXED field name
             try:
-                timeout = int(request.POST.get('execution_timeout_ms', 500))  # Template sends 'execution_timeout_ms'
-                if timeout < 50 or timeout > 2000:
-                    errors.append('Execution timeout must be between 50ms and 2000ms.')
+                timeout = int(request.POST.get('execution_timeout_ms', 500))
+                if timeout < 50 or timeout > 10000:  # Allow up to 10 seconds for flexibility
+                    errors.append('Execution timeout must be between 50ms and 10000ms.')
                     logger.warning(f"Invalid execution timeout: {timeout}")
                 else:
                     form_data['execution_timeout_ms'] = timeout
@@ -571,7 +570,7 @@ def delete_configuration(request, config_id):
             context = {
                 'config': config,
                 'page_title': 'Delete Configuration',
-                'cancel_url': reverse('dashboard:configuration_summary', kwargs={'config_id': config.id}),
+                'cancel_url': reverse('dashboard:configuration_panel_summary', kwargs={'config_id': config.id}),
             }
             return render(request, 'dashboard/confirm_delete_config.html', context)
             

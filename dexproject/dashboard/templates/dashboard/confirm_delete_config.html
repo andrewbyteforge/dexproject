@@ -110,7 +110,7 @@
                         <a href="{% url 'dashboard:configuration_list' %}">Configurations</a>
                     </li>
                     <li class="breadcrumb-item">
-                        <a href="{% url 'dashboard:configuration_summary' config.id %}">{{ config.name }}</a>
+                        <a href="{% url 'dashboard:configuration_panel_summary' config.id %}">{{ config.name }}</a>
                     </li>
                     <li class="breadcrumb-item active" aria-current="page">Delete</li>
                 </ol>
@@ -270,7 +270,7 @@
     <div class="row mt-4">
         <div class="col-12 text-center">
             <div class="btn-group" role="group">
-                <a href="{% url 'dashboard:configuration_summary' config.id %}" class="btn btn-outline-light">
+                <a href="{% url 'dashboard:configuration_panel_summary' config.id %}" class="btn btn-outline-light">
                     <i class="bi bi-eye me-2"></i>View Summary
                 </a>
                 <a href="{% url 'dashboard:configuration_list' %}" class="btn btn-outline-info">
