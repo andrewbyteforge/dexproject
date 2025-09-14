@@ -4,6 +4,13 @@ Complete Dashboard Views for DEX Trading Bot
 Updated with Fast Lane engine integration, configuration summary functionality, 
 proper error handling, thorough logging, and improved user experience.
 
+Features:
+- Fixed form field validation to match template field names
+- Enhanced error handling and logging throughout
+- VS Code/Pylance compatible code with proper type annotations
+- Comprehensive docstrings for all functions
+- PEP 8 compliant formatting
+
 File: dexproject/dashboard/views.py
 """
 
@@ -12,12 +19,12 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Union
 from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse, StreamingHttpResponse, JsonResponse
+from django.http import HttpResponse, StreamingHttpResponse, JsonResponse, HttpRequest
 from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib import messages
@@ -36,8 +43,16 @@ logger = logging.getLogger(__name__)
 # ENGINE INITIALIZATION HELPER
 # =========================================================================
 
-async def ensure_engine_initialized():
-    """Ensure the Fast Lane engine is initialized."""
+async def ensure_engine_initialized() -> None:
+    """
+    Ensure the Fast Lane engine is initialized.
+    
+    Initializes the engine if not already done and handles initialization errors
+    gracefully by falling back to mock mode if necessary.
+    
+    Raises:
+        Exception: Logs but does not re-raise engine initialization errors
+    """
     if not engine_service.engine_initialized and not engine_service.mock_mode:
         try:
             success = await engine_service.initialize_engine(chain_id=1)  # Ethereum mainnet
@@ -46,11 +61,25 @@ async def ensure_engine_initialized():
             else:
                 logger.warning("Failed to initialize Fast Lane engine - falling back to mock mode")
         except Exception as e:
-            logger.error(f"Engine initialization error: {e}")
+            logger.error(f"Engine initialization error: {e}", exc_info=True)
 
 
-def run_async_in_view(coro):
-    """Helper to run async code in Django views."""
+def run_async_in_view(coro) -> Optional[Any]:
+    """
+    Helper to run async code in Django views.
+    
+    Creates a new event loop to execute async functions within synchronous
+    Django view functions.
+    
+    Args:
+        coro: Coroutine to execute
+        
+    Returns:
+        Result of the coroutine execution, None if error occurs
+        
+    Raises:
+        Exception: Logs but does not re-raise async execution errors
+    """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -59,7 +88,7 @@ def run_async_in_view(coro):
         finally:
             loop.close()
     except Exception as e:
-        logger.error(f"Async execution error: {e}")
+        logger.error(f"Async execution error: {e}", exc_info=True)
         return None
 
 
@@ -67,11 +96,21 @@ def run_async_in_view(coro):
 # MAIN DASHBOARD PAGES
 # =========================================================================
 
-def dashboard_home(request):
+def dashboard_home(request: HttpRequest) -> HttpResponse:
     """
     Main dashboard page with Fast Lane engine integration and comprehensive error handling.
     
     Displays trading bot status, performance metrics, and recent activity with real-time data.
+    Handles both authenticated and anonymous users by creating demo user when needed.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        Rendered dashboard home template with context data
+        
+    Raises:
+        Exception: Renders error template if critical error occurs
     """
     try:
         # Initialize engine if needed
@@ -180,11 +219,18 @@ def dashboard_home(request):
         return render(request, 'dashboard/error.html', {'error': str(e)})
 
 
-def mode_selection(request):
+def mode_selection(request: HttpRequest) -> HttpResponse:
     """
     Mode selection interface with Fast Lane integration and comprehensive error handling.
     
     Allows users to choose between Fast Lane and Smart Lane trading modes with real metrics.
+    Displays performance comparisons and system status for each mode.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        Rendered mode selection template with context data
     """
     try:
         # Initialize engine if needed
@@ -241,7 +287,7 @@ def mode_selection(request):
         return redirect('dashboard:home')
 
 
-def configuration_panel(request, mode):
+def configuration_panel(request: HttpRequest, mode: str) -> HttpResponse:
     """
     Comprehensive configuration panel for specific trading mode with Fast Lane integration.
     
@@ -249,7 +295,11 @@ def configuration_panel(request, mode):
     with extensive validation, error handling, and real engine status.
     
     Args:
+        request: Django HTTP request object
         mode: Either 'fast_lane' or 'smart_lane'
+        
+    Returns:
+        Rendered configuration panel template or redirect to summary
     """
     # Input validation and logging
     logger.info(f"Configuration panel accessed for mode: {mode} by user: {getattr(request.user, 'username', 'anonymous')}")
@@ -382,19 +432,27 @@ def configuration_panel(request, mode):
         return redirect('dashboard:home')
 
 
-def handle_configuration_update(request, mode: str, mode_display: str):
+def handle_configuration_update(request: HttpRequest, mode: str, mode_display: str) -> Union[HttpResponse, JsonResponse]:
     """
     Handle configuration form submission with comprehensive validation and error handling.
     
-    Fixed to match the actual form field names from the template.
+    FIXED: Updated to match the actual form field names from the template:
+    - 'name' (not 'config_name')
+    - 'max_position_size_usd' (matches template field name)
+    - 'risk_tolerance' (matches template field name)
+    - 'execution_timeout_ms' (matches template field name)
+    - 'max_slippage_percent' (matches template field name)
     
     Args:
-        request: Django request object
+        request: Django HTTP request object
         mode: Trading mode ('fast_lane' or 'smart_lane')
         mode_display: Display name for the mode
         
     Returns:
         Redirect to configuration summary or JsonResponse with error
+        
+    Raises:
+        Exception: Returns JsonResponse with error message if unexpected error occurs
     """
     try:
         logger.info(f"Processing {mode_display} configuration update for user: {request.user.username}")
@@ -408,14 +466,14 @@ def handle_configuration_update(request, mode: str, mode_display: str):
             })
         
         # Extract and validate form data - FIXED field names to match template
-        form_data = {}
-        errors = []
+        form_data: Dict[str, Any] = {}
+        errors: list[str] = []
         
-        # Required fields validation - corrected field names
+        # Required fields validation - corrected field names to match template
         required_fields = {
             'name': 'Configuration name',  # Template sends 'name', not 'config_name'
             'max_position_size_usd': 'Maximum position size',  # Template sends 'max_position_size_usd'
-            'risk_tolerance': 'Risk tolerance level'
+            'risk_tolerance': 'Risk tolerance level'  # Template sends 'risk_tolerance'
         }
         
         for field, display_name in required_fields.items():
@@ -440,8 +498,9 @@ def handle_configuration_update(request, mode: str, mode_display: str):
         
         # Mode-specific validation
         if mode == 'fast_lane':
+            # Execution timeout validation - corrected field name
             try:
-                timeout = int(request.POST.get('execution_timeout_ms', 500))
+                timeout = int(request.POST.get('execution_timeout_ms', 500))  # Template sends 'execution_timeout_ms'
                 if timeout < 50 or timeout > 10000:  # Allow up to 10 seconds for flexibility
                     errors.append('Execution timeout must be between 50ms and 10000ms.')
                     logger.warning(f"Invalid execution timeout: {timeout}")
@@ -451,17 +510,19 @@ def handle_configuration_update(request, mode: str, mode_display: str):
                 errors.append('Execution timeout must be a valid number.')
                 logger.warning("Invalid execution timeout format")
             
-            # Slippage validation - FIXED field name
+            # Slippage validation - FIXED field name to match template
             slippage = request.POST.get('max_slippage_percent')  # Template sends 'max_slippage_percent'
             if slippage:
                 try:
                     slippage_val = float(slippage)
                     if slippage_val < 0.1 or slippage_val > 10.0:
                         errors.append('Slippage must be between 0.1% and 10.0%.')
+                        logger.warning(f"Invalid slippage: {slippage_val}")
                     else:
                         form_data['max_slippage_percent'] = Decimal(str(slippage_val))
                 except (ValueError, TypeError):
                     errors.append('Slippage must be a valid number.')
+                    logger.warning("Invalid slippage format")
         
         # Return validation errors if any
         if errors:
@@ -485,7 +546,7 @@ def handle_configuration_update(request, mode: str, mode_display: str):
             config.name = form_data['name']  # Corrected
             config.description = request.POST.get('description', '')
             config.max_position_size_usd = form_data['max_position_size_usd']  # Corrected
-            config.risk_tolerance_level = form_data['risk_tolerance']
+            config.risk_tolerance_level = form_data['risk_tolerance']  # Corrected
             
             # Mode-specific updates
             if mode == 'fast_lane':
@@ -542,14 +603,15 @@ def handle_configuration_update(request, mode: str, mode_display: str):
         })
 
 
-def configuration_summary(request, config_id):
+def configuration_summary(request: HttpRequest, config_id: int) -> HttpResponse:
     """
     Display configuration summary page with saved settings and navigation options.
     
     Shows the user their saved configuration with options to edit, delete, or return to dashboard.
+    Includes risk score calculation and mode-specific display formatting.
     
     Args:
-        request: Django request object
+        request: Django HTTP request object
         config_id: ID of the saved configuration
         
     Returns:
@@ -600,14 +662,15 @@ def configuration_summary(request, config_id):
         return redirect('dashboard:home')
 
 
-def configuration_list(request):
+def configuration_list(request: HttpRequest) -> HttpResponse:
     """
     Display list of user's saved configurations with pagination and filtering.
     
     Shows all user configurations organized by trading mode with management options.
+    Includes search functionality and mode filtering.
     
     Args:
-        request: Django request object
+        request: Django HTTP request object
         
     Returns:
         Rendered configuration list template
@@ -664,12 +727,15 @@ def configuration_list(request):
         return redirect('dashboard:home')
 
 
-def delete_configuration(request, config_id):
+def delete_configuration(request: HttpRequest, config_id: int) -> HttpResponse:
     """
     Delete a configuration with confirmation and proper error handling.
     
+    Handles both GET (show confirmation) and POST (perform deletion) requests.
+    Includes logic to redirect appropriately based on remaining configurations.
+    
     Args:
-        request: Django request object
+        request: Django HTTP request object
         config_id: ID of the configuration to delete
         
     Returns:
@@ -724,17 +790,29 @@ def delete_configuration(request, config_id):
 # REAL-TIME DATA STREAMS (Updated with Fast Lane Integration)
 # =========================================================================
 
-def metrics_stream(request):
+def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
     """
     Server-Sent Events endpoint for real-time metrics with Fast Lane integration.
     
     Streams live trading metrics from the Fast Lane engine to the dashboard.
     Falls back to mock data if engine is unavailable.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        StreamingHttpResponse with Server-Sent Events format
     """
     def event_stream():
-        """Generator function for SSE data stream with Fast Lane integration."""
-        import time
+        """
+        Generator function for SSE data stream with Fast Lane integration.
         
+        Yields formatted SSE data with real-time metrics and status updates.
+        Includes connection confirmation, periodic updates, and error handling.
+        
+        Yields:
+            str: Formatted SSE data strings
+        """
         try:
             # Initialize engine if needed
             run_async_in_view(ensure_engine_initialized())
@@ -819,8 +897,19 @@ def metrics_stream(request):
 # API ENDPOINTS (Updated with Fast Lane Integration)
 # =========================================================================
 
-def api_engine_status(request):
-    """API endpoint for engine status with Fast Lane integration."""
+def api_engine_status(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for engine status with Fast Lane integration.
+    
+    Returns current engine status including Fast Lane and Smart Lane availability,
+    connection states, and system health metrics.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        JsonResponse with engine status data or error message
+    """
     try:
         # Initialize engine if needed
         run_async_in_view(ensure_engine_initialized())
@@ -842,8 +931,19 @@ def api_engine_status(request):
         }, status=500)
 
 
-def api_performance_metrics(request):
-    """API endpoint for performance metrics with Fast Lane integration."""
+def api_performance_metrics(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for performance metrics with Fast Lane integration.
+    
+    Returns current performance metrics including execution times, success rates,
+    and trading volume statistics from the Fast Lane engine.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        JsonResponse with performance metrics data or error message
+    """
     try:
         # Initialize engine if needed
         run_async_in_view(ensure_engine_initialized())
@@ -867,8 +967,19 @@ def api_performance_metrics(request):
 
 @require_POST
 @csrf_exempt
-def api_set_trading_mode(request):
-    """API endpoint to set trading mode with Fast Lane engine integration."""
+def api_set_trading_mode(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint to set trading mode with Fast Lane engine integration.
+    
+    Accepts POST requests with mode selection and updates the engine configuration.
+    Validates mode parameter and uses engine service for mode switching.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        JsonResponse with success/error status and confirmation message
+    """
     try:
         data = json.loads(request.body)
         mode = data.get('mode')
@@ -907,8 +1018,19 @@ def api_set_trading_mode(request):
 # TRADING SESSION MANAGEMENT
 # =========================================================================
 
-def start_trading_session(request):
-    """Start a new trading session with comprehensive validation."""
+def start_trading_session(request: HttpRequest) -> HttpResponse:
+    """
+    Start a new trading session with comprehensive validation.
+    
+    Handles POST requests to initiate trading sessions with proper error handling
+    and session state management.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        Redirect to dashboard home with success/error message
+    """
     if request.method == 'POST':
         try:
             logger.info(f"Trading session start requested by user: {request.user.username}")
@@ -922,8 +1044,20 @@ def start_trading_session(request):
     return redirect('dashboard:home')
 
 
-def stop_trading_session(request, session_id):
-    """Stop an active trading session with proper cleanup."""
+def stop_trading_session(request: HttpRequest, session_id: str) -> HttpResponse:
+    """
+    Stop an active trading session with proper cleanup.
+    
+    Handles requests to stop specific trading sessions by session ID.
+    Includes proper session validation and cleanup procedures.
+    
+    Args:
+        request: Django HTTP request object
+        session_id: UUID string identifying the trading session
+        
+    Returns:
+        Redirect to dashboard home with success/error message
+    """
     try:
         logger.info(f"Trading session stop requested for session {session_id} by user: {request.user.username}")
         # Mock session stop for demo
@@ -940,8 +1074,19 @@ def stop_trading_session(request, session_id):
 # DEBUG AND TESTING ENDPOINTS
 # =========================================================================
 
-def simple_test(request):
-    """Simple test endpoint that returns basic HTML for debugging."""
+def simple_test(request: HttpRequest) -> HttpResponse:
+    """
+    Simple test endpoint that returns basic HTML for debugging.
+    
+    Used for testing basic Django functionality and verifying the application
+    is running correctly. Returns a simple HTML page with system information.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        HttpResponse with basic HTML test page
+    """
     logger.debug("Simple test endpoint accessed")
     return HttpResponse(f"""
     <!DOCTYPE html>
@@ -961,8 +1106,19 @@ def simple_test(request):
     """)
 
 
-def debug_templates(request):
-    """Debug template loading with comprehensive error reporting."""
+def debug_templates(request: HttpRequest) -> HttpResponse:
+    """
+    Debug template loading with comprehensive error reporting.
+    
+    Tests template loading functionality and provides detailed reporting
+    on template availability and Django configuration.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        HttpResponse with template debug information
+    """
     from django.http import HttpResponse
     from django.template.loader import get_template
     from django.conf import settings
@@ -999,8 +1155,19 @@ def debug_templates(request):
     return HttpResponse(''.join(html))
 
 
-def minimal_dashboard(request):
-    """Minimal dashboard without template dependencies for emergency access."""
+def minimal_dashboard(request: HttpRequest) -> HttpResponse:
+    """
+    Minimal dashboard without template dependencies for emergency access.
+    
+    Provides a fallback dashboard interface that doesn't rely on complex templates.
+    Useful for debugging template issues or providing emergency access.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        HttpResponse with minimal dashboard HTML
+    """
     logger.debug("Minimal dashboard accessed")
     return HttpResponse(f"""
     <!DOCTYPE html>
