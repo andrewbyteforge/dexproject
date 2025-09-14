@@ -395,7 +395,7 @@ class MempoolMonitor:
         provider: MempoolProvider
     ) -> None:
         """
-        Maintain WebSocket connection to a mempool provider.
+        Maintain WebSocket connection to a mempool provider with auto-reconnection.
         
         Args:
             chain_id: Target blockchain network
@@ -403,23 +403,42 @@ class MempoolMonitor:
         """
         connection_key = f"{chain_id}_{provider.value}"
         retry_count = 0
-        max_retries = self._chain_configs[chain_id].max_retries
+        max_retries = 100  # Allow continuous reconnection
+        
+        self.logger.info(f"Starting WebSocket monitor: {provider.value} chain {chain_id}")
         
         while retry_count < max_retries:
             try:
+                # Get WebSocket URL for this provider and chain
                 websocket_url = self._get_websocket_url(chain_id, provider)
+                if not websocket_url:
+                    self.logger.error(f"No WebSocket URL available for {provider.value} chain {chain_id}")
+                    return
                 
                 self.logger.info(f"Connecting to {provider.value} WebSocket for chain {chain_id}")
+                self.logger.debug(f"WebSocket URL: {websocket_url}")
                 
+                # Establish WebSocket connection with proper configuration
                 async with websockets.connect(
                     websocket_url,
-                    timeout=self._chain_configs[chain_id].websocket_timeout,
-                    ping_interval=20,
-                    ping_timeout=10
+                    timeout=30,  # Connection timeout
+                    ping_interval=20,  # Send ping every 20 seconds
+                    ping_timeout=10,   # Wait 10 seconds for pong
+                    close_timeout=10,  # Wait 10 seconds for close
+                    max_size=1024*1024,  # 1MB max message size
+                    max_queue=100      # Max queued messages
                 ) as websocket:
                     
+                    # Store active connection
                     self._websocket_connections[connection_key] = websocket
-                    self._stats[chain_id].active_providers.append(provider)
+                    
+                    # Update provider status
+                    if provider not in self._stats[chain_id].active_providers:
+                        self._stats[chain_id].active_providers.append(provider)
+                    if provider in self._stats[chain_id].failed_providers:
+                        self._stats[chain_id].failed_providers.remove(provider)
+                    
+                    self.logger.info(f"WebSocket connected: {provider.value} chain {chain_id}")
                     
                     # Subscribe to mempool events
                     await self._subscribe_to_mempool(websocket, chain_id, provider)
@@ -428,10 +447,36 @@ class MempoolMonitor:
                     retry_count = 0
                     
                     # Handle incoming messages
-                    async for message in websocket:
-                        await self._handle_websocket_message(
-                            message, chain_id, provider
-                        )
+                    try:
+                        async for raw_message in websocket:
+                            try:
+                                # Performance tracking
+                                start_time = time.perf_counter()
+                                
+                                # Process the message
+                                await self._handle_websocket_message(
+                                    raw_message, chain_id, provider
+                                )
+                                
+                                # Track processing latency
+                                processing_time = (time.perf_counter() - start_time) * 1000
+                                self._processing_latencies.append(processing_time)
+                                
+                                # Update rolling average
+                                if len(self._processing_latencies) >= 10:
+                                    avg_latency = sum(list(self._processing_latencies)[-10:]) / 10
+                                    self._stats[chain_id].avg_processing_latency_ms = avg_latency
+                                    
+                            except Exception as msg_error:
+                                self.logger.error(f"Error processing message from {provider.value}: {msg_error}")
+                                continue
+                                
+                    except websockets.exceptions.ConnectionClosed:
+                        self.logger.warning(f"WebSocket closed: {provider.value} chain {chain_id}")
+                    except websockets.exceptions.ConnectionClosedError as e:
+                        self.logger.warning(f"WebSocket closed with error: {provider.value} chain {chain_id}: {e}")
+                    except Exception as e:
+                        self.logger.error(f"WebSocket error: {provider.value} chain {chain_id}: {e}")
                         
             except Exception as e:
                 retry_count += 1
@@ -447,13 +492,18 @@ class MempoolMonitor:
                 if provider not in self._stats[chain_id].failed_providers:
                     self._stats[chain_id].failed_providers.append(provider)
                 
+                # Clean up connection reference
+                if connection_key in self._websocket_connections:
+                    del self._websocket_connections[connection_key]
+                
                 if retry_count < max_retries:
-                    # Exponential backoff
-                    wait_time = min(2 ** retry_count, 60)
+                    # Exponential backoff with jitter
+                    wait_time = min(2 ** retry_count, 60) + (retry_count % 5)
+                    self.logger.info(f"Waiting {wait_time}s before reconnection attempt...")
                     await asyncio.sleep(wait_time)
         
         self.logger.error(f"Max retries exceeded for {provider.value} on chain {chain_id}")
-    
+
     def _get_websocket_url(self, chain_id: int, provider: MempoolProvider) -> str:
         """
         Get WebSocket URL for the specified provider and chain.
@@ -465,19 +515,63 @@ class MempoolMonitor:
         Returns:
             WebSocket URL for the provider
         """
-        if provider == MempoolProvider.ALCHEMY:
-            api_key = getattr(self.config, 'alchemy_api_key', 'demo')
-            if chain_id == 1:  # Ethereum mainnet
-                return f"wss://eth-mainnet.g.alchemy.com/v2/{api_key}"
-            elif chain_id == 8453:  # Base mainnet
-                return f"wss://base-mainnet.g.alchemy.com/v2/{api_key}"
-        
-        elif provider == MempoolProvider.ANKR:
-            if chain_id == 1:  # Ethereum mainnet
-                return "wss://rpc.ankr.com/eth/ws"
-        
-        # Add more providers as needed
-        raise ValueError(f"No WebSocket URL configured for {provider.value} on chain {chain_id}")
+        try:
+            # Get the base RPC URL from configuration
+            chain_config = self.config.chain_configs.get(chain_id)
+            if not chain_config:
+                raise ValueError(f"No configuration found for chain {chain_id}")
+                
+            # Extract base URL from provider configuration
+            base_url = None
+            if hasattr(chain_config, 'providers'):
+                for provider_config in chain_config.providers:
+                    if hasattr(provider_config, 'url'):
+                        base_url = provider_config.url
+                        break
+            
+            if not base_url:
+                # Fallback to direct chain config URL
+                base_url = getattr(chain_config, 'rpc_url', None)
+                
+            if not base_url:
+                raise ValueError(f"No RPC URL found for chain {chain_id}")
+            
+            # Convert HTTP URL to WebSocket URL based on provider
+            if provider == MempoolProvider.ALCHEMY:
+                if 'alchemy.com' in base_url:
+                    # Replace https:// with wss:// for Alchemy
+                    websocket_url = base_url.replace('https://', 'wss://')
+                    self.logger.debug(f"Generated Alchemy WebSocket URL: {websocket_url}")
+                    return websocket_url
+                else:
+                    api_key = getattr(self.config, 'alchemy_api_key', 'demo')
+                    if chain_id == 1:  # Ethereum mainnet
+                        return f"wss://eth-mainnet.g.alchemy.com/v2/{api_key}"
+                    elif chain_id == 8453:  # Base mainnet
+                        return f"wss://base-mainnet.g.alchemy.com/v2/{api_key}"
+                    
+            elif provider == MempoolProvider.ANKR:
+                if 'ankr.com' in base_url:
+                    # Ankr WebSocket URL format
+                    websocket_url = base_url.replace('https://', 'wss://')
+                    self.logger.debug(f"Generated Ankr WebSocket URL: {websocket_url}")
+                    return websocket_url
+                else:
+                    if chain_id == 1:  # Ethereum mainnet
+                        return "wss://rpc.ankr.com/eth/ws"
+                    
+            elif provider == MempoolProvider.INFURA:
+                if 'infura.io' in base_url:
+                    # Infura WebSocket URL format
+                    websocket_url = base_url.replace('https://', 'wss://')
+                    self.logger.debug(f"Generated Infura WebSocket URL: {websocket_url}")
+                    return websocket_url
+                    
+            raise ValueError(f"No WebSocket URL configured for {provider.value} on chain {chain_id}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to generate WebSocket URL for {provider.value} chain {chain_id}: {e}")
+            raise
     
     async def _subscribe_to_mempool(
         self, 
@@ -486,83 +580,118 @@ class MempoolMonitor:
         provider: MempoolProvider
     ) -> None:
         """
-        Subscribe to mempool events on the WebSocket connection.
+        Subscribe to mempool events from the WebSocket provider.
         
         Args:
-            websocket: WebSocket connection
-            chain_id: Target blockchain network
+            websocket: Active WebSocket connection
+            chain_id: Blockchain network ID
             provider: Mempool data provider
         """
-        if provider == MempoolProvider.ALCHEMY:
-            # Alchemy subscription for pending transactions
-            subscription = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "eth_subscribe",
-                "params": ["alchemy_pendingTransactions"]
-            }
-        elif provider == MempoolProvider.ANKR:
-            # Ankr subscription for pending transactions
-            subscription = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "eth_subscribe",
-                "params": ["newPendingTransactions"]
-            }
-        else:
-            raise ValueError(f"Unsupported provider: {provider.value}")
+        self.logger.info(f"Subscribing to mempool events: {provider.value} chain {chain_id}")
         
-        await websocket.send(json.dumps(subscription))
-        
-        # Wait for subscription confirmation
-        response = await websocket.recv()
-        response_data = json.loads(response)
-        
-        if "result" in response_data:
-            self.logger.info(
-                f"Successfully subscribed to {provider.value} mempool "
-                f"for chain {chain_id}: {response_data['result']}"
-            )
-        else:
-            raise Exception(f"Subscription failed: {response_data}")
+        try:
+            if provider == MempoolProvider.ALCHEMY:
+                # Alchemy WebSocket subscription for pending transactions
+                subscription_message = {
+                    "id": 1,
+                    "method": "eth_subscribe",
+                    "params": ["alchemy_pendingTransactions", {
+                        "toAddress": list(self._chain_configs[chain_id].target_addresses),
+                        "hashesOnly": False  # Get full transaction data
+                    }]
+                }
+                
+                await websocket.send(json.dumps(subscription_message))
+                self.logger.info(f"Subscribed to Alchemy pending transactions for chain {chain_id}")
+                
+            elif provider == MempoolProvider.ANKR:
+                # Ankr WebSocket subscription
+                subscription_message = {
+                    "id": 1,
+                    "method": "eth_subscribe", 
+                    "params": ["newPendingTransactions"]
+                }
+                
+                await websocket.send(json.dumps(subscription_message))
+                self.logger.info(f"Subscribed to Ankr pending transactions for chain {chain_id}")
+                
+            elif provider == MempoolProvider.INFURA:
+                # Infura WebSocket subscription  
+                subscription_message = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "eth_subscribe",
+                    "params": ["newPendingTransactions"]
+                }
+                
+                await websocket.send(json.dumps(subscription_message))
+                self.logger.info(f"Subscribed to Infura pending transactions for chain {chain_id}")
+                
+            else:
+                self.logger.warning(f"No subscription method implemented for {provider.value}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to mempool events: {e}")
+            raise
     
     async def _handle_websocket_message(
         self, 
-        message: str, 
+        raw_message: str, 
         chain_id: int, 
         provider: MempoolProvider
     ) -> None:
         """
-        Handle incoming WebSocket message from mempool provider.
+        Handle incoming WebSocket messages and parse transaction data.
         
         Args:
-            message: Raw WebSocket message
-            chain_id: Source blockchain network
-            provider: Source mempool provider
+            raw_message: Raw WebSocket message
+            chain_id: Blockchain network ID  
+            provider: Data provider that sent the message
         """
         try:
-            data = json.loads(message)
+            # Parse JSON message
+            message = json.loads(raw_message)
             
-            # Handle subscription notifications
-            if "params" in data and "result" in data["params"]:
-                transaction_data = data["params"]["result"]
-                
-                # Convert to our internal transaction format
-                mempool_tx = await self._parse_transaction_data(
-                    transaction_data, chain_id, provider
-                )
-                
-                if mempool_tx:
-                    # Add to processing queue
-                    await self._transaction_queues[chain_id].put(mempool_tx)
+            # Handle subscription confirmation
+            if "result" in message and "id" in message:
+                if message["id"] == 1:  # Subscription confirmation
+                    self.logger.debug(f"Subscription confirmed for {provider.value} chain {chain_id}")
+                    return
                     
-                    # Update statistics
-                    self._stats[chain_id].total_transactions_seen += 1
-                    if mempool_tx.is_dex_interaction:
-                        self._stats[chain_id].dex_transactions_seen += 1
-        
+            # Handle pending transaction notifications
+            if "method" in message and message["method"] == "eth_subscription":
+                params = message.get("params", {})
+                
+                if "result" in params:
+                    transaction_data = params["result"]
+                    
+                    # Parse transaction from different provider formats
+                    if provider == MempoolProvider.ALCHEMY:
+                        # Alchemy provides full transaction objects
+                        tx = await self._parse_alchemy_transaction(transaction_data, chain_id)
+                    else:
+                        # Other providers might send just hashes, need to fetch full data
+                        if isinstance(transaction_data, str):  # Transaction hash only
+                            tx = await self._fetch_full_transaction(transaction_data, chain_id, provider)
+                        else:
+                            tx = await self._parse_transaction_data(transaction_data, chain_id, provider)
+                    
+                    if tx:
+                        # Queue transaction for processing
+                        await self._transaction_queues[chain_id].put(tx)
+                        self._stats[chain_id].total_transactions_seen += 1
+                        
+                        if tx.is_dex_interaction:
+                            self._stats[chain_id].dex_transactions_seen += 1
+            
+            # Handle other message types
+            elif "error" in message:
+                self.logger.error(f"WebSocket error from {provider.value}: {message['error']}")
+                
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Invalid JSON from {provider.value}: {e}")
         except Exception as e:
-            self.logger.error(f"Error handling WebSocket message: {e}")
+            self.logger.error(f"Error handling WebSocket message from {provider.value}: {e}")
     
     async def _parse_transaction_data(
         self, 
@@ -809,23 +938,21 @@ class MempoolMonitor:
         for tx in new_transactions:
             if tx.is_dex_interaction:
                 try:
-                    # Convert to format expected by MEV engine
-                    tx_params = self._convert_to_tx_params(tx)
+                    pending_tx = tx.to_pending_transaction()
                     
                     # Analyze for MEV threats
-                    threats, recommendation = await self._mev_engine.analyze_transaction_for_mev_threats(
-                        tx_params, current_mempool
-                    )
+                    analysis = await self._mev_engine.analyze_pending_transaction(pending_tx)
                     
-                    # Store analysis results
-                    tx.mev_threats = threats
-                    tx.protection_recommendation = recommendation
-                    
-                    if threats:
-                        self._stats[chain_id].mev_threats_detected += len(threats)
+                    if analysis:
+                        # Store analysis results
+                        tx.mev_threats = analysis.threats
+                        tx.protection_recommendation = analysis.recommendation
                         
-                        # Send threat notifications
-                        await self._process_threat_callbacks(tx, threats, chain_id)
+                        if analysis.threats:
+                            self._stats[chain_id].mev_threats_detected += len(analysis.threats)
+                            
+                            # Send threat notifications
+                            await self._process_threat_callbacks(tx, analysis.threats, chain_id)
                 
                 except Exception as e:
                     self.logger.error(f"MEV analysis failed for tx {tx.hash}: {e}")
@@ -1051,6 +1178,258 @@ async def create_mempool_monitor(
     monitor = MempoolMonitor(config)
     await monitor.initialize(mev_engine, gas_optimizer, relay_manager)
     return monitor
+
+
+
+
+# Add these additional methods to your MempoolMonitor class in monitor.py:
+
+async def _parse_alchemy_transaction(
+    self, 
+    tx_data: Dict[str, Any], 
+    chain_id: int
+) -> Optional[MempoolTransaction]:
+    """
+    Parse transaction data from Alchemy WebSocket.
+    
+    Args:
+        tx_data: Transaction data from Alchemy
+        chain_id: Blockchain network ID
+        
+    Returns:
+        Parsed MempoolTransaction or None if invalid
+    """
+    try:
+        # Extract transaction fields
+        tx_hash = tx_data.get("hash")
+        from_addr = tx_data.get("from")
+        to_addr = tx_data.get("to")
+        value = tx_data.get("value", "0x0")
+        gas_price = tx_data.get("gasPrice", "0x0")
+        gas_limit = tx_data.get("gas", "0x0")
+        nonce = tx_data.get("nonce", "0x0")
+        input_data = tx_data.get("input", "0x")
+        
+        if not tx_hash or not from_addr:
+            return None
+            
+        # Convert hex values to decimals
+        value_wei = int(value, 16) if isinstance(value, str) else value
+        gas_price_wei = int(gas_price, 16) if isinstance(gas_price, str) else gas_price
+        gas_limit_int = int(gas_limit, 16) if isinstance(gas_limit, str) else gas_limit
+        nonce_int = int(nonce, 16) if isinstance(nonce, str) else nonce
+        
+        # Determine if this is a DEX interaction
+        is_dex = self._is_dex_transaction(to_addr, input_data, chain_id)
+        
+        # Create MempoolTransaction
+        now = datetime.utcnow()
+        mempool_tx = MempoolTransaction(
+            hash=tx_hash,
+            from_address=from_addr,
+            to_address=to_addr,
+            value=Decimal(str(value_wei)),
+            gas_price=Decimal(str(gas_price_wei)),
+            gas_limit=gas_limit_int,
+            nonce=nonce_int,
+            data=input_data,
+            first_seen=now,
+            last_seen=now,
+            is_dex_interaction=is_dex
+        )
+        
+        if is_dex:
+            await self._analyze_transaction_type(mempool_tx, chain_id)
+        
+        return mempool_tx
+        
+    except Exception as e:
+        self.logger.error(f"Error parsing Alchemy transaction: {e}")
+        return None
+
+async def _fetch_full_transaction(
+    self, 
+    tx_hash: str, 
+    chain_id: int, 
+    provider: MempoolProvider
+) -> Optional[MempoolTransaction]:
+    """
+    Fetch full transaction data when only hash is provided.
+    
+    Args:
+        tx_hash: Transaction hash
+        chain_id: Blockchain network ID
+        provider: Data provider
+        
+    Returns:
+        Full MempoolTransaction or None if fetch failed
+    """
+    try:
+        if not self._session:
+            return None
+            
+        # Get RPC URL for the chain
+        rpc_url = self._get_rpc_url_for_chain(chain_id)
+        if not rpc_url:
+            return None
+            
+        # Prepare RPC request
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionByHash",
+            "params": [tx_hash],
+            "id": 1
+        }
+        
+        # Make HTTP request to fetch full transaction
+        async with self._session.post(
+            rpc_url, 
+            json=rpc_request,
+            timeout=5  # 5 second timeout
+        ) as response:
+            
+            if response.status == 200:
+                data = await response.json()
+                
+                if "result" in data and data["result"]:
+                    return await self._parse_transaction_data(
+                        data["result"], chain_id, provider
+                    )
+                    
+        return None
+        
+    except Exception as e:
+        self.logger.error(f"Error fetching transaction {tx_hash}: {e}")
+        return None
+
+def _is_dex_transaction(
+    self, 
+    to_address: Optional[str], 
+    input_data: str, 
+    chain_id: int
+) -> bool:
+    """
+    Determine if a transaction is a DEX interaction.
+    
+    Args:
+        to_address: Transaction recipient address
+        input_data: Transaction input data
+        chain_id: Blockchain network ID
+        
+    Returns:
+        True if this is a DEX transaction
+    """
+    if not to_address:
+        return False
+        
+    # Check if recipient is a known DEX contract
+    chain_config = self._chain_configs.get(chain_id)
+    if chain_config and to_address.lower() in [addr.lower() for addr in chain_config.target_addresses]:
+        return True
+        
+    # Check function signatures for DEX operations
+    if len(input_data) >= 10:  # At least function selector (4 bytes = 8 hex chars + 0x)
+        function_selector = input_data[:10].lower()
+        
+        # Common DEX function signatures
+        dex_signatures = {
+            "0x7ff36ab5",  # swapExactETHForTokens (Uniswap V2)
+            "0x18cbafe5",  # swapExactTokensForETH (Uniswap V2)  
+            "0x38ed1739",  # swapExactTokensForTokens (Uniswap V2)
+            "0x414bf389",  # exactInputSingle (Uniswap V3)
+            "0xac9650d8",  # multicall (Uniswap V3)
+            "0x5ae401dc",  # multicall with deadline (Uniswap V3)
+            "0x24856bc3",  # exactOutput (Uniswap V3)
+            "0x09b81346",  # exactOutputSingle (Uniswap V3)
+        }
+        
+        if function_selector in dex_signatures:
+            return True
+            
+    return False
+
+def _get_rpc_url_for_chain(self, chain_id: int) -> Optional[str]:
+    """Get RPC URL for a specific chain."""
+    chain_config = self.config.chain_configs.get(chain_id)
+    if chain_config and hasattr(chain_config, 'providers'):
+        for provider in chain_config.providers:
+            if hasattr(provider, 'url'):
+                return provider.url
+    return None
+
+def is_connected(self, chain_id: Optional[int] = None) -> bool:
+    """
+    Check if WebSocket connections are active.
+    
+    Args:
+        chain_id: Specific chain to check, or None for any connection
+        
+    Returns:
+        True if at least one connection is active
+    """
+    if not self._websocket_connections:
+        return False
+        
+    if chain_id is not None:
+        # Check connections for specific chain
+        chain_connections = [
+            conn for key, conn in self._websocket_connections.items() 
+            if key.startswith(f"{chain_id}_")
+        ]
+        return any(not conn.closed for conn in chain_connections)
+    else:
+        # Check all connections
+        return any(not conn.closed for conn in self._websocket_connections.values())
+
+def get_connected_chains(self) -> List[int]:
+    """
+    Get list of chain IDs with active WebSocket connections.
+    
+    Returns:
+        List of chain IDs with active connections
+    """
+    connected_chains = set()
+    
+    for connection_key, websocket in self._websocket_connections.items():
+        if not websocket.closed:
+            # Extract chain ID from connection key (format: "chain_id_provider")
+            try:
+                chain_id = int(connection_key.split('_')[0])
+                connected_chains.add(chain_id)
+            except (ValueError, IndexError):
+                continue
+                
+    return sorted(list(connected_chains))
+
+def get_performance_metrics(self) -> Dict[str, Any]:
+    """
+    Get performance metrics for the mempool monitor.
+    
+    Returns:
+        Dictionary containing performance metrics
+    """
+    total_connections = len(self._websocket_connections)
+    active_connections = sum(1 for conn in self._websocket_connections.values() if not conn.closed)
+    
+    # Calculate average processing latency
+    avg_latency = 0.0
+    if self._processing_latencies:
+        avg_latency = sum(self._processing_latencies) / len(self._processing_latencies)
+    
+    total_pending = sum(len(txs) for txs in self._pending_transactions.values())
+    
+    return {
+        "total_connections": total_connections,
+        "active_connections": active_connections,
+        "connection_uptime_pct": (active_connections / max(total_connections, 1)) * 100,
+        "avg_processing_latency_ms": round(avg_latency, 2),
+        "total_chains_monitored": len(self._chain_configs),
+        "total_pending_transactions": total_pending,
+        "processing_queue_sizes": {
+            str(chain_id): queue.qsize() 
+            for chain_id, queue in self._transaction_queues.items()
+        }
+    }
 
 
 # =============================================================================

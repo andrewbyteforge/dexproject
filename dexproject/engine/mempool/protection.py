@@ -21,6 +21,8 @@ Django App: N/A (Pure engine component)
 import asyncio
 import logging
 import time
+import json
+import hashlib
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
@@ -144,6 +146,10 @@ class MEVThreat:
     detection_time: datetime = field(default_factory=datetime.utcnow)
     
     # Threat-specific data
+    attacker_address: Optional[str] = None
+    frontrun_transaction: Optional[str] = None
+    backrun_transaction: Optional[str] = None
+    gas_price_advantage: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -157,6 +163,10 @@ class MEVThreat:
             "estimated_profit": str(self.estimated_profit) if self.estimated_profit else None,
             "estimated_loss": str(self.estimated_loss) if self.estimated_loss else None,
             "detection_time": self.detection_time.isoformat(),
+            "attacker_address": self.attacker_address,
+            "frontrun_transaction": self.frontrun_transaction,
+            "backrun_transaction": self.backrun_transaction,
+            "gas_price_advantage": self.gas_price_advantage,
             "metadata": self.metadata
         }
 
@@ -190,6 +200,21 @@ class ProtectionRecommendation:
             "expected_cost": str(self.expected_cost) if self.expected_cost else None,
             "expected_savings": str(self.expected_savings) if self.expected_savings else None
         }
+
+
+@dataclass
+class ProtectionAnalysis:
+    """Complete MEV analysis result for a transaction."""
+    transaction_hash: str
+    threats: List[MEVThreat]
+    recommendation: ProtectionRecommendation
+    analysis_time_ms: float
+    timestamp: datetime
+    
+    # Analysis metadata
+    mempool_size_analyzed: int = 0
+    confidence_threshold_used: float = 0.6
+    analysis_version: str = "1.0"
 
 
 # =============================================================================
@@ -311,6 +336,78 @@ class MEVProtectionEngine:
         
         self.logger.info(f"Initialized {len(self._threat_patterns)} threat pattern categories")
     
+    async def analyze_pending_transaction(self, transaction: PendingTransaction) -> Optional['ProtectionAnalysis']:
+        """
+        Analyze a pending transaction for MEV threats and generate protection recommendations.
+        
+        Args:
+            transaction: Transaction to analyze for MEV risks
+            
+        Returns:
+            ProtectionAnalysis containing threats and recommendations, or None if analysis fails
+        """
+        start_time = time.perf_counter()
+        
+        try:
+            self.logger.debug(f"Analyzing transaction {transaction.hash[:10]}... for MEV threats")
+            
+            # Get current mempool state for context
+            current_mempool = list(self._pending_transactions.values())
+            
+            # Detect MEV threats
+            threats = await self._detect_mev_threats(transaction, current_mempool)
+            
+            # Generate protection recommendation based on threats
+            recommendation = await self._generate_protection_recommendation(transaction, threats)
+            
+            # Track analysis performance
+            analysis_time_ms = (time.perf_counter() - start_time) * 1000
+            self._analysis_latencies.append(analysis_time_ms)
+            
+            # Update statistics
+            if threats:
+                self._threats_detected += len(threats)
+                threat_types = [threat.threat_type.value for threat in threats]
+                self.logger.info(
+                    f"MEV threats detected for {transaction.hash[:10]}...: {threat_types} "
+                    f"(Analysis: {analysis_time_ms:.2f}ms)"
+                )
+                
+                # Send threat notifications to Django
+                if self._django_bridge:
+                    await self._send_threat_notifications(transaction, threats, recommendation)
+            
+            # Create analysis result
+            analysis = ProtectionAnalysis(
+                transaction_hash=transaction.hash,
+                threats=threats,
+                recommendation=recommendation,
+                analysis_time_ms=analysis_time_ms,
+                timestamp=datetime.utcnow()
+            )
+            
+            return analysis
+            
+        except Exception as e:
+            self.logger.error(f"MEV analysis failed for {transaction.hash[:10]}...: {e}")
+            
+            # Return safe default recommendation
+            default_recommendation = ProtectionRecommendation(
+                action=ProtectionAction.PRIVATE_RELAY,
+                priority_level=PriorityLevel.HIGH,
+                gas_price_multiplier=1.2,
+                use_private_relay=True,
+                reasoning="Analysis failed, using conservative protection"
+            )
+            
+            return ProtectionAnalysis(
+                transaction_hash=transaction.hash,
+                threats=[],
+                recommendation=default_recommendation,
+                analysis_time_ms=(time.perf_counter() - start_time) * 1000,
+                timestamp=datetime.utcnow()
+            )
+
     async def analyze_transaction_for_mev_threats(
         self,
         transaction: TxParams,
@@ -356,7 +453,7 @@ class MEVProtectionEngine:
                 
                 # Send threat alerts to Django
                 if self._django_bridge:
-                    await self._send_threat_alerts(threats, recommendation)
+                    await self._send_threat_notifications(pending_tx, threats, recommendation)
             
             return threats, recommendation
             
@@ -410,17 +507,17 @@ class MEVProtectionEngine:
             # Track gas price trends
             if tx.is_dex_interaction:
                 self._gas_price_history.append(tx.gas_price)
-    
+
     async def _detect_mev_threats(
-        self,
-        target_tx: PendingTransaction,
+        self, 
+        target_tx: PendingTransaction, 
         mempool: List[PendingTransaction]
     ) -> List[MEVThreat]:
         """
-        Detect MEV threats targeting the given transaction.
+        Detect various MEV threat types against a target transaction.
         
         Args:
-            target_tx: Transaction to protect
+            target_tx: Transaction being analyzed
             mempool: Current mempool state
             
         Returns:
@@ -428,109 +525,129 @@ class MEVProtectionEngine:
         """
         threats = []
         
-        # Only analyze DEX transactions for MEV threats
-        if not target_tx.is_dex_interaction:
-            return threats
-        
-        # Detect sandwich attacks
-        sandwich_threats = await self._detect_sandwich_attacks(target_tx, mempool)
-        threats.extend(sandwich_threats)
-        
-        # Detect frontrunning attempts
-        frontrun_threats = await self._detect_frontrunning(target_tx, mempool)
-        threats.extend(frontrun_threats)
-        
-        # Detect backrunning opportunities (less critical)
-        backrun_threats = await self._detect_backrunning(target_tx, mempool)
-        threats.extend(backrun_threats)
-        
-        # Filter threats by confidence threshold
-        high_confidence_threats = [
-            threat for threat in threats 
-            if threat.confidence >= 0.6
-        ]
-        
-        return high_confidence_threats
-    
+        try:
+            # Concurrent threat detection for performance
+            threat_detection_tasks = [
+                self._detect_sandwich_attacks(target_tx, mempool),
+                self._detect_frontrunning(target_tx, mempool),
+                self._detect_backrunning(target_tx, mempool),
+                self._detect_jit_liquidity(target_tx, mempool),
+            ]
+            
+            # Execute all detection algorithms concurrently
+            results = await asyncio.gather(*threat_detection_tasks, return_exceptions=True)
+            
+            # Collect results from all detectors
+            for result in results:
+                if isinstance(result, Exception):
+                    self.logger.error(f"Threat detection failed: {result}")
+                    continue
+                if isinstance(result, list):
+                    threats.extend(result)
+            
+            # Remove duplicates and sort by severity
+            unique_threats = self._deduplicate_threats(threats)
+            sorted_threats = sorted(
+                unique_threats, 
+                key=lambda t: self._get_severity_score(t.severity), 
+                reverse=True
+            )
+            
+            return sorted_threats
+            
+        except Exception as e:
+            self.logger.error(f"MEV threat detection failed: {e}")
+            return []
+
     async def _detect_sandwich_attacks(
-        self,
-        target_tx: PendingTransaction,
+        self, 
+        target_tx: PendingTransaction, 
         mempool: List[PendingTransaction]
     ) -> List[MEVThreat]:
         """
-        Detect sandwich attack patterns targeting the transaction.
+        Detect sandwich attack patterns in the mempool.
         
         Args:
-            target_tx: Target transaction
-            mempool: Current mempool state
+            target_tx: Target transaction to protect
+            mempool: Current mempool transactions
             
         Returns:
             List of sandwich attack threats
         """
         threats = []
         
-        if not target_tx.target_token:
+        if not target_tx.is_dex_interaction:
             return threats
-        
-        # Look for transactions that could be sandwich components
-        potential_front = []
-        potential_back = []
-        
-        for tx in mempool:
-            if (tx.hash != target_tx.hash and 
-                tx.is_dex_interaction and 
-                tx.target_token == target_tx.target_token):
-                
-                # Check if this could be front-running transaction
-                if (tx.gas_price > target_tx.gas_price and
-                    tx.timestamp <= target_tx.timestamp):
-                    potential_front.append(tx)
-                
-                # Check if this could be back-running transaction
-                elif (tx.gas_price < target_tx.gas_price and
-                      tx.timestamp > target_tx.timestamp):
-                    potential_back.append(tx)
-        
-        # Analyze potential sandwich patterns
-        for front_tx in potential_front:
-            for back_tx in potential_back:
-                # Check if front and back transactions are from same address
-                if front_tx.from_address == back_tx.from_address:
-                    # Calculate sandwich profitability
-                    confidence = self._calculate_sandwich_confidence(
-                        front_tx, target_tx, back_tx
-                    )
+            
+        try:
+            # Find potential sandwich transactions
+            frontrun_candidates = []
+            backrun_candidates = []
+            
+            for tx in mempool:
+                if tx.hash == target_tx.hash or not tx.is_dex_interaction:
+                    continue
                     
-                    if confidence >= 0.6:
-                        threat = MEVThreat(
-                            threat_type=MEVThreatType.SANDWICH_ATTACK,
-                            severity=self._calculate_threat_severity(confidence),
-                            confidence=confidence,
-                            target_transaction=target_tx.hash,
-                            threatening_transactions=[front_tx.hash, back_tx.hash],
-                            metadata={
-                                "front_tx": front_tx.hash,
-                                "back_tx": back_tx.hash,
-                                "attacker_address": front_tx.from_address,
-                                "token_address": target_tx.target_token,
-                                "gas_price_difference": float(front_tx.gas_price - target_tx.gas_price)
-                            }
+                # Check for same token pair interaction
+                if not self._involves_same_token_pair(target_tx, tx):
+                    continue
+                    
+                # Frontrunning candidate: higher gas price, earlier timestamp
+                if (tx.gas_price > target_tx.gas_price and 
+                    tx.timestamp <= target_tx.timestamp):
+                    frontrun_candidates.append(tx)
+                    
+                # Backrunning candidate: lower gas price, later timestamp
+                elif (tx.gas_price < target_tx.gas_price and 
+                      tx.timestamp >= target_tx.timestamp):
+                    backrun_candidates.append(tx)
+            
+            # Detect sandwich patterns
+            for frontrun_tx in frontrun_candidates:
+                for backrun_tx in backrun_candidates:
+                    # Check if same attacker (same from address)
+                    if frontrun_tx.from_address == backrun_tx.from_address:
+                        
+                        # Calculate confidence based on pattern strength
+                        confidence = self._calculate_sandwich_confidence(
+                            frontrun_tx, target_tx, backrun_tx
                         )
-                        threats.append(threat)
-        
-        return threats
-    
+                        
+                        if confidence >= 0.6:  # Minimum confidence threshold
+                            threat = MEVThreat(
+                                threat_type=MEVThreatType.SANDWICH_ATTACK,
+                                target_transaction=target_tx.hash,
+                                attacker_address=frontrun_tx.from_address,
+                                frontrun_transaction=frontrun_tx.hash,
+                                backrun_transaction=backrun_tx.hash,
+                                confidence=confidence,
+                                severity=self._determine_threat_severity(confidence),
+                                estimated_profit=self._estimate_sandwich_profit(
+                                    frontrun_tx, target_tx, backrun_tx
+                                ),
+                                detection_time=datetime.utcnow(),
+                                threatening_transactions=[frontrun_tx.hash, backrun_tx.hash]
+                            )
+                            
+                            threats.append(threat)
+            
+            return threats
+            
+        except Exception as e:
+            self.logger.error(f"Sandwich attack detection failed: {e}")
+            return []
+
     async def _detect_frontrunning(
-        self,
-        target_tx: PendingTransaction,
+        self, 
+        target_tx: PendingTransaction, 
         mempool: List[PendingTransaction]
     ) -> List[MEVThreat]:
         """
-        Detect frontrunning attempts against the transaction.
+        Detect frontrunning patterns in the mempool.
         
         Args:
-            target_tx: Target transaction
-            mempool: Current mempool state
+            target_tx: Target transaction to protect
+            mempool: Current mempool transactions
             
         Returns:
             List of frontrunning threats
@@ -539,173 +656,209 @@ class MEVProtectionEngine:
         
         if not target_tx.is_dex_interaction:
             return threats
-        
-        # Look for transactions with similar parameters but higher gas prices
-        for tx in mempool:
-            if (tx.hash != target_tx.hash and
-                tx.is_dex_interaction and
-                tx.target_token == target_tx.target_token and
-                tx.gas_price > target_tx.gas_price * Decimal('1.1')):
-                
-                # Calculate similarity and frontrun probability
-                confidence = self._calculate_frontrun_confidence(tx, target_tx)
-                
-                if confidence >= 0.7:
-                    threat = MEVThreat(
-                        threat_type=MEVThreatType.FRONTRUNNING,
-                        severity=self._calculate_threat_severity(confidence),
-                        confidence=confidence,
-                        target_transaction=target_tx.hash,
-                        threatening_transactions=[tx.hash],
-                        metadata={
-                            "frontrunner_tx": tx.hash,
-                            "frontrunner_address": tx.from_address,
-                            "gas_price_advantage": float(tx.gas_price - target_tx.gas_price),
-                            "time_advantage_ms": (target_tx.timestamp - tx.timestamp).total_seconds() * 1000
-                        }
-                    )
-                    threats.append(threat)
-        
-        return threats
-    
+            
+        try:
+            # Look for transactions with similar intent but higher gas prices
+            for tx in mempool:
+                if tx.hash == target_tx.hash:
+                    continue
+                    
+                # Must be same token interaction with higher gas price
+                if (self._involves_same_token_pair(target_tx, tx) and
+                    tx.gas_price > target_tx.gas_price):
+                    
+                    # Calculate confidence based on similarity and timing
+                    confidence = self._calculate_frontrun_confidence(target_tx, tx)
+                    
+                    if confidence >= 0.7:  # Higher threshold for frontrunning
+                        
+                        threat = MEVThreat(
+                            threat_type=MEVThreatType.FRONTRUNNING,
+                            target_transaction=target_tx.hash,
+                            attacker_address=tx.from_address,
+                            frontrun_transaction=tx.hash,
+                            confidence=confidence,
+                            severity=self._determine_threat_severity(confidence),
+                            gas_price_advantage=float(tx.gas_price - target_tx.gas_price),
+                            detection_time=datetime.utcnow(),
+                            threatening_transactions=[tx.hash]
+                        )
+                        
+                        threats.append(threat)
+            
+            return threats
+            
+        except Exception as e:
+            self.logger.error(f"Frontrunning detection failed: {e}")
+            return []
+
     async def _detect_backrunning(
-        self,
-        target_tx: PendingTransaction,
+        self, 
+        target_tx: PendingTransaction, 
         mempool: List[PendingTransaction]
     ) -> List[MEVThreat]:
         """
-        Detect backrunning opportunities (lower severity).
+        Detect backrunning/arbitrage patterns that might affect the target transaction.
         
         Args:
-            target_tx: Target transaction
-            mempool: Current mempool state
+            target_tx: Target transaction to protect
+            mempool: Current mempool transactions
             
         Returns:
             List of backrunning threats
         """
         threats = []
         
-        # Backrunning is generally less harmful but worth tracking
-        for tx in mempool:
-            if (tx.hash != target_tx.hash and
-                tx.is_dex_interaction and
-                tx.target_token == target_tx.target_token and
-                tx.gas_price < target_tx.gas_price and
-                tx.timestamp > target_tx.timestamp):
-                
-                confidence = 0.5  # Lower confidence as it's less harmful
-                
-                threat = MEVThreat(
-                    threat_type=MEVThreatType.BACKRUNNING,
-                    severity=SeverityLevel.LOW,
-                    confidence=confidence,
-                    target_transaction=target_tx.hash,
-                    threatening_transactions=[tx.hash],
-                    metadata={
-                        "backrunner_tx": tx.hash,
-                        "backrunner_address": tx.from_address,
-                    }
-                )
-                threats.append(threat)
-        
-        return threats
-    
-    def _calculate_sandwich_confidence(
-        self,
-        front_tx: PendingTransaction,
-        target_tx: PendingTransaction,
-        back_tx: PendingTransaction
-    ) -> float:
+        if not target_tx.is_dex_interaction:
+            return threats
+            
+        try:
+            # Look for transactions that could exploit price changes from target tx
+            for tx in mempool:
+                if tx.hash == target_tx.hash:
+                    continue
+                    
+                # Check for arbitrage opportunities that follow our transaction
+                if (tx.timestamp > target_tx.timestamp and
+                    self._could_be_arbitrage_followup(target_tx, tx)):
+                    
+                    confidence = self._calculate_backrun_confidence(target_tx, tx)
+                    
+                    if confidence >= 0.6:
+                        threat = MEVThreat(
+                            threat_type=MEVThreatType.BACKRUNNING,
+                            target_transaction=target_tx.hash,
+                            attacker_address=tx.from_address,
+                            backrun_transaction=tx.hash,
+                            confidence=confidence,
+                            severity=self._determine_threat_severity(confidence),
+                            detection_time=datetime.utcnow(),
+                            threatening_transactions=[tx.hash]
+                        )
+                        
+                        threats.append(threat)
+            
+            return threats
+            
+        except Exception as e:
+            self.logger.error(f"Backrunning detection failed: {e}")
+            return []
+
+    async def _detect_jit_liquidity(
+        self, 
+        target_tx: PendingTransaction, 
+        mempool: List[PendingTransaction]
+    ) -> List[MEVThreat]:
         """
-        Calculate confidence level for sandwich attack detection.
+        Detect Just-In-Time liquidity provision patterns.
         
         Args:
-            front_tx: Front-running transaction
-            target_tx: Target transaction
-            back_tx: Back-running transaction
+            target_tx: Target transaction to protect
+            mempool: Current mempool transactions
             
         Returns:
-            Confidence score (0.0 to 1.0)
+            List of JIT liquidity threats
         """
+        threats = []
+        
+        try:
+            # Look for liquidity provision followed by removal around target tx
+            liquidity_adds = []
+            liquidity_removes = []
+            
+            for tx in mempool:
+                if tx.hash == target_tx.hash:
+                    continue
+                    
+                # Identify liquidity provision transactions
+                if self._is_liquidity_provision(tx):
+                    if tx.timestamp <= target_tx.timestamp:
+                        liquidity_adds.append(tx)
+                    else:
+                        liquidity_removes.append(tx)
+            
+            # Match adds and removes from same address
+            for add_tx in liquidity_adds:
+                for remove_tx in liquidity_removes:
+                    if (add_tx.from_address == remove_tx.from_address and
+                        self._involves_same_pool(add_tx, remove_tx, target_tx)):
+                        
+                        confidence = self._calculate_jit_confidence(add_tx, target_tx, remove_tx)
+                        
+                        if confidence >= 0.5:
+                            threat = MEVThreat(
+                                threat_type=MEVThreatType.JIT_LIQUIDITY,
+                                target_transaction=target_tx.hash,
+                                attacker_address=add_tx.from_address,
+                                frontrun_transaction=add_tx.hash,
+                                backrun_transaction=remove_tx.hash,
+                                confidence=confidence,
+                                severity=self._determine_threat_severity(confidence),
+                                detection_time=datetime.utcnow(),
+                                threatening_transactions=[add_tx.hash, remove_tx.hash]
+                            )
+                            
+                            threats.append(threat)
+            
+            return threats
+            
+        except Exception as e:
+            self.logger.error(f"JIT liquidity detection failed: {e}")
+            return []
+    
+    # Helper methods for transaction analysis
+    def _involves_same_token_pair(self, tx1: PendingTransaction, tx2: PendingTransaction) -> bool:
+        """Check if two transactions involve the same token pair."""
+        # This is a simplified implementation
+        # In production, would parse transaction data to extract token addresses
+        return (tx1.to_address == tx2.to_address and 
+                tx1.data[:10] == tx2.data[:10])  # Same function signature
+
+    def _calculate_sandwich_confidence(
+        self, 
+        frontrun_tx: PendingTransaction, 
+        target_tx: PendingTransaction, 
+        backrun_tx: PendingTransaction
+    ) -> float:
+        """Calculate confidence score for sandwich attack pattern."""
         confidence = 0.0
         
-        # Same attacker address (strong indicator)
-        if front_tx.from_address == back_tx.from_address:
+        # Gas price ordering (frontrun > target > backrun)
+        if frontrun_tx.gas_price > target_tx.gas_price > backrun_tx.gas_price:
             confidence += 0.4
         
-        # Gas price pattern analysis
-        if (front_tx.gas_price > target_tx.gas_price and
-            back_tx.gas_price < target_tx.gas_price):
+        # Time ordering
+        if frontrun_tx.timestamp <= target_tx.timestamp <= backrun_tx.timestamp:
             confidence += 0.3
         
-        # Timing analysis (transactions should be close in time)
-        time_span = (back_tx.timestamp - front_tx.timestamp).total_seconds()
-        if time_span < 15:  # Within 1 block
-            confidence += 0.2
-        elif time_span < 60:  # Within ~4 blocks
-            confidence += 0.1
-        
-        # Amount analysis (if available)
-        if (front_tx.swap_amount_in and target_tx.swap_amount_in and
-            back_tx.swap_amount_out):
-            # Check if amounts suggest profitable sandwich
-            confidence += 0.1
+        # Same attacker address
+        if frontrun_tx.from_address == backrun_tx.from_address:
+            confidence += 0.3
         
         return min(confidence, 1.0)
-    
-    def _calculate_frontrun_confidence(
-        self,
-        frontrun_tx: PendingTransaction,
-        target_tx: PendingTransaction
-    ) -> float:
-        """
-        Calculate confidence level for frontrunning detection.
-        
-        Args:
-            frontrun_tx: Potential frontrunning transaction
-            target_tx: Target transaction
-            
-        Returns:
-            Confidence score (0.0 to 1.0)
-        """
+
+    def _calculate_frontrun_confidence(self, target_tx: PendingTransaction, suspect_tx: PendingTransaction) -> float:
+        """Calculate confidence score for frontrunning pattern."""
         confidence = 0.0
         
-        # Gas price advantage (strong indicator)
-        gas_advantage = float(frontrun_tx.gas_price / target_tx.gas_price)
-        if gas_advantage > 1.5:
+        # Higher gas price
+        gas_advantage = float(suspect_tx.gas_price - target_tx.gas_price) / float(target_tx.gas_price)
+        if gas_advantage > 0.1:  # 10% higher gas
             confidence += 0.4
-        elif gas_advantage > 1.2:
-            confidence += 0.3
-        elif gas_advantage > 1.1:
-            confidence += 0.2
-        
-        # Same target token
-        if frontrun_tx.target_token == target_tx.target_token:
-            confidence += 0.2
         
         # Similar transaction data
-        if frontrun_tx.data[:10] == target_tx.data[:10]:  # Same function selector
-            confidence += 0.2
+        if target_tx.data[:10] == suspect_tx.data[:10]:  # Same function
+            confidence += 0.4
         
-        # Timing (frontrunner should be submitted around same time)
-        time_diff = abs((frontrun_tx.timestamp - target_tx.timestamp).total_seconds())
-        if time_diff < 5:
+        # Time proximity
+        time_diff = abs((suspect_tx.timestamp - target_tx.timestamp).total_seconds())
+        if time_diff < 60:  # Within 1 minute
             confidence += 0.2
-        elif time_diff < 15:
-            confidence += 0.1
         
         return min(confidence, 1.0)
-    
-    def _calculate_threat_severity(self, confidence: float) -> SeverityLevel:
-        """
-        Calculate threat severity based on confidence and potential impact.
-        
-        Args:
-            confidence: Threat confidence score
-            
-        Returns:
-            Severity level
-        """
+
+    def _determine_threat_severity(self, confidence: float) -> SeverityLevel:
+        """Determine threat severity based on confidence score."""
         if confidence >= 0.9:
             return SeverityLevel.CRITICAL
         elif confidence >= 0.8:
@@ -716,65 +869,70 @@ class MEVProtectionEngine:
             return SeverityLevel.LOW
         else:
             return SeverityLevel.NEGLIGIBLE
-    
+
     async def _generate_protection_recommendation(
-        self,
-        target_tx: PendingTransaction,
+        self, 
+        transaction: PendingTransaction, 
         threats: List[MEVThreat]
     ) -> ProtectionRecommendation:
         """
-        Generate MEV protection recommendation based on detected threats.
+        Generate protection recommendation based on detected threats.
         
         Args:
-            target_tx: Transaction to protect
-            threats: Detected MEV threats
+            transaction: Transaction to protect
+            threats: List of detected threats
             
         Returns:
             Protection recommendation
         """
-        # Default safe recommendation
         if not threats:
+            # No threats detected - minimal protection
             return ProtectionRecommendation(
-                action=ProtectionAction.PRIVATE_RELAY,
-                priority_level=PriorityLevel.MEDIUM,
+                action=ProtectionAction.NO_ACTION,
+                priority_level=PriorityLevel.LOW,
                 gas_price_multiplier=1.0,
-                use_private_relay=True,
-                reasoning="No specific threats detected, using private relay as precaution"
+                use_private_relay=False,
+                reasoning="No MEV threats detected"
             )
         
         # Analyze threat severity
-        max_severity = max(threat.severity for threat in threats)
+        max_severity = max(threats, key=lambda t: self._get_severity_score(t.severity))
         threat_types = {threat.threat_type for threat in threats}
-        max_confidence = max(threat.confidence for threat in threats)
         
-        # Determine protection strategy based on threats
-        if SeverityLevel.CRITICAL in [threat.severity for threat in threats]:
-            # Critical threats require immediate private relay + gas increase
+        # Generate recommendation based on threat analysis
+        if SeverityLevel.CRITICAL in [t.severity for t in threats]:
+            # Critical threats - maximum protection
             return ProtectionRecommendation(
                 action=ProtectionAction.PRIVATE_RELAY,
                 priority_level=PriorityLevel.CRITICAL,
                 gas_price_multiplier=1.5,
                 use_private_relay=True,
-                reasoning=f"Critical MEV threats detected: {', '.join(t.value for t in threat_types)}"
+                delay_seconds=0,
+                reasoning=f"Critical MEV threat detected: {list(threat_types)}"
             )
         
         elif MEVThreatType.SANDWICH_ATTACK in threat_types:
-            # Sandwich attacks require private relay
+            # Sandwich attacks - private relay strongly recommended
             return ProtectionRecommendation(
                 action=ProtectionAction.PRIVATE_RELAY,
                 priority_level=PriorityLevel.HIGH,
-                gas_price_multiplier=1.2,
+                gas_price_multiplier=1.3,
                 use_private_relay=True,
-                reasoning="Sandwich attack detected, using private relay for protection"
+                reasoning="Sandwich attack detected - using private relay"
             )
         
         elif MEVThreatType.FRONTRUNNING in threat_types:
-            # Frontrunning can be countered with gas increase or private relay
-            if max_confidence > 0.8:
+            # Frontrunning - increase gas price or use private relay
+            high_confidence_frontrun = any(
+                t.threat_type == MEVThreatType.FRONTRUNNING and t.confidence > 0.8 
+                for t in threats
+            )
+            
+            if high_confidence_frontrun:
                 return ProtectionRecommendation(
                     action=ProtectionAction.PRIVATE_RELAY,
                     priority_level=PriorityLevel.HIGH,
-                    gas_price_multiplier=1.3,
+                    gas_price_multiplier=1.4,
                     use_private_relay=True,
                     reasoning="High-confidence frontrunning detected"
                 )
@@ -782,92 +940,203 @@ class MEVProtectionEngine:
                 return ProtectionRecommendation(
                     action=ProtectionAction.INCREASE_GAS,
                     priority_level=PriorityLevel.MEDIUM,
-                    gas_price_multiplier=1.4,
+                    gas_price_multiplier=1.2,
                     use_private_relay=False,
-                    reasoning="Potential frontrunning, increasing gas price"
+                    reasoning="Potential frontrunning detected - increasing gas price"
                 )
         
         else:
-            # Lower severity threats
+            # Medium threats - moderate protection
             return ProtectionRecommendation(
-                action=ProtectionAction.PRIVATE_RELAY,
+                action=ProtectionAction.INCREASE_GAS,
                 priority_level=PriorityLevel.MEDIUM,
                 gas_price_multiplier=1.1,
-                use_private_relay=True,
-                reasoning=f"MEV threats detected: {', '.join(t.value for t in threat_types)}"
+                use_private_relay=False,
+                reasoning=f"Medium MEV threats detected: {list(threat_types)}"
             )
-    
+
+    def _get_severity_score(self, severity: SeverityLevel) -> int:
+        """Convert severity level to numeric score for comparison."""
+        severity_scores = {
+            SeverityLevel.CRITICAL: 5,
+            SeverityLevel.HIGH: 4,
+            SeverityLevel.MEDIUM: 3,
+            SeverityLevel.LOW: 2,
+            SeverityLevel.NEGLIGIBLE: 1
+        }
+        return severity_scores.get(severity, 0)
+
+    def _deduplicate_threats(self, threats: List[MEVThreat]) -> List[MEVThreat]:
+        """Remove duplicate threats based on transaction hash and type."""
+        seen = set()
+        unique_threats = []
+        
+        for threat in threats:
+            threat_key = (threat.threat_type, threat.target_transaction, threat.attacker_address)
+            if threat_key not in seen:
+                seen.add(threat_key)
+                unique_threats.append(threat)
+        
+        return unique_threats
+
+    async def _send_threat_notifications(
+        self, 
+        transaction: PendingTransaction, 
+        threats: List[MEVThreat], 
+        recommendation: ProtectionRecommendation
+    ) -> None:
+        """Send threat notifications to Django backend."""
+        if not self._django_bridge:
+            return
+            
+        try:
+            notification = {
+                'type': 'mev_threat_detected',
+                'transaction_hash': transaction.hash,
+                'threats': [
+                    {
+                        'type': threat.threat_type.value,
+                        'severity': threat.severity.value,
+                        'confidence': threat.confidence,
+                        'attacker_address': threat.attacker_address
+                    }
+                    for threat in threats
+                ],
+                'recommendation': {
+                    'action': recommendation.action.value,
+                    'priority_level': recommendation.priority_level.value,
+                    'gas_multiplier': recommendation.gas_price_multiplier,
+                    'use_private_relay': recommendation.use_private_relay,
+                    'reasoning': recommendation.reasoning
+                },
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+            await self._django_bridge.send_message('mev_threats', notification)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send threat notifications: {e}")
+
+    # Additional helper methods
+    def _could_be_arbitrage_followup(self, target_tx: PendingTransaction, suspect_tx: PendingTransaction) -> bool:
+        """Check if suspect transaction could be arbitrage following target transaction."""
+        # Simple heuristic: different DEX interaction after our transaction
+        return (suspect_tx.is_dex_interaction and 
+                suspect_tx.to_address != target_tx.to_address and
+                suspect_tx.timestamp > target_tx.timestamp)
+
+    def _calculate_backrun_confidence(self, target_tx: PendingTransaction, suspect_tx: PendingTransaction) -> float:
+        """Calculate confidence for backrunning pattern."""
+        confidence = 0.0
+        
+        # Time ordering (suspect after target)
+        if suspect_tx.timestamp > target_tx.timestamp:
+            confidence += 0.3
+        
+        # Different DEX (arbitrage pattern)
+        if suspect_tx.to_address != target_tx.to_address:
+            confidence += 0.4
+        
+        # Value correlation
+        if abs(float(suspect_tx.value - target_tx.value)) / float(target_tx.value) < 0.5:
+            confidence += 0.3
+        
+        return min(confidence, 1.0)
+
+    def _is_liquidity_provision(self, tx: PendingTransaction) -> bool:
+        """Check if transaction is liquidity provision."""
+        # Common LP function signatures
+        lp_signatures = [
+            '0xe8e33700',  # addLiquidity
+            '0xf305d719',  # addLiquidityETH
+            '0xbaa2abde',  # addLiquidityETH (V3)
+            '0x0c49ccbe',  # mint (V3)
+        ]
+        
+        if len(tx.data) >= 10:
+            function_sig = tx.data[:10].lower()
+            return function_sig in lp_signatures
+        
+        return False
+
+    def _involves_same_pool(self, add_tx: PendingTransaction, remove_tx: PendingTransaction, target_tx: PendingTransaction) -> bool:
+        """Check if transactions involve the same liquidity pool."""
+        # Simplified check - in production would parse transaction data
+        return (add_tx.to_address == remove_tx.to_address and
+                self._involves_same_token_pair(add_tx, target_tx))
+
+    def _calculate_jit_confidence(self, add_tx: PendingTransaction, target_tx: PendingTransaction, remove_tx: PendingTransaction) -> float:
+        """Calculate confidence for JIT liquidity pattern."""
+        confidence = 0.0
+        
+        # Time ordering (add before target, remove after)
+        if add_tx.timestamp <= target_tx.timestamp <= remove_tx.timestamp:
+            confidence += 0.4
+        
+        # Same attacker
+        if add_tx.from_address == remove_tx.from_address:
+            confidence += 0.4
+        
+        # Pool involvement
+        if self._involves_same_pool(add_tx, remove_tx, target_tx):
+            confidence += 0.2
+        
+        return min(confidence, 1.0)
+
+    def _estimate_sandwich_profit(self, frontrun_tx: PendingTransaction, target_tx: PendingTransaction, backrun_tx: PendingTransaction) -> Decimal:
+        """Estimate potential profit from sandwich attack."""
+        # Simplified calculation based on transaction values
+        # In production would use more sophisticated price impact models
+        target_value = target_tx.value
+        estimated_slippage = Decimal('0.005')  # 0.5% estimated slippage
+        return target_value * estimated_slippage
+
     async def apply_protection_recommendation(
-        self,
-        transaction: TxParams,
+        self, 
+        transaction: TxParams, 
         recommendation: ProtectionRecommendation
     ) -> TxParams:
         """
-        Apply protection recommendation to transaction parameters.
+        Apply MEV protection recommendation to a transaction.
         
         Args:
             transaction: Original transaction parameters
             recommendation: Protection recommendation to apply
             
         Returns:
-            Modified transaction parameters
+            Modified transaction parameters with protection applied
         """
         protected_tx = transaction.copy()
         
         try:
-            # Apply gas price modifications
-            if recommendation.gas_price_multiplier != 1.0:
-                if 'gasPrice' in protected_tx:
-                    current_gas = Decimal(str(protected_tx['gasPrice']))
-                    new_gas = int(current_gas * Decimal(str(recommendation.gas_price_multiplier)))
-                    protected_tx['gasPrice'] = new_gas
-                    
-                elif 'maxFeePerGas' in protected_tx:
-                    current_fee = Decimal(str(protected_tx['maxFeePerGas']))
-                    new_fee = int(current_fee * Decimal(str(recommendation.gas_price_multiplier)))
-                    protected_tx['maxFeePerGas'] = new_fee
+            if recommendation.action == ProtectionAction.INCREASE_GAS:
+                # Increase gas price by multiplier
+                current_gas_price = protected_tx.get('gasPrice', 0)
+                new_gas_price = int(current_gas_price * recommendation.gas_price_multiplier)
+                protected_tx['gasPrice'] = new_gas_price
+                
+                self.logger.info(f"Applied gas increase: {current_gas_price} -> {new_gas_price} wei")
+                
+            elif recommendation.action == ProtectionAction.DELAY_EXECUTION:
+                # Add timing delay (would be handled by caller)
+                protected_tx['_mev_delay'] = recommendation.delay_seconds
+                
+            elif recommendation.action == ProtectionAction.PRIVATE_RELAY:
+                # Mark for private relay routing
+                protected_tx['_use_private_relay'] = True
+                protected_tx['_priority_level'] = recommendation.priority_level.value
+                
+                self.logger.info(f"Marked for private relay with priority: {recommendation.priority_level.value}")
             
-            # Track protection action
+            # Track action taken
             self._protection_actions_taken[recommendation.action] += 1
-            
-            self.logger.info(
-                f"Applied MEV protection: {recommendation.action.value}, "
-                f"gas multiplier: {recommendation.gas_price_multiplier}"
-            )
             
             return protected_tx
             
         except Exception as e:
             self.logger.error(f"Failed to apply protection recommendation: {e}")
             return transaction
-    
-    async def _send_threat_alerts(
-        self,
-        threats: List[MEVThreat],
-        recommendation: ProtectionRecommendation
-    ) -> None:
-        """Send MEV threat alerts to Django backend."""
-        if not self._django_bridge:
-            return
-        
-        try:
-            alert_data = {
-                "component": "mev_protection",
-                "timestamp": datetime.utcnow().isoformat(),
-                "threats_detected": len(threats),
-                "max_severity": max(threat.severity.value for threat in threats),
-                "threat_types": [threat.threat_type.value for threat in threats],
-                "protection_action": recommendation.action.value,
-                "threats": [threat.to_dict() for threat in threats],
-                "recommendation": recommendation.to_dict()
-            }
-            
-            # Send through Django bridge
-            self.logger.debug(f"Sending MEV threat alert to Django: {alert_data}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to send threat alert to Django: {e}")
-    
+
     def get_protection_statistics(self) -> Dict[str, Any]:
         """
         Get MEV protection performance statistics.
@@ -887,7 +1156,8 @@ class MEVProtectionEngine:
             "protection_actions": dict(self._protection_actions_taken),
             "average_analysis_time_ms": avg_analysis_time,
             "mempool_transactions_tracked": len(self._pending_transactions),
-            "gas_price_samples": len(self._gas_price_history)
+            "gas_price_samples": len(self._gas_price_history),
+            "detection_accuracy": sum(self._detection_accuracy) / len(self._detection_accuracy) if self._detection_accuracy else 0.0
         }
 
 
@@ -921,6 +1191,7 @@ __all__ = [
     'MEVProtectionEngine',
     'MEVThreat',
     'ProtectionRecommendation',
+    'ProtectionAnalysis',
     'PendingTransaction',
     'MEVThreatType',
     'ProtectionAction',

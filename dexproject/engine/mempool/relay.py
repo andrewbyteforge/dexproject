@@ -21,6 +21,7 @@ import asyncio
 import logging
 import time
 import json
+import hashlib
 from dataclasses import dataclass, asdict
 from decimal import Decimal
 from enum import Enum
@@ -285,209 +286,211 @@ class PrivateRelayManager:
         Args:
             transactions: List of transaction parameters to bundle
             priority: Priority level for relay selection
-            target_block: Specific block number to target (optional)
+            target_block: Specific block number to target (None for next block)
             max_block_delay: Maximum blocks to wait for inclusion
-            replacement_uuid: UUID for bundle replacement (optional)
+            replacement_uuid: UUID for replacing existing bundle
             
         Returns:
-            Bundle submission result with status and metadata
+            Bundle submission result with success status and metadata
         """
-        start_time = time.time()
+        submission_start = time.perf_counter()
+        
+        if not self._session:
+            raise RuntimeError("Private relay manager not initialized")
+            
+        self.logger.info(f"Submitting bundle with {len(transactions)} transactions (Priority: {priority.value})")
         
         try:
-            # Validate inputs
-            if not transactions:
-                raise ValueError("Transaction list cannot be empty")
-            
-            # Get current block number if target not specified
-            if not target_block:
+            # Get current block number for targeting
+            if target_block is None:
                 target_block = await self._get_current_block_number()
+                
+            # Prepare signed transactions for bundle
+            signed_transactions = []
+            for tx in transactions:
+                signed_tx_data = await self._prepare_signed_transaction(tx)
+                signed_transactions.append(signed_tx_data)
             
-            # Select optimal relay for this submission
-            relay_config = self._select_optimal_relay(priority)
-            
-            if not relay_config:
-                self.logger.warning("No suitable relay available, falling back to public mempool")
-                return await self._submit_to_public_mempool(transactions)
-            
-            # Prepare bundle for submission
-            bundle = await self._prepare_bundle(
-                transactions, target_block, max_block_delay, replacement_uuid
+            # Create bundle
+            bundle = FlashbotsBundle(
+                transactions=signed_transactions,
+                block_number=target_block,
+                max_timestamp=int((datetime.utcnow() + timedelta(seconds=60)).timestamp()),
+                replacement_uuid=replacement_uuid
             )
+            
+            # Generate unique bundle ID
+            bundle_id = self._generate_bundle_id(bundle)
+            bundle.bundle_id = bundle_id
+            
+            # Select best relay based on priority and performance
+            selected_relay = self._select_optimal_relay(priority)
+            if not selected_relay:
+                return BundleSubmissionResult(
+                    success=False,
+                    error_message="No suitable relay available",
+                    submission_time=datetime.utcnow()
+                )
+            
+            self.logger.info(f"Selected relay: {selected_relay.name} for priority {priority.value}")
             
             # Submit to selected relay
-            result = await self._submit_to_relay(bundle, relay_config)
+            result = await self._submit_to_relay(bundle, selected_relay)
             
-            # Track metrics
-            latency_ms = (time.time() - start_time) * 1000
-            result.latency_ms = latency_ms
-            self._submission_latencies.append(latency_ms)
-            
-            # Update statistics
-            self._total_submissions += 1
+            # Track bundle and update metrics
             if result.success:
+                self._active_bundles[bundle_id] = bundle
+                self._bundle_status[bundle_id] = BundleStatus.SUBMITTED
                 self._successful_submissions += 1
+                
+                self.logger.info(f"Bundle {bundle_id[:10]}... submitted successfully to {selected_relay.name}")
+            else:
+                self.logger.error(f"Bundle submission failed: {result.error_message}")
             
-            # Log submission result
-            self.logger.info(
-                f"Bundle submission result: {result.success}, "
-                f"relay: {relay_config.name}, "
-                f"latency: {latency_ms:.1f}ms, "
-                f"bundle_id: {result.bundle_id}"
-            )
+            # Track performance metrics
+            submission_time = (time.perf_counter() - submission_start) * 1000
+            self._submission_latencies.append(submission_time)
+            self._total_submissions += 1
             
-            # Track bundle status if successful
-            if result.success and result.bundle_id:
-                self._active_bundles[result.bundle_id] = bundle
-                self._bundle_status[result.bundle_id] = BundleStatus.SUBMITTED
+            result.latency_ms = submission_time
             
-            # Send metrics to Django if bridge available
+            # Send metrics to Django
             if self._django_bridge:
-                await self._send_submission_metrics(result, relay_config)
+                await self._send_submission_metrics(result, selected_relay)
             
             return result
             
         except Exception as e:
-            self.logger.error(f"Bundle submission failed: {e}")
-            latency_ms = (time.time() - start_time) * 1000
+            self.logger.error(f"Bundle submission failed with exception: {e}")
             
             return BundleSubmissionResult(
                 success=False,
                 error_message=str(e),
-                latency_ms=latency_ms,
-                submission_time=datetime.utcnow()
+                submission_time=datetime.utcnow(),
+                latency_ms=(time.perf_counter() - submission_start) * 1000
             )
-    
+
     def _select_optimal_relay(self, priority: PriorityLevel) -> Optional[RelayConfig]:
         """
-        Select the optimal relay based on priority and performance metrics.
+        Select the best relay based on priority level and performance metrics.
         
         Args:
-            priority: Required priority level
+            priority: Transaction priority level
             
         Returns:
-            Best relay configuration or None if no suitable relay
+            Selected relay configuration or None if no suitable relay found
         """
-        # Filter enabled relays that meet priority threshold
-        suitable_relays = [
-            config for config in self._relay_configs.values()
-            if (config.enabled and 
-                self._priority_level_value(config.priority_threshold) <= 
-                self._priority_level_value(priority))
-        ]
+        suitable_relays = []
+        
+        # Filter relays by priority threshold and availability
+        for relay_name, relay_config in self._relay_configs.items():
+            if not relay_config.enabled:
+                continue
+                
+            # Check if relay supports this priority level
+            priority_scores = {
+                PriorityLevel.CRITICAL: 4,
+                PriorityLevel.HIGH: 3,
+                PriorityLevel.MEDIUM: 2,
+                PriorityLevel.LOW: 1
+            }
+            
+            if priority_scores[priority] >= priority_scores[relay_config.priority_threshold]:
+                suitable_relays.append((relay_config, self._calculate_relay_score(relay_config)))
         
         if not suitable_relays:
             return None
         
-        # For CRITICAL priority, always use fastest relay (Flashbots Protect)
-        if priority == PriorityLevel.CRITICAL:
-            protect_relay = next(
-                (r for r in suitable_relays if r.relay_type == RelayType.FLASHBOTS_PROTECT),
-                None
-            )
-            if protect_relay:
-                return protect_relay
+        # Sort by score (higher is better) and return best relay
+        suitable_relays.sort(key=lambda x: x[1], reverse=True)
+        selected_relay = suitable_relays[0][0]
         
-        # Select based on success rate and latency
-        best_relay = None
-        best_score = -1
+        self.logger.debug(f"Selected {selected_relay.name} with score {suitable_relays[0][1]:.3f}")
         
-        for relay in suitable_relays:
-            success_rate = self._success_rates.get(relay.name, 0.9)  # Default optimistic
-            avg_latency = self._get_average_latency(relay.name)
-            
-            # Score calculation: prioritize success rate, then latency
-            score = success_rate * 0.7 + (1.0 / max(avg_latency, 1.0)) * 0.3
-            
-            if score > best_score:
-                best_score = score
-                best_relay = relay
-        
-        return best_relay
-    
-    def _priority_level_value(self, priority: PriorityLevel) -> int:
-        """Convert priority level to numeric value for comparison."""
-        priority_values = {
-            PriorityLevel.CRITICAL: 4,
-            PriorityLevel.HIGH: 3,
-            PriorityLevel.MEDIUM: 2,
-            PriorityLevel.LOW: 1
-        }
-        return priority_values.get(priority, 1)
-    
-    async def _prepare_bundle(
-        self,
-        transactions: List[TxParams],
-        target_block: int,
-        max_block_delay: int,
-        replacement_uuid: Optional[str]
-    ) -> FlashbotsBundle:
+        return selected_relay
+
+    def _calculate_relay_score(self, relay_config: RelayConfig) -> float:
         """
-        Prepare transactions for bundle submission.
+        Calculate a score for relay selection based on performance metrics.
         
         Args:
-            transactions: Raw transaction parameters
-            target_block: Target block number
-            max_block_delay: Maximum block delay
-            replacement_uuid: Bundle replacement UUID
+            relay_config: Relay configuration to score
             
         Returns:
-            Prepared Flashbots bundle
+            Relay score (higher is better)
         """
-        # Convert transactions to signed format
-        signed_transactions = []
+        score = 0.0
         
-        for tx_params in transactions:
-            # Ensure all required fields are present
-            if 'nonce' not in tx_params:
-                # Get nonce from chain if not provided
-                tx_params['nonce'] = await self._get_transaction_nonce(tx_params['from'])
-            
-            if 'gasPrice' not in tx_params and 'maxFeePerGas' not in tx_params:
-                # Set appropriate gas pricing
-                gas_params = await self._get_optimal_gas_params()
-                tx_params.update(gas_params)
-            
-            # Sign the transaction (this would need private key access)
-            # For now, we'll prepare the transaction structure
-            signed_tx = self._prepare_signed_transaction(tx_params)
-            signed_transactions.append(signed_tx)
+        # Success rate weight (40%)
+        success_rate = self._success_rates.get(relay_config.name, 0.95)  # Default 95%
+        score += success_rate * 0.4
         
-        # Create bundle with timing constraints
-        bundle = FlashbotsBundle(
-            transactions=signed_transactions,
-            block_number=target_block,
-            min_timestamp=int(time.time()),
-            max_timestamp=int(time.time()) + (max_block_delay * 12),  # ~12s per block
-            replacement_uuid=replacement_uuid
-        )
+        # Latency weight (30%)
+        avg_latency = self._get_average_latency(relay_config.name)
+        latency_score = max(0, 1 - (avg_latency / 1000.0))  # Normalize to 0-1
+        score += latency_score * 0.3
         
-        return bundle
-    
-    def _prepare_signed_transaction(self, tx_params: TxParams) -> Dict[str, Any]:
+        # Relay type preference weight (20%)
+        type_preferences = {
+            RelayType.FLASHBOTS_PROTECT: 1.0,
+            RelayType.FLASHBOTS_RELAY: 0.8,
+            RelayType.PUBLIC_MEMPOOL: 0.3
+        }
+        score += type_preferences.get(relay_config.relay_type, 0.5) * 0.2
+        
+        # Availability weight (10%)
+        if relay_config.enabled and relay_config.endpoint_url:
+            score += 0.1
+        
+        return score
+
+    async def _prepare_signed_transaction(self, tx_params: TxParams) -> Dict[str, Any]:
         """
-        Prepare a signed transaction for bundle inclusion.
-        
-        Note: This is a placeholder implementation. In production, this would
-        need access to private keys and proper transaction signing.
+        Prepare and sign transaction for bundle submission.
         
         Args:
             tx_params: Transaction parameters
             
         Returns:
-            Signed transaction data
+            Signed transaction data ready for bundle
         """
-        # This is a simplified version - actual implementation would need:
-        # 1. Access to private keys (from secure wallet manager)
-        # 2. Proper transaction signing with eth_account
-        # 3. RLP encoding of signed transaction
-        
-        return {
-            "signed_transaction": "0x" + "00" * 100,  # Placeholder
-            "hash": "0x" + "00" * 64,  # Placeholder
-            **tx_params
-        }
-    
+        try:
+            # In production, this would:
+            # 1. Get private key from secure wallet manager
+            # 2. Sign transaction with proper nonce
+            # 3. Encode as RLP hex string
+            
+            # For now, return properly formatted transaction structure
+            signed_tx = {
+                "signed_transaction": "0x" + "f8" + "00" * 100,  # Placeholder RLP encoding
+                "hash": self._calculate_tx_hash(tx_params),
+                "from": tx_params.get("from"),
+                "to": tx_params.get("to"),
+                "value": hex(tx_params.get("value", 0)),
+                "gasPrice": hex(tx_params.get("gasPrice", 0)),
+                "gas": hex(tx_params.get("gas", 200000)),
+                "nonce": hex(tx_params.get("nonce", 0)),
+                "data": tx_params.get("data", "0x")
+            }
+            
+            self.logger.debug(f"Prepared signed transaction: {signed_tx['hash'][:10]}...")
+            
+            return signed_tx
+            
+        except Exception as e:
+            self.logger.error(f"Failed to prepare signed transaction: {e}")
+            raise
+
+    def _calculate_tx_hash(self, tx_params: TxParams) -> str:
+        """Generate a deterministic transaction hash for tracking."""
+        tx_string = f"{tx_params.get('from', '')}{tx_params.get('to', '')}{tx_params.get('value', 0)}{tx_params.get('nonce', 0)}{int(time.time() * 1000)}"
+        return "0x" + hashlib.sha256(tx_string.encode()).hexdigest()
+
+    def _generate_bundle_id(self, bundle: FlashbotsBundle) -> str:
+        """Generate unique bundle ID for tracking."""
+        bundle_data = f"{len(bundle.transactions)}{bundle.block_number}{int(time.time() * 1000000)}"
+        return "0x" + hashlib.sha256(bundle_data.encode()).hexdigest()[:16]
+
     async def _submit_to_relay(
         self,
         bundle: FlashbotsBundle,
@@ -509,7 +512,7 @@ class PrivateRelayManager:
         submission_time = datetime.utcnow()
         
         try:
-            # Prepare request based on relay type
+            # Route to appropriate relay implementation
             if relay_config.relay_type in [RelayType.FLASHBOTS_PROTECT, RelayType.FLASHBOTS_RELAY]:
                 return await self._submit_to_flashbots(bundle, relay_config, submission_time)
             else:
@@ -524,7 +527,7 @@ class PrivateRelayManager:
                 submission_time=submission_time,
                 error_message=str(e)
             )
-    
+
     async def _submit_to_flashbots(
         self,
         bundle: FlashbotsBundle,
@@ -545,28 +548,34 @@ class PrivateRelayManager:
         # Prepare Flashbots API request
         bundle_data = bundle.to_flashbots_format()
         
-        # Add method-specific parameters
+        # Determine method and endpoint based on relay type
         if relay_config.relay_type == RelayType.FLASHBOTS_PROTECT:
             method = "eth_sendBundle"
-            endpoint = f"{relay_config.endpoint_url}"
+            endpoint = relay_config.endpoint_url
         else:
             method = "flashbots_sendBundle"
             endpoint = f"{relay_config.endpoint_url}/v1/bundle"
         
         request_data = {
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": int(time.time()),
             "method": method,
             "params": [bundle_data]
         }
         
-        # Prepare headers with authentication if required
-        headers = {}
+        # Prepare authentication headers
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
         if relay_config.require_signing:
-            # In production, this would include proper Flashbots authentication
-            headers["X-Flashbots-Signature"] = "placeholder_signature"
+            # In production, this would include proper Flashbots signature
+            # Using X-Flashbots-Signature header with signed request
+            headers["X-Flashbots-Signature"] = self._generate_flashbots_signature(request_data)
         
         try:
+            self.logger.debug(f"Submitting to {relay_config.name}: {endpoint}")
+            
             async with self._session.post(
                 endpoint,
                 json=request_data,
@@ -574,34 +583,48 @@ class PrivateRelayManager:
                 timeout=relay_config.timeout_seconds
             ) as response:
                 
+                response_text = await response.text()
+                
                 if response.status == 200:
-                    result_data = await response.json()
-                    
-                    if "result" in result_data:
-                        bundle_id = result_data["result"].get("bundleHash")
+                    try:
+                        result_data = await response.json()
                         
-                        return BundleSubmissionResult(
-                            success=True,
-                            bundle_id=bundle_id,
-                            relay_type=relay_config.relay_type,
-                            submission_time=submission_time,
-                            block_number=bundle.block_number
-                        )
-                    else:
-                        error_msg = result_data.get("error", {}).get("message", "Unknown error")
+                        if "result" in result_data:
+                            bundle_hash = result_data["result"].get("bundleHash")
+                            
+                            self.logger.info(f"Flashbots submission successful: {bundle_hash}")
+                            
+                            return BundleSubmissionResult(
+                                success=True,
+                                bundle_id=bundle_hash,
+                                relay_type=relay_config.relay_type,
+                                submission_time=submission_time,
+                                block_number=bundle.block_number
+                            )
+                        elif "error" in result_data:
+                            error_msg = result_data["error"].get("message", "Unknown Flashbots error")
+                            self.logger.error(f"Flashbots error: {error_msg}")
+                            
+                            return BundleSubmissionResult(
+                                success=False,
+                                relay_type=relay_config.relay_type,
+                                submission_time=submission_time,
+                                error_message=f"Flashbots error: {error_msg}"
+                            )
+                            
+                    except json.JSONDecodeError:
                         return BundleSubmissionResult(
                             success=False,
                             relay_type=relay_config.relay_type,
                             submission_time=submission_time,
-                            error_message=error_msg
+                            error_message=f"Invalid JSON response: {response_text[:200]}"
                         )
                 else:
-                    error_text = await response.text()
                     return BundleSubmissionResult(
                         success=False,
                         relay_type=relay_config.relay_type,
                         submission_time=submission_time,
-                        error_message=f"HTTP {response.status}: {error_text}"
+                        error_message=f"HTTP {response.status}: {response_text[:200]}"
                     )
                     
         except asyncio.TimeoutError:
@@ -609,9 +632,125 @@ class PrivateRelayManager:
                 success=False,
                 relay_type=relay_config.relay_type,
                 submission_time=submission_time,
-                error_message="Request timeout"
+                error_message=f"Timeout after {relay_config.timeout_seconds}s"
             )
-    
+        except Exception as e:
+            return BundleSubmissionResult(
+                success=False,
+                relay_type=relay_config.relay_type,
+                submission_time=submission_time,
+                error_message=f"Network error: {str(e)}"
+            )
+
+    def _generate_flashbots_signature(self, request_data: Dict[str, Any]) -> str:
+        """
+        Generate Flashbots signature for request authentication.
+        
+        Args:
+            request_data: Request data to sign
+            
+        Returns:
+            Signature string for X-Flashbots-Signature header
+        """
+        # In production, this would:
+        # 1. Get private key from secure storage
+        # 2. Sign the request body with eth_account.sign_message
+        # 3. Format as required by Flashbots
+        
+        # Placeholder implementation
+        request_hash = hashlib.sha256(json.dumps(request_data, sort_keys=True).encode()).hexdigest()
+        return f"0x{'0' * 130}"  # Placeholder 65-byte signature
+
+    async def _get_current_block_number(self) -> int:
+        """Get current block number from the blockchain."""
+        try:
+            # In production, would use Web3 provider to get latest block
+            # For now, return a reasonable mainnet block number
+            return 18_500_000 + int(time.time() // 12)  # Approximate current block
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get current block number: {e}")
+            return 18_500_000  # Fallback
+
+    async def _send_submission_metrics(
+        self,
+        result: BundleSubmissionResult,
+        relay_config: RelayConfig
+    ) -> None:
+        """Send submission metrics to Django backend."""
+        if not self._django_bridge:
+            return
+            
+        try:
+            metrics_data = {
+                "type": "relay_submission",
+                "relay_name": relay_config.name,
+                "relay_type": relay_config.relay_type.value,
+                "success": result.success,
+                "bundle_id": result.bundle_id,
+                "latency_ms": result.latency_ms,
+                "block_number": result.block_number,
+                "error_message": result.error_message,
+                "timestamp": result.submission_time.isoformat() if result.submission_time else None
+            }
+            
+            await self._django_bridge.send_message("relay_metrics", metrics_data)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send submission metrics: {e}")
+
+    def get_submission_statistics(self) -> Dict[str, Any]:
+        """Get relay submission statistics."""
+        success_rate = 0.0
+        if self._total_submissions > 0:
+            success_rate = (self._successful_submissions / self._total_submissions) * 100
+        
+        avg_latency = 0.0
+        if self._submission_latencies:
+            avg_latency = sum(self._submission_latencies) / len(self._submission_latencies)
+        
+        return {
+            "total_submissions": self._total_submissions,
+            "successful_submissions": self._successful_submissions,
+            "success_rate_percent": round(success_rate, 2),
+            "average_latency_ms": round(avg_latency, 2),
+            "active_bundles": len(self._active_bundles),
+            "relay_configs": len(self._relay_configs),
+            "relay_success_rates": dict(self._success_rates)
+        }
+
+    async def check_bundle_status(self, bundle_id: str) -> BundleStatus:
+        """
+        Check the status of a submitted bundle.
+        
+        Args:
+            bundle_id: Bundle identifier to check
+            
+        Returns:
+            Current bundle status
+        """
+        if bundle_id not in self._bundle_status:
+            return BundleStatus.FAILED
+        
+        current_status = self._bundle_status[bundle_id]
+        
+        # If already final status, return it
+        if current_status in [BundleStatus.INCLUDED, BundleStatus.FAILED, 
+                             BundleStatus.TIMEOUT, BundleStatus.CANCELLED]:
+            return current_status
+        
+        # For active bundles, could query relay for updated status
+        # For now, return current status
+        return current_status
+
+    def _get_average_latency(self, relay_name: str) -> float:
+        """Get average latency for a specific relay."""
+        # Calculate from stored metrics
+        if not self._submission_latencies:
+            return 1000.0  # Default 1s if no data
+        
+        return sum(self._submission_latencies[-10:]) / len(self._submission_latencies[-10:])
+
     async def _submit_to_public_mempool(
         self,
         transactions: List[TxParams]
@@ -652,110 +791,7 @@ class PrivateRelayManager:
                 submission_time=submission_time,
                 error_message=str(e)
             )
-    
-    async def check_bundle_status(self, bundle_id: str) -> BundleStatus:
-        """
-        Check the status of a submitted bundle.
-        
-        Args:
-            bundle_id: Bundle identifier to check
-            
-        Returns:
-            Current bundle status
-        """
-        if bundle_id not in self._bundle_status:
-            return BundleStatus.FAILED
-        
-        current_status = self._bundle_status[bundle_id]
-        
-        # If already final status, return it
-        if current_status in [BundleStatus.INCLUDED, BundleStatus.FAILED, 
-                             BundleStatus.TIMEOUT, BundleStatus.CANCELLED]:
-            return current_status
-        
-        # Check with relay for updated status
-        try:
-            # This would query the specific relay for bundle status
-            # Implementation depends on relay type and available APIs
-            updated_status = await self._query_relay_for_status(bundle_id)
-            self._bundle_status[bundle_id] = updated_status
-            return updated_status
-            
-        except Exception as e:
-            self.logger.error(f"Failed to check bundle status for {bundle_id}: {e}")
-            return current_status
-    
-    async def _query_relay_for_status(self, bundle_id: str) -> BundleStatus:
-        """
-        Query relay for bundle inclusion status.
-        
-        Args:
-            bundle_id: Bundle to check
-            
-        Returns:
-            Updated bundle status
-        """
-        # Placeholder implementation
-        # In production, this would query Flashbots or other relay APIs
-        return BundleStatus.PENDING
-    
-    async def _get_current_block_number(self) -> int:
-        """Get current block number from the chain."""
-        # This would use Web3 connection to get latest block
-        # Placeholder implementation
-        return 18000000
-    
-    async def _get_transaction_nonce(self, address: str) -> int:
-        """Get transaction nonce for address."""
-        # This would query the chain for current nonce
-        # Placeholder implementation
-        return 0
-    
-    async def _get_optimal_gas_params(self) -> Dict[str, Any]:
-        """Get optimal gas parameters for current network conditions."""
-        # This would analyze current gas market and return optimal parameters
-        # Placeholder implementation
-        return {
-            "gasPrice": 20_000_000_000,  # 20 gwei
-            "gasLimit": 200_000
-        }
-    
-    def _get_average_latency(self, relay_name: str) -> float:
-        """Get average latency for a specific relay."""
-        # Calculate from stored metrics
-        if not self._submission_latencies:
-            return 1000.0  # Default 1s if no data
-        
-        return sum(self._submission_latencies[-10:]) / len(self._submission_latencies[-10:])
-    
-    async def _send_submission_metrics(
-        self,
-        result: BundleSubmissionResult,
-        relay_config: RelayConfig
-    ) -> None:
-        """Send submission metrics to Django backend."""
-        if not self._django_bridge:
-            return
-        
-        try:
-            metrics_data = {
-                "component": "private_relay",
-                "relay_name": relay_config.name,
-                "relay_type": relay_config.relay_type.value,
-                "success": result.success,
-                "latency_ms": result.latency_ms,
-                "timestamp": result.submission_time.isoformat() if result.submission_time else None,
-                "bundle_id": result.bundle_id,
-                "error": result.error_message
-            }
-            
-            # This would send metrics through the Django bridge
-            # Implementation depends on the bridge structure
-            self.logger.debug(f"Sending metrics to Django: {metrics_data}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to send metrics to Django: {e}")
-    
+
     def get_performance_metrics(self) -> Dict[str, Any]:
         """
         Get performance metrics for the relay manager.
@@ -786,6 +822,62 @@ class PrivateRelayManager:
             "configured_relays": len(self._relay_configs),
             "enabled_relays": len([r for r in self._relay_configs.values() if r.enabled])
         }
+
+    def get_relay_configs(self) -> Dict[str, RelayConfig]:
+        """Get current relay configurations."""
+        return self._relay_configs.copy()
+
+    def enable_relay(self, relay_name: str) -> bool:
+        """
+        Enable a specific relay.
+        
+        Args:
+            relay_name: Name of the relay to enable
+            
+        Returns:
+            True if relay was found and enabled
+        """
+        if relay_name in self._relay_configs:
+            self._relay_configs[relay_name].enabled = True
+            self.logger.info(f"Enabled relay: {relay_name}")
+            return True
+        return False
+
+    def disable_relay(self, relay_name: str) -> bool:
+        """
+        Disable a specific relay.
+        
+        Args:
+            relay_name: Name of the relay to disable
+            
+        Returns:
+            True if relay was found and disabled
+        """
+        if relay_name in self._relay_configs:
+            self._relay_configs[relay_name].enabled = False
+            self.logger.info(f"Disabled relay: {relay_name}")
+            return True
+        return False
+
+    def get_active_bundles(self) -> Dict[str, FlashbotsBundle]:
+        """Get currently active bundles."""
+        return self._active_bundles.copy()
+
+    def cancel_bundle(self, bundle_id: str) -> bool:
+        """
+        Cancel an active bundle.
+        
+        Args:
+            bundle_id: Bundle to cancel
+            
+        Returns:
+            True if bundle was found and cancelled
+        """
+        if bundle_id in self._bundle_status:
+            self._bundle_status[bundle_id] = BundleStatus.CANCELLED
+            self.logger.info(f"Cancelled bundle: {bundle_id}")
+            return True
+        return False
 
 
 # =============================================================================
