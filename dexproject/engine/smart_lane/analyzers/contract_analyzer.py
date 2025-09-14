@@ -1,9 +1,9 @@
 """
 Contract Security Analyzer
 
-Critical security analyzer that evaluates smart contract security,
-vulnerability patterns, and potential exploit risks. This is one of
-the most important risk categories for preventing total loss.
+Critical-priority analyzer that performs comprehensive smart contract security
+analysis, vulnerability detection, and code quality assessment. Essential for
+identifying malicious contracts and security risks.
 
 Path: engine/smart_lane/analyzers/contract_analyzer.py
 """
@@ -11,9 +11,10 @@ Path: engine/smart_lane/analyzers/contract_analyzer.py
 import asyncio
 import logging
 import time
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+import re
 import hashlib
 
 from . import BaseAnalyzer
@@ -24,40 +25,67 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SecurityVulnerability:
-    """Individual security vulnerability finding."""
-    vulnerability_id: str
-    severity: str  # LOW, MEDIUM, HIGH, CRITICAL
-    confidence: float  # 0-1 scale
-    category: str  # REENTRANCY, OVERFLOW, ACCESS_CONTROL, etc.
+    """Individual security vulnerability found in contract."""
+    vulnerability_type: str  # REENTRANCY, OVERFLOW, BACKDOOR, etc.
+    severity: str  # CRITICAL, HIGH, MEDIUM, LOW
     description: str
-    exploit_potential: str  # NONE, LOW, MEDIUM, HIGH, CRITICAL
-    mitigation: Optional[str]
-    code_location: Optional[str]
+    location: Optional[str]  # Function or line where found
+    impact: str  # Description of potential impact
+    confidence: float  # 0-1 scale
+    remediation: str  # Suggested fix
 
 
 @dataclass
-class ContractMetadata:
-    """Contract metadata and basic information."""
-    is_verified: bool
-    compiler_version: str
-    optimization_enabled: bool
-    license: Optional[str]
-    creation_block: Optional[int]
-    creator_address: Optional[str]
-    contract_size_bytes: int
+class ContractFunction:
+    """Analysis of individual contract function."""
+    name: str
+    visibility: str  # PUBLIC, PRIVATE, INTERNAL, EXTERNAL
+    is_payable: bool
+    is_view: bool
+    is_pure: bool
+    has_modifiers: bool
+    complexity_score: float
+    risk_level: str  # LOW, MEDIUM, HIGH, CRITICAL
+
+
+@dataclass
+class OwnershipAnalysis:
+    """Contract ownership and admin function analysis."""
+    has_owner: bool
+    owner_address: Optional[str]
+    is_renounced: bool
+    admin_functions: List[str]
+    emergency_functions: List[str]
+    upgrade_mechanism: Optional[str]
+    centralization_risk: str  # LOW, MEDIUM, HIGH, CRITICAL
+
+
+@dataclass
+class ContractMetrics:
+    """Overall contract quality and security metrics."""
+    total_functions: int
+    public_functions: int
+    external_functions: int
+    payable_functions: int
+    complexity_score: float
+    code_quality_score: float
+    security_score: float
+    audit_status: str  # UNAUDITED, SELF_AUDITED, PROFESSIONALLY_AUDITED
+    verification_status: str  # VERIFIED, UNVERIFIED, PROXY
 
 
 class ContractAnalyzer(BaseAnalyzer):
     """
-    Advanced smart contract security analyzer.
+    Advanced smart contract security and quality analyzer.
     
     Analyzes:
+    - Smart contract bytecode and source code (if available)
     - Common vulnerability patterns (reentrancy, overflow, etc.)
-    - Access control mechanisms and ownership
-    - Proxy patterns and upgradeability risks
-    - External dependencies and integrations
-    - Code verification and audit status
-    - Known malicious patterns and honeypot indicators
+    - Ownership and admin function analysis
+    - Upgrade mechanisms and proxy patterns
+    - Code quality and complexity metrics
+    - Audit status and verification
+    - Backdoor and malicious pattern detection
     """
     
     def __init__(self, chain_id: int, config: Optional[Dict[str, Any]] = None):
@@ -66,39 +94,35 @@ class ContractAnalyzer(BaseAnalyzer):
         
         Args:
             chain_id: Blockchain chain identifier
-            config: Analyzer configuration
+            config: Analyzer configuration including security thresholds
         """
         super().__init__(chain_id, config)
         
-        # Security analysis thresholds
+        # Security thresholds
         self.thresholds = {
-            'critical_vuln_limit': 0,       # No critical vulnerabilities allowed
-            'high_vuln_limit': 1,           # Max 1 high severity vulnerability
-            'medium_vuln_limit': 3,         # Max 3 medium vulnerabilities
-            'min_verification_score': 0.7,  # Minimum verification requirement
-            'max_contract_size_kb': 24,     # Max contract size in KB
-            'proxy_risk_threshold': 0.6,    # Proxy upgrade risk threshold
-            'external_deps_limit': 5        # Max external dependencies
+            'critical_vulnerability_limit': 0,  # No critical vulnerabilities allowed
+            'high_vulnerability_limit': 2,
+            'max_admin_functions': 5,
+            'max_complexity_score': 0.8,
+            'min_security_score': 0.6,
+            'centralization_risk_threshold': 'MEDIUM'
         }
         
         # Update with custom config
         if config:
             self.thresholds.update(config.get('thresholds', {}))
         
-        # Known malicious patterns (hashes for pattern matching)
-        self.malicious_patterns = self._load_malicious_patterns()
-        
-        # Known secure patterns (for positive scoring)
-        self.secure_patterns = self._load_secure_patterns()
-        
-        # Vulnerability pattern definitions
+        # Vulnerability patterns to detect
         self.vulnerability_patterns = self._load_vulnerability_patterns()
         
-        # Contract analysis cache
-        self.analysis_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
-        self.cache_ttl_minutes = 60  # Contract analysis can be cached longer
+        # Known malicious patterns
+        self.malicious_patterns = self._load_malicious_patterns()
         
-        logger.info(f"Contract security analyzer initialized for chain {chain_id}")
+        # Analysis cache
+        self.contract_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
+        self.cache_ttl_hours = 24  # Contract code doesn't change often
+        
+        logger.info(f"Contract analyzer initialized for chain {chain_id}")
     
     def get_category(self) -> RiskCategory:
         """Get the risk category this analyzer handles."""
@@ -114,19 +138,22 @@ class ContractAnalyzer(BaseAnalyzer):
         
         Args:
             token_address: Token contract address to analyze
-            context: Additional context for analysis
+            context: Additional context including bytecode, source code
             
         Returns:
-            RiskScore with security assessment
+            RiskScore with contract security assessment
         """
         analysis_start = time.time()
         
         try:
-            logger.debug(f"Starting contract security analysis for {token_address[:10]}...")
+            logger.debug(f"Starting contract analysis for {token_address[:10]}...")
+            
+            # Update performance stats
+            self.performance_stats['total_analyses'] += 1
             
             # Input validation
-            if not self._validate_contract_address(token_address):
-                return self._create_error_risk_score("Invalid contract address")
+            if not self._validate_inputs(token_address, context):
+                return self._create_error_risk_score("Invalid inputs for contract analysis")
             
             # Check cache first
             cached_result = self._get_cached_analysis(token_address)
@@ -136,757 +163,1050 @@ class ContractAnalyzer(BaseAnalyzer):
             
             self.performance_stats['cache_misses'] += 1
             
-            # Parallel security analysis tasks
+            # Get contract data
+            contract_data = await self._fetch_contract_data(token_address, context)
+            if not contract_data:
+                return self._create_error_risk_score("Unable to fetch contract data")
+            
+            # Perform security analysis tasks
             analysis_tasks = [
-                self._analyze_contract_metadata(token_address),
-                self._analyze_vulnerability_patterns(token_address),
-                self._analyze_access_controls(token_address),
-                self._analyze_proxy_patterns(token_address),
-                self._analyze_external_dependencies(token_address),
-                self._analyze_known_patterns(token_address),
-                self._analyze_audit_status(token_address)
+                self._analyze_bytecode_vulnerabilities(contract_data),
+                self._analyze_source_code_vulnerabilities(contract_data),
+                self._analyze_ownership_structure(contract_data),
+                self._analyze_function_security(contract_data),
+                self._check_known_malicious_patterns(contract_data),
+                self._assess_upgrade_mechanisms(contract_data),
+                self._calculate_contract_metrics(contract_data)
             ]
             
-            analysis_results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
+            # Execute all tasks with timeout protection
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*analysis_tasks, return_exceptions=True),
+                    timeout=20.0  # 20 second timeout for contract analysis
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Contract analysis timeout for {token_address[:10]}")
+                return self._create_timeout_risk_score()
             
-            # Process results and handle exceptions
-            contract_metadata = self._safe_extract_result(analysis_results[0], {})
-            vulnerabilities = self._safe_extract_result(analysis_results[1], [])
-            access_controls = self._safe_extract_result(analysis_results[2], {})
-            proxy_analysis = self._safe_extract_result(analysis_results[3], {})
-            dependencies = self._safe_extract_result(analysis_results[4], {})
-            pattern_analysis = self._safe_extract_result(analysis_results[5], {})
-            audit_status = self._safe_extract_result(analysis_results[6], {})
+            # Process results
+            vulnerabilities = []
+            ownership_analysis = None
+            contract_functions = []
+            malicious_patterns = []
+            upgrade_analysis = {}
+            contract_metrics = None
             
-            # Calculate overall security risk
-            risk_score, confidence = self._calculate_security_risk(
-                contract_metadata, vulnerabilities, access_controls,
-                proxy_analysis, dependencies, pattern_analysis, audit_status
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Contract analysis task {i} failed: {result}")
+                    continue
+                
+                if i <= 1 and isinstance(result, list):  # Vulnerabilities
+                    vulnerabilities.extend(result)
+                elif i == 2:  # Ownership analysis
+                    ownership_analysis = result
+                elif i == 3 and isinstance(result, list):  # Function analysis
+                    contract_functions = result
+                elif i == 4 and isinstance(result, list):  # Malicious patterns
+                    malicious_patterns = result
+                elif i == 5:  # Upgrade mechanisms
+                    upgrade_analysis = result
+                elif i == 6:  # Contract metrics
+                    contract_metrics = result
+            
+            # Calculate overall security risk score
+            risk_score = self._calculate_security_risk_score(
+                vulnerabilities, ownership_analysis, malicious_patterns, contract_metrics
             )
             
-            # Generate security warnings
-            warnings = self._generate_security_warnings(
-                vulnerabilities, access_controls, proxy_analysis, risk_score
-            )
+            # Cache the result
+            analysis_result = {
+                'vulnerabilities': vulnerabilities,
+                'ownership_analysis': ownership_analysis,
+                'contract_functions': contract_functions,
+                'malicious_patterns': malicious_patterns,
+                'upgrade_analysis': upgrade_analysis,
+                'contract_metrics': contract_metrics
+            }
+            self._cache_analysis_result(token_address, analysis_result)
             
-            # Compile detailed analysis
-            analysis_details = self._compile_security_details(
-                contract_metadata, vulnerabilities, access_controls,
-                proxy_analysis, dependencies, pattern_analysis, audit_status
-            )
+            # Create detailed analysis data
+            analysis_details = {
+                'vulnerabilities': [v.__dict__ for v in vulnerabilities],
+                'ownership_analysis': ownership_analysis.__dict__ if ownership_analysis else None,
+                'contract_functions': [f.__dict__ for f in contract_functions],
+                'malicious_patterns': malicious_patterns,
+                'upgrade_analysis': upgrade_analysis,
+                'contract_metrics': contract_metrics.__dict__ if contract_metrics else None,
+                'verification_status': contract_data.get('verification_status', 'UNKNOWN'),
+                'compiler_version': contract_data.get('compiler_version'),
+                'audit_reports': contract_data.get('audit_reports', [])
+            }
             
+            # Generate warnings
+            warnings = self._generate_security_warnings(vulnerabilities, ownership_analysis, malicious_patterns)
+            
+            # Calculate analysis time
             analysis_time_ms = (time.time() - analysis_start) * 1000
             
-            # Cache the results
-            self._cache_analysis_result(token_address, {
-                'risk_score': risk_score,
-                'confidence': confidence,
-                'details': analysis_details,
-                'warnings': warnings,
-                'vulnerabilities': vulnerabilities
-            })
-            
             # Update performance stats
-            self._update_performance_stats(analysis_time_ms, success=True)
+            self.performance_stats['successful_analyses'] += 1
             
-            logger.debug(
-                f"Contract security analysis completed for {token_address[:10]}... "
-                f"Risk: {risk_score:.3f}, Confidence: {confidence:.3f} "
-                f"({len(vulnerabilities)} vulns, {analysis_time_ms:.1f}ms)"
-            )
+            # Determine confidence based on data availability
+            confidence = self._calculate_analysis_confidence(contract_data, vulnerabilities)
             
-            return self._create_risk_score(
+            # Create and return risk score
+            return RiskScore(
+                category=self.get_category(),
                 score=risk_score,
                 confidence=confidence,
                 details=analysis_details,
+                analysis_time_ms=analysis_time_ms,
                 warnings=warnings,
-                data_quality=self._assess_data_quality(contract_metadata, vulnerabilities),
-                analysis_time_ms=analysis_time_ms
+                data_quality=self._assess_contract_data_quality(contract_data),
+                last_updated=datetime.now(timezone.utc).isoformat()
             )
             
         except Exception as e:
-            analysis_time_ms = (time.time() - analysis_start) * 1000
-            self._update_performance_stats(analysis_time_ms, success=False)
-            
             logger.error(f"Error in contract security analysis: {e}", exc_info=True)
-            return self._create_error_risk_score(f"Contract analysis failed: {str(e)}")
-    
-    async def _analyze_contract_metadata(self, token_address: str) -> ContractMetadata:
-        """Analyze basic contract metadata and verification status."""
-        try:
-            # Simulate blockchain queries for contract metadata
-            await asyncio.sleep(0.15)
+            self.performance_stats['failed_analyses'] += 1
             
-            # Mock contract metadata based on address characteristics
-            address_hash = hash(token_address)
-            is_verified = (address_hash % 100) > 20  # 80% verified rate
-            
-            metadata = ContractMetadata(
-                is_verified=is_verified,
-                compiler_version="0.8.19" if is_verified else "unknown",
-                optimization_enabled=True if is_verified else False,
-                license="MIT" if is_verified and (address_hash % 10) > 3 else None,
-                creation_block=18000000 + (address_hash % 1000000),
-                creator_address=f"0x{(address_hash % (16**40)):040x}",
-                contract_size_bytes=8192 + (address_hash % 16384)  # 8-24KB typical
-            )
-            
-            return metadata
-            
-        except Exception as e:
-            logger.error(f"Error analyzing contract metadata: {e}")
-            # Return default metadata with error indication
-            return ContractMetadata(
-                is_verified=False,
-                compiler_version="error",
-                optimization_enabled=False,
-                license=None,
-                creation_block=None,
-                creator_address=None,
-                contract_size_bytes=0
+            analysis_time_ms = (time.time() - analysis_start) * 1000
+            return RiskScore(
+                category=self.get_category(),
+                score=0.8,  # High risk due to analysis failure
+                confidence=0.2,
+                details={'error': str(e), 'analysis_failed': True},
+                analysis_time_ms=analysis_time_ms,
+                warnings=[f"Contract analysis failed: {str(e)}"],
+                data_quality="POOR"
             )
     
-    async def _analyze_vulnerability_patterns(self, token_address: str) -> List[SecurityVulnerability]:
-        """Analyze contract for known vulnerability patterns."""
-        try:
-            await asyncio.sleep(0.3)  # Simulate static analysis time
-            
-            vulnerabilities = []
-            address_hash = hash(token_address)
-            
-            # Generate realistic vulnerability findings based on address
-            vuln_probability = (address_hash % 100) / 100.0
-            
-            # Check for common vulnerabilities
-            if vuln_probability > 0.85:  # 15% have reentrancy issues
-                vulnerabilities.append(SecurityVulnerability(
-                    vulnerability_id="REEN-001",
-                    severity="HIGH",
-                    confidence=0.8,
-                    category="REENTRANCY",
-                    description="Potential reentrancy vulnerability in transfer function",
-                    exploit_potential="MEDIUM",
-                    mitigation="Implement checks-effects-interactions pattern",
-                    code_location="transfer() line 145"
-                ))
-            
-            if vuln_probability > 0.75:  # 25% have access control issues
-                vulnerabilities.append(SecurityVulnerability(
-                    vulnerability_id="AC-002",
-                    severity="MEDIUM",
-                    confidence=0.7,
-                    category="ACCESS_CONTROL",
-                    description="Insufficient access control on administrative functions",
-                    exploit_potential="LOW",
-                    mitigation="Add proper onlyOwner modifiers",
-                    code_location="setFeePercent() line 89"
-                ))
-            
-            if vuln_probability > 0.9:  # 10% have integer overflow potential
-                vulnerabilities.append(SecurityVulnerability(
-                    vulnerability_id="OF-003",
-                    severity="HIGH",
-                    confidence=0.85,
-                    category="INTEGER_OVERFLOW",
-                    description="Potential integer overflow in balance calculations",
-                    exploit_potential="HIGH",
-                    mitigation="Use SafeMath library or Solidity 0.8+ built-in checks",
-                    code_location="_mint() line 234"
-                ))
-            
-            if vuln_probability > 0.95:  # 5% have critical issues
-                vulnerabilities.append(SecurityVulnerability(
-                    vulnerability_id="CRIT-004",
-                    severity="CRITICAL",
-                    confidence=0.9,
-                    category="BACKDOOR",
-                    description="Hidden backdoor function detected in contract",
-                    exploit_potential="CRITICAL",
-                    mitigation="Remove backdoor function or avoid contract",
-                    code_location="_backdoor() line 567"
-                ))
-            
-            # Add some low-severity findings for completeness
-            if vuln_probability > 0.3:  # 70% have minor issues
-                vulnerabilities.append(SecurityVulnerability(
-                    vulnerability_id="INFO-005",
-                    severity="LOW",
-                    confidence=0.6,
-                    category="CODE_QUALITY",
-                    description="Missing input validation on public functions",
-                    exploit_potential="NONE",
-                    mitigation="Add input validation checks",
-                    code_location="approve() line 67"
-                ))
-            
-            return vulnerabilities
-            
-        except Exception as e:
-            logger.error(f"Error analyzing vulnerability patterns: {e}")
-            return []
-    
-    async def _analyze_access_controls(self, token_address: str) -> Dict[str, Any]:
-        """Analyze contract access control mechanisms."""
-        try:
-            await asyncio.sleep(0.12)  # Simulate code analysis
-            
-            address_hash = hash(token_address)
-            
-            access_analysis = {
-                'has_owner': True,
-                'owner_can_mint': (address_hash % 10) < 7,  # 70% can mint
-                'owner_can_pause': (address_hash % 10) < 4,  # 40% can pause
-                'owner_can_blacklist': (address_hash % 10) < 3,  # 30% can blacklist
-                'ownership_renounced': (address_hash % 10) < 2,  # 20% renounced
-                'multisig_owner': (address_hash % 10) < 1,  # 10% multisig
-                'timelock_delays': [],
-                'role_based_access': (address_hash % 10) < 3,  # 30% use roles
-                'emergency_functions': [
-                    'pause()',
-                    'emergencyWithdraw()'
-                ] if (address_hash % 10) < 5 else [],
-                'admin_privileges': {
-                    'mint_tokens': (address_hash % 10) < 7,
-                    'change_fees': (address_hash % 10) < 8,
-                    'update_router': (address_hash % 10) < 3,
-                    'exclude_from_fees': (address_hash % 10) < 9
-                }
-            }
-            
-            return access_analysis
-            
-        except Exception as e:
-            logger.error(f"Error analyzing access controls: {e}")
-            return {'error': str(e)}
-    
-    async def _analyze_proxy_patterns(self, token_address: str) -> Dict[str, Any]:
-        """Analyze proxy patterns and upgradeability risks."""
-        try:
-            await asyncio.sleep(0.08)  # Simulate proxy detection
-            
-            address_hash = hash(token_address)
-            is_proxy = (address_hash % 20) == 0  # 5% are proxies
-            
-            if is_proxy:
-                proxy_analysis = {
-                    'is_proxy': True,
-                    'proxy_type': 'TRANSPARENT' if (address_hash % 2) == 0 else 'UUPS',
-                    'implementation_address': f"0x{((address_hash + 1) % (16**40)):040x}",
-                    'admin_address': f"0x{((address_hash + 2) % (16**40)):040x}",
-                    'upgrade_mechanism': 'ADMIN_CONTROLLED',
-                    'has_timelock': (address_hash % 4) == 0,
-                    'upgrade_risk': 'HIGH' if (address_hash % 3) == 0 else 'MEDIUM',
-                    'immutable_functions': ['name()', 'symbol()', 'decimals()'],
-                    'upgrade_history': []
-                }
-            else:
-                proxy_analysis = {
-                    'is_proxy': False,
-                    'immutable_contract': True,
-                    'upgrade_risk': 'NONE'
-                }
-            
-            return proxy_analysis
-            
-        except Exception as e:
-            logger.error(f"Error analyzing proxy patterns: {e}")
-            return {'error': str(e)}
-    
-    async def _analyze_external_dependencies(self, token_address: str) -> Dict[str, Any]:
-        """Analyze external contract dependencies and integrations."""
-        try:
-            await asyncio.sleep(0.1)  # Simulate dependency analysis
-            
-            address_hash = hash(token_address)
-            num_dependencies = address_hash % 8  # 0-7 dependencies
-            
-            dependencies = []
-            for i in range(num_dependencies):
-                dep_hash = hash(f"{token_address}_{i}")
-                dependencies.append({
-                    'address': f"0x{(dep_hash % (16**40)):040x}",
-                    'type': ['ORACLE', 'DEX', 'LIBRARY', 'GOVERNANCE'][dep_hash % 4],
-                    'risk_level': ['LOW', 'MEDIUM', 'HIGH'][dep_hash % 3],
-                    'verified': (dep_hash % 3) > 0,
-                    'function_calls': dep_hash % 10 + 1
-                })
-            
-            dependency_analysis = {
-                'total_dependencies': num_dependencies,
-                'external_contracts': dependencies,
-                'dependency_risk_score': min(1.0, num_dependencies / 10.0),
-                'uses_oracles': any(dep['type'] == 'ORACLE' for dep in dependencies),
-                'uses_governance': any(dep['type'] == 'GOVERNANCE' for dep in dependencies),
-                'unverified_dependencies': sum(1 for dep in dependencies if not dep['verified']),
-                'high_risk_dependencies': sum(1 for dep in dependencies if dep['risk_level'] == 'HIGH')
-            }
-            
-            return dependency_analysis
-            
-        except Exception as e:
-            logger.error(f"Error analyzing external dependencies: {e}")
-            return {'error': str(e)}
-    
-    async def _analyze_known_patterns(self, token_address: str) -> Dict[str, Any]:
-        """Analyze against known malicious and secure patterns."""
-        try:
-            await asyncio.sleep(0.05)  # Quick pattern matching
-            
-            address_hash = hash(token_address)
-            
-            # Check against known patterns
-            malicious_score = 0.0
-            secure_score = 0.0
-            
-            # Simulate pattern matching results
-            if (address_hash % 100) < 5:  # 5% match malicious patterns
-                malicious_score = 0.8
-            elif (address_hash % 100) < 15:  # 10% partially match
-                malicious_score = 0.3
-            
-            if (address_hash % 100) > 70:  # 30% match secure patterns
-                secure_score = 0.7
-            elif (address_hash % 100) > 50:  # 20% partially match
-                secure_score = 0.4
-            
-            pattern_analysis = {
-                'malicious_pattern_score': malicious_score,
-                'secure_pattern_score': secure_score,
-                'known_scam_similarity': malicious_score,
-                'verified_project_similarity': secure_score,
-                'pattern_confidence': 0.8 if malicious_score > 0.5 or secure_score > 0.6 else 0.4,
-                'similar_contracts': [],
-                'pattern_flags': []
-            }
-            
-            if malicious_score > 0.5:
-                pattern_analysis['pattern_flags'].append('POTENTIAL_SCAM_PATTERN')
-            if secure_score > 0.6:
-                pattern_analysis['pattern_flags'].append('VERIFIED_PATTERN_MATCH')
-            
-            return pattern_analysis
-            
-        except Exception as e:
-            logger.error(f"Error analyzing known patterns: {e}")
-            return {'error': str(e)}
-    
-    async def _analyze_audit_status(self, token_address: str) -> Dict[str, Any]:
-        """Analyze contract audit status and security reports."""
-        try:
-            await asyncio.sleep(0.07)  # Simulate audit database lookup
-            
-            address_hash = hash(token_address)
-            has_audit = (address_hash % 10) < 3  # 30% have audits
-            
-            if has_audit:
-                audit_analysis = {
-                    'has_professional_audit': True,
-                    'audit_firms': ['CertiK', 'PeckShield'][address_hash % 2],
-                    'audit_score': 75 + (address_hash % 20),  # 75-94 audit score
-                    'issues_found': address_hash % 5,  # 0-4 issues
-                    'critical_issues_fixed': True,
-                    'audit_date': '2024-08-15',
-                    'audit_report_url': f"https://audit-reports.example.com/{token_address[:10]}",
-                    'audit_coverage': 95.0,
-                    'recommendations_implemented': (address_hash % 4) != 0  # 75% implemented
-                }
-            else:
-                audit_analysis = {
-                    'has_professional_audit': False,
-                    'community_reviewed': (address_hash % 5) == 0,  # 20% community reviewed
-                    'self_reported_security': (address_hash % 3) == 0,  # 33% self-reported
-                    'audit_score': 0,
-                    'security_considerations': []
-                }
-            
-            return audit_analysis
-            
-        except Exception as e:
-            logger.error(f"Error analyzing audit status: {e}")
-            return {'error': str(e)}
-    
-    def _calculate_security_risk(
+    async def _fetch_contract_data(
         self,
-        metadata: ContractMetadata,
-        vulnerabilities: List[SecurityVulnerability],
-        access_controls: Dict[str, Any],
-        proxy_analysis: Dict[str, Any],
-        dependencies: Dict[str, Any],
-        pattern_analysis: Dict[str, Any],
-        audit_status: Dict[str, Any]
-    ) -> Tuple[float, float]:
-        """Calculate overall security risk score and confidence."""
-        risk_factors = []
-        confidence_factors = []
+        token_address: str,
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Fetch contract bytecode, source code, and metadata.
         
-        # Vulnerability scoring (highest weight)
-        vuln_risk = self._score_vulnerabilities(vulnerabilities)
-        risk_factors.append(('vulnerabilities', vuln_risk, 0.35))
-        confidence_factors.append(0.9)  # High confidence in vuln detection
+        In production, this would use blockchain APIs like Etherscan,
+        Web3 providers, and verification services.
+        """
+        await asyncio.sleep(0.1)  # Simulate API call
         
-        # Pattern analysis (second highest weight)
-        pattern_risk = pattern_analysis.get('malicious_pattern_score', 0.0)
-        risk_factors.append(('patterns', pattern_risk, 0.25))
-        confidence_factors.append(pattern_analysis.get('pattern_confidence', 0.5))
+        # Mock contract data - in production would fetch real data
+        contract_data = {
+            'address': token_address,
+            'bytecode': context.get('bytecode', '0x608060405234801561001057600080fd5b50...'),  # Mock bytecode
+            'source_code': context.get('source_code'),  # May be None if not verified
+            'verification_status': 'VERIFIED' if context.get('source_code') else 'UNVERIFIED',
+            'compiler_version': '0.8.19+commit.7dd6d404',
+            'optimization_enabled': True,
+            'creation_block': 18567890,
+            'creator_address': '0x742d35Cc6481C4c29f4F1f8CA0dAa5c2E8a2C0A5',
+            'transaction_count': 15234,
+            'contract_size_bytes': 12458,
+            'audit_reports': [],  # Would contain audit information if available
+            'proxy_type': None,  # 'TRANSPARENT', 'UUPS', 'BEACON', or None
+            'implementation_address': None
+        }
         
-        # Access control analysis
-        access_risk = self._score_access_controls(access_controls)
-        risk_factors.append(('access_controls', access_risk, 0.2))
-        confidence_factors.append(0.8)
+        # Add mock source code if available
+        if not contract_data['source_code'] and context.get('include_mock_source'):
+            contract_data['source_code'] = self._generate_mock_source_code()
+            contract_data['verification_status'] = 'VERIFIED'
         
-        # Proxy and upgradeability risk
-        proxy_risk = self._score_proxy_risk(proxy_analysis)
-        risk_factors.append(('proxy', proxy_risk, 0.1))
-        confidence_factors.append(0.7)
-        
-        # External dependencies
-        dep_risk = dependencies.get('dependency_risk_score', 0.0)
-        risk_factors.append(('dependencies', dep_risk, 0.05))
-        confidence_factors.append(0.6)
-        
-        # Audit status (reduces risk if good audit)
-        audit_risk = self._score_audit_status(audit_status)
-        risk_factors.append(('audit', audit_risk, 0.05))
-        confidence_factors.append(0.8)
-        
-        # Calculate weighted risk score
-        total_risk = 0.0
-        total_weight = 0.0
-        
-        for factor_name, risk, weight in risk_factors:
-            total_risk += risk * weight
-            total_weight += weight
-        
-        overall_risk = total_risk / total_weight if total_weight > 0 else 0.5
-        
-        # Calculate confidence (weighted average)
-        overall_confidence = sum(
-            conf * weight for (_, _, weight), conf in zip(risk_factors, confidence_factors)
-        ) / total_weight if total_weight > 0 else 0.5
-        
-        return overall_risk, overall_confidence
+        return contract_data
     
-    def _score_vulnerabilities(self, vulnerabilities: List[SecurityVulnerability]) -> float:
-        """Score vulnerability risk based on severity and count."""
-        if not vulnerabilities:
-            return 0.1  # Small base risk for no analysis
+    async def _analyze_bytecode_vulnerabilities(self, contract_data: Dict[str, Any]) -> List[SecurityVulnerability]:
+        """
+        Analyze bytecode for known vulnerability patterns.
         
-        risk_score = 0.0
+        In production, this would use sophisticated bytecode analysis tools
+        and pattern matching against known vulnerability signatures.
+        """
+        vulnerabilities = []
+        bytecode = contract_data.get('bytecode', '')
         
-        for vuln in vulnerabilities:
-            if vuln.severity == 'CRITICAL':
-                risk_score += 0.8
-            elif vuln.severity == 'HIGH':
-                risk_score += 0.5
-            elif vuln.severity == 'MEDIUM':
-                risk_score += 0.2
-            elif vuln.severity == 'LOW':
-                risk_score += 0.05
+        if not bytecode or len(bytecode) < 10:
+            return vulnerabilities
         
-        # Cap at 1.0 and apply confidence weighting
-        return min(1.0, risk_score)
-    
-    def _score_access_controls(self, access_controls: Dict[str, Any]) -> float:
-        """Score access control risk."""
-        if 'error' in access_controls:
-            return 0.7  # High risk for analysis failure
-        
-        risk_score = 0.0
-        
-        # Dangerous admin privileges
-        admin_privs = access_controls.get('admin_privileges', {})
-        if admin_privs.get('mint_tokens', False):
-            risk_score += 0.3
-        if admin_privs.get('update_router', False):
-            risk_score += 0.2
-        if access_controls.get('owner_can_blacklist', False):
-            risk_score += 0.3
-        
-        # Mitigating factors
-        if access_controls.get('ownership_renounced', False):
-            risk_score *= 0.2  # Major risk reduction
-        elif access_controls.get('multisig_owner', False):
-            risk_score *= 0.5  # Moderate risk reduction
-        
-        return min(1.0, risk_score)
-    
-    def _score_proxy_risk(self, proxy_analysis: Dict[str, Any]) -> float:
-        """Score proxy-related upgrade risks."""
-        if not proxy_analysis.get('is_proxy', False):
-            return 0.0  # No proxy risk
-        
-        upgrade_risk = proxy_analysis.get('upgrade_risk', 'MEDIUM')
-        
-        if upgrade_risk == 'HIGH':
-            return 0.8
-        elif upgrade_risk == 'MEDIUM':
-            return 0.5
-        else:
-            return 0.2
-    
-    def _score_audit_status(self, audit_status: Dict[str, Any]) -> float:
-        """Score audit-related risk (lower is better for audits)."""
-        if audit_status.get('has_professional_audit', False):
-            audit_score = audit_status.get('audit_score', 0)
-            critical_fixed = audit_status.get('critical_issues_fixed', False)
+        try:
+            # Mock bytecode analysis - in production would use real analysis
+            await asyncio.sleep(0.2)  # Simulate analysis time
             
-            if audit_score > 85 and critical_fixed:
-                return 0.1  # Low risk - good audit
-            elif audit_score > 70 and critical_fixed:
-                return 0.3  # Medium risk - decent audit
+            # Check for suspicious patterns in bytecode
+            patterns_to_check = [
+                {
+                    'pattern': 'selfdestruct',
+                    'opcode': '0xff',
+                    'vulnerability': 'SELFDESTRUCT_VULNERABILITY',
+                    'severity': 'HIGH',
+                    'description': 'Contract contains selfdestruct function'
+                },
+                {
+                    'pattern': 'delegatecall',
+                    'opcode': '0xf4',
+                    'vulnerability': 'DELEGATECALL_VULNERABILITY',
+                    'severity': 'MEDIUM',
+                    'description': 'Contract uses delegatecall - potential for logic bugs'
+                }
+            ]
+            
+            for pattern in patterns_to_check:
+                if pattern['opcode'] in bytecode.lower():
+                    vulnerabilities.append(SecurityVulnerability(
+                        vulnerability_type=pattern['vulnerability'],
+                        severity=pattern['severity'],
+                        description=pattern['description'],
+                        location='Bytecode analysis',
+                        impact=f"Potential {pattern['vulnerability'].lower()} risk",
+                        confidence=0.6,
+                        remediation=f"Review {pattern['pattern']} usage carefully"
+                    ))
+            
+            # Check for common vulnerability signatures
+            if len(bytecode) > 20000:  # Very large contract
+                vulnerabilities.append(SecurityVulnerability(
+                    vulnerability_type='LARGE_CONTRACT',
+                    severity='MEDIUM',
+                    description='Contract bytecode is unusually large',
+                    location='Contract size',
+                    impact='Increased complexity may hide vulnerabilities',
+                    confidence=0.8,
+                    remediation='Review contract complexity and consider refactoring'
+                ))
+            
+        except Exception as e:
+            logger.warning(f"Error in bytecode analysis: {e}")
+        
+        return vulnerabilities
+    
+    async def _analyze_source_code_vulnerabilities(self, contract_data: Dict[str, Any]) -> List[SecurityVulnerability]:
+        """
+        Analyze source code for vulnerability patterns.
+        
+        This performs static analysis on Solidity source code to identify
+        common security issues and anti-patterns.
+        """
+        vulnerabilities = []
+        source_code = contract_data.get('source_code')
+        
+        if not source_code:
+            # Can't analyze without source code
+            vulnerabilities.append(SecurityVulnerability(
+                vulnerability_type='UNVERIFIED_CONTRACT',
+                severity='HIGH',
+                description='Contract source code is not verified',
+                location='Verification status',
+                impact='Cannot perform comprehensive security analysis',
+                confidence=1.0,
+                remediation='Verify contract source code on block explorer'
+            ))
+            return vulnerabilities
+        
+        try:
+            await asyncio.sleep(0.1)  # Simulate analysis time
+            
+            # Check for common vulnerability patterns
+            vulnerability_checks = [
+                {
+                    'pattern': r'\.call\s*\(',
+                    'type': 'LOW_LEVEL_CALL',
+                    'severity': 'MEDIUM',
+                    'description': 'Contract uses low-level calls'
+                },
+                {
+                    'pattern': r'tx\.origin',
+                    'type': 'TX_ORIGIN_USAGE',
+                    'severity': 'HIGH',
+                    'description': 'Dangerous use of tx.origin for authorization'
+                },
+                {
+                    'pattern': r'block\.timestamp',
+                    'type': 'TIMESTAMP_DEPENDENCE',
+                    'severity': 'LOW',
+                    'description': 'Contract depends on block timestamp'
+                },
+                {
+                    'pattern': r'suicide\s*\(',
+                    'type': 'DEPRECATED_SUICIDE',
+                    'severity': 'MEDIUM',
+                    'description': 'Use of deprecated suicide function'
+                },
+                {
+                    'pattern': r'throw\s*;',
+                    'type': 'DEPRECATED_THROW',
+                    'severity': 'LOW',
+                    'description': 'Use of deprecated throw statement'
+                }
+            ]
+            
+            for check in vulnerability_checks:
+                matches = re.findall(check['pattern'], source_code, re.IGNORECASE)
+                if matches:
+                    vulnerabilities.append(SecurityVulnerability(
+                        vulnerability_type=check['type'],
+                        severity=check['severity'],
+                        description=check['description'],
+                        location=f"Found {len(matches)} occurrence(s)",
+                        impact=f"Potential security risk from {check['type'].lower()}",
+                        confidence=0.8,
+                        remediation=f"Review and replace {check['type'].lower()} usage"
+                    ))
+            
+            # Check for reentrancy patterns
+            if re.search(r'\.call\.value\s*\(', source_code, re.IGNORECASE):
+                vulnerabilities.append(SecurityVulnerability(
+                    vulnerability_type='REENTRANCY_RISK',
+                    severity='CRITICAL',
+                    description='Potential reentrancy vulnerability detected',
+                    location='call.value usage',
+                    impact='Funds could be drained through reentrancy attack',
+                    confidence=0.7,
+                    remediation='Implement checks-effects-interactions pattern'
+                ))
+            
+            # Check for unchecked external calls
+            external_calls = re.findall(r'(\w+)\.call\(', source_code)
+            if external_calls:
+                vulnerabilities.append(SecurityVulnerability(
+                    vulnerability_type='UNCHECKED_EXTERNAL_CALL',
+                    severity='MEDIUM',
+                    description='External calls may not be properly checked',
+                    location='External call sites',
+                    impact='Failed calls might not be handled properly',
+                    confidence=0.6,
+                    remediation='Always check return values of external calls'
+                ))
+            
+        except Exception as e:
+            logger.warning(f"Error in source code analysis: {e}")
+        
+        return vulnerabilities
+    
+    async def _analyze_ownership_structure(self, contract_data: Dict[str, Any]) -> OwnershipAnalysis:
+        """Analyze contract ownership and admin functions."""
+        source_code = contract_data.get('source_code', '')
+        
+        try:
+            await asyncio.sleep(0.05)
+            
+            # Check for ownership patterns
+            has_owner = bool(re.search(r'owner\s*=|onlyOwner|Ownable', source_code, re.IGNORECASE))
+            is_renounced = bool(re.search(r'renounceOwnership|owner.*=.*address\(0\)', source_code, re.IGNORECASE))
+            
+            # Find admin functions
+            admin_functions = []
+            admin_patterns = [
+                r'function\s+(\w*(?:admin|owner|mint|burn|pause|emergency)\w*)',
+                r'function\s+(\w+).*onlyOwner',
+                r'function\s+(set\w+)',
+                r'function\s+(withdraw\w*)'
+            ]
+            
+            for pattern in admin_patterns:
+                matches = re.findall(pattern, source_code, re.IGNORECASE)
+                admin_functions.extend(matches)
+            
+            # Remove duplicates
+            admin_functions = list(set(admin_functions))
+            
+            # Find emergency functions
+            emergency_functions = []
+            emergency_patterns = [
+                r'function\s+(\w*emergency\w*)',
+                r'function\s+(\w*pause\w*)',
+                r'function\s+(\w*stop\w*)'
+            ]
+            
+            for pattern in emergency_patterns:
+                matches = re.findall(pattern, source_code, re.IGNORECASE)
+                emergency_functions.extend(matches)
+            
+            emergency_functions = list(set(emergency_functions))
+            
+            # Check for upgrade mechanisms
+            upgrade_mechanism = None
+            if re.search(r'upgradeTo|proxy|implementation', source_code, re.IGNORECASE):
+                upgrade_mechanism = 'PROXY_UPGRADEABLE'
+            elif re.search(r'migrate|upgrade', source_code, re.IGNORECASE):
+                upgrade_mechanism = 'MIGRATION_BASED'
+            
+            # Determine centralization risk
+            admin_count = len(admin_functions)
+            if not has_owner and admin_count == 0:
+                centralization_risk = 'LOW'
+            elif is_renounced and admin_count <= 2:
+                centralization_risk = 'LOW'
+            elif admin_count <= 3:
+                centralization_risk = 'MEDIUM'
+            elif admin_count <= 8:
+                centralization_risk = 'HIGH'
             else:
-                return 0.6  # Higher risk - poor audit or unfixed issues
+                centralization_risk = 'CRITICAL'
+            
+            return OwnershipAnalysis(
+                has_owner=has_owner,
+                owner_address=contract_data.get('creator_address'),
+                is_renounced=is_renounced,
+                admin_functions=admin_functions,
+                emergency_functions=emergency_functions,
+                upgrade_mechanism=upgrade_mechanism,
+                centralization_risk=centralization_risk
+            )
+            
+        except Exception as e:
+            logger.warning(f"Error in ownership analysis: {e}")
+            return OwnershipAnalysis(
+                has_owner=False,
+                owner_address=None,
+                is_renounced=False,
+                admin_functions=[],
+                emergency_functions=[],
+                upgrade_mechanism=None,
+                centralization_risk='UNKNOWN'
+            )
+    
+    async def _analyze_function_security(self, contract_data: Dict[str, Any]) -> List[ContractFunction]:
+        """Analyze individual functions for security issues."""
+        functions = []
+        source_code = contract_data.get('source_code', '')
+        
+        if not source_code:
+            return functions
+        
+        try:
+            await asyncio.sleep(0.1)
+            
+            # Find all function definitions
+            function_pattern = r'function\s+(\w+)\s*\([^)]*\)\s*((?:public|private|internal|external|payable|view|pure|override|virtual|onlyOwner|\s)*)\s*(?:returns\s*\([^)]*\))?\s*\{'
+            
+            matches = re.finditer(function_pattern, source_code, re.IGNORECASE | re.MULTILINE)
+            
+            for match in matches:
+                func_name = match.group(1)
+                modifiers = match.group(2).lower() if match.group(2) else ''
+                
+                # Analyze function properties
+                visibility = 'public'  # default
+                if 'private' in modifiers:
+                    visibility = 'private'
+                elif 'internal' in modifiers:
+                    visibility = 'internal'
+                elif 'external' in modifiers:
+                    visibility = 'external'
+                
+                is_payable = 'payable' in modifiers
+                is_view = 'view' in modifiers
+                is_pure = 'pure' in modifiers
+                has_modifiers = 'onlyowner' in modifiers or 'modifier' in modifiers
+                
+                # Calculate complexity score (simplified)
+                func_body_start = match.end()
+                func_body_end = self._find_function_end(source_code, func_body_start)
+                func_body = source_code[func_body_start:func_body_end]
+                
+                complexity_score = self._calculate_function_complexity(func_body)
+                
+                # Determine risk level
+                risk_level = 'LOW'
+                if is_payable and visibility in ['public', 'external'] and not has_modifiers:
+                    risk_level = 'HIGH'
+                elif is_payable or (visibility in ['public', 'external'] and not is_view and not is_pure):
+                    risk_level = 'MEDIUM'
+                elif complexity_score > 0.8:
+                    risk_level = 'MEDIUM'
+                
+                functions.append(ContractFunction(
+                    name=func_name,
+                    visibility=visibility,
+                    is_payable=is_payable,
+                    is_view=is_view,
+                    is_pure=is_pure,
+                    has_modifiers=has_modifiers,
+                    complexity_score=complexity_score,
+                    risk_level=risk_level
+                ))
+            
+        except Exception as e:
+            logger.warning(f"Error in function analysis: {e}")
+        
+        return functions
+    
+    async def _check_known_malicious_patterns(self, contract_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Check for known malicious patterns."""
+        patterns = []
+        source_code = contract_data.get('source_code', '')
+        bytecode = contract_data.get('bytecode', '')
+        
+        try:
+            await asyncio.sleep(0.05)
+            
+            # Check for honeypot patterns
+            for pattern in self.malicious_patterns:
+                if pattern['type'] == 'SOURCE_PATTERN' and source_code:
+                    if re.search(pattern['pattern'], source_code, re.IGNORECASE):
+                        patterns.append({
+                            'pattern_name': pattern['name'],
+                            'severity': pattern['severity'],
+                            'description': pattern['description'],
+                            'confidence': pattern['confidence']
+                        })
+                elif pattern['type'] == 'BYTECODE_PATTERN' and bytecode:
+                    if pattern['pattern'] in bytecode.lower():
+                        patterns.append({
+                            'pattern_name': pattern['name'],
+                            'severity': pattern['severity'],
+                            'description': pattern['description'],
+                            'confidence': pattern['confidence']
+                        })
+            
+        except Exception as e:
+            logger.warning(f"Error checking malicious patterns: {e}")
+        
+        return patterns
+    
+    async def _assess_upgrade_mechanisms(self, contract_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess contract upgrade mechanisms and associated risks."""
+        source_code = contract_data.get('source_code', '')
+        proxy_type = contract_data.get('proxy_type')
+        
+        analysis = {
+            'is_upgradeable': False,
+            'upgrade_type': None,
+            'upgrade_controls': [],
+            'immutability_score': 1.0,
+            'upgrade_risk': 'LOW'
+        }
+        
+        try:
+            await asyncio.sleep(0.05)
+            
+            if proxy_type:
+                analysis['is_upgradeable'] = True
+                analysis['upgrade_type'] = proxy_type
+                analysis['immutability_score'] = 0.3
+                analysis['upgrade_risk'] = 'HIGH'
+            
+            if source_code:
+                # Check for upgrade patterns
+                upgrade_patterns = [
+                    'upgradeTo',
+                    'implementation',
+                    'proxy',
+                    'delegate',
+                    'migrate'
+                ]
+                
+                found_patterns = []
+                for pattern in upgrade_patterns:
+                    if re.search(pattern, source_code, re.IGNORECASE):
+                        found_patterns.append(pattern)
+                
+                if found_patterns:
+                    analysis['is_upgradeable'] = True
+                    analysis['upgrade_controls'] = found_patterns
+                    analysis['immutability_score'] = max(0.1, 1.0 - (len(found_patterns) * 0.2))
+                    
+                    if len(found_patterns) >= 3:
+                        analysis['upgrade_risk'] = 'CRITICAL'
+                    elif len(found_patterns) >= 2:
+                        analysis['upgrade_risk'] = 'HIGH'
+                    else:
+                        analysis['upgrade_risk'] = 'MEDIUM'
+            
+        except Exception as e:
+            logger.warning(f"Error assessing upgrade mechanisms: {e}")
+        
+        return analysis
+    
+    async def _calculate_contract_metrics(self, contract_data: Dict[str, Any]) -> ContractMetrics:
+        """Calculate overall contract quality and security metrics."""
+        source_code = contract_data.get('source_code', '')
+        bytecode = contract_data.get('bytecode', '')
+        
+        try:
+            await asyncio.sleep(0.05)
+            
+            # Count function types
+            if source_code:
+                all_functions = re.findall(r'function\s+\w+', source_code, re.IGNORECASE)
+                public_functions = re.findall(r'function\s+\w+.*public', source_code, re.IGNORECASE)
+                external_functions = re.findall(r'function\s+\w+.*external', source_code, re.IGNORECASE)
+                payable_functions = re.findall(r'function\s+\w+.*payable', source_code, re.IGNORECASE)
+                
+                total_functions = len(all_functions)
+                public_count = len(public_functions)
+                external_count = len(external_functions)
+                payable_count = len(payable_functions)
+            else:
+                total_functions = 0
+                public_count = 0
+                external_count = 0
+                payable_count = 0
+            
+            # Calculate complexity score
+            complexity_score = self._calculate_overall_complexity(source_code, bytecode)
+            
+            # Calculate code quality score
+            code_quality_score = self._calculate_code_quality(source_code)
+            
+            # Calculate security score (inverse of risk)
+            security_score = self._calculate_security_score(source_code, contract_data)
+            
+            # Determine audit status
+            audit_reports = contract_data.get('audit_reports', [])
+            if len(audit_reports) > 0:
+                audit_status = 'PROFESSIONALLY_AUDITED'
+            elif contract_data.get('verification_status') == 'VERIFIED':
+                audit_status = 'SELF_AUDITED'
+            else:
+                audit_status = 'UNAUDITED'
+            
+            # Verification status
+            verification_status = contract_data.get('verification_status', 'UNVERIFIED')
+            if contract_data.get('proxy_type'):
+                verification_status = 'PROXY'
+            
+            return ContractMetrics(
+                total_functions=total_functions,
+                public_functions=public_count,
+                external_functions=external_count,
+                payable_functions=payable_count,
+                complexity_score=complexity_score,
+                code_quality_score=code_quality_score,
+                security_score=security_score,
+                audit_status=audit_status,
+                verification_status=verification_status
+            )
+            
+        except Exception as e:
+            logger.warning(f"Error calculating contract metrics: {e}")
+            return ContractMetrics(
+                total_functions=0,
+                public_functions=0,
+                external_functions=0,
+                payable_functions=0,
+                complexity_score=0.5,
+                code_quality_score=0.5,
+                security_score=0.5,
+                audit_status='UNKNOWN',
+                verification_status='UNKNOWN'
+            )
+    
+    def _calculate_security_risk_score(
+        self,
+        vulnerabilities: List[SecurityVulnerability],
+        ownership_analysis: Optional[OwnershipAnalysis],
+        malicious_patterns: List[Dict[str, Any]],
+        contract_metrics: Optional[ContractMetrics]
+    ) -> float:
+        """Calculate overall security risk score."""
+        risk_factors = []
+        
+        # Vulnerability risk
+        critical_vulns = [v for v in vulnerabilities if v.severity == 'CRITICAL']
+        high_vulns = [v for v in vulnerabilities if v.severity == 'HIGH']
+        
+        if critical_vulns:
+            risk_factors.append(0.9)  # Critical vulnerabilities = very high risk
+        elif high_vulns:
+            risk_factors.append(0.7)
+        elif vulnerabilities:
+            risk_factors.append(0.4)
         else:
-            return 0.4  # Moderate risk - no professional audit
+            risk_factors.append(0.1)
+        
+        # Ownership risk
+        if ownership_analysis:
+            if ownership_analysis.centralization_risk == 'CRITICAL':
+                risk_factors.append(0.8)
+            elif ownership_analysis.centralization_risk == 'HIGH':
+                risk_factors.append(0.6)
+            elif ownership_analysis.centralization_risk == 'MEDIUM':
+                risk_factors.append(0.4)
+            else:
+                risk_factors.append(0.2)
+        
+        # Malicious pattern risk
+        critical_patterns = [p for p in malicious_patterns if p.get('severity') == 'CRITICAL']
+        if critical_patterns:
+            risk_factors.append(0.95)
+        elif malicious_patterns:
+            risk_factors.append(0.6)
+        else:
+            risk_factors.append(0.1)
+        
+        # Contract metrics risk
+        if contract_metrics:
+            if contract_metrics.verification_status == 'UNVERIFIED':
+                risk_factors.append(0.6)
+            elif contract_metrics.audit_status == 'UNAUDITED':
+                risk_factors.append(0.4)
+            else:
+                risk_factors.append(0.2)
+            
+            if contract_metrics.security_score < 0.3:
+                risk_factors.append(0.7)
+            elif contract_metrics.security_score < 0.6:
+                risk_factors.append(0.5)
+            else:
+                risk_factors.append(0.2)
+        
+        return sum(risk_factors) / len(risk_factors) if risk_factors else 0.5
     
     def _generate_security_warnings(
         self,
         vulnerabilities: List[SecurityVulnerability],
-        access_controls: Dict[str, Any],
-        proxy_analysis: Dict[str, Any],
-        risk_score: float
+        ownership_analysis: Optional[OwnershipAnalysis],
+        malicious_patterns: List[Dict[str, Any]]
     ) -> List[str]:
-        """Generate security-specific warnings."""
+        """Generate security warnings based on analysis."""
         warnings = []
         
-        # Critical vulnerability warnings
+        # Vulnerability warnings
         critical_vulns = [v for v in vulnerabilities if v.severity == 'CRITICAL']
-        if critical_vulns:
-            warnings.append(f"CRITICAL: {len(critical_vulns)} critical vulnerabilities detected")
-        
         high_vulns = [v for v in vulnerabilities if v.severity == 'HIGH']
-        if len(high_vulns) > 1:
-            warnings.append(f"HIGH RISK: {len(high_vulns)} high-severity vulnerabilities found")
         
-        # Access control warnings
-        if access_controls.get('owner_can_mint', False) and not access_controls.get('ownership_renounced', False):
-            warnings.append("Owner can mint unlimited tokens - inflation risk")
+        if critical_vulns:
+            warnings.append(f"CRITICAL: {len(critical_vulns)} critical security vulnerabilities found")
         
-        if access_controls.get('owner_can_blacklist', False):
-            warnings.append("Owner can blacklist addresses - exit scam risk")
+        if high_vulns:
+            warnings.append(f"HIGH RISK: {len(high_vulns)} high-severity vulnerabilities detected")
         
-        # Proxy warnings
-        if proxy_analysis.get('is_proxy', False) and proxy_analysis.get('upgrade_risk') == 'HIGH':
-            warnings.append("Upgradeable contract with high modification risk")
+        # Ownership warnings
+        if ownership_analysis:
+            if ownership_analysis.centralization_risk in ['CRITICAL', 'HIGH']:
+                warnings.append(f"High centralization risk: {len(ownership_analysis.admin_functions)} admin functions")
+            
+            if not ownership_analysis.is_renounced and ownership_analysis.has_owner:
+                warnings.append("Contract ownership not renounced - centralization risk")
         
-        # Overall risk warnings
-        if risk_score > 0.8:
-            warnings.append("EXTREME security risk - avoid trading")
-        elif risk_score > 0.6:
-            warnings.append("HIGH security risk - use extreme caution")
-        elif risk_score > 0.4:
-            warnings.append("MODERATE security risk - monitor closely")
+        # Malicious pattern warnings
+        for pattern in malicious_patterns:
+            if pattern.get('severity') in ['CRITICAL', 'HIGH']:
+                warnings.append(f"Suspicious pattern detected: {pattern.get('pattern_name')}")
         
         return warnings
     
-    def _compile_security_details(
-        self,
-        metadata: ContractMetadata,
-        vulnerabilities: List[SecurityVulnerability],
-        access_controls: Dict[str, Any],
-        proxy_analysis: Dict[str, Any],
-        dependencies: Dict[str, Any],
-        pattern_analysis: Dict[str, Any],
-        audit_status: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Compile detailed security analysis results."""
-        return {
-            'contract_metadata': {
-                'verified': metadata.is_verified,
-                'compiler_version': metadata.compiler_version,
-                'size_bytes': metadata.contract_size_bytes,
-                'creation_block': metadata.creation_block
-            },
-            'vulnerabilities': [
-                {
-                    'id': v.vulnerability_id,
-                    'severity': v.severity,
-                    'category': v.category,
-                    'description': v.description,
-                    'confidence': v.confidence
-                } for v in vulnerabilities
-            ],
-            'access_controls': access_controls,
-            'proxy_analysis': proxy_analysis,
-            'dependencies': dependencies,
-            'pattern_analysis': pattern_analysis,
-            'audit_status': audit_status,
-            'security_summary': {
-                'total_vulnerabilities': len(vulnerabilities),
-                'critical_count': len([v for v in vulnerabilities if v.severity == 'CRITICAL']),
-                'high_count': len([v for v in vulnerabilities if v.severity == 'HIGH']),
-                'has_admin_risks': self._has_admin_risks(access_controls),
-                'is_upgradeable': proxy_analysis.get('is_proxy', False),
-                'audit_score': audit_status.get('audit_score', 0)
-            },
-            'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
-            'chain_id': self.chain_id
-        }
+    # Helper methods for contract analysis
+    def _find_function_end(self, source_code: str, start_pos: int) -> int:
+        """Find the end of a function body."""
+        brace_count = 0
+        i = start_pos
+        
+        while i < len(source_code):
+            if source_code[i] == '{':
+                brace_count += 1
+            elif source_code[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    return i
+            i += 1
+        
+        return len(source_code)
     
-    def _has_admin_risks(self, access_controls: Dict[str, Any]) -> bool:
-        """Check if contract has significant admin-related risks."""
-        admin_privs = access_controls.get('admin_privileges', {})
-        return (
-            admin_privs.get('mint_tokens', False) or
-            admin_privs.get('update_router', False) or
-            access_controls.get('owner_can_blacklist', False)
-        ) and not access_controls.get('ownership_renounced', False)
+    def _calculate_function_complexity(self, func_body: str) -> float:
+        """Calculate function complexity score."""
+        # Simple complexity based on control structures and calls
+        complexity_indicators = [
+            'if', 'else', 'for', 'while', 'require', 'assert',
+            '.call', '.delegatecall', '.transfer', '.send'
+        ]
+        
+        complexity_count = 0
+        for indicator in complexity_indicators:
+            complexity_count += len(re.findall(indicator, func_body, re.IGNORECASE))
+        
+        # Normalize to 0-1 scale
+        return min(complexity_count / 10, 1.0)
     
-    def _assess_data_quality(
-        self, 
-        metadata: ContractMetadata, 
-        vulnerabilities: List[SecurityVulnerability]
-    ) -> str:
-        """Assess the quality of security analysis data."""
-        if metadata.compiler_version == "error":
-            return "POOR"
-        
-        if not metadata.is_verified:
-            return "FAIR"
-        
-        # Check if we have comprehensive vulnerability data
-        vuln_categories = set(v.category for v in vulnerabilities)
-        expected_categories = {'ACCESS_CONTROL', 'REENTRANCY', 'INTEGER_OVERFLOW', 'CODE_QUALITY'}
-        
-        if len(vuln_categories) >= 3:
-            return "EXCELLENT"
-        elif len(vuln_categories) >= 2:
-            return "GOOD"
+    def _calculate_overall_complexity(self, source_code: str, bytecode: str) -> float:
+        """Calculate overall contract complexity."""
+        if source_code:
+            lines = len(source_code.split('\n'))
+            functions = len(re.findall(r'function\s+\w+', source_code, re.IGNORECASE))
+            complexity = (lines / 1000) + (functions / 50)
         else:
-            return "FAIR"
+            # Use bytecode size as proxy
+            complexity = len(bytecode) / 50000 if bytecode else 0.5
+        
+        return min(complexity, 1.0)
     
-    # Helper methods and data loading
-    
-    def _validate_contract_address(self, token_address: str) -> bool:
-        """Validate contract address format."""
-        if not token_address or len(token_address) != 42:
-            return False
-        if not token_address.startswith('0x'):
-            return False
-        try:
-            int(token_address[2:], 16)  # Validate hex format
-            return True
-        except ValueError:
-            return False
-    
-    def _safe_extract_result(self, result: Any, default: Any) -> Any:
-        """Safely extract result from async gather, handling exceptions."""
-        if isinstance(result, Exception):
-            logger.warning(f"Security analysis task failed: {result}")
-            return default
-        return result if result is not None else default
-    
-    def _load_malicious_patterns(self) -> Set[str]:
-        """Load known malicious contract patterns."""
-        # In production, this would load from a security database
-        return {
-            'honeypot_pattern_1',
-            'rug_pull_pattern_2', 
-            'hidden_mint_pattern_3',
-            'backdoor_pattern_4'
+    def _calculate_code_quality(self, source_code: str) -> float:
+        """Calculate code quality score."""
+        if not source_code:
+            return 0.3  # Low quality if no source available
+        
+        quality_indicators = {
+            'has_comments': bool(re.search(r'//|/\*', source_code)),
+            'has_natspec': bool(re.search(r'///', source_code)),
+            'uses_safemath': bool(re.search(r'SafeMath|using.*for', source_code, re.IGNORECASE)),
+            'has_events': bool(re.search(r'event\s+\w+', source_code, re.IGNORECASE)),
+            'proper_visibility': not bool(re.search(r'function\s+\w+\s*\([^)]*\)\s*\{', source_code)),
+            'has_modifiers': bool(re.search(r'modifier\s+\w+', source_code, re.IGNORECASE))
         }
+        
+        score = sum(quality_indicators.values()) / len(quality_indicators)
+        return score
     
-    def _load_secure_patterns(self) -> Set[str]:
-        """Load known secure contract patterns."""
-        # In production, this would load from a verified contracts database
-        return {
-            'openzeppelin_erc20',
-            'verified_audit_pattern_1',
-            'standard_token_pattern_2'
-        }
+    def _calculate_security_score(self, source_code: str, contract_data: Dict[str, Any]) -> float:
+        """Calculate security score based on various factors."""
+        score_components = []
+        
+        # Verification status
+        if contract_data.get('verification_status') == 'VERIFIED':
+            score_components.append(0.8)
+        else:
+            score_components.append(0.2)
+        
+        # Audit status
+        audit_reports = contract_data.get('audit_reports', [])
+        if audit_reports:
+            score_components.append(0.9)
+        else:
+            score_components.append(0.4)
+        
+        # Source code security patterns
+        if source_code:
+            security_patterns = {
+                'uses_require': bool(re.search(r'require\s*\(', source_code)),
+                'checks_overflow': bool(re.search(r'SafeMath|overflow|underflow', source_code, re.IGNORECASE)),
+                'reentrancy_guard': bool(re.search(r'nonReentrant|ReentrancyGuard', source_code, re.IGNORECASE)),
+                'proper_access_control': bool(re.search(r'onlyOwner|modifier', source_code, re.IGNORECASE)),
+                'event_logging': bool(re.search(r'emit\s+\w+', source_code, re.IGNORECASE))
+            }
+            
+            pattern_score = sum(security_patterns.values()) / len(security_patterns)
+            score_components.append(pattern_score)
+        else:
+            score_components.append(0.3)
+        
+        return sum(score_components) / len(score_components)
     
-    def _load_vulnerability_patterns(self) -> Dict[str, Dict[str, Any]]:
-        """Load vulnerability pattern definitions."""
-        return {
-            'reentrancy': {
-                'severity': 'HIGH',
-                'description': 'Reentrancy vulnerability in state-changing functions',
-                'mitigation': 'Use checks-effects-interactions pattern or reentrancy guards'
-            },
-            'integer_overflow': {
-                'severity': 'HIGH', 
-                'description': 'Integer overflow/underflow in arithmetic operations',
-                'mitigation': 'Use SafeMath library or Solidity 0.8+ overflow protection'
-            },
-            'access_control': {
-                'severity': 'MEDIUM',
-                'description': 'Insufficient access control on privileged functions',
-                'mitigation': 'Implement proper role-based access control'
-            },
-            'backdoor': {
-                'severity': 'CRITICAL',
-                'description': 'Hidden backdoor functions allowing unauthorized access',
-                'mitigation': 'Remove backdoor functions or avoid contract entirely'
+    def _generate_mock_source_code(self) -> str:
+        """Generate mock source code for testing."""
+        return '''
+        pragma solidity ^0.8.0;
+        
+        contract MockERC20 {
+            string public name = "Mock Token";
+            string public symbol = "MOCK";
+            uint8 public decimals = 18;
+            uint256 public totalSupply;
+            
+            mapping(address => uint256) public balanceOf;
+            mapping(address => mapping(address => uint256)) public allowance;
+            
+            address public owner;
+            
+            modifier onlyOwner() {
+                require(msg.sender == owner, "Not owner");
+                _;
+            }
+            
+            constructor(uint256 _totalSupply) {
+                totalSupply = _totalSupply;
+                balanceOf[msg.sender] = _totalSupply;
+                owner = msg.sender;
+            }
+            
+            function transfer(address to, uint256 amount) public returns (bool) {
+                require(balanceOf[msg.sender] >= amount, "Insufficient balance");
+                balanceOf[msg.sender] -= amount;
+                balanceOf[to] += amount;
+                return true;
+            }
+            
+            function mint(address to, uint256 amount) public onlyOwner {
+                totalSupply += amount;
+                balanceOf[to] += amount;
             }
         }
+        '''
+    
+    def _load_vulnerability_patterns(self) -> List[Dict[str, Any]]:
+        """Load known vulnerability patterns."""
+        return [
+            {
+                'name': 'reentrancy',
+                'pattern': r'\.call\.value\s*\(',
+                'severity': 'CRITICAL',
+                'description': 'Potential reentrancy vulnerability'
+            },
+            {
+                'name': 'tx_origin',
+                'pattern': r'tx\.origin',
+                'severity': 'HIGH',
+                'description': 'Dangerous use of tx.origin'
+            },
+            {
+                'name': 'unchecked_call',
+                'pattern': r'\.call\s*\([^)]*\)\s*;',
+                'severity': 'MEDIUM',
+                'description': 'Unchecked external call'
+            }
+        ]
+    
+    def _load_malicious_patterns(self) -> List[Dict[str, Any]]:
+        """Load known malicious contract patterns."""
+        return [
+            {
+                'name': 'hidden_mint',
+                'type': 'SOURCE_PATTERN',
+                'pattern': r'function\s+\w*\s*\([^)]*\)\s*[^{]*\{\s*[^}]*totalSupply\s*\+=',
+                'severity': 'HIGH',
+                'description': 'Hidden mint function detected',
+                'confidence': 0.7
+            },
+            {
+                'name': 'backdoor_transfer',
+                'type': 'SOURCE_PATTERN',
+                'pattern': r'if\s*\([^)]*==\s*0x[a-fA-F0-9]{40}[^)]*\)',
+                'severity': 'MEDIUM',
+                'description': 'Potential backdoor in transfer logic',
+                'confidence': 0.6
+            }
+        ]
+    
+    def _validate_inputs(self, token_address: str, context: Dict[str, Any]) -> bool:
+        """Validate inputs for contract analysis."""
+        if not token_address or len(token_address) != 42:
+            return False
+        
+        if not token_address.startswith('0x'):
+            return False
+        
+        return True
+    
+    def _create_error_risk_score(self, error_message: str) -> RiskScore:
+        """Create error risk score for failed analysis."""
+        return RiskScore(
+            category=self.get_category(),
+            score=0.8,  # High risk when analysis fails
+            confidence=0.1,
+            details={'error': error_message, 'analysis_failed': True},
+            analysis_time_ms=0.0,
+            warnings=[error_message],
+            data_quality="POOR"
+        )
+    
+    def _create_timeout_risk_score(self) -> RiskScore:
+        """Create risk score for timeout scenarios."""
+        return RiskScore(
+            category=self.get_category(),
+            score=0.7,  # High risk on timeout due to security importance
+            confidence=0.1,
+            details={'timeout': True, 'analysis_incomplete': True},
+            analysis_time_ms=20000.0,
+            warnings=["Contract analysis timed out - security assessment incomplete"],
+            data_quality="POOR"
+        )
     
     def _get_cached_analysis(self, token_address: str) -> Optional[Dict[str, Any]]:
-        """Get cached security analysis if available and fresh."""
-        if token_address in self.analysis_cache:
-            result, timestamp = self.analysis_cache[token_address]
+        """Get cached contract analysis if available and fresh."""
+        if token_address in self.contract_cache:
+            result, timestamp = self.contract_cache[token_address]
             age = datetime.now(timezone.utc) - timestamp
             
-            if age.total_seconds() < (self.cache_ttl_minutes * 60):
+            if age.total_seconds() < (self.cache_ttl_hours * 3600):
                 return result
             else:
-                del self.analysis_cache[token_address]
+                del self.contract_cache[token_address]
         
         return None
     
     def _cache_analysis_result(self, token_address: str, result: Dict[str, Any]) -> None:
-        """Cache security analysis result."""
-        self.analysis_cache[token_address] = (result, datetime.now(timezone.utc))
+        """Cache contract analysis result."""
+        self.contract_cache[token_address] = (result, datetime.now(timezone.utc))
         
         # Clean up old cache entries
-        if len(self.analysis_cache) > 100:
-            oldest_token = min(
-                self.analysis_cache.keys(),
-                key=lambda k: self.analysis_cache[k][1]
+        if len(self.contract_cache) > 100:
+            sorted_entries = sorted(
+                self.contract_cache.items(),
+                key=lambda x: x[1][1]
             )
-            del self.analysis_cache[oldest_token]
+            for token, _ in sorted_entries[:20]:
+                del self.contract_cache[token]
     
     def _create_risk_score_from_cache(self, cached_result: Dict[str, Any]) -> RiskScore:
-        """Create RiskScore from cached result."""
-        return self._create_risk_score(
-            score=cached_result['risk_score'],
-            confidence=cached_result['confidence'],
-            details=cached_result['details'],
-            warnings=cached_result['warnings'],
-            data_quality="CACHED",
-            analysis_time_ms=0.1
+        """Create risk score from cached analysis."""
+        vulnerabilities = cached_result.get('vulnerabilities', [])
+        ownership_analysis = cached_result.get('ownership_analysis')
+        malicious_patterns = cached_result.get('malicious_patterns', [])
+        contract_metrics = cached_result.get('contract_metrics')
+        
+        risk_score = self._calculate_security_risk_score(
+            vulnerabilities, ownership_analysis, malicious_patterns, contract_metrics
         )
-    
-    def _create_error_risk_score(self, error_message: str) -> RiskScore:
-        """Create error risk score for failed analysis."""
-        return self._create_risk_score(
-            score=0.9,  # Very high risk for failed security analysis
-            confidence=0.3,
-            details={'error': error_message},
-            warnings=[f"Security analysis failed: {error_message}"],
-            data_quality="POOR"
-        )
-    
-    def _create_risk_score(
-        self,
-        score: float,
-        confidence: float,
-        details: Dict[str, Any],
-        warnings: List[str],
-        data_quality: str,
-        analysis_time_ms: float = 0.0
-    ) -> RiskScore:
-        """Create standardized RiskScore object."""
+        
         return RiskScore(
             category=self.get_category(),
-            score=score,
-            confidence=confidence,
-            details=details,
-            analysis_time_ms=analysis_time_ms,
-            warnings=warnings,
-            data_quality=data_quality,
+            score=risk_score,
+            confidence=0.8,  # High confidence for cached analysis
+            details={**cached_result, 'from_cache': True},
+            analysis_time_ms=10.0,  # Fast cache retrieval
+            warnings=self._generate_security_warnings(vulnerabilities, ownership_analysis, malicious_patterns),
+            data_quality="GOOD",
             last_updated=datetime.now(timezone.utc).isoformat()
         )
+    
+    def _assess_contract_data_quality(self, contract_data: Dict[str, Any]) -> str:
+        """Assess the quality of contract data available for analysis."""
+        has_source = bool(contract_data.get('source_code'))
+        has_bytecode = bool(contract_data.get('bytecode'))
+        is_verified = contract_data.get('verification_status') == 'VERIFIED'
+        has_audit = bool(contract_data.get('audit_reports'))
+        
+        if has_source and is_verified and has_audit:
+            return "EXCELLENT"
+        elif has_source and is_verified:
+            return "GOOD"
+        elif has_bytecode and (has_source or is_verified):
+            return "FAIR"
+        else:
+            return "POOR"
+    
+    def _calculate_analysis_confidence(
+        self,
+        contract_data: Dict[str, Any],
+        vulnerabilities: List[SecurityVulnerability]
+    ) -> float:
+        """Calculate confidence level for the analysis."""
+        confidence_factors = []
+        
+        # Data availability factor
+        if contract_data.get('source_code'):
+            confidence_factors.append(0.9)
+        elif contract_data.get('bytecode'):
+            confidence_factors.append(0.6)
+        else:
+            confidence_factors.append(0.2)
+        
+        # Verification factor
+        if contract_data.get('verification_status') == 'VERIFIED':
+            confidence_factors.append(0.8)
+        else:
+            confidence_factors.append(0.4)
+        
+        # Analysis completeness factor
+        if vulnerabilities:
+            avg_vuln_confidence = sum(v.confidence for v in vulnerabilities) / len(vulnerabilities)
+            confidence_factors.append(avg_vuln_confidence)
+        else:
+            confidence_factors.append(0.7)  # No vulnerabilities found is also valuable
+        
+        return sum(confidence_factors) / len(confidence_factors)
 
 
 # Export the analyzer class
-__all__ = ['ContractAnalyzer', 'SecurityVulnerability', 'ContractMetadata']
+__all__ = [
+    'ContractAnalyzer',
+    'SecurityVulnerability', 
+    'ContractFunction',
+    'OwnershipAnalysis',
+    'ContractMetrics'
+]

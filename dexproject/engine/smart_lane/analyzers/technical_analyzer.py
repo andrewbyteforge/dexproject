@@ -1,9 +1,9 @@
 """
 Technical Analysis Analyzer
 
-Medium-priority analyzer that evaluates token price action, technical
-indicators, and chart patterns across multiple timeframes. Provides
-technical trading signals and trend analysis.
+Medium-priority analyzer that performs multi-timeframe technical chart analysis
+using various indicators and pattern recognition. Provides trading signals
+and price target calculations.
 
 Path: engine/smart_lane/analyzers/technical_analyzer.py
 """
@@ -11,11 +11,11 @@ Path: engine/smart_lane/analyzers/technical_analyzer.py
 import asyncio
 import logging
 import time
-import math
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from decimal import Decimal
+import math
+import statistics
 
 from . import BaseAnalyzer
 from .. import RiskScore, RiskCategory, TechnicalSignal
@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TechnicalIndicator:
     """Individual technical indicator result."""
-    name: str
-    timeframe: str
+    name: str  # RSI, MACD, SMA, EMA, etc.
+    timeframe: str  # 5m, 30m, 4h, 1d
     value: float
     signal: str  # BUY, SELL, NEUTRAL
     strength: float  # 0-1 scale
@@ -36,39 +36,56 @@ class TechnicalIndicator:
 
 
 @dataclass
-class SupportResistance:
-    """Support and resistance level."""
+class PriceLevel:
+    """Support or resistance price level."""
     level_type: str  # SUPPORT, RESISTANCE
     price: float
     strength: float  # 0-1 scale
-    touches: int
-    timeframe: str
+    test_count: int  # How many times price tested this level
+    last_test_date: str
     confidence: float
 
 
 @dataclass
 class ChartPattern:
-    """Chart pattern identification."""
-    pattern_name: str
-    timeframe: str
-    confidence: float
+    """Identified chart pattern."""
+    pattern_name: str  # TRIANGLE, WEDGE, HEAD_SHOULDERS, etc.
+    pattern_type: str  # CONTINUATION, REVERSAL
     signal: str  # BULLISH, BEARISH, NEUTRAL
-    target_price: Optional[float]
-    stop_loss: Optional[float]
-    completion_percentage: float
+    completion_percent: float  # How complete the pattern is
+    price_target: Optional[float]
+    confidence: float
+    timeframe: str
+
+
+@dataclass
+class TechnicalAnalysisResult:
+    """Complete technical analysis result."""
+    overall_signal: str  # STRONG_BUY, BUY, NEUTRAL, SELL, STRONG_SELL
+    signal_strength: float  # 0-1 scale
+    trend_direction: str  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float
+    volatility_score: float
+    momentum_score: float
+    support_levels: List[PriceLevel]
+    resistance_levels: List[PriceLevel]
+    chart_patterns: List[ChartPattern]
+    risk_reward_ratio: float
+    confidence_level: float
 
 
 class TechnicalAnalyzer(BaseAnalyzer):
     """
-    Advanced multi-timeframe technical analysis for tokens.
+    Advanced technical analysis for token price charts.
     
     Analyzes:
-    - Price action and trend direction across timeframes
-    - Technical indicators (RSI, MACD, Moving Averages, etc.)
-    - Support and resistance levels
-    - Chart patterns and formations
-    - Volume analysis and momentum
-    - Fibonacci retracements and extensions
+    - Multi-timeframe technical indicators (RSI, MACD, SMA, EMA, etc.)
+    - Support and resistance level identification
+    - Chart pattern recognition
+    - Trend analysis and momentum indicators
+    - Volume analysis and price-volume relationships
+    - Volatility and risk metrics
+    - Price targets and risk/reward calculations
     """
     
     def __init__(self, chain_id: int, config: Optional[Dict[str, Any]] = None):
@@ -77,22 +94,26 @@ class TechnicalAnalyzer(BaseAnalyzer):
         
         Args:
             chain_id: Blockchain chain identifier
-            config: Analyzer configuration
+            config: Analyzer configuration including timeframes and indicators
         """
         super().__init__(chain_id, config)
         
-        # Technical analysis parameters
-        self.timeframes = ['5m', '15m', '1h', '4h', '1d']
-        self.indicators = ['RSI', 'MACD', 'SMA', 'EMA', 'BB', 'STOCH']
+        # Analysis configuration
+        self.timeframes = config.get('timeframes', ['5m', '30m', '4h', '1d']) if config else ['5m', '30m', '4h', '1d']
+        self.indicators = config.get('indicators', [
+            'RSI', 'MACD', 'SMA_20', 'SMA_50', 'EMA_12', 'EMA_26', 'BB', 'STOCH'
+        ]) if config else ['RSI', 'MACD', 'SMA_20', 'SMA_50', 'EMA_12', 'EMA_26', 'BB', 'STOCH']
         
-        # Analysis thresholds
+        # Technical thresholds
         self.thresholds = {
             'rsi_oversold': 30,
             'rsi_overbought': 70,
             'trend_strength_min': 0.6,
             'pattern_confidence_min': 0.7,
+            'min_price_history_hours': 24,
+            'volatility_high_threshold': 0.15,  # 15% daily volatility
             'volume_spike_threshold': 2.0,  # 2x average volume
-            'momentum_threshold': 0.15      # 15% price change
+            'support_resistance_min_tests': 2
         }
         
         # Update with custom config
@@ -100,10 +121,10 @@ class TechnicalAnalyzer(BaseAnalyzer):
             self.thresholds.update(config.get('thresholds', {}))
         
         # Technical analysis cache
-        self.technical_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
-        self.cache_ttl_minutes = 5  # Technical data changes frequently
+        self.analysis_cache: Dict[str, Tuple[TechnicalAnalysisResult, datetime]] = {}
+        self.cache_ttl_minutes = 5  # Short cache for technical data
         
-        logger.info(f"Technical analyzer initialized for chain {chain_id}")
+        logger.info(f"Technical analyzer initialized for chain {chain_id} with timeframes: {self.timeframes}")
     
     def get_category(self) -> RiskCategory:
         """Get the risk category this analyzer handles."""
@@ -119,7 +140,7 @@ class TechnicalAnalyzer(BaseAnalyzer):
         
         Args:
             token_address: Token contract address to analyze
-            context: Additional context including price data
+            context: Additional context including price data, volume data
             
         Returns:
             RiskScore with technical analysis assessment
@@ -128,6 +149,9 @@ class TechnicalAnalyzer(BaseAnalyzer):
         
         try:
             logger.debug(f"Starting technical analysis for {token_address[:10]}...")
+            
+            # Update performance stats
+            self.performance_stats['total_analyses'] += 1
             
             # Input validation
             if not self._validate_inputs(token_address, context):
@@ -141,555 +165,918 @@ class TechnicalAnalyzer(BaseAnalyzer):
             
             self.performance_stats['cache_misses'] += 1
             
-            # Parallel technical analysis tasks
+            # Get price and volume data
+            price_data = await self._fetch_price_data(token_address, context)
+            if not price_data or len(price_data.get('prices', [])) < 24:
+                return self._create_error_risk_score("Insufficient price data for technical analysis")
+            
+            # Perform multi-timeframe analysis
             analysis_tasks = [
-                self._analyze_price_action(token_address, context),
-                self._calculate_technical_indicators(token_address, context),
-                self._identify_support_resistance(token_address, context),
-                self._analyze_volume_patterns(token_address, context),
-                self._detect_chart_patterns(token_address, context),
-                self._analyze_momentum_oscillators(token_address, context)
+                self._calculate_technical_indicators(price_data),
+                self._identify_support_resistance(price_data),
+                self._detect_chart_patterns(price_data),
+                self._analyze_trend_momentum(price_data),
+                self._analyze_volume_patterns(price_data),
+                self._calculate_volatility_metrics(price_data)
             ]
             
-            analysis_results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
+            # Execute all tasks with timeout protection
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*analysis_tasks, return_exceptions=True),
+                    timeout=15.0  # 15 second timeout for technical analysis
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Technical analysis timeout for {token_address[:10]}")
+                return self._create_timeout_risk_score()
             
-            # Process results and handle exceptions
-            price_action = self._safe_extract_result(analysis_results[0], {})
-            technical_indicators = self._safe_extract_result(analysis_results[1], [])
-            support_resistance = self._safe_extract_result(analysis_results[2], [])
-            volume_analysis = self._safe_extract_result(analysis_results[3], {})
-            chart_patterns = self._safe_extract_result(analysis_results[4], [])
-            momentum_analysis = self._safe_extract_result(analysis_results[5], {})
+            # Process results
+            indicators = results[0] if not isinstance(results[0], Exception) else []
+            support_resistance = results[1] if not isinstance(results[1], Exception) else ([], [])
+            chart_patterns = results[2] if not isinstance(results[2], Exception) else []
+            trend_momentum = results[3] if not isinstance(results[3], Exception) else {}
+            volume_analysis = results[4] if not isinstance(results[4], Exception) else {}
+            volatility_metrics = results[5] if not isinstance(results[5], Exception) else {}
             
-            # Generate comprehensive technical signals
-            technical_signals = self._generate_technical_signals(
-                price_action, technical_indicators, support_resistance,
-                volume_analysis, chart_patterns, momentum_analysis
+            # Create comprehensive technical analysis
+            technical_analysis = self._aggregate_technical_signals(
+                indicators, support_resistance, chart_patterns, 
+                trend_momentum, volume_analysis, volatility_metrics
             )
             
-            # Calculate technical risk score (inverted - good technicals = low risk)
-            risk_score, confidence = self._calculate_technical_risk(
-                technical_signals, price_action, volume_analysis
-            )
+            # Calculate risk score
+            risk_score = self._calculate_technical_risk_score(technical_analysis, volatility_metrics)
             
-            # Generate technical warnings
-            warnings = self._generate_technical_warnings(
-                technical_signals, price_action, volume_analysis
-            )
+            # Generate technical signals for Smart Lane pipeline
+            technical_signals = self._generate_technical_signals(indicators, technical_analysis)
             
-            # Compile detailed analysis
-            analysis_details = self._compile_technical_details(
-                price_action, technical_indicators, support_resistance,
-                volume_analysis, chart_patterns, momentum_analysis,
-                technical_signals
-            )
+            # Cache the result
+            self._cache_analysis_result(token_address, technical_analysis)
             
+            # Create detailed analysis data
+            analysis_details = {
+                'technical_analysis': technical_analysis.__dict__,
+                'indicators': [ind.__dict__ for ind in indicators],
+                'technical_signals': [sig.__dict__ for sig in technical_signals],
+                'volatility_metrics': volatility_metrics,
+                'volume_analysis': volume_analysis,
+                'price_data_quality': self._assess_price_data_quality(price_data)
+            }
+            
+            # Generate warnings
+            warnings = self._generate_technical_warnings(technical_analysis, volatility_metrics)
+            
+            # Calculate analysis time
             analysis_time_ms = (time.time() - analysis_start) * 1000
-            
-            # Cache the results
-            self._cache_analysis_result(token_address, {
-                'risk_score': risk_score,
-                'confidence': confidence,
-                'details': analysis_details,
-                'warnings': warnings,
-                'technical_signals': technical_signals
-            })
             
             # Update performance stats
-            self._update_performance_stats(analysis_time_ms, success=True)
+            self.performance_stats['successful_analyses'] += 1
             
-            logger.debug(
-                f"Technical analysis completed for {token_address[:10]}... "
-                f"Risk: {risk_score:.3f}, Confidence: {confidence:.3f} "
-                f"({len(technical_signals)} signals, {analysis_time_ms:.1f}ms)"
-            )
-            
-            return self._create_risk_score(
+            # Create and return risk score
+            return RiskScore(
+                category=self.get_category(),
                 score=risk_score,
-                confidence=confidence,
+                confidence=technical_analysis.confidence_level,
                 details=analysis_details,
+                analysis_time_ms=analysis_time_ms,
                 warnings=warnings,
-                data_quality=self._assess_data_quality(technical_signals, price_action),
-                analysis_time_ms=analysis_time_ms
+                data_quality=self._assess_price_data_quality(price_data),
+                last_updated=datetime.now(timezone.utc).isoformat()
             )
             
         except Exception as e:
-            analysis_time_ms = (time.time() - analysis_start) * 1000
-            self._update_performance_stats(analysis_time_ms, success=False)
-            
             logger.error(f"Error in technical analysis: {e}", exc_info=True)
-            return self._create_error_risk_score(f"Technical analysis failed: {str(e)}")
+            self.performance_stats['failed_analyses'] += 1
+            
+            analysis_time_ms = (time.time() - analysis_start) * 1000
+            return RiskScore(
+                category=self.get_category(),
+                score=0.5,  # Neutral risk due to analysis failure
+                confidence=0.2,
+                details={'error': str(e), 'analysis_failed': True},
+                analysis_time_ms=analysis_time_ms,
+                warnings=[f"Technical analysis failed: {str(e)}"],
+                data_quality="POOR"
+            )
     
-    async def _analyze_price_action(
-        self, 
-        token_address: str, 
+    async def _fetch_price_data(
+        self,
+        token_address: str,
         context: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Analyze basic price action and trends."""
+        """
+        Fetch historical price and volume data.
+        
+        In production, this would fetch data from DEX APIs, price feeds,
+        or blockchain data providers like The Graph.
+        """
+        await asyncio.sleep(0.1)  # Simulate API call
+        
+        # Mock price data generation
+        current_time = datetime.now(timezone.utc)
+        base_price = context.get('current_price', 1.0)
+        
+        # Generate 7 days of hourly price data
+        prices = []
+        volumes = []
+        
+        for i in range(168):  # 7 days * 24 hours
+            timestamp = current_time - timedelta(hours=168-i)
+            
+            # Simulate price movement with trend and volatility
+            trend_factor = 1.0 + (i / 1000)  # Slight uptrend
+            volatility = 0.02 + (0.01 * math.sin(i / 10))  # Variable volatility
+            random_factor = 1.0 + (volatility * math.sin(i * 0.7) * math.cos(i * 0.3))
+            
+            price = base_price * trend_factor * random_factor
+            volume = 10000 + (5000 * math.sin(i / 5)) + (2000 * random_factor)
+            
+            prices.append({
+                'timestamp': timestamp.isoformat(),
+                'open': price * 0.999,
+                'high': price * 1.002,
+                'low': price * 0.998,
+                'close': price,
+                'volume': max(volume, 100)
+            })
+        
+        return {
+            'prices': prices,
+            'current_price': base_price,
+            'data_quality': 'GOOD',
+            'source': 'mock_api'
+        }
+    
+    async def _calculate_technical_indicators(self, price_data: Dict[str, Any]) -> List[TechnicalIndicator]:
+        """Calculate various technical indicators across timeframes."""
+        indicators = []
+        prices = price_data['prices']
+        
+        if len(prices) < 50:
+            return indicators
+        
+        # Extract close prices for calculations
+        close_prices = [float(p['close']) for p in prices[-50:]]  # Last 50 periods
+        volumes = [float(p['volume']) for p in prices[-50:]]
+        
         try:
-            await asyncio.sleep(0.2)  # Simulate price data fetching
+            # RSI Calculation
+            rsi_value = self._calculate_rsi(close_prices)
+            rsi_signal = "SELL" if rsi_value > self.thresholds['rsi_overbought'] else \
+                        "BUY" if rsi_value < self.thresholds['rsi_oversold'] else "NEUTRAL"
             
-            # Mock price data generation based on token characteristics
-            address_hash = hash(token_address)
+            indicators.append(TechnicalIndicator(
+                name="RSI",
+                timeframe="4h",
+                value=rsi_value,
+                signal=rsi_signal,
+                strength=abs(rsi_value - 50) / 50,
+                confidence=0.8,
+                description=f"RSI({rsi_value:.1f}) - {'Overbought' if rsi_value > 70 else 'Oversold' if rsi_value < 30 else 'Neutral'}"
+            ))
             
-            # Generate realistic price action data
-            current_price = 1.0 + (address_hash % 1000) / 100.0  # $1.00-$11.00 range
+            # MACD Calculation
+            macd_line, signal_line = self._calculate_macd(close_prices)
+            macd_signal = "BUY" if macd_line > signal_line else "SELL"
             
-            # Price changes over different periods
-            price_changes = {
-                '24h': -5 + (address_hash % 200) / 10.0,      # -5% to +15%
-                '7d': -10 + (address_hash % 400) / 10.0,      # -10% to +30%
-                '30d': -20 + (address_hash % 800) / 10.0,     # -20% to +60%
-                '90d': -30 + (address_hash % 1200) / 10.0     # -30% to +90%
-            }
+            indicators.append(TechnicalIndicator(
+                name="MACD",
+                timeframe="4h",
+                value=macd_line - signal_line,
+                signal=macd_signal,
+                strength=min(abs(macd_line - signal_line) * 100, 1.0),
+                confidence=0.75,
+                description=f"MACD {'Bullish' if macd_line > signal_line else 'Bearish'} crossover"
+            ))
+            
+            # Moving Averages
+            sma_20 = sum(close_prices[-20:]) / 20
+            sma_50 = sum(close_prices[-50:]) / 50
+            current_price = close_prices[-1]
+            
+            sma_signal = "BUY" if current_price > sma_20 > sma_50 else \
+                        "SELL" if current_price < sma_20 < sma_50 else "NEUTRAL"
+            
+            indicators.append(TechnicalIndicator(
+                name="SMA_Cross",
+                timeframe="4h",
+                value=(sma_20 - sma_50) / sma_50,
+                signal=sma_signal,
+                strength=abs(sma_20 - sma_50) / sma_50,
+                confidence=0.7,
+                description=f"SMA20({'Above' if sma_20 > sma_50 else 'Below'}) SMA50"
+            ))
+            
+            # Bollinger Bands
+            bb_middle, bb_upper, bb_lower = self._calculate_bollinger_bands(close_prices)
+            bb_position = (current_price - bb_lower) / (bb_upper - bb_lower)
+            
+            bb_signal = "SELL" if bb_position > 0.8 else "BUY" if bb_position < 0.2 else "NEUTRAL"
+            
+            indicators.append(TechnicalIndicator(
+                name="BOLLINGER_BANDS",
+                timeframe="4h",
+                value=bb_position,
+                signal=bb_signal,
+                strength=abs(bb_position - 0.5) * 2,
+                confidence=0.65,
+                description=f"Price at {bb_position:.1%} of Bollinger Band range"
+            ))
+            
+            # Volume Analysis
+            avg_volume = sum(volumes[-20:]) / 20
+            current_volume = volumes[-1]
+            volume_ratio = current_volume / avg_volume
+            
+            volume_signal = "BUY" if volume_ratio > 1.5 and close_prices[-1] > close_prices[-5] else \
+                           "SELL" if volume_ratio > 1.5 and close_prices[-1] < close_prices[-5] else "NEUTRAL"
+            
+            indicators.append(TechnicalIndicator(
+                name="VOLUME",
+                timeframe="4h",
+                value=volume_ratio,
+                signal=volume_signal,
+                strength=min(volume_ratio / 3, 1.0),
+                confidence=0.6,
+                description=f"Volume {volume_ratio:.1f}x above average"
+            ))
+            
+        except Exception as e:
+            logger.warning(f"Error calculating technical indicators: {e}")
+        
+        return indicators
+    
+    async def _identify_support_resistance(self, price_data: Dict[str, Any]) -> Tuple[List[PriceLevel], List[PriceLevel]]:
+        """Identify key support and resistance levels."""
+        prices = price_data['prices']
+        support_levels = []
+        resistance_levels = []
+        
+        if len(prices) < 24:
+            return support_levels, resistance_levels
+        
+        try:
+            # Extract price data
+            highs = [float(p['high']) for p in prices[-100:]]
+            lows = [float(p['low']) for p in prices[-100:]]
+            closes = [float(p['close']) for p in prices[-100:]]
+            
+            # Find local peaks and valleys
+            resistance_candidates = self._find_local_peaks(highs, window=5)
+            support_candidates = self._find_local_valleys(lows, window=5)
+            
+            # Analyze resistance levels
+            for level in resistance_candidates:
+                test_count = sum(1 for h in highs if abs(h - level) / level < 0.02)
+                if test_count >= self.thresholds['support_resistance_min_tests']:
+                    resistance_levels.append(PriceLevel(
+                        level_type="RESISTANCE",
+                        price=level,
+                        strength=min(test_count / 5, 1.0),
+                        test_count=test_count,
+                        last_test_date=datetime.now(timezone.utc).isoformat(),
+                        confidence=0.7
+                    ))
+            
+            # Analyze support levels
+            for level in support_candidates:
+                test_count = sum(1 for l in lows if abs(l - level) / level < 0.02)
+                if test_count >= self.thresholds['support_resistance_min_tests']:
+                    support_levels.append(PriceLevel(
+                        level_type="SUPPORT",
+                        price=level,
+                        strength=min(test_count / 5, 1.0),
+                        test_count=test_count,
+                        last_test_date=datetime.now(timezone.utc).isoformat(),
+                        confidence=0.7
+                    ))
+            
+            # Sort by strength
+            support_levels.sort(key=lambda x: x.strength, reverse=True)
+            resistance_levels.sort(key=lambda x: x.strength, reverse=True)
+            
+        except Exception as e:
+            logger.warning(f"Error identifying support/resistance: {e}")
+        
+        return support_levels[:5], resistance_levels[:5]  # Return top 5 each
+    
+    async def _detect_chart_patterns(self, price_data: Dict[str, Any]) -> List[ChartPattern]:
+        """Detect common chart patterns."""
+        patterns = []
+        prices = price_data['prices']
+        
+        if len(prices) < 20:
+            return patterns
+        
+        try:
+            closes = [float(p['close']) for p in prices[-50:]]
+            
+            # Simple trend pattern detection
+            if len(closes) >= 20:
+                recent_trend = self._calculate_trend_strength(closes[-20:])
+                longer_trend = self._calculate_trend_strength(closes[-50:])
+                
+                # Detect trend patterns
+                if recent_trend > 0.3 and longer_trend > 0.3:
+                    patterns.append(ChartPattern(
+                        pattern_name="UPTREND",
+                        pattern_type="CONTINUATION",
+                        signal="BULLISH",
+                        completion_percent=0.8,
+                        price_target=closes[-1] * 1.1,
+                        confidence=0.7,
+                        timeframe="4h"
+                    ))
+                elif recent_trend < -0.3 and longer_trend < -0.3:
+                    patterns.append(ChartPattern(
+                        pattern_name="DOWNTREND",
+                        pattern_type="CONTINUATION",
+                        signal="BEARISH",
+                        completion_percent=0.8,
+                        price_target=closes[-1] * 0.9,
+                        confidence=0.7,
+                        timeframe="4h"
+                    ))
+                
+                # Detect reversal patterns (simplified)
+                if recent_trend > 0.2 and longer_trend < -0.2:
+                    patterns.append(ChartPattern(
+                        pattern_name="TREND_REVERSAL",
+                        pattern_type="REVERSAL",
+                        signal="BULLISH",
+                        completion_percent=0.6,
+                        price_target=closes[-1] * 1.15,
+                        confidence=0.6,
+                        timeframe="4h"
+                    ))
+                elif recent_trend < -0.2 and longer_trend > 0.2:
+                    patterns.append(ChartPattern(
+                        pattern_name="TREND_REVERSAL",
+                        pattern_type="REVERSAL",
+                        signal="BEARISH",
+                        completion_percent=0.6,
+                        price_target=closes[-1] * 0.85,
+                        confidence=0.6,
+                        timeframe="4h"
+                    ))
+            
+        except Exception as e:
+            logger.warning(f"Error detecting chart patterns: {e}")
+        
+        return patterns
+    
+    async def _analyze_trend_momentum(self, price_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze trend direction and momentum."""
+        prices = price_data['prices']
+        
+        if len(prices) < 10:
+            return {}
+        
+        try:
+            closes = [float(p['close']) for p in prices[-50:]]
             
             # Calculate trend strength
-            trend_strength = abs(price_changes['7d']) / 30.0  # Normalize to 0-1
-            trend_direction = 'BULLISH' if price_changes['7d'] > 5 else 'BEARISH' if price_changes['7d'] < -5 else 'SIDEWAYS'
+            trend_strength = self._calculate_trend_strength(closes)
             
-            # Generate OHLC data for recent periods
-            ohlc_data = []
-            for i in range(24):  # Last 24 hours of hourly data
-                hour_hash = hash(f"{token_address}_{i}")
-                volatility = 0.02 + (hour_hash % 50) / 2500.0  # 2-4% hourly volatility
-                
-                open_price = current_price * (1 + (hour_hash % 100 - 50) / 5000.0)
-                high_price = open_price * (1 + volatility)
-                low_price = open_price * (1 - volatility)
-                close_price = open_price * (1 + (hour_hash % 100 - 50) / 2500.0)
-                
-                ohlc_data.append({
-                    'timestamp': datetime.now(timezone.utc) - timedelta(hours=24-i),
-                    'open': open_price,
-                    'high': high_price,
-                    'low': low_price,
-                    'close': close_price,
-                    'volume': 10000 + (hour_hash % 50000)
-                })
+            # Determine trend direction
+            if trend_strength > 0.3:
+                trend_direction = "UPTREND"
+            elif trend_strength < -0.3:
+                trend_direction = "DOWNTREND"
+            else:
+                trend_direction = "SIDEWAYS"
             
-            price_action = {
-                'current_price': current_price,
-                'price_changes': price_changes,
+            # Calculate momentum
+            short_momentum = (closes[-1] - closes[-5]) / closes[-5] if len(closes) >= 5 else 0
+            medium_momentum = (closes[-1] - closes[-10]) / closes[-10] if len(closes) >= 10 else 0
+            
+            momentum_score = (short_momentum + medium_momentum) / 2
+            
+            return {
                 'trend_direction': trend_direction,
-                'trend_strength': min(1.0, trend_strength),
-                'volatility_24h': sum(abs(h['high'] - h['low']) / h['open'] for h in ohlc_data) / len(ohlc_data),
-                'ohlc_data': ohlc_data,
-                'all_time_high': current_price * (1.5 + (address_hash % 200) / 100.0),
-                'all_time_low': current_price * (0.1 + (address_hash % 40) / 100.0),
-                'trading_range': {
-                    'support': current_price * 0.9,
-                    'resistance': current_price * 1.1
-                }
+                'trend_strength': abs(trend_strength),
+                'momentum_score': momentum_score,
+                'short_term_momentum': short_momentum,
+                'medium_term_momentum': medium_momentum
             }
             
-            return price_action
-            
         except Exception as e:
-            logger.error(f"Error analyzing price action: {e}")
-            return {'error': str(e)}
+            logger.warning(f"Error analyzing trend momentum: {e}")
+            return {}
     
-    async def _calculate_technical_indicators(
-        self, 
-        token_address: str, 
-        context: Dict[str, Any]
-    ) -> List[TechnicalIndicator]:
-        """Calculate various technical indicators across timeframes."""
+    async def _analyze_volume_patterns(self, price_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze volume patterns and relationships."""
+        prices = price_data['prices']
+        
+        if len(prices) < 10:
+            return {}
+        
         try:
-            await asyncio.sleep(0.25)  # Simulate indicator calculations
+            volumes = [float(p['volume']) for p in prices[-20:]]
+            closes = [float(p['close']) for p in prices[-20:]]
             
-            indicators = []
-            address_hash = hash(token_address)
+            # Volume trend analysis
+            avg_volume = sum(volumes) / len(volumes)
+            recent_volume = sum(volumes[-5:]) / 5
+            volume_trend = (recent_volume - avg_volume) / avg_volume
             
-            # Generate indicators for different timeframes
-            for i, timeframe in enumerate(self.timeframes):
-                tf_hash = hash(f"{token_address}_{timeframe}")
-                
-                # RSI (Relative Strength Index)
-                rsi_value = 30 + (tf_hash % 400) / 10.0  # 30-70 typical range
-                rsi_signal = 'BUY' if rsi_value < 35 else 'SELL' if rsi_value > 65 else 'NEUTRAL'
-                
-                indicators.append(TechnicalIndicator(
-                    name='RSI',
-                    timeframe=timeframe,
-                    value=rsi_value,
-                    signal=rsi_signal,
-                    strength=abs(rsi_value - 50) / 50.0,
-                    confidence=0.8,
-                    description=f'RSI({timeframe}): {rsi_value:.1f} - {rsi_signal.lower()} signal'
-                ))
-                
-                # MACD
-                macd_value = -2 + (tf_hash % 400) / 100.0  # -2 to +2 range
-                macd_signal = 'BUY' if macd_value > 0.5 else 'SELL' if macd_value < -0.5 else 'NEUTRAL'
-                
-                indicators.append(TechnicalIndicator(
-                    name='MACD',
-                    timeframe=timeframe,
-                    value=macd_value,
-                    signal=macd_signal,
-                    strength=abs(macd_value) / 2.0,
-                    confidence=0.75,
-                    description=f'MACD({timeframe}): {macd_value:.2f} - {macd_signal.lower()} momentum'
-                ))
-                
-                # Moving Average convergence
-                ma_signal = ['BUY', 'SELL', 'NEUTRAL'][(tf_hash >> 4) % 3]
-                ma_strength = (tf_hash % 100) / 100.0
-                
-                indicators.append(TechnicalIndicator(
-                    name='MA_Cross',
-                    timeframe=timeframe,
-                    value=ma_strength,
-                    signal=ma_signal,
-                    strength=ma_strength,
-                    confidence=0.7,
-                    description=f'MA Cross({timeframe}): {ma_signal.lower()} trend'
-                ))
-                
-                # Bollinger Bands
-                bb_position = (tf_hash % 100) / 100.0  # Position within bands
-                bb_signal = 'BUY' if bb_position < 0.2 else 'SELL' if bb_position > 0.8 else 'NEUTRAL'
-                
-                indicators.append(TechnicalIndicator(
-                    name='BB',
-                    timeframe=timeframe,
-                    value=bb_position,
-                    signal=bb_signal,
-                    strength=abs(bb_position - 0.5) * 2,
-                    confidence=0.65,
-                    description=f'Bollinger Bands({timeframe}): {bb_signal.lower()} position'
-                ))
+            # Price-volume relationship
+            price_changes = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
+            volume_changes = [(volumes[i] - volumes[i-1]) / volumes[i-1] for i in range(1, len(volumes))]
             
-            return indicators
+            # Simple correlation
+            correlation = self._calculate_correlation(price_changes, volume_changes)
             
-        except Exception as e:
-            logger.error(f"Error calculating technical indicators: {e}")
-            return []
-    
-    async def _identify_support_resistance(
-        self, 
-        token_address: str, 
-        context: Dict[str, Any]
-    ) -> List[SupportResistance]:
-        """Identify key support and resistance levels."""
-        try:
-            await asyncio.sleep(0.15)  # Simulate S/R level identification
-            
-            support_resistance = []
-            address_hash = hash(token_address)
-            current_price = 1.0 + (address_hash % 1000) / 100.0
-            
-            # Generate support levels
-            for i in range(3):  # 3 support levels
-                level_hash = hash(f"{token_address}_support_{i}")
-                distance_factor = 0.05 + (i * 0.05) + (level_hash % 50) / 1000.0  # 5-20% below
-                support_price = current_price * (1 - distance_factor)
-                
-                support_resistance.append(SupportResistance(
-                    level_type='SUPPORT',
-                    price=support_price,
-                    strength=0.6 + (level_hash % 40) / 100.0,  # 0.6-0.99 strength
-                    touches=2 + (level_hash % 5),  # 2-6 touches
-                    timeframe=['1h', '4h', '1d'][i],
-                    confidence=0.7 + (level_hash % 25) / 100.0
-                ))
-            
-            # Generate resistance levels
-            for i in range(3):  # 3 resistance levels
-                level_hash = hash(f"{token_address}_resistance_{i}")
-                distance_factor = 0.05 + (i * 0.05) + (level_hash % 50) / 1000.0  # 5-20% above
-                resistance_price = current_price * (1 + distance_factor)
-                
-                support_resistance.append(SupportResistance(
-                    level_type='RESISTANCE',
-                    price=resistance_price,
-                    strength=0.6 + (level_hash % 40) / 100.0,
-                    touches=2 + (level_hash % 5),
-                    timeframe=['1h', '4h', '1d'][i],
-                    confidence=0.7 + (level_hash % 25) / 100.0
-                ))
-            
-            return support_resistance
-            
-        except Exception as e:
-            logger.error(f"Error identifying support/resistance: {e}")
-            return []
-    
-    async def _analyze_volume_patterns(
-        self, 
-        token_address: str, 
-        context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Analyze volume patterns and trends."""
-        try:
-            await asyncio.sleep(0.12)  # Simulate volume analysis
-            
-            address_hash = hash(token_address)
-            
-            # Generate volume metrics
-            avg_volume_24h = 100000 + (address_hash % 500000)  # $100K-$600K daily
-            current_volume = avg_volume_24h * (0.5 + (address_hash % 200) / 100.0)  # 50%-250% of average
-            
-            volume_analysis = {
-                'current_volume_24h': current_volume,
-                'average_volume_24h': avg_volume_24h,
-                'volume_ratio': current_volume / avg_volume_24h,
-                'volume_trend': 'INCREASING' if current_volume > avg_volume_24h * 1.2 else 
-                               'DECREASING' if current_volume < avg_volume_24h * 0.8 else 'STABLE',
-                'volume_spike_detected': current_volume > avg_volume_24h * self.thresholds['volume_spike_threshold'],
-                'volume_profile': {
-                    'buy_volume_percentage': 45 + (address_hash % 20),  # 45-64% buy volume
-                    'sell_volume_percentage': 36 + (address_hash % 20),  # 36-55% sell volume
-                },
-                'volume_oscillator': -0.2 + (address_hash % 40) / 100.0,  # -0.2 to +0.2
-                'on_balance_volume_trend': ['BULLISH', 'BEARISH', 'NEUTRAL'][(address_hash >> 8) % 3],
-                'accumulation_distribution': 0.3 + (address_hash % 40) / 100.0  # 0.3-0.7
+            return {
+                'volume_trend': volume_trend,
+                'average_volume': avg_volume,
+                'current_volume_ratio': volumes[-1] / avg_volume,
+                'price_volume_correlation': correlation,
+                'volume_spike_detected': volumes[-1] > avg_volume * self.thresholds['volume_spike_threshold']
             }
             
-            # Volume-based signals
-            volume_signals = []
-            
-            if volume_analysis['volume_spike_detected']:
-                volume_signals.append('VOLUME_SPIKE')
-            
-            if volume_analysis['volume_ratio'] > 1.5:
-                volume_signals.append('HIGH_VOLUME')
-            elif volume_analysis['volume_ratio'] < 0.5:
-                volume_signals.append('LOW_VOLUME')
-            
-            if volume_analysis['volume_profile']['buy_volume_percentage'] > 60:
-                volume_signals.append('BUYING_PRESSURE')
-            elif volume_analysis['volume_profile']['sell_volume_percentage'] > 60:
-                volume_signals.append('SELLING_PRESSURE')
-            
-            volume_analysis['signals'] = volume_signals
-            
-            return volume_analysis
-            
         except Exception as e:
-            logger.error(f"Error analyzing volume patterns: {e}")
-            return {'error': str(e)}
+            logger.warning(f"Error analyzing volume patterns: {e}")
+            return {}
     
-    async def _detect_chart_patterns(
-        self, 
-        token_address: str, 
-        context: Dict[str, Any]
-    ) -> List[ChartPattern]:
-        """Detect chart patterns and formations."""
+    async def _calculate_volatility_metrics(self, price_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate volatility and risk metrics."""
+        prices = price_data['prices']
+        
+        if len(prices) < 10:
+            return {}
+        
         try:
-            await asyncio.sleep(0.18)  # Simulate pattern detection
+            closes = [float(p['close']) for p in prices[-30:]]
             
-            chart_patterns = []
-            address_hash = hash(token_address)
-            current_price = 1.0 + (address_hash % 1000) / 100.0
+            # Calculate returns
+            returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
             
-            # Common chart patterns
-            patterns = [
-                'Head_and_Shoulders', 'Double_Top', 'Double_Bottom', 
-                'Triangle_Ascending', 'Triangle_Descending', 'Flag_Bull', 
-                'Flag_Bear', 'Wedge_Rising', 'Wedge_Falling'
-            ]
+            # Volatility metrics
+            volatility = statistics.stdev(returns) if len(returns) > 1 else 0
+            mean_return = statistics.mean(returns) if returns else 0
             
-            # Generate 1-3 detected patterns
-            pattern_count = 1 + (address_hash % 3)
+            # Risk metrics
+            downside_returns = [r for r in returns if r < 0]
+            downside_volatility = statistics.stdev(downside_returns) if len(downside_returns) > 1 else 0
             
-            for i in range(pattern_count):
-                pattern_hash = hash(f"{token_address}_pattern_{i}")
-                pattern_name = patterns[pattern_hash % len(patterns)]
-                
-                # Determine pattern characteristics
-                is_bullish = pattern_name in ['Double_Bottom', 'Triangle_Ascending', 'Flag_Bull', 'Wedge_Falling']
-                is_bearish = pattern_name in ['Head_and_Shoulders', 'Double_Top', 'Flag_Bear', 'Wedge_Rising']
-                
-                signal = 'BULLISH' if is_bullish else 'BEARISH' if is_bearish else 'NEUTRAL'
-                confidence = 0.6 + (pattern_hash % 35) / 100.0  # 0.6-0.94 confidence
-                
-                # Calculate target and stop loss
-                if is_bullish:
-                    target_price = current_price * (1.1 + (pattern_hash % 30) / 100.0)  # 10-40% upside
-                    stop_loss = current_price * (0.95 - (pattern_hash % 10) / 100.0)   # 5-15% downside
-                elif is_bearish:
-                    target_price = current_price * (0.9 - (pattern_hash % 30) / 100.0)  # 10-40% downside
-                    stop_loss = current_price * (1.05 + (pattern_hash % 10) / 100.0)   # 5-15% upside
-                else:
-                    target_price = None
-                    stop_loss = None
-                
-                chart_patterns.append(ChartPattern(
-                    pattern_name=pattern_name,
-                    timeframe=self.timeframes[(pattern_hash >> 4) % len(self.timeframes)],
-                    confidence=confidence,
-                    signal=signal,
-                    target_price=target_price,
-                    stop_loss=stop_loss,
-                    completion_percentage=70 + (pattern_hash % 30)  # 70-99% complete
-                ))
+            # VaR approximation (95% confidence)
+            sorted_returns = sorted(returns)
+            var_95 = sorted_returns[int(len(sorted_returns) * 0.05)] if len(sorted_returns) > 20 else 0
             
-            return chart_patterns
-            
-        except Exception as e:
-            logger.error(f"Error detecting chart patterns: {e}")
-            return []
-    
-    async def _analyze_momentum_oscillators(
-        self, 
-        token_address: str, 
-        context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Analyze momentum oscillators and momentum indicators."""
-        try:
-            await asyncio.sleep(0.1)  # Simulate momentum analysis
-            
-            address_hash = hash(token_address)
-            
-            momentum_analysis = {
-                'stochastic': {
-                    'k_percent': 20 + (address_hash % 600) / 10.0,  # 20-80 range
-                    'd_percent': 25 + (address_hash % 500) / 10.0,  # 25-75 range
-                    'signal': 'OVERSOLD' if (address_hash % 100) < 20 else 
-                             'OVERBOUGHT' if (address_hash % 100) > 80 else 'NEUTRAL'
-                },
-                'williams_r': -80 + (address_hash % 600) / 10.0,  # -80 to -20
-                'cci': -100 + (address_hash % 2000) / 10.0,  # -100 to +100
-                'momentum_score': 0.3 + (address_hash % 400) / 1000.0,  # 0.3-0.7
-                'rate_of_change': -15 + (address_hash % 300) / 10.0,  # -15% to +15%
-                'momentum_divergence': (address_hash % 10) < 2,  # 20% chance of divergence
-                'momentum_trend': ['ACCELERATING', 'DECELERATING', 'STABLE'][(address_hash >> 6) % 3],
-                'bullish_momentum': (address_hash % 100) > 60,  # 40% chance of bullish momentum
-                'bearish_momentum': (address_hash % 100) < 20   # 20% chance of bearish momentum
+            return {
+                'volatility': volatility,
+                'annualized_volatility': volatility * math.sqrt(365 * 24),  # Hourly to annual
+                'mean_return': mean_return,
+                'downside_volatility': downside_volatility,
+                'value_at_risk_95': var_95,
+                'volatility_rating': 'HIGH' if volatility > self.thresholds['volatility_high_threshold'] else 
+                                   'MEDIUM' if volatility > 0.05 else 'LOW'
             }
             
-            return momentum_analysis
-            
         except Exception as e:
-            logger.error(f"Error analyzing momentum oscillators: {e}")
-            return {'error': str(e)}
+            logger.warning(f"Error calculating volatility metrics: {e}")
+            return {}
+    
+    def _aggregate_technical_signals(
+        self,
+        indicators: List[TechnicalIndicator],
+        support_resistance: Tuple[List[PriceLevel], List[PriceLevel]],
+        chart_patterns: List[ChartPattern],
+        trend_momentum: Dict[str, Any],
+        volume_analysis: Dict[str, Any],
+        volatility_metrics: Dict[str, Any]
+    ) -> TechnicalAnalysisResult:
+        """Aggregate all technical analysis components."""
+        
+        support_levels, resistance_levels = support_resistance
+        
+        # Calculate overall signal
+        buy_signals = len([i for i in indicators if i.signal == "BUY"])
+        sell_signals = len([i for i in indicators if i.signal == "SELL"])
+        total_signals = len(indicators)
+        
+        if total_signals == 0:
+            overall_signal = "NEUTRAL"
+            signal_strength = 0.0
+        else:
+            signal_ratio = (buy_signals - sell_signals) / total_signals
+            
+            if signal_ratio > 0.6:
+                overall_signal = "STRONG_BUY"
+            elif signal_ratio > 0.2:
+                overall_signal = "BUY"
+            elif signal_ratio < -0.6:
+                overall_signal = "STRONG_SELL"
+            elif signal_ratio < -0.2:
+                overall_signal = "SELL"
+            else:
+                overall_signal = "NEUTRAL"
+            
+            signal_strength = abs(signal_ratio)
+        
+        # Extract trend information
+        trend_direction = trend_momentum.get('trend_direction', 'SIDEWAYS')
+        trend_strength = trend_momentum.get('trend_strength', 0.0)
+        momentum_score = trend_momentum.get('momentum_score', 0.0)
+        
+        # Calculate volatility score
+        volatility_score = volatility_metrics.get('volatility', 0.0)
+        
+        # Calculate risk/reward ratio
+        if resistance_levels and support_levels:
+            nearest_resistance = min(resistance_levels, key=lambda x: abs(x.price - indicators[0].value) if indicators else 0)
+            nearest_support = min(support_levels, key=lambda x: abs(x.price - indicators[0].value) if indicators else 0)
+            current_price = indicators[0].value if indicators else 1.0
+            
+            potential_reward = abs(nearest_resistance.price - current_price) / current_price
+            potential_risk = abs(current_price - nearest_support.price) / current_price
+            
+            risk_reward_ratio = potential_reward / potential_risk if potential_risk > 0 else 0
+        else:
+            risk_reward_ratio = 1.0
+        
+        # Calculate confidence level
+        indicator_confidence = sum(i.confidence for i in indicators) / len(indicators) if indicators else 0.5
+        pattern_confidence = sum(p.confidence for p in chart_patterns) / len(chart_patterns) if chart_patterns else 0.5
+        data_quality_factor = 0.8 if len(indicators) >= 3 else 0.5
+        
+        confidence_level = (indicator_confidence * 0.6 + pattern_confidence * 0.3 + data_quality_factor * 0.1)
+        
+        return TechnicalAnalysisResult(
+            overall_signal=overall_signal,
+            signal_strength=signal_strength,
+            trend_direction=trend_direction,
+            trend_strength=trend_strength,
+            volatility_score=volatility_score,
+            momentum_score=momentum_score,
+            support_levels=support_levels,
+            resistance_levels=resistance_levels,
+            chart_patterns=chart_patterns,
+            risk_reward_ratio=risk_reward_ratio,
+            confidence_level=confidence_level
+        )
+    
+    def _calculate_technical_risk_score(
+        self,
+        technical_analysis: TechnicalAnalysisResult,
+        volatility_metrics: Dict[str, Any]
+    ) -> float:
+        """Calculate overall technical risk score."""
+        risk_factors = []
+        
+        # Signal risk
+        if technical_analysis.overall_signal in ["STRONG_SELL", "SELL"]:
+            risk_factors.append(0.7)
+        elif technical_analysis.overall_signal == "NEUTRAL":
+            risk_factors.append(0.4)
+        else:
+            risk_factors.append(0.2)
+        
+        # Trend risk
+        if technical_analysis.trend_direction == "DOWNTREND":
+            risk_factors.append(0.6)
+        elif technical_analysis.trend_direction == "SIDEWAYS":
+            risk_factors.append(0.4)
+        else:
+            risk_factors.append(0.2)
+        
+        # Volatility risk
+        volatility_rating = volatility_metrics.get('volatility_rating', 'MEDIUM')
+        if volatility_rating == "HIGH":
+            risk_factors.append(0.8)
+        elif volatility_rating == "MEDIUM":
+            risk_factors.append(0.4)
+        else:
+            risk_factors.append(0.2)
+        
+        # Risk/reward ratio
+        if technical_analysis.risk_reward_ratio < 1.0:
+            risk_factors.append(0.6)
+        elif technical_analysis.risk_reward_ratio < 2.0:
+            risk_factors.append(0.3)
+        else:
+            risk_factors.append(0.1)
+        
+        return sum(risk_factors) / len(risk_factors)
     
     def _generate_technical_signals(
         self,
-        price_action: Dict[str, Any],
-        technical_indicators: List[TechnicalIndicator],
-        support_resistance: List[SupportResistance],
-        volume_analysis: Dict[str, Any],
-        chart_patterns: List[ChartPattern],
-        momentum_analysis: Dict[str, Any]
+        indicators: List[TechnicalIndicator],
+        technical_analysis: TechnicalAnalysisResult
     ) -> List[TechnicalSignal]:
-        """Generate comprehensive technical signals from all analyses."""
+        """Generate technical signals for Smart Lane pipeline."""
         signals = []
         
-        # Generate signals for each timeframe
         for timeframe in self.timeframes:
-            # Collect indicators for this timeframe
-            tf_indicators = [ind for ind in technical_indicators if ind.timeframe == timeframe]
+            timeframe_indicators = [i for i in indicators if i.timeframe == timeframe]
             
-            # Calculate aggregated signal strength
-            buy_signals = sum(1 for ind in tf_indicators if ind.signal == 'BUY')
-            sell_signals = sum(1 for ind in tf_indicators if ind.signal == 'SELL')
-            total_signals = len(tf_indicators)
-            
-            if total_signals == 0:
-                continue
-            
-            # Determine overall signal
-            if buy_signals > sell_signals and buy_signals >= total_signals * 0.6:
-                signal = 'BUY'
-                strength = buy_signals / total_signals
-            elif sell_signals > buy_signals and sell_signals >= total_signals * 0.6:
-                signal = 'SELL'
-                strength = sell_signals / total_signals
-            else:
-                signal = 'NEUTRAL'
-                strength = 0.5
-            
-            # Aggregate indicator values for this timeframe
-            indicators_dict = {}
-            for ind in tf_indicators:
-                indicators_dict[ind.name] = ind.value
-            
-            # Find relevant support/resistance levels
-            sr_levels = [sr for sr in support_resistance if sr.timeframe == timeframe]
-            price_targets = {}
-            
-            if sr_levels:
-                supports = [sr.price for sr in sr_levels if sr.level_type == 'SUPPORT']
-                resistances = [sr.price for sr in sr_levels if sr.level_type == 'RESISTANCE']
+            if timeframe_indicators:
+                # Aggregate signals for this timeframe
+                buy_count = len([i for i in timeframe_indicators if i.signal == "BUY"])
+                sell_count = len([i for i in timeframe_indicators if i.signal == "SELL"])
+                total_count = len(timeframe_indicators)
                 
-                if supports:
-                    price_targets['support'] = min(supports)
-                if resistances:
-                    price_targets['resistance'] = max(resistances)
-            
-            # Calculate confidence based on signal convergence
-            signal_convergence = max(buy_signals, sell_signals) / total_signals
-            confidence = signal_convergence * 0.8 + 0.2  # 0.2-1.0 range
-            
-            signals.append(TechnicalSignal(
-                timeframe=timeframe,
-                signal=signal,
-                strength=strength,
-                indicators=indicators_dict,
-                price_targets=price_targets,
-                confidence=confidence
-            ))
+                if total_count > 0:
+                    signal_ratio = (buy_count - sell_count) / total_count
+                    
+                    if signal_ratio > 0.3:
+                        signal = "BUY"
+                    elif signal_ratio < -0.3:
+                        signal = "SELL"
+                    else:
+                        signal = "NEUTRAL"
+                    
+                    strength = abs(signal_ratio)
+                    confidence = sum(i.confidence for i in timeframe_indicators) / total_count
+                    
+                    # Create price targets from support/resistance
+                    price_targets = {}
+                    if technical_analysis.resistance_levels:
+                        price_targets['resistance'] = technical_analysis.resistance_levels[0].price
+                    if technical_analysis.support_levels:
+                        price_targets['support'] = technical_analysis.support_levels[0].price
+                    
+                    # Extract indicator values
+                    indicator_values = {i.name: i.value for i in timeframe_indicators}
+                    
+                    signals.append(TechnicalSignal(
+                        timeframe=timeframe,
+                        signal=signal,
+                        strength=strength,
+                        indicators=indicator_values,
+                        price_targets=price_targets,
+                        confidence=confidence
+                    ))
         
         return signals
     
-    def _calculate_technical_risk(
+    def _generate_technical_warnings(
         self,
-        technical_signals: List[TechnicalSignal],
-        price_action: Dict[str, Any],
-        volume_analysis: Dict[str, Any]
-    ) -> Tuple[float, float]:
-        """Calculate technical risk score (inverted - good technicals = low risk)."""
-        if not technical_signals:
-            return 0.6, 0.3  # Moderate risk, low confidence for no signals
+        technical_analysis: TechnicalAnalysisResult,
+        volatility_metrics: Dict[str, Any]
+    ) -> List[str]:
+        """Generate warnings based on technical analysis."""
+        warnings = []
         
-        risk_factors = []
+        if technical_analysis.overall_signal in ["STRONG_SELL", "SELL"]:
+            warnings.append("Technical indicators show strong bearish signals")
         
-        # Signal consistency risk (conflicting signals = higher risk)
-        buy_signals = sum(1 for sig in technical_signals if sig.signal == 'BUY')
-        sell_signals = sum(1 for sig in technical_signals if sig.signal == 'SELL')
-        neutral_signals = len(technical_signals) - buy_signals - sell_signals
+        if volatility_metrics.get('volatility_rating') == "HIGH":
+            warnings.append("High volatility detected - increased trading risk")
         
-        # Higher risk when signals conflict across timeframes
-        signal_conflict = min(buy_signals, sell_signals) / len(technical_signals)
-        consistency_risk = signal_conflict * 0.8  # 0-0.8 risk from conflicts
-        risk_factors.append(('signal_consistency', consistency_risk, 0.3))
+        if technical_analysis.confidence_level < 0.5:
+            warnings.append("Low confidence in technical analysis due to limited data")
         
-        # Trend strength risk (weak trends = higher risk)
-        trend_strength = price_action.get('trend_strength', 0.5)
-        trend_risk = 1.0 - trend_strength  # Invert: weak trend = high risk
-        risk_factors.append(('trend_strength', trend_risk, 0.25))
+        if technical_analysis.risk_reward_ratio < 1.0:
+            warnings.append("Poor risk/reward ratio - limited upside potential")
         
-        # Volatility risk
-        volatility = price_action.get('volatility_24h', 0.05)
-        volatility_risk = min(1.0, volatility * 10)  # Normalize to 0-1
-        risk_factors.append(('volatility', volatility_risk, 0.2))
+        if not technical_analysis.support_levels:
+            warnings.append("No clear support levels identified")
         
-        # Volume risk (abnormal volume = higher risk)
-        volume_ratio = volume_analysis.get('volume_ratio', 1.0)
-        volume_risk = abs(volume_ratio - 1.0)  # Deviation from normal
-        volume_risk = min(1.0, volume_risk)
-        risk_factors.append(('volume', volume_risk, 0.15))
+        return warnings
+    
+    # Technical calculation helper methods
+    def _calculate_rsi(self, prices: List[float], period: int = 14) -> float:
+        """Calculate Relative Strength Index."""
+        if len(prices) < period + 1:
+            return 50.0
         
-        # Momentum risk
-        momentum_score = price_action.get('momentum_score', 0.5)
-        momentum_risk = 1.0 - momentum_score  # Invert: weak momentum = high risk
-        risk_factors.append(('momentum', momentum_risk, 0.1))
+        gains = []
+        losses = []
         
-        # Calculate weighted risk
-        total_risk = 0.0
-        total_weight = 0.0
+        for i in range(1, len(prices)):
+            change = prices[i] - prices[i-1]
+            if change > 0:
+                gains.append(change)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(change))
         
-        for factor_name, risk, weight in risk_factors:
-            total_risk += risk * weight
-            total_weight += weight
+        if len(gains) < period:
+            return 50.0
         
-        overall_risk = total_risk / total_weight if total_weight > 0 else 0.5
+        avg_gain = sum(gains[-period:]) / period
+        avg_loss = sum(losses[-period:]) / period
         
-        # Confidence based on signal quality and data completeness
-        avg_confidence = sum(sig.confidence for sig in technical_signals) / len(technical_signals)
-        data_completeness = 1.0 if price_action and volume_analysis else 0.5
+        if avg_loss == 0:
+            return 100.0
         
-        overall_confidence = (avg_confidence + data_completeness) / 2
-        overall_confidence = max(0.3, min(0.95, overall_confidence))
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
+    
+    def _calculate_macd(self, prices: List[float]) -> Tuple[float, float]:
+        """Calculate MACD and signal line."""
+        if len(prices) < 26:
+            return 0.0, 0.0
+        
+        # Calculate EMAs
+        ema_12 = self._calculate_ema(prices, 12)
+        ema_26 = self._calculate_ema(prices, 26)
+        
+        macd_line = ema_12 - ema_26
+        
+        # Signal line is 9-period EMA of MACD line
+        # Simplified calculation for this example
+        signal_line = macd_line * 0.9  # Approximation
+        
+        return macd_line, signal_line
+    
+    def _calculate_ema(self, prices: List[float], period: int) -> float:
+        """Calculate Exponential Moving Average."""
+        if len(prices) < period:
+            return sum(prices) / len(prices)
+        
+        multiplier = 2 / (period + 1)
+        ema = sum(prices[:period]) / period
+        
+        for price in prices[period:]:
+            ema = (price * multiplier) + (ema * (1 - multiplier))
+        
+        return ema
+    
+    def _calculate_bollinger_bands(self, prices: List[float], period: int = 20) -> Tuple[float, float, float]:
+        """Calculate Bollinger Bands."""
+        if len(prices) < period:
+            avg = sum(prices) / len(prices)
+            return avg, avg * 1.02, avg * 0.98
+        
+        recent_prices = prices[-period:]
+        middle = sum(recent_prices) / period
+        
+        variance = sum((p - middle) ** 2 for p in recent_prices) / period
+        std_dev = math.sqrt(variance)
+        
+        upper = middle + (2 * std_dev)
+        lower = middle - (2 * std_dev)
+        
+        return middle, upper, lower
+    
+    def _find_local_peaks(self, data: List[float], window: int = 3) -> List[float]:
+        """Find local peaks in price data."""
+        peaks = []
+        
+        for i in range(window, len(data) - window):
+            is_peak = True
+            for j in range(i - window, i + window + 1):
+                if j != i and data[j] >= data[i]:
+                    is_peak = False
+                    break
+            
+            if is_peak:
+                peaks.append(data[i])
+        
+        return peaks
+    
+    def _find_local_valleys(self, data: List[float], window: int = 3) -> List[float]:
+        """Find local valleys in price data."""
+        valleys = []
+        
+        for i in range(window, len(data) - window):
+            is_valley = True
+            for j in range(i - window, i + window + 1):
+                if j != i and data[j] <= data[i]:
+                    is_valley = False
+                    break
+            
+            if is_valley:
+                valleys.append(data[i])
+        
+        return valleys
+    
+    def _calculate_trend_strength(self, prices: List[float]) -> float:
+        """Calculate trend strength using linear regression."""
+        if len(prices) < 2:
+            return 0.0
+        
+        n = len(prices)
+        x = list(range(n))
+        
+        # Linear regression calculation
+        sum_x = sum(x)
+        sum_y = sum(prices)
+        sum_xy = sum(x[i] * prices[i] for i in range(n))
+        sum_x2 = sum(xi ** 2 for xi in x)
+        
+        slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x ** 2)
+        
+        # Normalize slope relative to price
+        avg_price = sum_y / n
+        trend_strength = slope / avg_price if avg_price > 0 else 0
+        
+        return max(-1.0, min(1.0, trend_strength))
+    
+    def _calculate_correlation(self, x: List[float], y: List[float]) -> float:
+        """Calculate correlation between two data series."""
+        if len(x) != len(y) or len(x) < 2:
+            return 0.0
+        
+        n = len(x)
+        sum_x = sum(x)
+        sum_y = sum(y)
+        sum_xy = sum(x[i] * y[i] for i in range(n))
+        sum_x2 = sum(xi ** 2 for xi in x)
+        sum_y2 = sum(yi ** 2 for yi in y)
+        
+        numerator = n * sum_xy - sum_x * sum_y
+        denominator = math.sqrt((n * sum_x2 - sum_x ** 2) * (n * sum_y2 - sum_y ** 2))
+        
+        return numerator / denominator if denominator != 0 else 0.0
+    
+    def _validate_inputs(self, token_address: str, context: Dict[str, Any]) -> bool:
+        """Validate inputs for technical analysis."""
+        if not token_address or len(token_address) != 42:
+            return False
+        
+        return True
+    
+    def _create_error_risk_score(self, error_message: str) -> RiskScore:
+        """Create error risk score for failed analysis."""
+        return RiskScore(
+            category=self.get_category(),
+            score=0.5,  # Neutral risk when analysis fails
+            confidence=0.1,
+            details={'error': error_message, 'analysis_failed': True},
+            analysis_time_ms=0.0,
+            warnings=[error_message],
+            data_quality="POOR"
+        )
+    
+    def _create_timeout_risk_score(self) -> RiskScore:
+        """Create risk score for timeout scenarios."""
+        return RiskScore(
+            category=self.get_category(),
+            score=0.5,  # Neutral risk on timeout
+            confidence=0.1,
+            details={'timeout': True, 'analysis_incomplete': True},
+            analysis_time_ms=15000.0,
+            warnings=["Technical analysis timed out - results may be incomplete"],
+            data_quality="POOR"
+        )
+    
+    def _get_cached_analysis(self, token_address: str) -> Optional[TechnicalAnalysisResult]:
+        """Get cached technical analysis if available and fresh."""
+        if token_address in self.analysis_cache:
+            result, timestamp = self.analysis_cache[token_address]
+            age = datetime.now(timezone.utc) - timestamp
+            
+            if age.total_seconds() < (self.cache_ttl_minutes * 60):
+                return result
+            else:
+                del self.analysis_cache[token_address]
+        
+        return None
+    
+    def _cache_analysis_result(self, token_address: str, result: TechnicalAnalysisResult) -> None:
+        """Cache technical analysis result."""
+        self.analysis_cache[token_address] = (result, datetime.now(timezone.utc))
+        
+        # Clean up old cache entries
+        if len(self.analysis_cache) > 20:
+            sorted_entries = sorted(
+                self.analysis_cache.items(),
+                key=lambda x: x[1][1]
+            )
+            for token, _ in sorted_entries[:5]:
+                del self.analysis_cache[token]
+    
+    def _create_risk_score_from_cache(self, cached_result: TechnicalAnalysisResult) -> RiskScore:
+        """Create risk score from cached technical analysis."""
+        risk_score = self._calculate_technical_risk_score(cached_result, {})
+        
+        return RiskScore(
+            category=self.get_category(),
+            score=risk_score,
+            confidence=cached_result.confidence_level,
+            details={'technical_analysis': cached_result.__dict__, 'from_cache': True},
+            analysis_time_ms=2.0,  # Fast cache retrieval
+            warnings=[],
+            data_quality="GOOD",
+            last_updated=datetime.now(timezone.utc).isoformat()
+        )
+    
+    def _assess_price_data_quality(self, price_data: Dict[str, Any]) -> str:
+        """Assess the quality of price data used for analysis."""
+        prices = price_data.get('prices', [])
+        
+        if len(prices) < 24:
+            return "POOR"
+        elif len(prices) < 48:
+            return "FAIR"
+        elif len(prices) < 168:  # 1 week
+            return "GOOD"
+        else:
+            return "EXCELLENT"
+
+
+# Export the analyzer class
+__all__ = [
+    'TechnicalAnalyzer', 
+    'TechnicalIndicator', 
+    'PriceLevel', 
+    'ChartPattern', 
+    'TechnicalAnalysisResult'
+]
