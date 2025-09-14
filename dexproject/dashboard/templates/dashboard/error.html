@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+
+{% block title %}Error - DEX Trading Bot{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card card-glass">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-exclamation-triangle text-warning display-1 mb-4"></i>
+                    <h2 class="text-danger mb-3">Oops! Something went wrong</h2>
+                    
+                    {% if error %}
+                        <div class="alert alert-danger">
+                            <h5 class="alert-heading">Error Details:</h5>
+                            <p class="mb-0">{{ error }}</p>
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-4">
+                            We're sorry, but something unexpected happened while loading the dashboard.
+                        </p>
+                    {% endif %}
+                    
+                    <div class="d-flex justify-content-center gap-3">
+                        <a href="{% url 'dashboard:home' %}" class="btn btn-primary">
+                            <i class="bi bi-arrow-clockwise me-2"></i>Try Again
+                        </a>
+                        <a href="/admin/" class="btn btn-outline-light">
+                            <i class="bi bi-gear me-2"></i>Admin Panel
+                        </a>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="text-start">
+                        <h6 class="text-muted mb-3">Debug Information:</h6>
+                        <ul class="text-muted small">
+                            <li>Time: {{ "now"|date:"F j, Y g:i A" }}</li>
+                            <li>Project: DEX Trading Bot Phase 2</li>
+                            <li>Status: Development Mode</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,550 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ page_title }} - DEX Trading Bot{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="h3 mb-1">Welcome back, {{ user_profile.display_name }}</h1>
+                <p class="text-muted mb-0">
+                    <i class="bi bi-clock me-1"></i>
+                    {{ "now"|date:"F j, Y • g:i A" }}
+                </p>
+            </div>
+            <div>
+                <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-light me-2">
+                    <i class="bi bi-toggle-on me-1"></i>Switch Mode
+                </a>
+                {% if not active_sessions %}
+                <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#startSessionModal">
+                    <i class="bi bi-play-fill me-1"></i>Start Trading
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mode Selection Cards -->
+<div class="row mb-4">
+    <div class="col-lg-6 mb-4">
+        <div class="card card-glass metric-card h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="me-3">
+                        <i class="bi bi-lightning-charge-fill fast-lane-accent display-6"></i>
+                    </div>
+                    <div>
+                        <h5 class="card-title mb-1 fast-lane-accent">Fast Lane</h5>
+                        <p class="text-muted mb-0">Speed-optimized execution</p>
+                    </div>
+                </div>
+                
+                <div class="row text-center">
+                    <div class="col-4">
+                        <div class="h4 mb-1 fast-lane-accent" id="execution-time-metric">
+                            {% if performance_metrics.execution_time_ms %}
+                                {{ performance_metrics.execution_time_ms }}ms
+                            {% else %}
+                                --ms
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Execution</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h4 mb-1 text-success" id="success-rate-metric">
+                            {% if performance_metrics.success_rate %}
+                                {{ performance_metrics.success_rate }}%
+                            {% else %}
+                                --%
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Success</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h4 mb-1 text-info">
+                            {% if performance_metrics.fast_lane_trades_today %}
+                                {{ performance_metrics.fast_lane_trades_today }}
+                            {% else %}
+                                --
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Today</small>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <a href="{% url 'dashboard:configuration' mode='fast_lane' %}" class="btn btn-fast-lane btn-sm me-2">
+                        <i class="bi bi-gear me-1"></i>Configure
+                    </a>
+                    <button class="btn btn-outline-light btn-sm" onclick="toggleFastLane()">
+                        <i class="bi bi-play me-1"></i>Activate
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-6 mb-4">
+        <div class="card card-glass metric-card h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="me-3">
+                        <i class="bi bi-cpu-fill smart-lane-accent display-6"></i>
+                    </div>
+                    <div>
+                        <h5 class="card-title mb-1 smart-lane-accent">Smart Lane</h5>
+                        <p class="text-muted mb-0">Intelligence-optimized analysis</p>
+                    </div>
+                </div>
+                
+                <div class="row text-center">
+                    <div class="col-4">
+                        <div class="h4 mb-1 smart-lane-accent">2.5s</div>
+                        <small class="text-muted">Analysis</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h4 mb-1 text-success">96.2%</div>
+                        <small class="text-muted">Success</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h4 mb-1 text-info">
+                            {% if performance_metrics.smart_lane_trades_today %}
+                                {{ performance_metrics.smart_lane_trades_today }}
+                            {% else %}
+                                --
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Today</small>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <a href="{% url 'dashboard:configuration' mode='smart_lane' %}" class="btn btn-smart-lane btn-sm me-2">
+                        <i class="bi bi-gear me-1"></i>Configure
+                    </a>
+                    <button class="btn btn-outline-light btn-sm" onclick="toggleSmartLane()">
+                        <i class="bi bi-play me-1"></i>Activate
+                    </button>
+                </div>
+                
+                <div class="mt-2">
+                    <small class="text-warning">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Phase 5 - Coming Soon
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Real-time Metrics Row -->
+<div class="row mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card card-glass metric-card">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <i class="bi bi-speedometer2 text-primary display-6"></i>
+                    </div>
+                    <div>
+                        <div class="h4 mb-1" id="trades-per-minute-metric">
+                            {% if performance_metrics.trades_per_minute %}
+                                {{ performance_metrics.trades_per_minute }}/min
+                            {% else %}
+                                --/min
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Trade Rate</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card card-glass metric-card">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <i class="bi bi-shield-check text-success display-6"></i>
+                    </div>
+                    <div>
+                        <div class="h4 mb-1" id="risk-cache-hits-metric">
+                            {% if performance_metrics.risk_cache_hits %}
+                                {{ performance_metrics.risk_cache_hits }}%
+                            {% else %}
+                                --%
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Risk Cache</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card card-glass metric-card">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <i class="bi bi-wifi text-info display-6"></i>
+                    </div>
+                    <div>
+                        <div class="h4 mb-1">
+                            {% if performance_metrics.mempool_latency_ms %}
+                                {{ performance_metrics.mempool_latency_ms }}ms
+                            {% else %}
+                                --ms
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Mempool</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card card-glass metric-card">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <i class="bi bi-graph-up text-warning display-6"></i>
+                    </div>
+                    <div>
+                        <div class="h4 mb-1">
+                            {% if performance_metrics.gas_optimization_ms %}
+                                {{ performance_metrics.gas_optimization_ms }}ms
+                            {% else %}
+                                --ms
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">Gas Opt</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- System Status and Trading Sessions -->
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card card-glass">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-activity me-2"></i>System Status
+                </h6>
+                <span class="badge bg-success">
+                    {% if engine_status.is_mock %}DEMO{% else %}LIVE{% endif %}
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-12 mb-3">
+                        <div class="d-flex align-items-center">
+                            <span class="status-indicator {% if engine_status.status == 'OPERATIONAL' %}status-operational{% else %}status-degraded{% endif %}"></span>
+                            <strong>{{ engine_status.status|default:"UNKNOWN" }}</strong>
+                            <span class="ms-auto text-muted small">
+                                {% if engine_status.is_cached %}
+                                    <i class="bi bi-archive me-1"></i>Cached
+                                {% elif engine_status.is_mock %}
+                                    <i class="bi bi-cpu me-1"></i>Mock
+                                {% else %}
+                                    <i class="bi bi-broadcast-pin me-1"></i>Live
+                                {% endif %}
+                            </span>
+                        </div>
+                        <small class="text-muted ms-4">{{ engine_status.message|default:"Status message unavailable" }}</small>
+                    </div>
+                </div>
+                
+                <hr class="my-3">
+                
+                <div class="row small">
+                    <div class="col-6">
+                        <div class="mb-2">
+                            <i class="bi bi-lightning me-1"></i>Fast Lane: 
+                            <span class="{% if engine_status.fast_lane_active %}text-success{% else %}text-muted{% endif %}">
+                                {% if engine_status.fast_lane_active %}Active{% else %}Inactive{% endif %}
+                            </span>
+                        </div>
+                        <div class="mb-2">
+                            <i class="bi bi-cpu me-1"></i>Smart Lane: 
+                            <span class="{% if engine_status.smart_lane_active %}text-success{% else %}text-muted{% endif %}">
+                                {% if engine_status.smart_lane_active %}Active{% else %}Inactive{% endif %}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="mb-2">
+                            <i class="bi bi-wifi me-1"></i>Mempool: 
+                            <span class="{% if engine_status.mempool_connected %}text-success{% else %}text-danger{% endif %}">
+                                {% if engine_status.mempool_connected %}Connected{% else %}Disconnected{% endif %}
+                            </span>
+                        </div>
+                        <div class="mb-2">
+                            <i class="bi bi-shield-check me-1"></i>Risk Cache: 
+                            <span class="{% if engine_status.risk_cache_status == 'HEALTHY' %}text-success{% else %}text-warning{% endif %}">
+                                {{ engine_status.risk_cache_status|default:"Unknown" }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-6 mb-4">
+        <div class="card card-glass">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-play-circle me-2"></i>Trading Sessions
+                </h6>
+                {% if not active_sessions %}
+                <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#startSessionModal">
+                    <i class="bi bi-plus me-1"></i>Start Session
+                </button>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if active_sessions %}
+                    {% for session in active_sessions %}
+                    <div class="d-flex align-items-center mb-3 p-2 rounded" style="background: rgba(255,255,255,0.05);">
+                        <div class="me-3">
+                            {% if session.status == 'RUNNING' %}
+                                <i class="bi bi-play-fill text-success"></i>
+                            {% elif session.status == 'PAUSED' %}
+                                <i class="bi bi-pause-fill text-warning"></i>
+                            {% else %}
+                                <i class="bi bi-stop-fill text-danger"></i>
+                            {% endif %}
+                        </div>
+                        <div class="flex-grow-1">
+                            <div class="fw-bold">{{ session.name }}</div>
+                            <small class="text-muted">
+                                {{ session.trading_mode|title }} • 
+                                Started {{ session.started_at|timesince }} ago
+                            </small>
+                        </div>
+                        <div class="text-end me-3">
+                            <div class="fw-bold {% if session.total_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                ${{ session.total_pnl_usd|floatformat:2 }}
+                            </div>
+                            <small class="text-muted">{{ session.trades_executed }} trades</small>
+                        </div>
+                        <div>
+                            {% if session.status == 'RUNNING' %}
+                            <a href="{% url 'dashboard:stop_session' session.session_id %}" class="btn btn-outline-danger btn-sm">
+                                <i class="bi bi-stop"></i>
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-play-circle display-4 text-muted"></i>
+                        <div class="mt-2">
+                            <p class="text-muted mb-3">No active trading sessions</p>
+                            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#startSessionModal">
+                                <i class="bi bi-play-fill me-1"></i>Start Your First Session
+                            </button>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Performance Chart -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card card-glass">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-graph-up me-2"></i>Execution Performance (Real-time)
+                </h6>
+            </div>
+            <div class="card-body">
+                <canvas id="performanceChart" width="400" height="100"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Start Session Modal -->
+<div class="modal fade" id="startSessionModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-play-fill me-2"></i>Start Trading Session
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'dashboard:start_session' %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="config_id" class="form-label">Select Configuration</label>
+                        <select class="form-select" name="config_id" id="config_id" required>
+                            <option value="">Choose a configuration...</option>
+                            {% for config in bot_configs %}
+                            <option value="{{ config.id }}">
+                                {{ config.name }} ({{ config.trading_mode|title }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">
+                            Select which bot configuration to use for this trading session.
+                        </div>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Demo Mode:</strong> This session will use mock data and won't execute real trades.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-play-fill me-1"></i>Start Session
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Real-time performance chart
+let performanceChart;
+let performanceData = {
+    labels: [],
+    datasets: [{
+        label: 'Fast Lane (ms)',
+        data: [],
+        borderColor: '#00d4aa',
+        backgroundColor: 'rgba(0, 212, 170, 0.1)',
+        tension: 0.4,
+        fill: true
+    }, {
+        label: 'Smart Lane (ms)',
+        data: [],
+        borderColor: '#0066cc',
+        backgroundColor: 'rgba(0, 102, 204, 0.1)',
+        tension: 0.4,
+        fill: true
+    }]
+};
+
+function initPerformanceChart() {
+    const ctx = document.getElementById('performanceChart');
+    if (!ctx) return;
+    
+    performanceChart = new Chart(ctx, {
+        type: 'line',
+        data: performanceData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Execution Time (ms)'
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: '#adb5bd'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: '#adb5bd'
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: {
+                        color: '#adb5bd'
+                    }
+                }
+            },
+            elements: {
+                point: {
+                    radius: 3,
+                    hoverRadius: 6
+                }
+            }
+        }
+    });
+}
+
+// Update chart with new data
+function updatePerformanceChart(metrics) {
+    if (!performanceChart || !metrics) return;
+    
+    const now = new Date().toLocaleTimeString();
+    
+    // Add new data point
+    performanceData.labels.push(now);
+    performanceData.datasets[0].data.push(metrics.execution_time_ms || 0);
+    performanceData.datasets[1].data.push(2500); // Mock Smart Lane data
+    
+    // Keep only last 20 data points
+    if (performanceData.labels.length > 20) {
+        performanceData.labels.shift();
+        performanceData.datasets[0].data.shift();
+        performanceData.datasets[1].data.shift();
+    }
+    
+    performanceChart.update('none'); // No animation for real-time updates
+}
+
+// Override SSE message handler to update chart
+if (window.ssebridge) {
+    const originalHandleMessage = window.ssebridge.handleMessage;
+    window.ssebridge.handleMessage = function(data) {
+        originalHandleMessage.call(this, data);
+        
+        if (data.type === 'metrics_update' && data.metrics) {
+            updatePerformanceChart(data.metrics);
+        }
+    };
+}
+
+// Initialize chart when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    initPerformanceChart();
+});
+
+// Resize chart on window resize
+window.addEventListener('resize', function() {
+    if (performanceChart) {
+        performanceChart.resize();
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}DEX Trading Bot{% endblock %}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.6"></script>
+    
+    <!-- Chart.js for metrics visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Custom CSS -->
+    <style>
+        :root {
+            --fast-lane-color: #00d4aa;
+            --smart-lane-color: #0066cc;
+            --success-color: #198754;
+            --warning-color: #fd7e14;
+            --danger-color: #dc3545;
+        }
+        
+        .fast-lane-accent {
+            color: var(--fast-lane-color) !important;
+        }
+        
+        .smart-lane-accent {
+            color: var(--smart-lane-color) !important;
+        }
+        
+        .btn-fast-lane {
+            background: linear-gradient(135deg, var(--fast-lane-color), #00b894);
+            border: none;
+            color: white;
+        }
+        
+        .btn-fast-lane:hover {
+            background: linear-gradient(135deg, #00b894, var(--fast-lane-color));
+            color: white;
+        }
+        
+        .btn-smart-lane {
+            background: linear-gradient(135deg, var(--smart-lane-color), #0056b3);
+            border: none;
+            color: white;
+        }
+        
+        .btn-smart-lane:hover {
+            background: linear-gradient(135deg, #0056b3, var(--smart-lane-color));
+            color: white;
+        }
+        
+        .metric-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        
+        .status-operational {
+            background-color: var(--success-color);
+            box-shadow: 0 0 8px rgba(25, 135, 84, 0.5);
+        }
+        
+        .status-degraded {
+            background-color: var(--warning-color);
+            box-shadow: 0 0 8px rgba(253, 126, 20, 0.5);
+        }
+        
+        .status-error {
+            background-color: var(--danger-color);
+            box-shadow: 0 0 8px rgba(220, 53, 69, 0.5);
+        }
+        
+        .real-time-indicator {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .navbar-brand {
+            font-weight: 600;
+            font-size: 1.5rem;
+        }
+        
+        .sidebar {
+            min-height: calc(100vh - 56px);
+            background: linear-gradient(180deg, #1a1a1a 0%, #0d1117 100%);
+        }
+        
+        .main-content {
+            min-height: calc(100vh - 56px);
+            background: #0d1117;
+        }
+        
+        .card-glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    </style>
+    
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-dark">
+    
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{% url 'dashboard:home' %}">
+                <i class="bi bi-lightning-charge-fill fast-lane-accent me-2"></i>
+                DEX Trading Bot
+            </a>
+            
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'dashboard:home' %}">
+                            <i class="bi bi-house-door me-1"></i>Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'dashboard:mode_selection' %}">
+                            <i class="bi bi-toggle-on me-1"></i>Mode Selection
+                        </a>
+                    </li>
+                </ul>
+                
+                <!-- Real-time status indicator -->
+                <div class="navbar-text me-3">
+                    <span class="status-indicator status-operational real-time-indicator" id="connection-status"></span>
+                    <span id="connection-text">Connected</span>
+                </div>
+                
+                <!-- User menu -->
+                <div class="dropdown">
+                    <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                        <i class="bi bi-person-circle me-1"></i>
+                        {% if user.is_authenticated %}{{ user.username }}{% else %}Demo User{% endif %}
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item" href="#"><i class="bi bi-gear me-1"></i>Settings</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="/admin/"><i class="bi bi-shield-check me-1"></i>Admin</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main content area -->
+    <div class="container-fluid px-0">
+        <div class="row g-0">
+            
+            <!-- Sidebar (optional for future expansion) -->
+            <div class="col-md-2 sidebar d-none d-md-block">
+                <div class="p-3">
+                    <h6 class="text-muted mb-3">QUICK ACTIONS</h6>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-fast-lane btn-sm" onclick="toggleFastLane()">
+                            <i class="bi bi-lightning-charge me-1"></i>Fast Lane
+                        </button>
+                        <button class="btn btn-smart-lane btn-sm" onclick="toggleSmartLane()">
+                            <i class="bi bi-cpu me-1"></i>Smart Lane
+                        </button>
+                    </div>
+                    
+                    <hr class="my-3">
+                    
+                    <h6 class="text-muted mb-3">PERFORMANCE</h6>
+                    <div class="small">
+                        <div class="d-flex justify-content-between">
+                            <span>Execution Time</span>
+                            <span id="sidebar-execution-time" class="fast-lane-accent">78ms</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span>Success Rate</span>
+                            <span id="sidebar-success-rate" class="text-success">94%</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span>Status</span>
+                            <span id="sidebar-status" class="text-success">Demo</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Main content -->
+            <div class="col-md-10 main-content">
+                <div class="container-fluid p-4">
+                    
+                    <!-- Messages -->
+                    {% if messages %}
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                {% for message in messages %}
+                                    <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show" role="alert">
+                                        {{ message }}
+                                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% endif %}
+                    
+                    <!-- Page content -->
+                    {% block content %}{% endblock %}
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- SSE Bridge Script -->
+    <script>
+        class SSEBridge {
+            constructor() {
+                this.eventSource = null;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 5;
+                this.reconnectDelay = 2000;
+                this.isConnected = false;
+                
+                this.connect();
+            }
+            
+            connect() {
+                try {
+                    this.eventSource = new EventSource('/dashboard/metrics/stream/');
+                    
+                    this.eventSource.onopen = () => {
+                        console.log('SSE connection opened');
+                        this.isConnected = true;
+                        this.reconnectAttempts = 0;
+                        this.updateConnectionStatus('connected');
+                    };
+                    
+                    this.eventSource.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            this.handleMessage(data);
+                        } catch (e) {
+                            console.error('Failed to parse SSE message:', e);
+                        }
+                    };
+                    
+                    this.eventSource.onerror = () => {
+                        console.warn('SSE connection error');
+                        this.isConnected = false;
+                        this.updateConnectionStatus('error');
+                        this.handleReconnect();
+                    };
+                    
+                } catch (e) {
+                    console.error('Failed to establish SSE connection:', e);
+                    this.handleReconnect();
+                }
+            }
+            
+            handleMessage(data) {
+                switch (data.type) {
+                    case 'connection':
+                        console.log('SSE connection confirmed');
+                        break;
+                        
+                    case 'metrics_update':
+                        this.updateMetrics(data.metrics);
+                        this.updateStatus(data.status);
+                        break;
+                        
+                    case 'error':
+                        console.warn('SSE error message:', data.message);
+                        this.updateConnectionStatus('degraded');
+                        break;
+                        
+                    default:
+                        console.log('Unknown SSE message type:', data.type);
+                }
+            }
+            
+            updateMetrics(metrics) {
+                if (!metrics) return;
+                
+                // Update execution time
+                const execTimeEl = document.getElementById('sidebar-execution-time');
+                if (execTimeEl && metrics.execution_time_ms) {
+                    execTimeEl.textContent = `${metrics.execution_time_ms}ms`;
+                }
+                
+                // Update success rate
+                const successRateEl = document.getElementById('sidebar-success-rate');
+                if (successRateEl && metrics.success_rate) {
+                    successRateEl.textContent = `${metrics.success_rate}%`;
+                }
+                
+                // Update main dashboard metrics (if elements exist)
+                this.updateElementById('execution-time-metric', `${metrics.execution_time_ms}ms`);
+                this.updateElementById('success-rate-metric', `${metrics.success_rate}%`);
+                this.updateElementById('trades-per-minute-metric', `${metrics.trades_per_minute}/min`);
+                this.updateElementById('risk-cache-hits-metric', `${metrics.risk_cache_hits}%`);
+            }
+            
+            updateStatus(status) {
+                if (!status) return;
+                
+                const statusEl = document.getElementById('sidebar-status');
+                if (statusEl) {
+                    statusEl.textContent = status.status;
+                    statusEl.className = status.status === 'OPERATIONAL' ? 'text-success' : 'text-warning';
+                }
+            }
+            
+            updateConnectionStatus(status) {
+                const indicator = document.getElementById('connection-status');
+                const text = document.getElementById('connection-text');
+                
+                if (indicator && text) {
+                    indicator.className = `status-indicator status-${status === 'connected' ? 'operational' : status === 'degraded' ? 'degraded' : 'error'} real-time-indicator`;
+                    text.textContent = status === 'connected' ? 'Connected' : status === 'degraded' ? 'Degraded' : 'Disconnected';
+                }
+            }
+            
+            updateElementById(id, value) {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.textContent = value;
+                }
+            }
+            
+            handleReconnect() {
+                if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.reconnectAttempts++;
+                    console.log(`Attempting to reconnect SSE (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+                    
+                    setTimeout(() => {
+                        this.connect();
+                    }, this.reconnectDelay * this.reconnectAttempts);
+                } else {
+                    console.error('Max SSE reconnection attempts reached');
+                    this.updateConnectionStatus('error');
+                }
+            }
+            
+            disconnect() {
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.isConnected = false;
+                }
+            }
+        }
+        
+        // Quick action functions
+        function toggleFastLane() {
+            setTradingMode('FAST_LANE');
+        }
+        
+        function toggleSmartLane() {
+            alert('Smart Lane is coming in Phase 5! For now, please use Fast Lane.');
+        }
+        
+        function setTradingMode(mode) {
+            fetch('/dashboard/api/set-mode/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+                },
+                body: JSON.stringify({ mode: mode })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log(`Switched to ${mode}`);
+                } else {
+                    console.error('Failed to switch mode:', data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error switching mode:', error);
+            });
+        }
+        
+        // Initialize SSE connection when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            window.ssebridge = new SSEBridge();
+        });
+        
+        // Clean up SSE connection when page unloads
+        window.addEventListener('beforeunload', function() {
+            if (window.ssebridge) {
+                window.ssebridge.disconnect();
+            }
+        });
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

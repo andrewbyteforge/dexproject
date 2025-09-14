@@ -1,0 +1,539 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ mode_display }} Configuration - DEX Trading Bot{% endblock %}
+
+{% block content %}
+<!-- Header Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="h3 mb-1">
+                    {% if mode == 'fast_lane' %}
+                        <i class="bi bi-lightning-charge-fill fast-lane-accent me-2"></i>
+                        Fast Lane Configuration
+                    {% else %}
+                        <i class="bi bi-cpu-fill smart-lane-accent me-2"></i>
+                        Smart Lane Configuration
+                    {% endif %}
+                </h1>
+                <p class="text-muted mb-0">
+                    Configure settings for {{ mode_display|lower }} trading execution
+                </p>
+            </div>
+            <div>
+                <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-light me-2">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Selection
+                </a>
+                <a href="{% url 'dashboard:home' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-house me-1"></i>Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mode Status Card -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card card-glass">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <div class="d-flex align-items-center">
+                            <div class="me-3">
+                                {% if mode == 'fast_lane' %}
+                                    <i class="bi bi-lightning-charge-fill fast-lane-accent" style="font-size: 2.5rem;"></i>
+                                {% else %}
+                                    <i class="bi bi-cpu-fill smart-lane-accent" style="font-size: 2.5rem;"></i>
+                                {% endif %}
+                            </div>
+                            <div>
+                                <h5 class="mb-1 {% if mode == 'fast_lane' %}fast-lane-accent{% else %}smart-lane-accent{% endif %}">
+                                    {{ mode_display }}
+                                </h5>
+                                <p class="text-muted mb-0">
+                                    {% if mode == 'fast_lane' %}
+                                        Speed-optimized execution for time-sensitive opportunities
+                                    {% else %}
+                                        Intelligence-optimized analysis for strategic positions
+                                    {% endif %}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 text-md-end">
+                        {% if mode == 'smart_lane' %}
+                            <span class="badge bg-warning">
+                                <i class="bi bi-clock me-1"></i>Phase 5 - Coming Soon
+                            </span>
+                        {% else %}
+                            <span class="badge bg-success">
+                                <i class="bi bi-check-circle me-1"></i>Production Ready
+                            </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Configuration Form -->
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card card-glass">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-gear me-2"></i>{{ mode_display }} Settings
+                </h6>
+            </div>
+            <div class="card-body">
+                <form method="post" id="configForm" novalidate>
+                    {% csrf_token %}
+                    
+                    <!-- Basic Configuration -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-uppercase text-muted mb-3">Basic Configuration</h6>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="config_name" class="form-label">Configuration Name *</label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="config_name" 
+                                   name="name" 
+                                   value="{{ config.name|default:'Default Configuration' }}"
+                                   required 
+                                   maxlength="100">
+                            <div class="form-text">Unique name for this configuration</div>
+                            <div class="invalid-feedback"></div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="config_description" class="form-label">Description</label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="config_description" 
+                                   name="description" 
+                                   value="{{ config.description|default:'' }}"
+                                   maxlength="255">
+                            <div class="form-text">Optional description for this configuration</div>
+                        </div>
+                    </div>
+
+                    <!-- Risk Management Settings -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-uppercase text-muted mb-3">Risk Management</h6>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="max_position_size" class="form-label">Max Position Size (USD) *</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number" 
+                                       class="form-control" 
+                                       id="max_position_size" 
+                                       name="max_position_size_usd" 
+                                       value="{{ config.max_position_size_usd|default:'100' }}"
+                                       min="1" 
+                                       max="10000" 
+                                       step="0.01"
+                                       required>
+                            </div>
+                            <div class="form-text">Maximum USD amount per trade</div>
+                            <div class="invalid-feedback"></div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="risk_tolerance" class="form-label">Risk Tolerance *</label>
+                            <select class="form-select" id="risk_tolerance" name="risk_tolerance" required>
+                                <option value="">Select risk level</option>
+                                <option value="VERY_LOW" {% if config.risk_tolerance_level == 'VERY_LOW' %}selected{% endif %}>Very Low</option>
+                                <option value="LOW" {% if config.risk_tolerance_level == 'LOW' %}selected{% endif %}>Low</option>
+                                <option value="MEDIUM" {% if config.risk_tolerance_level == 'MEDIUM' %}selected{% endif %}>Medium</option>
+                                <option value="HIGH" {% if config.risk_tolerance_level == 'HIGH' %}selected{% endif %}>High</option>
+                                <option value="VERY_HIGH" {% if config.risk_tolerance_level == 'VERY_HIGH' %}selected{% endif %}>Very High</option>
+                            </select>
+                            <div class="form-text">Overall risk tolerance level</div>
+                            <div class="invalid-feedback"></div>
+                        </div>
+                    </div>
+
+                    <!-- Mode-Specific Settings -->
+                    {% if mode == 'fast_lane' %}
+                    <!-- Fast Lane Specific Settings -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-uppercase text-muted mb-3">
+                                <i class="bi bi-lightning fast-lane-accent me-1"></i>Fast Lane Settings
+                            </h6>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="execution_timeout" class="form-label">Execution Timeout (ms) *</label>
+                            <input type="number" 
+                                   class="form-control" 
+                                   id="execution_timeout" 
+                                   name="execution_timeout_ms" 
+                                   value="{{ config.execution_timeout_ms|default:'500' }}"
+                                   min="50" 
+                                   max="2000" 
+                                   step="50"
+                                   required>
+                            <div class="form-text">Maximum time to wait for execution (50-2000ms)</div>
+                            <div class="invalid-feedback"></div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="max_slippage" class="form-label">Max Slippage (%)</label>
+                            <input type="number" 
+                                   class="form-control" 
+                                   id="max_slippage" 
+                                   name="max_slippage_percent" 
+                                   value="{{ config.max_slippage_percent|default:'2.0' }}"
+                                   min="0.1" 
+                                   max="10.0" 
+                                   step="0.1">
+                            <div class="form-text">Maximum acceptable slippage percentage</div>
+                        </div>
+                        <div class="col-12 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" 
+                                       type="checkbox" 
+                                       id="mev_protection" 
+                                       name="mev_protection_enabled" 
+                                       {% if config.mev_protection_enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="mev_protection">
+                                    Enable MEV Protection (Recommended)
+                                </label>
+                                <div class="form-text">Use Flashbots private mempool to protect against MEV attacks</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <!-- Smart Lane Specific Settings -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-uppercase text-muted mb-3">
+                                <i class="bi bi-cpu smart-lane-accent me-1"></i>Smart Lane Settings
+                            </h6>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="analysis_depth" class="form-label">Analysis Depth</label>
+                            <select class="form-select" id="analysis_depth" name="analysis_depth" disabled>
+                                <option value="COMPREHENSIVE" selected>Comprehensive Analysis</option>
+                            </select>
+                            <div class="form-text text-warning">Available in Phase 5</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="ai_thought_log" class="form-label">AI Thought Log</label>
+                            <select class="form-select" id="ai_thought_log" name="ai_thought_log" disabled>
+                                <option value="ENABLED" selected>Full Reasoning</option>
+                            </select>
+                            <div class="form-text text-warning">Available in Phase 5</div>
+                        </div>
+                        <div class="col-12">
+                            <div class="alert alert-warning">
+                                <h6 class="alert-heading smart-lane-accent">
+                                    <i class="bi bi-info-circle me-2"></i>Smart Lane - Phase 5 Development
+                                </h6>
+                                <p class="mb-0 small">
+                                    Smart Lane configuration will be available in Phase 5. This will include:
+                                    comprehensive risk analysis, AI thought logs, multi-timeframe technical analysis,
+                                    and strategic position sizing.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Execution Settings -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-uppercase text-muted mb-3">Execution Settings</h6>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" 
+                                       type="checkbox" 
+                                       id="auto_execution" 
+                                       name="auto_execution_enabled" 
+                                       {% if config.auto_execution_enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="auto_execution">
+                                    Enable Auto-Execution
+                                </label>
+                                <div class="form-text">Automatically execute trades without manual approval</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" 
+                                       type="checkbox" 
+                                       id="require_approval" 
+                                       name="require_manual_approval" 
+                                       {% if config.require_manual_approval %}checked{% endif %}>
+                                <label class="form-check-label" for="require_approval">
+                                    Require Manual Approval
+                                </label>
+                                <div class="form-text">Require confirmation before executing trades</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Form Actions -->
+                    <div class="row">
+                        <div class="col-12">
+                            <hr>
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <button type="button" class="btn btn-outline-danger" id="resetForm">
+                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Defaults
+                                    </button>
+                                </div>
+                                <div>
+                                    <button type="button" class="btn btn-outline-secondary me-2" onclick="window.history.back()">
+                                        <i class="bi bi-x-circle me-1"></i>Cancel
+                                    </button>
+                                    <button type="submit" class="btn btn-success" id="saveConfig">
+                                        <i class="bi bi-check-circle me-1"></i>Save Configuration
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Preview -->
+    <div class="col-lg-4">
+        <div class="card card-glass">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-eye me-2"></i>Configuration Preview
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="small">
+                    <div class="mb-3">
+                        <strong>Mode:</strong> 
+                        <span class="{% if mode == 'fast_lane' %}fast-lane-accent{% else %}smart-lane-accent{% endif %}">
+                            {{ mode_display }}
+                        </span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>Max Position:</strong> 
+                        <span id="preview-position">${{ config.max_position_size_usd|default:'100' }}</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>Risk Level:</strong> 
+                        <span id="preview-risk">{{ config.risk_tolerance_level|default:'Medium' }}</span>
+                    </div>
+                    {% if mode == 'fast_lane' %}
+                    <div class="mb-2">
+                        <strong>Timeout:</strong> 
+                        <span id="preview-timeout">{{ config.execution_timeout_ms|default:'500' }}ms</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>Auto-Execute:</strong> 
+                        <span id="preview-auto">{% if config.auto_execution_enabled %}Yes{% else %}No{% endif %}</span>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <hr class="my-3">
+                
+                <div class="alert alert-info">
+                    <h6 class="alert-heading">
+                        <i class="bi bi-info-circle me-1"></i>Configuration Tips
+                    </h6>
+                    <ul class="small mb-0">
+                        {% if mode == 'fast_lane' %}
+                        <li>Lower timeouts improve speed but may miss opportunities</li>
+                        <li>MEV protection is recommended for all trades</li>
+                        <li>Start with smaller position sizes for testing</li>
+                        {% else %}
+                        <li>Smart Lane provides comprehensive risk analysis</li>
+                        <li>AI thought logs explain every decision</li>
+                        <li>Strategic position sizing optimizes risk/reward</li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Metrics -->
+        {% if mode == 'fast_lane' %}
+        <div class="card card-glass mt-4">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-speedometer2 me-2"></i>Expected Performance
+                </h6>
+            </div>
+            <div class="card-body text-center">
+                <div class="row">
+                    <div class="col-6">
+                        <div class="h4 fast-lane-accent mb-1">~78ms</div>
+                        <small class="text-muted">Execution Time</small>
+                    </div>
+                    <div class="col-6">
+                        <div class="h4 text-success mb-1">94%+</div>
+                        <small class="text-muted">Success Rate</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('configForm');
+    const resetBtn = document.getElementById('resetForm');
+    const saveBtn = document.getElementById('saveConfig');
+    
+    // Form validation
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        if (validateForm()) {
+            saveConfiguration();
+        }
+    });
+    
+    // Reset form
+    resetBtn.addEventListener('click', function() {
+        if (confirm('Are you sure you want to reset all settings to defaults?')) {
+            resetToDefaults();
+        }
+    });
+    
+    // Live preview updates
+    document.getElementById('max_position_size').addEventListener('input', function() {
+        document.getElementById('preview-position').textContent = '$' + this.value;
+    });
+    
+    document.getElementById('risk_tolerance').addEventListener('change', function() {
+        document.getElementById('preview-risk').textContent = this.options[this.selectedIndex].text;
+    });
+    
+    {% if mode == 'fast_lane' %}
+    document.getElementById('execution_timeout').addEventListener('input', function() {
+        document.getElementById('preview-timeout').textContent = this.value + 'ms';
+    });
+    
+    document.getElementById('auto_execution').addEventListener('change', function() {
+        document.getElementById('preview-auto').textContent = this.checked ? 'Yes' : 'No';
+    });
+    {% endif %}
+    
+    function validateForm() {
+        let isValid = true;
+        const inputs = form.querySelectorAll('input[required], select[required]');
+        
+        inputs.forEach(input => {
+            const feedback = input.nextElementSibling?.nextElementSibling;
+            
+            if (!input.value.trim()) {
+                input.classList.add('is-invalid');
+                if (feedback && feedback.classList.contains('invalid-feedback')) {
+                    feedback.textContent = 'This field is required.';
+                }
+                isValid = false;
+            } else {
+                input.classList.remove('is-invalid');
+                input.classList.add('is-valid');
+            }
+        });
+        
+        // Validate position size
+        const positionSize = document.getElementById('max_position_size');
+        if (positionSize.value < 1 || positionSize.value > 10000) {
+            positionSize.classList.add('is-invalid');
+            positionSize.nextElementSibling?.nextElementSibling?.textContent = 
+                'Position size must be between $1 and $10,000.';
+            isValid = false;
+        }
+        
+        return isValid;
+    }
+    
+    function saveConfiguration() {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
+        
+        const formData = new FormData(form);
+        
+        fetch(window.location.href, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert('Configuration saved successfully!', 'success');
+                // Optional: redirect after success
+                setTimeout(() => {
+                    window.location.href = '/dashboard/';
+                }, 1500);
+            } else {
+                showAlert(data.error || 'Failed to save configuration.', 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Save error:', error);
+            showAlert('An error occurred while saving. Please try again.', 'danger');
+        })
+        .finally(() => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Save Configuration';
+        });
+    }
+    
+    function resetToDefaults() {
+        // Reset form to default values
+        document.getElementById('config_name').value = 'Default {{ mode_display }} Config';
+        document.getElementById('config_description').value = '';
+        document.getElementById('max_position_size').value = '100';
+        document.getElementById('risk_tolerance').value = 'MEDIUM';
+        
+        {% if mode == 'fast_lane' %}
+        document.getElementById('execution_timeout').value = '500';
+        document.getElementById('max_slippage').value = '2.0';
+        document.getElementById('mev_protection').checked = true;
+        document.getElementById('auto_execution').checked = false;
+        document.getElementById('require_approval').checked = true;
+        {% endif %}
+        
+        // Clear validation classes
+        form.querySelectorAll('.is-valid, .is-invalid').forEach(el => {
+            el.classList.remove('is-valid', 'is-invalid');
+        });
+        
+        showAlert('Form reset to default values.', 'info');
+    }
+    
+    function showAlert(message, type) {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+        alertDiv.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        const container = document.querySelector('.container-fluid');
+        container.insertBefore(alertDiv, container.firstChild);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            alertDiv.remove();
+        }, 5000);
+    }
+});
+</script>
+{% endblock %}

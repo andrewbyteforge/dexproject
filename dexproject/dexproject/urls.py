@@ -1,22 +1,34 @@
 """
 URL configuration for dexproject project.
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+Updated to include dashboard app URLs and provide proper routing
+for the Phase 2 dashboard interface.
+
+File: dexproject/urls.py
 """
+
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+from django.shortcuts import redirect
 
 urlpatterns = [
+    # Admin interface
     path('admin/', admin.site.urls),
+    
+    # Dashboard app (main interface)
+    path('dashboard/', include('dashboard.urls')),
+    
+    # API endpoints (future expansion)
+    path('api/trading/', include('trading.urls')),
+    path('api/risk/', include('risk.urls')), 
+    path('api/wallet/', include('wallet.urls')),
+    path('api/analytics/', include('analytics.urls')),
+    
+    # Root redirect to dashboard
+    path('', lambda request: redirect('dashboard:home')),
 ]
+
+# Customize admin site
+admin.site.site_header = 'DEX Trading Bot Administration'
+admin.site.site_title = 'DEX Trading Bot Admin'
+admin.site.index_title = 'Trading Bot Management'

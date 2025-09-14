@@ -1,0 +1,396 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ page_title }} - DEX Trading Bot{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="text-center">
+            <h1 class="h2 mb-3">Choose Your Trading Mode</h1>
+            <p class="lead text-muted">
+                Select the execution strategy that matches your trading goals: speed-optimized or intelligence-optimized.
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- Mode Comparison Cards -->
+<div class="row justify-content-center">
+    <div class="col-xl-5 col-lg-6 mb-4">
+        <div class="card card-glass h-100 position-relative overflow-hidden">
+            <!-- Fast Lane Accent Border -->
+            <div class="position-absolute top-0 start-0 w-100" style="height: 4px; background: linear-gradient(90deg, #00d4aa, #00b894);"></div>
+            
+            <div class="card-body p-4">
+                <div class="text-center mb-4">
+                    <div class="mb-3">
+                        <i class="bi bi-lightning-charge-fill fast-lane-accent" style="font-size: 4rem;"></i>
+                    </div>
+                    <h3 class="fast-lane-accent mb-2">Fast Lane</h3>
+                    <p class="text-muted">Lightning-fast execution for time-sensitive opportunities</p>
+                </div>
+                
+                <!-- Performance Metrics -->
+                <div class="row text-center mb-4">
+                    <div class="col-4">
+                        <div class="h3 fast-lane-accent mb-1">{{ fast_lane_metrics.execution_time_ms }}ms</div>
+                        <small class="text-muted">Execution Time</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h3 text-success mb-1">{{ fast_lane_metrics.success_rate }}%</div>
+                        <small class="text-muted">Success Rate</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h3 text-info mb-1">{{ fast_lane_metrics.trades_per_minute }}/min</div>
+                        <small class="text-muted">Trade Rate</small>
+                    </div>
+                </div>
+                
+                <!-- Key Features -->
+                <div class="mb-4">
+                    <h6 class="text-uppercase text-muted mb-3">Key Features</h6>
+                    <ul class="list-unstyled">
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            Sub-100ms execution times
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            Real-time mempool monitoring
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            MEV protection via Flashbots
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            Optimized gas pricing
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            Minimal risk checks for speed
+                        </li>
+                    </ul>
+                </div>
+                
+                <!-- Best For -->
+                <div class="mb-4">
+                    <h6 class="text-uppercase text-muted mb-3">Best For</h6>
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 212, 170, 0.1);">
+                                <i class="bi bi-graph-up fast-lane-accent d-block mb-1"></i>
+                                <small>Sniping</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 212, 170, 0.1);">
+                                <i class="bi bi-clock-history fast-lane-accent d-block mb-1"></i>
+                                <small>Time-sensitive</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 212, 170, 0.1);">
+                                <i class="bi bi-lightning fast-lane-accent d-block mb-1"></i>
+                                <small>High-frequency</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 212, 170, 0.1);">
+                                <i class="bi bi-trophy fast-lane-accent d-block mb-1"></i>
+                                <small>Competition</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-grid">
+                    <button class="btn btn-fast-lane btn-lg" onclick="selectMode('FAST_LANE')">
+                        <i class="bi bi-lightning-charge me-2"></i>
+                        Choose Fast Lane
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-5 col-lg-6 mb-4">
+        <div class="card card-glass h-100 position-relative overflow-hidden">
+            <!-- Smart Lane Accent Border -->
+            <div class="position-absolute top-0 start-0 w-100" style="height: 4px; background: linear-gradient(90deg, #0066cc, #0056b3);"></div>
+            
+            <div class="card-body p-4">
+                <div class="text-center mb-4">
+                    <div class="mb-3">
+                        <i class="bi bi-cpu-fill smart-lane-accent" style="font-size: 4rem;"></i>
+                    </div>
+                    <h3 class="smart-lane-accent mb-2">Smart Lane</h3>
+                    <p class="text-muted">Comprehensive analysis for intelligent decision making</p>
+                </div>
+                
+                <!-- Performance Metrics -->
+                <div class="row text-center mb-4">
+                    <div class="col-4">
+                        <div class="h3 smart-lane-accent mb-1">{{ smart_lane_metrics.execution_time_ms }}ms</div>
+                        <small class="text-muted">Analysis Time</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h3 text-success mb-1">{{ smart_lane_metrics.success_rate }}%</div>
+                        <small class="text-muted">Success Rate</small>
+                    </div>
+                    <div class="col-4">
+                        <div class="h3 text-warning mb-1">{{ smart_lane_metrics.risk_adjusted_return }}%</div>
+                        <small class="text-muted">Risk-Adj Return</small>
+                    </div>
+                </div>
+                
+                <!-- Key Features -->
+                <div class="mb-4">
+                    <h6 class="text-uppercase text-muted mb-3">Key Features</h6>
+                    <ul class="list-unstyled">
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            8-category risk analysis
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            AI thought log explanations
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            Multi-timeframe technical analysis
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            Strategic position sizing
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            Advanced exit strategies
+                        </li>
+                    </ul>
+                </div>
+                
+                <!-- Best For -->
+                <div class="mb-4">
+                    <h6 class="text-uppercase text-muted mb-3">Best For</h6>
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 102, 204, 0.1);">
+                                <i class="bi bi-shield-check smart-lane-accent d-block mb-1"></i>
+                                <small>Risk Management</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 102, 204, 0.1);">
+                                <i class="bi bi-graph-up-arrow smart-lane-accent d-block mb-1"></i>
+                                <small>Strategic Trades</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 102, 204, 0.1);">
+                                <i class="bi bi-mortarboard smart-lane-accent d-block mb-1"></i>
+                                <small>Learning</small>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-center p-2 rounded mb-2" style="background: rgba(0, 102, 204, 0.1);">
+                                <i class="bi bi-building smart-lane-accent d-block mb-1"></i>
+                                <small>Professional</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-grid">
+                    <button class="btn btn-smart-lane btn-lg" onclick="selectMode('SMART_LANE')" disabled>
+                        <i class="bi bi-cpu me-2"></i>
+                        Choose Smart Lane
+                    </button>
+                    <small class="text-warning text-center mt-2">
+                        <i class="bi bi-clock me-1"></i>Coming in Phase 5
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Comparison Table -->
+<div class="row mt-5">
+    <div class="col-12">
+        <div class="card card-glass">
+            <div class="card-header text-center">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-table me-2"></i>Feature Comparison
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover">
+                        <thead>
+                            <tr>
+                                <th>Feature</th>
+                                <th class="text-center">
+                                    <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>Fast Lane
+                                </th>
+                                <th class="text-center">
+                                    <i class="bi bi-cpu smart-lane-accent me-2"></i>Smart Lane
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Execution Time</strong></td>
+                                <td class="text-center fast-lane-accent">~78ms ⚡</td>
+                                <td class="text-center smart-lane-accent">~2.5s 🧠</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Risk Analysis Depth</strong></td>
+                                <td class="text-center">2 core checks ⚡</td>
+                                <td class="text-center">8 comprehensive checks 🛡️</td>
+                            </tr>
+                            <tr>
+                                <td><strong>AI Explanations</strong></td>
+                                <td class="text-center text-muted">Basic</td>
+                                <td class="text-center text-success">Full reasoning ✅</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Technical Analysis</strong></td>
+                                <td class="text-center text-warning">Limited</td>
+                                <td class="text-center text-success">Multi-timeframe ✅</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Position Sizing</strong></td>
+                                <td class="text-center text-warning">Fixed</td>
+                                <td class="text-center text-success">Strategic ✅</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Exit Strategy</strong></td>
+                                <td class="text-center text-warning">Basic</td>
+                                <td class="text-center text-success">Advanced ✅</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Mempool Monitoring</strong></td>
+                                <td class="text-center text-success">Real-time ✅</td>
+                                <td class="text-center text-success">Real-time ✅</td>
+                            </tr>
+                            <tr>
+                                <td><strong>MEV Protection</strong></td>
+                                <td class="text-center text-success">Flashbots ✅</td>
+                                <td class="text-center text-success">Flashbots ✅</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-md-6">
+                        <div class="alert alert-info">
+                            <h6 class="alert-heading fast-lane-accent">
+                                <i class="bi bi-info-circle me-2"></i>Fast Lane Advantage
+                            </h6>
+                            <p class="mb-0 small">
+                                4x faster than commercial competitors (Unibot, Maestro) with production-ready 
+                                78ms execution times. Perfect for sniping and time-sensitive opportunities.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="alert alert-warning">
+                            <h6 class="alert-heading smart-lane-accent">
+                                <i class="bi bi-cpu me-2"></i>Smart Lane Coming Soon
+                            </h6>
+                            <p class="mb-0 small">
+                                Phase 5 will introduce comprehensive risk analysis, AI thought logs, and 
+                                intelligent decision making for strategic trading positions.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action Buttons -->
+<div class="row mt-4 mb-5">
+    <div class="col-12 text-center">
+        <a href="{% url 'dashboard:home' %}" class="btn btn-outline-light btn-lg me-3">
+            <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+        </a>
+        <button class="btn btn-success btn-lg" onclick="selectMode('FAST_LANE')">
+            <i class="bi bi-lightning-charge me-2"></i>Start with Fast Lane
+        </button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function selectMode(mode) {
+    if (mode === 'SMART_LANE') {
+        // Show coming soon message
+        alert('Smart Lane is coming in Phase 5! For now, please use Fast Lane.');
+        return;
+    }
+    
+    // Set trading mode and redirect to configuration
+    setTradingMode(mode).then(() => {
+        window.location.href = `/dashboard/config/${mode.toLowerCase()}/`;
+    }).catch((error) => {
+        alert('Failed to set trading mode. Please try again.');
+        console.error('Mode selection error:', error);
+    });
+}
+
+// Enhanced setTradingMode function that returns a promise
+function setTradingMode(mode) {
+    return fetch('/dashboard/api/set-mode/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+        },
+        body: JSON.stringify({ mode: mode })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.error || 'Unknown error');
+        }
+        return data;
+    });
+}
+
+// Add some interactive animations
+document.addEventListener('DOMContentLoaded', function() {
+    // Animate metric counters on scroll
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.style.animation = 'fadeInUp 0.6s ease-out';
+            }
+        });
+    });
+    
+    document.querySelectorAll('.card').forEach(card => {
+        observer.observe(card);
+    });
+});
+</script>
+
+<style>
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+</style>
+{% endblock %}
