@@ -570,7 +570,7 @@ def delete_configuration(request, config_id):
             context = {
                 'config': config,
                 'page_title': 'Delete Configuration',
-                'cancel_url': reverse('dashboard:configuration_panel_summary', kwargs={'config_id': config.id}),
+                'cancel_url': reverse('dashboard:configuration_summary', kwargs={'config_id': config.id}),
             }
             return render(request, 'dashboard/confirm_delete_config.html', context)
             
