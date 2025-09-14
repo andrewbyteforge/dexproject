@@ -1,27 +1,29 @@
 """
 Django models for the analytics app.
 
-This module defines AI Thought Log models and analytics tracking
-for explainable decision-making in the DEX auto-trading bot.
+This module defines AI decision tracking, learning sessions, and performance
+metrics for the DEX auto-trading bot's intelligent decision-making system.
 """
 
 from decimal import Decimal
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 import uuid
 
 from django.db import models
-from shared.models.mixins import TimestampMixin, UUIDMixin
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 
+# Import mixins but don't use TimestampMixin for LearningSession
+from shared.models.mixins import UUIDMixin
 
-class DecisionContext(TimestampMixin):
+
+class DecisionContext(models.Model):
     """
-    Represents the context in which a trading decision was made.
+    Captures the complete context surrounding a trading decision.
     
-    Stores market conditions, strategy settings, and environmental
-    factors that influenced the decision-making process.
+    Stores market conditions, portfolio state, timing information,
+    and environmental factors at the moment a decision was made.
     """
     
     class DecisionType(models.TextChoices):
@@ -51,7 +53,8 @@ class DecisionContext(TimestampMixin):
     token = models.ForeignKey(
         'trading.Token',
         on_delete=models.CASCADE,
-        related_name='decision_contexts'
+        related_name='decision_contexts',
+        help_text="Primary token being analyzed"
     )
     strategy = models.ForeignKey(
         'trading.Strategy',
@@ -68,7 +71,7 @@ class DecisionContext(TimestampMixin):
         related_name='decision_contexts'
     )
     
-    # Market Context
+    # Market Conditions at Decision Time
     eth_price_usd = models.DecimalField(
         max_digits=15,
         decimal_places=8,
@@ -98,7 +101,7 @@ class DecisionContext(TimestampMixin):
         help_text="Pair liquidity in USD at decision time"
     )
     
-    # Decision Timing
+    # Timing Metrics
     discovery_latency_ms = models.PositiveIntegerField(
         null=True,
         blank=True,
@@ -115,7 +118,7 @@ class DecisionContext(TimestampMixin):
         help_text="Time from decision to execution (ms)"
     )
     
-    # Additional Context
+    # Contextual Data
     market_conditions = models.JSONField(
         default=dict,
         blank=True,
@@ -126,55 +129,42 @@ class DecisionContext(TimestampMixin):
         blank=True,
         help_text="Portfolio state at decision time"
     )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['context_id']),  # Fixed: was 'thought_id'
-            models.Index(fields=['decision_type']),  # Fixed: was 'decision_outcome'
-            models.Index(fields=['pair']),  # Fixed: was 'context'
-            models.Index(fields=['token']),  # Fixed: was 'trade'
-            models.Index(fields=['strategy']),  # Fixed: was 'confidence_percent'
-            models.Index(fields=['created_at']),  # This one was correct
-            # Removed 'model_version' since DecisionContext doesn't have this field
+            models.Index(fields=['context_id']),
+            models.Index(fields=['decision_type']),
+            models.Index(fields=['pair', 'created_at']),
+            models.Index(fields=['token', 'created_at']),
+            models.Index(fields=['strategy']),
+            models.Index(fields=['created_at']),
         ]
 
     def __str__(self) -> str:
-        return f"Decision Context {self.context_id} - {self.decision_type}"  # Fixed: was thought_id
-
-    @property
-    def total_analysis_time_ms(self) -> Optional[int]:
-        """Calculate total analysis time."""
-        if self.analysis_duration_ms:
-            return self.analysis_duration_ms
-        return None
+        return f"Decision Context {self.context_id} - {self.decision_type}"
 
 
-# Add these missing models to your analytics/models.py file
-# Place them after the DecisionContext class but before DecisionMetrics
-
-class DecisionFeature(TimestampMixin):
+class DecisionFeature(models.Model):
     """
-    Represents individual features that influenced a trading decision.
+    Stores individual features extracted for a trading decision.
     
-    Stores feature values, weights, and contribution scores for
-    explainable AI and feature importance analysis.
+    Represents structured data points that feed into the AI decision process,
+    enabling feature importance analysis and model interpretability.
     """
     
     class FeatureCategory(models.TextChoices):
-        RISK_SIGNAL = 'RISK_SIGNAL', 'Risk Signal'
-        MARKET_SIGNAL = 'MARKET_SIGNAL', 'Market Signal'
-        LIQUIDITY_SIGNAL = 'LIQUIDITY_SIGNAL', 'Liquidity Signal'
-        TECHNICAL_SIGNAL = 'TECHNICAL_SIGNAL', 'Technical Signal'
-        SOCIAL_SIGNAL = 'SOCIAL_SIGNAL', 'Social Signal'
-        PORTFOLIO_SIGNAL = 'PORTFOLIO_SIGNAL', 'Portfolio Signal'
-        TIMING_SIGNAL = 'TIMING_SIGNAL', 'Timing Signal'
-    
-    class DataType(models.TextChoices):
-        NUMERIC = 'NUMERIC', 'Numeric'
-        BOOLEAN = 'BOOLEAN', 'Boolean'
-        CATEGORICAL = 'CATEGORICAL', 'Categorical'
-        TEXT = 'TEXT', 'Text'
+        TECHNICAL = 'TECHNICAL', 'Technical Indicators'
+        FUNDAMENTAL = 'FUNDAMENTAL', 'Fundamental Analysis'
+        SENTIMENT = 'SENTIMENT', 'Market Sentiment'
+        RISK = 'RISK', 'Risk Metrics'
+        LIQUIDITY = 'LIQUIDITY', 'Liquidity Analysis'
+        TIMING = 'TIMING', 'Timing Factors'
+        PORTFOLIO = 'PORTFOLIO', 'Portfolio Context'
+        MARKET = 'MARKET', 'Market Conditions'
     
     # Identification
     feature_id = models.UUIDField(
@@ -191,42 +181,40 @@ class DecisionFeature(TimestampMixin):
     # Feature Definition
     name = models.CharField(
         max_length=100,
-        help_text="Feature name (e.g., 'honeypot_score', 'liquidity_depth')"
+        help_text="Feature name (e.g., 'rsi_14', 'holder_concentration')"
     )
     category = models.CharField(
-        max_length=20,
-        choices=FeatureCategory.choices
-    )
-    data_type = models.CharField(
         max_length=15,
-        choices=DataType.choices
+        choices=FeatureCategory.choices
     )
     
     # Feature Values
-    raw_value = models.JSONField(
-        help_text="Raw feature value before processing"
-    )
-    processed_value = models.JSONField(
+    value_numeric = models.DecimalField(
+        max_digits=20,
+        decimal_places=8,
         null=True,
         blank=True,
-        help_text="Processed/normalized feature value"
+        help_text="Numeric feature value"
+    )
+    value_text = models.TextField(
+        blank=True,
+        help_text="Text/categorical feature value"
+    )
+    value_bool = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text="Boolean feature value"
     )
     
-    # Feature Importance
-    weight = models.DecimalField(
+    # Metadata
+    importance_score = models.DecimalField(
         max_digits=8,
-        decimal_places=4,
-        default=Decimal('1.0'),
-        help_text="Weight applied to this feature"
-    )
-    contribution_score = models.DecimalField(
-        max_digits=10,
         decimal_places=6,
         null=True,
         blank=True,
-        help_text="This feature's contribution to the final decision"
+        help_text="Feature importance score (0-1)"
     )
-    confidence = models.DecimalField(
+    confidence_level = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         null=True,
@@ -234,27 +222,18 @@ class DecisionFeature(TimestampMixin):
         validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
         help_text="Confidence in this feature value (0-100)"
     )
-    
-    # Metadata
-    source = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Data source for this feature"
-    )
-    processing_time_ms = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Time taken to compute this feature (ms)"
-    )
-    threshold_values = models.JSONField(
+    raw_data = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Threshold values for this feature (e.g., min, max, optimal)"
+        help_text="Raw data used to compute this feature"
     )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['context', 'category', 'name']
-        unique_together = ['context', 'name']
+        ordering = ['context', '-importance_score', 'category', 'name']
+        unique_together = [['context', 'name']]
         indexes = [
             models.Index(fields=['feature_id']),
             models.Index(fields=['context', 'category']),
@@ -264,26 +243,25 @@ class DecisionFeature(TimestampMixin):
         ]
 
     def __str__(self) -> str:
-        return f"{self.name} ({self.category})"
+        return f"Feature: {self.name} ({self.category})"
 
 
-class ThoughtLog(TimestampMixin):
+class ThoughtLog(models.Model):
     """
-    Represents the AI's reasoning process for a specific decision.
+    Records the AI's reasoning process for each trading decision.
     
-    Stores the complete thought process, reasoning chain, and
-    decision rationale for transparency and explainability.
+    Captures the step-by-step thought process, confidence levels,
+    and decision rationale for transparency and learning.
     """
     
     class DecisionOutcome(models.TextChoices):
-        EXECUTE_BUY = 'EXECUTE_BUY', 'Execute Buy'
-        EXECUTE_SELL = 'EXECUTE_SELL', 'Execute Sell'
-        HOLD_POSITION = 'HOLD_POSITION', 'Hold Position'
-        SKIP_OPPORTUNITY = 'SKIP_OPPORTUNITY', 'Skip Opportunity'
-        BLOCK_TRADE = 'BLOCK_TRADE', 'Block Trade'
+        BUY = 'BUY', 'Buy'
+        SELL = 'SELL', 'Sell'
+        HOLD = 'HOLD', 'Hold'
+        SKIP = 'SKIP', 'Skip'
         EMERGENCY_EXIT = 'EMERGENCY_EXIT', 'Emergency Exit'
     
-    class PriorityLevel(models.TextChoices):
+    class Priority(models.TextChoices):
         LOW = 'LOW', 'Low'
         MEDIUM = 'MEDIUM', 'Medium'
         HIGH = 'HIGH', 'High'
@@ -295,98 +273,76 @@ class ThoughtLog(TimestampMixin):
         unique=True,
         help_text="Unique thought log identifier"
     )
+    
+    # Decision Context
     context = models.OneToOneField(
         DecisionContext,
         on_delete=models.CASCADE,
         related_name='thought_log'
     )
     
-    # Decision Outcome
+    # Decision Output
     decision_outcome = models.CharField(
-        max_length=20,
+        max_length=15,
         choices=DecisionOutcome.choices
     )
     confidence_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="AI's confidence in this decision (0-100)"
-    )
-    overall_score = models.DecimalField(
-        max_digits=8,
-        decimal_places=4,
-        help_text="Overall decision score computed by the AI"
+        help_text="Confidence in this decision (0-100)"
     )
     
-    # Reasoning Content
-    primary_reasoning = models.TextField(
-        help_text="Primary reasoning for the decision (1-3 sentences)"
+    # Reasoning Process
+    reasoning_steps = models.JSONField(
+        help_text="Step-by-step reasoning process as structured data"
     )
-    detailed_analysis = models.TextField(
-        blank=True,
-        help_text="Detailed analysis and reasoning chain"
-    )
-    
-    # Decision Factors
     key_factors = models.JSONField(
         default=list,
-        help_text="List of key factors that influenced the decision"
+        blank=True,
+        help_text="Key factors that influenced the decision"
     )
-    risk_factors = models.JSONField(
-        default=list,
-        help_text="Risk factors considered"
-    )
-    positive_signals = models.JSONField(
-        default=list,
-        help_text="Positive signals identified"
-    )
-    negative_signals = models.JSONField(
-        default=list,
-        help_text="Negative signals identified"
-    )
-    
-    # Alternative Analysis
-    alternative_outcomes = models.JSONField(
+    risk_concerns = models.JSONField(
         default=list,
         blank=True,
-        help_text="Alternative decisions that were considered"
+        help_text="Risk concerns identified during analysis"
     )
-    counterfactuals = models.JSONField(
+    alternative_scenarios = models.JSONField(
         default=list,
         blank=True,
-        help_text="What would change the decision (counterfactual reasoning)"
+        help_text="Alternative scenarios considered"
     )
     
-    # Execution Parameters
-    recommended_amount = models.DecimalField(
-        max_digits=50,
-        decimal_places=18,
+    # Decision Metadata
+    recommended_position_size_usd = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
         null=True,
         blank=True,
-        help_text="Recommended trade amount"
+        help_text="Recommended position size in USD"
     )
-    max_slippage_percent = models.DecimalField(
+    recommended_stop_loss_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Recommended maximum slippage"
+        help_text="Recommended stop loss percentage"
     )
-    max_gas_price_gwei = models.DecimalField(
-        max_digits=10,
+    recommended_take_profit_percent = models.DecimalField(
+        max_digits=5,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Recommended maximum gas price"
+        help_text="Recommended take profit percentage"
     )
-    priority_level = models.CharField(
+    priority = models.CharField(
         max_length=20,
-        choices=PriorityLevel.choices,
-        default=PriorityLevel.MEDIUM,
+        choices=Priority.choices,
+        default=Priority.MEDIUM,
         help_text="Execution priority level"
     )
     
-    # Related Objects
+    # Execution Link
     trade = models.ForeignKey(
         'trading.Trade',
         on_delete=models.SET_NULL,
@@ -449,8 +405,7 @@ class ThoughtLog(TimestampMixin):
         return None
 
 
-
-class DecisionMetrics(TimestampMixin):
+class DecisionMetrics(models.Model):
     """
     Stores quantitative metrics and performance data for decisions.
     
@@ -487,7 +442,7 @@ class DecisionMetrics(TimestampMixin):
         help_text="Total time from opportunity to execution (ms)"
     )
     
-    # Quality Metrics
+    # Trading Metrics
     slippage_actual_percent = models.DecimalField(
         max_digits=8,
         decimal_places=4,
@@ -510,62 +465,37 @@ class DecisionMetrics(TimestampMixin):
         help_text="Gas efficiency score (0-100)"
     )
     
-    # Financial Metrics
-    execution_cost_usd = models.DecimalField(
-        max_digits=15,
+    # Financial Performance
+    pnl_1hr_usd = models.DecimalField(
+        max_digits=20,
         decimal_places=8,
         null=True,
         blank=True,
-        help_text="Total execution cost in USD"
-    )
-    opportunity_cost_usd = models.DecimalField(
-        max_digits=15,
-        decimal_places=8,
-        null=True,
-        blank=True,
-        help_text="Estimated opportunity cost of delays"
-    )
-    
-    # Outcome Metrics (measured after execution)
-    pnl_5min_usd = models.DecimalField(
-        max_digits=15,
-        decimal_places=8,
-        null=True,
-        blank=True,
-        help_text="PnL after 5 minutes (USD)"
-    )
-    pnl_30min_usd = models.DecimalField(
-        max_digits=15,
-        decimal_places=8,
-        null=True,
-        blank=True,
-        help_text="PnL after 30 minutes (USD)"
+        help_text="PnL after 1 hour (USD)"
     )
     pnl_24hr_usd = models.DecimalField(
-        max_digits=15,
+        max_digits=20,
         decimal_places=8,
         null=True,
         blank=True,
         help_text="PnL after 24 hours (USD)"
     )
+    pnl_7d_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=8,
+        null=True,
+        blank=True,
+        help_text="PnL after 7 days (USD)"
+    )
+    max_drawdown_percent = models.DecimalField(
+        max_digits=8,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Maximum drawdown percentage"
+    )
     
-    # Decision Quality Scores
-    risk_accuracy_score = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="How accurate was the risk assessment (0-100)"
-    )
-    timing_score = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="Quality of entry/exit timing (0-100)"
-    )
+    # Quality Scores
     overall_quality_score = models.DecimalField(
         max_digits=5,
         decimal_places=2,
@@ -604,6 +534,11 @@ class DecisionMetrics(TimestampMixin):
         blank=True,
         help_text="Last time metrics were updated"
     )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -618,12 +553,14 @@ class DecisionMetrics(TimestampMixin):
         return f"Metrics for {self.thought_log.thought_id}"
 
 
-class LearningSession(TimestampMixin):
+class LearningSession(models.Model):  # Note: NOT inheriting from TimestampMixin
     """
     Represents a learning/training session for the AI model.
     
     Groups related decisions and outcomes for batch learning,
     model updates, and performance evaluation.
+    
+    Uses domain-specific timestamp fields instead of generic ones.
     """
     
     class SessionType(models.TextChoices):
@@ -712,8 +649,11 @@ class LearningSession(TimestampMixin):
         help_text="Model updates made based on this session"
     )
     
-    # Timestamps
-    started_at = models.DateTimeField(auto_now_add=True)
+    # Domain-specific timestamps (not generic created_at/updated_at)
+    started_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the learning session started"
+    )
     ended_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -729,7 +669,7 @@ class LearningSession(TimestampMixin):
     )
 
     class Meta:
-        ordering = ['-started_at']
+        ordering = ['-started_at']  # Order by started_at, not created_at
         indexes = [
             models.Index(fields=['session_id']),
             models.Index(fields=['session_type', 'status']),
@@ -757,7 +697,7 @@ class LearningSession(TimestampMixin):
         return None
 
 
-class ModelPerformance(TimestampMixin):
+class ModelPerformance(models.Model):
     """
     Tracks model performance metrics over time.
     
@@ -766,16 +706,18 @@ class ModelPerformance(TimestampMixin):
     """
     
     class TimeWindow(models.TextChoices):
-        HOURLY = 'HOURLY', 'Hourly'
-        DAILY = 'DAILY', 'Daily'
-        WEEKLY = 'WEEKLY', 'Weekly'
-        MONTHLY = 'MONTHLY', 'Monthly'
+        HOUR = 'HOUR', '1 Hour'
+        DAY = 'DAY', '1 Day'
+        WEEK = 'WEEK', '1 Week'
+        MONTH = 'MONTH', '1 Month'
+        QUARTER = 'QUARTER', '1 Quarter'
+        YEAR = 'YEAR', '1 Year'
     
     # Identification
     performance_id = models.UUIDField(
         default=uuid.uuid4,
         unique=True,
-        help_text="Unique performance record identifier"
+        help_text="Unique performance identifier"
     )
     model_version = models.CharField(
         max_length=50,
@@ -785,77 +727,45 @@ class ModelPerformance(TimestampMixin):
         max_length=10,
         choices=TimeWindow.choices
     )
+    
+    # Time Period
     period_start = models.DateTimeField(
-        help_text="Start of the performance period"
+        help_text="Start of the performance measurement period"
     )
     period_end = models.DateTimeField(
-        help_text="End of the performance period"
-    )
-    
-    # Volume Metrics
-    total_opportunities = models.PositiveIntegerField(
-        default=0,
-        help_text="Total opportunities evaluated"
-    )
-    decisions_made = models.PositiveIntegerField(
-        default=0,
-        help_text="Total decisions made"
-    )
-    trades_executed = models.PositiveIntegerField(
-        default=0,
-        help_text="Total trades executed"
-    )
-    
-    # Quality Metrics
-    average_confidence = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Average decision confidence"
-    )
-    average_quality_score = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Average decision quality score"
-    )
-    risk_accuracy = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Risk assessment accuracy percentage"
+        help_text="End of the performance measurement period"
     )
     
     # Performance Metrics
-    total_pnl_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=8,
-        default=Decimal('0'),
-        help_text="Total PnL in USD"
+    total_decisions = models.PositiveIntegerField(
+        default=0,
+        help_text="Total decisions made in this period"
+    )
+    successful_decisions = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of successful decisions"
     )
     win_rate_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Percentage of profitable trades"
+        help_text="Win rate percentage"
     )
-    average_return_percent = models.DecimalField(
-        max_digits=8,
-        decimal_places=4,
+    
+    # Financial Performance
+    total_pnl_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=8,
+        default=Decimal('0'),
+        help_text="Total PnL for this period (USD)"
+    )
+    average_pnl_per_decision_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=8,
         null=True,
         blank=True,
-        help_text="Average return percentage per trade"
-    )
-    sharpe_ratio = models.DecimalField(
-        max_digits=8,
-        decimal_places=4,
-        null=True,
-        blank=True,
-        help_text="Risk-adjusted return (Sharpe ratio)"
+        help_text="Average PnL per decision (USD)"
     )
     max_drawdown_percent = models.DecimalField(
         max_digits=8,
@@ -864,180 +774,77 @@ class ModelPerformance(TimestampMixin):
         blank=True,
         help_text="Maximum drawdown percentage"
     )
-    
-    # Timing Metrics
-    average_decision_latency_ms = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="Average decision latency in milliseconds"
-    )
-    average_execution_latency_ms = models.FloatField(
-        null=True,
-        blank=True,
-        help_text="Average execution latency in milliseconds"
-    )
-    
-    # Comparison Metrics
-    vs_benchmark_percent = models.DecimalField(
+    sharpe_ratio = models.DecimalField(
         max_digits=8,
         decimal_places=4,
         null=True,
         blank=True,
-        help_text="Performance vs benchmark percentage"
+        help_text="Sharpe ratio"
+    )
+    
+    # Quality Metrics
+    average_quality_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Average decision quality score"
+    )
+    average_confidence = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Average confidence level"
+    )
+    
+    # Timing Metrics
+    average_decision_latency_ms = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Average decision latency (ms)"
+    )
+    average_execution_latency_ms = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Average execution latency (ms)"
     )
     
     # Additional Metrics
     custom_metrics = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Additional custom performance metrics"
+        help_text="Additional performance metrics"
     )
     
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ['model_version', 'time_window', 'period_start']
         ordering = ['-period_start']
+        unique_together = [['model_version', 'time_window', 'period_start']]
         indexes = [
             models.Index(fields=['performance_id']),
             models.Index(fields=['model_version', 'time_window']),
             models.Index(fields=['period_start', 'period_end']),
-            models.Index(fields=['total_pnl_usd']),
             models.Index(fields=['win_rate_percent']),
+            models.Index(fields=['total_pnl_usd']),
+            models.Index(fields=['sharpe_ratio']),
         ]
 
     def __str__(self) -> str:
-        return f"Performance {self.model_version} - {self.time_window} {self.period_start.date()}"
+        return f"Performance: {self.model_version} ({self.time_window}) - {self.period_start.date()}"
 
+    @property
+    def duration_hours(self) -> float:
+        """Calculate period duration in hours."""
+        delta = self.period_end - self.period_start
+        return delta.total_seconds() / 3600
 
-class FeatureImportance(TimestampMixin):
-    """
-    Tracks the importance and contribution of different features over time.
-    
-    Helps understand which signals are most valuable for decision-making
-    and guides feature engineering efforts.
-    """
-    
-    # Identification
-    importance_id = models.UUIDField(
-        default=uuid.uuid4,
-        unique=True,
-        help_text="Unique importance record identifier"
-    )
-    feature_name = models.CharField(
-        max_length=100,
-        help_text="Name of the feature"
-    )
-    feature_category = models.CharField(
-        max_length=20,
-        choices=DecisionFeature.FeatureCategory.choices
-    )
-    
-    # Analysis Period
-    analysis_start = models.DateTimeField(
-        help_text="Start of analysis period"
-    )
-    analysis_end = models.DateTimeField(
-        help_text="End of analysis period"
-    )
-    model_version = models.CharField(
-        max_length=50,
-        help_text="Model version for this analysis"
-    )
-    
-    # Importance Metrics
-    usage_count = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of times this feature was used"
-    )
-    average_weight = models.DecimalField(
-        max_digits=8,
-        decimal_places=4,
-        default=Decimal('0'),
-        help_text="Average weight applied to this feature"
-    )
-    average_contribution = models.DecimalField(
-        max_digits=10,
-        decimal_places=6,
-        default=Decimal('0'),
-        help_text="Average contribution to decisions"
-    )
-    importance_score = models.DecimalField(
-        max_digits=8,
-        decimal_places=4,
-        default=Decimal('0'),
-        help_text="Overall importance score"
-    )
-    
-    # Quality Metrics
-    predictive_power = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Predictive power score (0-100)"
-    )
-    stability_score = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Feature stability score (0-100)"
-    )
-    correlation_with_outcome = models.DecimalField(
-        max_digits=6,
-        decimal_places=4,
-        null=True,
-        blank=True,
-        help_text="Correlation with successful outcomes (-1 to 1)"
-    )
-    
-    # Performance Impact
-    decisions_with_feature = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of decisions that used this feature"
-    )
-    success_rate_with_feature = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Success rate when this feature was used"
-    )
-    avg_pnl_with_feature = models.DecimalField(
-        max_digits=15,
-        decimal_places=8,
-        null=True,
-        blank=True,
-        help_text="Average PnL when this feature was used"
-    )
-    
-    # Trend Analysis
-    trend_direction = models.CharField(
-        max_length=20,
-        choices=[
-            ('INCREASING', 'Increasing'),
-            ('DECREASING', 'Decreasing'),
-            ('STABLE', 'Stable'),
-            ('VOLATILE', 'Volatile'),
-        ],
-        null=True,
-        blank=True,
-        help_text="Trend in feature importance"
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ['feature_name', 'model_version', 'analysis_start']
-        ordering = ['-importance_score', 'feature_name']
-        indexes = [
-            models.Index(fields=['importance_id']),
-            models.Index(fields=['feature_name', 'feature_category']),
-            models.Index(fields=['model_version']),
-            models.Index(fields=['importance_score']),
-            models.Index(fields=['analysis_start', 'analysis_end']),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.feature_name} - Importance: {self.importance_score}"
+    @property
+    def success_rate(self) -> Optional[Decimal]:
+        """Calculate success rate percentage."""
+        if self.total_decisions > 0:
+            return (Decimal(self.successful_decisions) / Decimal(self.total_decisions)) * 100
+        return None
