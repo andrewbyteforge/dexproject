@@ -33,8 +33,14 @@ urlpatterns = [
     path('test/', views.simple_test, name='simple_test'),
     path('debug-templates/', views.debug_templates, name='debug_templates'),
     path('minimal/', views.minimal_dashboard, name='minimal_dashboard'),
-    path('debug-mode-selection/', views.debug_mode_selection, name='debug_mode_selection'),
+    # path('debug-mode-selection/', views.debug_mode_selection, name='debug_mode_selection'),
 
     path('config/<str:mode>/', views.configuration_panel, name='configuration'),
-    path('debug-config/<str:mode>/', views.debug_configuration_panel, name='debug_configuration'),
+    # path('debug-config/<str:mode>/', views.debug_configuration_panel, name='debug_configuration'),
+
+    # Add these to your existing urlpatterns in dashboard/urls.py
+    # Add these to your existing urlpatterns
+    path('config/summary/<int:config_id>/', views.configuration_summary, name='configuration_summary'),
+    path('configs/', views.configuration_list, name='configuration_list'), 
+    path('config/delete/<int:config_id>/', views.delete_configuration, name='delete_configuration'),
 ]

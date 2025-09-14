@@ -1,0 +1,555 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .config-card {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .config-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(0, 212, 170, 0.3);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    }
+    
+    .config-card.fast-lane {
+        border-left: 4px solid #00d4aa;
+    }
+    
+    .config-card.smart-lane {
+        border-left: 4px solid #1f6feb;
+    }
+    
+    .config-card.other {
+        border-left: 4px solid #6c757d;
+    }
+    
+    .fast-lane-accent { color: #00d4aa; }
+    .smart-lane-accent { color: #1f6feb; }
+    
+    .config-meta {
+        font-size: 0.875rem;
+        color: #adb5bd;
+    }
+    
+    .status-badge {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+    }
+    
+    .search-box {
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+    }
+    
+    .search-box:focus {
+        background: rgba(0, 0, 0, 0.3);
+        border-color: #00d4aa;
+        box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25);
+    }
+    
+    .filter-pills .btn {
+        border-radius: 20px;
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .empty-state {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: #adb5bd;
+    }
+    
+    .config-actions {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+    
+    .config-card:hover .config-actions {
+        opacity: 1;
+    }
+    
+    .pagination-dark .page-link {
+        background-color: #1a1a2e;
+        border-color: rgba(255, 255, 255, 0.1);
+        color: #adb5bd;
+    }
+    
+    .pagination-dark .page-link:hover {
+        background-color: #16213e;
+        border-color: #00d4aa;
+        color: #00d4aa;
+    }
+    
+    .pagination-dark .page-item.active .page-link {
+        background-color: #00d4aa;
+        border-color: #00d4aa;
+        color: #000;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h3 mb-1">
+                        <i class="bi bi-gear-fill me-2"></i>My Configurations
+                    </h1>
+                    <p class="text-muted mb-0">
+                        Manage your trading bot configurations
+                        {% if total_configs > 0 %}
+                            ({{ total_configs }} total)
+                        {% endif %}
+                    </p>
+                </div>
+                <div>
+                    <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-primary">
+                        <i class="bi bi-plus-circle me-2"></i>New Configuration
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search and Filter Section -->
+    <div class="row mb-4">
+        <div class="col-lg-6">
+            <form method="get" class="d-flex">
+                <input type="text" 
+                       name="search" 
+                       value="{{ search }}" 
+                       placeholder="Search configurations..." 
+                       class="form-control search-box me-2">
+                <button type="submit" class="btn btn-outline-success">
+                    <i class="bi bi-search"></i>
+                </button>
+                {% if search %}
+                <a href="{% url 'dashboard:configuration_list' %}" class="btn btn-outline-secondary ms-2">
+                    <i class="bi bi-x-circle"></i>
+                </a>
+                {% endif %}
+            </form>
+        </div>
+        <div class="col-lg-6">
+            <div class="filter-pills text-end">
+                <a href="{% url 'dashboard:configuration_list' %}" 
+                   class="btn btn-sm {% if not mode_filter %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    All
+                </a>
+                <a href="?mode=fast_lane" 
+                   class="btn btn-sm {% if mode_filter == 'fast_lane' %}btn-success{% else %}btn-outline-success{% endif %}">
+                    <i class="bi bi-lightning-charge me-1"></i>Fast Lane
+                </a>
+                <a href="?mode=smart_lane" 
+                   class="btn btn-sm {% if mode_filter == 'smart_lane' %}btn-info{% else %}btn-outline-info{% endif %}">
+                    <i class="bi bi-cpu me-1"></i>Smart Lane
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configurations Grid -->
+    {% if page_obj %}
+        <!-- Fast Lane Configurations -->
+        {% if fast_lane_configs %}
+        <div class="row mb-4">
+            <div class="col-12">
+                <h4 class="h5 fast-lane-accent mb-3">
+                    <i class="bi bi-lightning-charge me-2"></i>Fast Lane Configurations
+                </h4>
+                <div class="row">
+                    {% for config in fast_lane_configs %}
+                    <div class="col-lg-4 col-md-6 mb-3">
+                        <div class="config-card fast-lane h-100">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <h6 class="card-title mb-0">{{ config.name }}</h6>
+                                    <span class="status-badge badge bg-{{ config.status|lower }}">
+                                        {{ config.get_status_display }}
+                                    </span>
+                                </div>
+                                
+                                {% if config.description %}
+                                <p class="card-text small text-muted mb-2">{{ config.description|truncatechars:80 }}</p>
+                                {% endif %}
+                                
+                                <div class="config-meta mb-3">
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <small><strong>Position:</strong> ${{ config.max_position_size_usd|floatformat:0 }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Timeout:</strong> {{ config.execution_timeout_ms }}ms</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Risk:</strong> {{ config.get_risk_tolerance_level_display }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Version:</strong> v{{ config.version }}</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="config-actions">
+                                    <div class="btn-group w-100" role="group">
+                                        <a href="{% url 'dashboard:configuration_summary' config.id %}" 
+                                           class="btn btn-sm btn-outline-light">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <a href="{% url 'dashboard:configuration_panel' mode='fast_lane' %}" 
+                                           class="btn btn-sm btn-outline-success">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <button type="button" 
+                                                class="btn btn-sm btn-outline-danger" 
+                                                onclick="confirmDelete('{{ config.name }}', '{% url 'dashboard:delete_configuration' config.id %}')">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Smart Lane Configurations -->
+        {% if smart_lane_configs %}
+        <div class="row mb-4">
+            <div class="col-12">
+                <h4 class="h5 smart-lane-accent mb-3">
+                    <i class="bi bi-cpu me-2"></i>Smart Lane Configurations
+                </h4>
+                <div class="row">
+                    {% for config in smart_lane_configs %}
+                    <div class="col-lg-4 col-md-6 mb-3">
+                        <div class="config-card smart-lane h-100">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <h6 class="card-title mb-0">{{ config.name }}</h6>
+                                    <span class="status-badge badge bg-{{ config.status|lower }}">
+                                        {{ config.get_status_display }}
+                                    </span>
+                                </div>
+                                
+                                {% if config.description %}
+                                <p class="card-text small text-muted mb-2">{{ config.description|truncatechars:80 }}</p>
+                                {% endif %}
+                                
+                                <div class="config-meta mb-3">
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <small><strong>Position:</strong> ${{ config.max_position_size_usd|floatformat:0 }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Analysis:</strong> {{ config.get_analysis_depth_display }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Risk:</strong> {{ config.get_risk_tolerance_level_display }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Version:</strong> v{{ config.version }}</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="config-actions">
+                                    <div class="btn-group w-100" role="group">
+                                        <a href="{% url 'dashboard:configuration_summary' config.id %}" 
+                                           class="btn btn-sm btn-outline-light">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <a href="{% url 'dashboard:configuration_panel' mode='smart_lane' %}" 
+                                           class="btn btn-sm btn-outline-info">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <button type="button" 
+                                                class="btn btn-sm btn-outline-danger" 
+                                                onclick="confirmDelete('{{ config.name }}', '{% url 'dashboard:delete_configuration' config.id %}')">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Other Configurations -->
+        {% if other_configs %}
+        <div class="row mb-4">
+            <div class="col-12">
+                <h4 class="h5 text-muted mb-3">
+                    <i class="bi bi-gear me-2"></i>Other Configurations
+                </h4>
+                <div class="row">
+                    {% for config in other_configs %}
+                    <div class="col-lg-4 col-md-6 mb-3">
+                        <div class="config-card other h-100">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <h6 class="card-title mb-0">{{ config.name }}</h6>
+                                    <span class="status-badge badge bg-{{ config.status|lower }}">
+                                        {{ config.get_status_display }}
+                                    </span>
+                                </div>
+                                
+                                {% if config.description %}
+                                <p class="card-text small text-muted mb-2">{{ config.description|truncatechars:80 }}</p>
+                                {% endif %}
+                                
+                                <div class="config-meta mb-3">
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <small><strong>Mode:</strong> {{ config.get_trading_mode_display }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Position:</strong> ${{ config.max_position_size_usd|floatformat:0 }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Risk:</strong> {{ config.get_risk_tolerance_level_display }}</small>
+                                        </div>
+                                        <div class="col-6">
+                                            <small><strong>Version:</strong> v{{ config.version }}</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="config-actions">
+                                    <div class="btn-group w-100" role="group">
+                                        <a href="{% url 'dashboard:configuration_summary' config.id %}" 
+                                           class="btn btn-sm btn-outline-light">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <button type="button" 
+                                                class="btn btn-sm btn-outline-secondary" 
+                                                disabled>
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button type="button" 
+                                                class="btn btn-sm btn-outline-danger" 
+                                                onclick="confirmDelete('{{ config.name }}', '{% url 'dashboard:delete_configuration' config.id %}')">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- All Configurations (Paginated View) -->
+        {% if page_obj.object_list and not fast_lane_configs and not smart_lane_configs %}
+        <div class="row">
+            {% for config in page_obj %}
+            <div class="col-lg-4 col-md-6 mb-3">
+                <div class="config-card {% if config.trading_mode == 'FAST_LANE' %}fast-lane{% elif config.trading_mode == 'SMART_LANE' %}smart-lane{% else %}other{% endif %} h-100">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="card-title mb-0">{{ config.name }}</h6>
+                            <div>
+                                <span class="badge bg-secondary me-1">{{ config.get_trading_mode_display }}</span>
+                                <span class="status-badge badge bg-{{ config.status|lower }}">
+                                    {{ config.get_status_display }}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        {% if config.description %}
+                        <p class="card-text small text-muted mb-2">{{ config.description|truncatechars:80 }}</p>
+                        {% endif %}
+                        
+                        <div class="config-meta mb-3">
+                            <small><strong>Updated:</strong> {{ config.updated_at|date:"M d, Y" }}</small>
+                        </div>
+                        
+                        <div class="config-actions">
+                            <div class="btn-group w-100" role="group">
+                                <a href="{% url 'dashboard:configuration_summary' config.id %}" 
+                                   class="btn btn-sm btn-outline-light">
+                                    View Details
+                                </a>
+                                <button type="button" 
+                                        class="btn btn-sm btn-outline-danger" 
+                                        onclick="confirmDelete('{{ config.name }}', '{% url 'dashboard:delete_configuration' config.id %}')">
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <div class="row mt-4">
+            <div class="col-12">
+                <nav aria-label="Configuration pagination">
+                    <ul class="pagination justify-content-center pagination-dark">
+                        {% if page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page=1{% if search %}&search={{ search }}{% endif %}{% if mode_filter %}&mode={{ mode_filter }}{% endif %}">
+                                    <i class="bi bi-chevron-double-left"></i>
+                                </a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search %}&search={{ search }}{% endif %}{% if mode_filter %}&mode={{ mode_filter }}{% endif %}">
+                                    <i class="bi bi-chevron-left"></i>
+                                </a>
+                            </li>
+                        {% endif %}
+                        
+                        {% for num in page_obj.paginator.page_range %}
+                            {% if page_obj.number == num %}
+                                <li class="page-item active">
+                                    <span class="page-link">{{ num }}</span>
+                                </li>
+                            {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?page={{ num }}{% if search %}&search={{ search }}{% endif %}{% if mode_filter %}&mode={{ mode_filter }}{% endif %}">{{ num }}</a>
+                                </li>
+                            {% endif %}
+                        {% endfor %}
+                        
+                        {% if page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search %}&search={{ search }}{% endif %}{% if mode_filter %}&mode={{ mode_filter }}{% endif %}">
+                                    <i class="bi bi-chevron-right"></i>
+                                </a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if search %}&search={{ search }}{% endif %}{% if mode_filter %}&mode={{ mode_filter }}{% endif %}">
+                                    <i class="bi bi-chevron-double-right"></i>
+                                </a>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+        </div>
+        {% endif %}
+
+    {% else %}
+        <!-- Empty State -->
+        <div class="row">
+            <div class="col-12">
+                <div class="empty-state">
+                    <i class="bi bi-gear display-1 mb-3"></i>
+                    <h3>No Configurations Found</h3>
+                    {% if search %}
+                        <p class="mb-3">No configurations match your search for "{{ search }}"</p>
+                        <a href="{% url 'dashboard:configuration_list' %}" class="btn btn-outline-primary">
+                            Clear Search
+                        </a>
+                    {% else %}
+                        <p class="mb-3">You haven't created any trading configurations yet.</p>
+                        <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle me-2"></i>Create Your First Configuration
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    {% endif %}
+
+    <!-- Back to Dashboard -->
+    <div class="row mt-4">
+        <div class="col-12 text-center">
+            <a href="{% url 'dashboard:home' %}" class="btn btn-outline-light">
+                <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-danger">
+                <h5 class="modal-title text-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>Delete Configuration
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete the configuration <strong id="configName"></strong>?</p>
+                <p class="text-warning small">
+                    <i class="bi bi-info-circle me-1"></i>
+                    This action cannot be undone.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <a href="#" id="deleteConfirmBtn" class="btn btn-danger">
+                    <i class="bi bi-trash me-2"></i>Delete Configuration
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let deleteModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+});
+
+function confirmDelete(configName, deleteUrl) {
+    document.getElementById('configName').textContent = configName;
+    document.getElementById('deleteConfirmBtn').href = deleteUrl;
+    deleteModal.show();
+}
+
+// Auto-submit search form on Enter key
+document.querySelector('input[name="search"]').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        this.form.submit();
+    }
+});
+
+// Preserve search and filter parameters in pagination and filter links
+document.addEventListener('DOMContentLoaded', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const search = urlParams.get('search');
+    const mode = urlParams.get('mode');
+    
+    // Update filter links to preserve search
+    if (search) {
+        document.querySelectorAll('.filter-pills a').forEach(link => {
+            const href = new URL(link.href);
+            href.searchParams.set('search', search);
+            link.href = href.toString();
+        });
+    }
+});
+</script>
+{% endblock

@@ -1,0 +1,417 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Delete Configuration - {{ config.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .delete-confirmation {
+        background: linear-gradient(135deg, #2d1b2e 0%, #3d1a1a 100%);
+        border-radius: 15px;
+        border: 1px solid rgba(220, 53, 69, 0.3);
+        padding: 2rem;
+    }
+    
+    .danger-icon {
+        color: #dc3545;
+        font-size: 4rem;
+        margin-bottom: 1rem;
+    }
+    
+    .config-details {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+        border-left: 4px solid #dc3545;
+    }
+    
+    .warning-list {
+        background: rgba(255, 193, 7, 0.1);
+        border: 1px solid rgba(255, 193, 7, 0.3);
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .warning-list ul {
+        margin-bottom: 0;
+        padding-left: 1.5rem;
+    }
+    
+    .warning-list li {
+        margin-bottom: 0.5rem;
+        color: #ffc107;
+    }
+    
+    .action-buttons .btn {
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+        min-width: 120px;
+    }
+    
+    .btn-delete-confirm {
+        background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        border: none;
+        color: white;
+        font-weight: 600;
+    }
+    
+    .btn-delete-confirm:hover {
+        background: linear-gradient(135deg, #c82333 0%, #a71e2a 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+    }
+    
+    .btn-cancel {
+        background: transparent;
+        border: 1px solid #6c757d;
+        color: #6c757d;
+    }
+    
+    .btn-cancel:hover {
+        background: #6c757d;
+        color: white;
+    }
+    
+    .breadcrumb-dark {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+    }
+    
+    .breadcrumb-dark .breadcrumb-item + .breadcrumb-item::before {
+        color: #6c757d;
+    }
+    
+    .breadcrumb-dark a {
+        color: #00d4aa;
+        text-decoration: none;
+    }
+    
+    .breadcrumb-dark a:hover {
+        text-decoration: underline;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Breadcrumb Navigation -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb breadcrumb-dark">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'dashboard:home' %}">
+                            <i class="bi bi-house-door me-1"></i>Dashboard
+                        </a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'dashboard:configuration_list' %}">Configurations</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'dashboard:configuration_summary' config.id %}">{{ config.name }}</a>
+                    </li>
+                    <li class="breadcrumb-item active" aria-current="page">Delete</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <!-- Main Confirmation Card -->
+    <div class="row justify-content-center">
+        <div class="col-lg-8 col-xl-6">
+            <div class="delete-confirmation">
+                <div class="text-center">
+                    <!-- Danger Icon -->
+                    <i class="bi bi-exclamation-triangle-fill danger-icon"></i>
+                    
+                    <!-- Title -->
+                    <h1 class="h3 text-danger mb-3">Delete Configuration</h1>
+                    <p class="text-light mb-4">
+                        You are about to permanently delete this trading configuration. 
+                        This action cannot be undone.
+                    </p>
+                </div>
+
+                <!-- Configuration Details -->
+                <div class="config-details">
+                    <h5 class="mb-3">
+                        <i class="bi bi-info-circle me-2"></i>Configuration Details
+                    </h5>
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <strong>Name:</strong>
+                        </div>
+                        <div class="col-sm-8">
+                            {{ config.name }}
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-sm-4">
+                            <strong>Trading Mode:</strong>
+                        </div>
+                        <div class="col-sm-8">
+                            <span class="badge bg-secondary">{{ config.get_trading_mode_display }}</span>
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-sm-4">
+                            <strong>Status:</strong>
+                        </div>
+                        <div class="col-sm-8">
+                            <span class="badge bg-{{ config.status|lower }}">{{ config.get_status_display }}</span>
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-sm-4">
+                            <strong>Created:</strong>
+                        </div>
+                        <div class="col-sm-8">
+                            {{ config.created_at|date:"F d, Y \a\t H:i" }}
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-sm-4">
+                            <strong>Last Updated:</strong>
+                        </div>
+                        <div class="col-sm-8">
+                            {{ config.updated_at|date:"F d, Y \a\t H:i" }}
+                        </div>
+                    </div>
+                    {% if config.last_used_at %}
+                    <div class="row mt-2">
+                        <div class="col-sm-4">
+                            <strong>Last Used:</strong>
+                        </div>
+                        <div class="col-sm-8">
+                            {{ config.last_used_at|date:"F d, Y \a\t H:i" }}
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div class="row mt-2">
+                        <div class="col-sm-4">
+                            <strong>Version:</strong>
+                        </div>
+                        <div class="col-sm-8">
+                            v{{ config.version }}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Warning Information -->
+                <div class="warning-list">
+                    <h6 class="text-warning mb-3">
+                        <i class="bi bi-exclamation-diamond-fill me-2"></i>What will be deleted:
+                    </h6>
+                    <ul class="text-warning">
+                        <li>All configuration settings and parameters</li>
+                        <li>Trading mode preferences and risk settings</li>
+                        <li>Historical version information</li>
+                        {% if config.trading_mode == 'FAST_LANE' %}
+                        <li>Fast Lane execution timeout and slippage settings</li>
+                        <li>MEV protection and execution preferences</li>
+                        {% elif config.trading_mode == 'SMART_LANE' %}
+                        <li>Smart Lane analysis depth and strategy settings</li>
+                        <li>Comprehensive risk assessment preferences</li>
+                        {% endif %}
+                        <li>Any associated trading session references</li>
+                    </ul>
+                    <p class="mb-0 text-warning small">
+                        <i class="bi bi-info-circle me-1"></i>
+                        <strong>Note:</strong> Active trading sessions using this configuration may be affected.
+                    </p>
+                </div>
+
+                <!-- Additional Warnings for Special Cases -->
+                {% if config.is_default %}
+                <div class="alert alert-warning">
+                    <i class="bi bi-star-fill me-2"></i>
+                    <strong>Default Configuration:</strong> This is your default {{ config.get_trading_mode_display|lower }} configuration. 
+                    Deleting it will require you to set up a new default configuration.
+                </div>
+                {% endif %}
+
+                {% if config.status == 'ACTIVE' %}
+                <div class="alert alert-danger">
+                    <i class="bi bi-play-circle-fill me-2"></i>
+                    <strong>Active Configuration:</strong> This configuration is currently active. 
+                    Please stop any running trading sessions before deleting.
+                </div>
+                {% endif %}
+
+                <!-- Action Buttons -->
+                <div class="action-buttons text-center mt-4">
+                    <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-delete-confirm btn-lg">
+                            <i class="bi bi-trash-fill me-2"></i>Delete Configuration
+                        </button>
+                    </form>
+                    
+                    <a href="{{ cancel_url|default:'/dashboard/configs/' }}" class="btn btn-cancel btn-lg">
+                        <i class="bi bi-x-circle me-2"></i>Cancel
+                    </a>
+                </div>
+
+                <!-- Safety Reminder -->
+                <div class="text-center mt-4">
+                    <p class="small text-muted mb-0">
+                        <i class="bi bi-shield-exclamation me-1"></i>
+                        Double-check that this is the correct configuration to delete.
+                        This action is permanent and cannot be reversed.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row mt-4">
+        <div class="col-12 text-center">
+            <div class="btn-group" role="group">
+                <a href="{% url 'dashboard:configuration_summary' config.id %}" class="btn btn-outline-light">
+                    <i class="bi bi-eye me-2"></i>View Summary
+                </a>
+                <a href="{% url 'dashboard:configuration_list' %}" class="btn btn-outline-info">
+                    <i class="bi bi-list-ul me-2"></i>All Configurations
+                </a>
+                <a href="{% url 'dashboard:home' %}" class="btn btn-outline-primary">
+                    <i class="bi bi-house-door me-2"></i>Dashboard Home
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirmation Modal (Double-check) -->
+<div class="modal fade" id="finalConfirmModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-danger">
+                <h5 class="modal-title text-danger">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>Final Confirmation
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <div class="mb-3">
+                    <i class="bi bi-trash-fill text-danger" style="font-size: 3rem;"></i>
+                </div>
+                <h6 class="mb-3">Are you absolutely sure?</h6>
+                <p class="mb-4">
+                    Type <code class="text-danger">{{ config.name }}</code> to confirm deletion:
+                </p>
+                <input type="text" 
+                       id="confirmationInput" 
+                       class="form-control bg-dark text-light border-danger text-center"
+                       placeholder="Enter configuration name"
+                       autocomplete="off">
+                <div class="invalid-feedback">
+                    Configuration name does not match.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" 
+                        class="btn btn-danger" 
+                        id="finalDeleteBtn" 
+                        disabled>
+                    <i class="bi bi-trash-fill me-2"></i>Delete Forever
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const deleteForm = document.querySelector('form[method="post"]');
+    const deleteButton = deleteForm.querySelector('button[type="submit"]');
+    const configName = '{{ config.name|escapejs }}';
+    
+    // Intercept form submission for additional confirmation
+    deleteForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        showFinalConfirmation();
+    });
+    
+    // Final confirmation modal
+    const finalModal = new bootstrap.Modal(document.getElementById('finalConfirmModal'));
+    const confirmationInput = document.getElementById('confirmationInput');
+    const finalDeleteBtn = document.getElementById('finalDeleteBtn');
+    
+    function showFinalConfirmation() {
+        finalModal.show();
+        setTimeout(() => {
+            confirmationInput.focus();
+        }, 500);
+    }
+    
+    // Enable/disable delete button based on input
+    confirmationInput.addEventListener('input', function() {
+        const isMatch = this.value.trim() === configName;
+        finalDeleteBtn.disabled = !isMatch;
+        
+        if (this.value.trim() === '') {
+            this.classList.remove('is-valid', 'is-invalid');
+        } else if (isMatch) {
+            this.classList.add('is-valid');
+            this.classList.remove('is-invalid');
+        } else {
+            this.classList.add('is-invalid');
+            this.classList.remove('is-valid');
+        }
+    });
+    
+    // Handle final delete confirmation
+    finalDeleteBtn.addEventListener('click', function() {
+        if (confirmationInput.value.trim() === configName) {
+            // Show loading state
+            this.disabled = true;
+            this.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Deleting...';
+            
+            // Submit the form
+            deleteForm.submit();
+        }
+    });
+    
+    // Reset modal when closed
+    document.getElementById('finalConfirmModal').addEventListener('hidden.bs.modal', function() {
+        confirmationInput.value = '';
+        confirmationInput.classList.remove('is-valid', 'is-invalid');
+        finalDeleteBtn.disabled = true;
+        finalDeleteBtn.innerHTML = '<i class="bi bi-trash-fill me-2"></i>Delete Forever';
+    });
+    
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // Escape key to go back
+        if (e.key === 'Escape' && !document.querySelector('.modal.show')) {
+            window.location.href = '{{ cancel_url|default:"/dashboard/configs/" }}';
+        }
+    });
+    
+    // Warning animation
+    setInterval(function() {
+        const dangerIcon = document.querySelector('.danger-icon');
+        dangerIcon.style.animation = 'pulse 2s ease-in-out';
+        setTimeout(() => {
+            dangerIcon.style.animation = '';
+        }, 2000);
+    }, 5000);
+});
+
+// Add pulse animation via CSS
+document.head.insertAdjacentHTML('beforeend', `
+    <style>
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+    </style>
+`);
+</script>
+{% endblock %}

@@ -3,8 +3,16 @@ Django models for the dashboard app.
 
 This module defines user profile, bot configuration, and dashboard-related
 models for the DEX auto-trading bot's control interface.
+
+Updated to include missing fields that were causing database errors:
+- analysis_depth
+- execution_timeout_ms  
+- max_slippage_percent
+- mev_protection_enabled
+- risk_tolerance_level
 """
 
+import logging
 from decimal import Decimal
 from typing import Dict, Any, List, Optional
 import uuid
@@ -16,6 +24,8 @@ from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 class UserProfile(TimestampMixin):
@@ -160,6 +170,7 @@ class UserProfile(TimestampMixin):
         blank=True,
         help_text="When user accepted terms of service"
     )
+    
     class Meta:
         indexes = [
             models.Index(fields=['profile_id']),
@@ -171,6 +182,16 @@ class UserProfile(TimestampMixin):
     def __str__(self) -> str:
         return f"{self.user.username} Profile"
 
+    def save(self, *args, **kwargs):
+        """Override save to add logging."""
+        try:
+            logger.debug(f"Saving UserProfile for user: {self.user.username}")
+            super().save(*args, **kwargs)
+            logger.info(f"Successfully saved UserProfile for user: {self.user.username}")
+        except Exception as e:
+            logger.error(f"Error saving UserProfile for user {self.user.username}: {e}", exc_info=True)
+            raise
+
 
 class BotConfiguration(TimestampMixin):
     """
@@ -178,6 +199,8 @@ class BotConfiguration(TimestampMixin):
     
     Stores complete bot settings including strategies, risk parameters,
     and execution preferences that can be applied to trading sessions.
+    
+    Updated with missing fields to fix fast_lane configuration errors.
     """
     
     class ConfigStatus(models.TextChoices):
@@ -185,11 +208,29 @@ class BotConfiguration(TimestampMixin):
         ACTIVE = 'ACTIVE', 'Active'
         PAUSED = 'PAUSED', 'Paused'
         ARCHIVED = 'ARCHIVED', 'Archived'
+        INACTIVE = 'INACTIVE', 'Inactive'  # Added for compatibility
     
     class TradingMode(models.TextChoices):
         PAPER = 'PAPER', 'Paper Trading'
         LIVE = 'LIVE', 'Live Trading'
         SHADOW = 'SHADOW', 'Shadow Trading'
+        FAST_LANE = 'FAST_LANE', 'Fast Lane'  # Added for compatibility
+        SMART_LANE = 'SMART_LANE', 'Smart Lane'  # Added for compatibility
+    
+    class RiskToleranceLevel(models.TextChoices):
+        """Risk tolerance levels for bot configuration."""
+        VERY_LOW = 'VERY_LOW', 'Very Low'
+        LOW = 'LOW', 'Low'
+        MEDIUM = 'MEDIUM', 'Medium'
+        HIGH = 'HIGH', 'High'
+        VERY_HIGH = 'VERY_HIGH', 'Very High'
+    
+    class AnalysisDepth(models.TextChoices):
+        """Analysis depth options for smart lane."""
+        BASIC = 'BASIC', 'Basic'
+        STANDARD = 'STANDARD', 'Standard'
+        COMPREHENSIVE = 'COMPREHENSIVE', 'Comprehensive'
+        DEEP = 'DEEP', 'Deep Analysis'
     
     # Identification
     config_id = models.UUIDField(
@@ -216,21 +257,61 @@ class BotConfiguration(TimestampMixin):
         default=ConfigStatus.DRAFT
     )
     trading_mode = models.CharField(
-        max_length=10,
+        max_length=15,  # Increased to accommodate FAST_LANE/SMART_LANE
         choices=TradingMode.choices,
         default=TradingMode.PAPER
     )
     
-    # Strategy Configuration
+    # Strategy Configuration - Made optional for compatibility
     strategy = models.ForeignKey(
         'trading.Strategy',
         on_delete=models.CASCADE,
-        related_name='bot_configurations'
+        related_name='bot_configurations',
+        null=True,
+        blank=True,
+        help_text="Trading strategy to use"
     )
     risk_profile = models.ForeignKey(
         'risk.RiskProfile',
         on_delete=models.CASCADE,
-        related_name='bot_configurations'
+        related_name='bot_configurations',
+        null=True,
+        blank=True,
+        help_text="Risk profile to apply"
+    )
+    
+    # NEW FIELDS - These were missing and causing the errors
+    risk_tolerance_level = models.CharField(
+        max_length=15,
+        choices=RiskToleranceLevel.choices,
+        default=RiskToleranceLevel.MEDIUM,
+        help_text="Risk tolerance level for this configuration"
+    )
+    
+    execution_timeout_ms = models.PositiveIntegerField(
+        default=5000,  # 5 seconds default
+        validators=[MinValueValidator(100), MaxValueValidator(30000)],  # 100ms to 30s
+        help_text="Maximum execution timeout in milliseconds"
+    )
+    
+    max_slippage_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('2.0'),
+        validators=[MinValueValidator(Decimal('0.1')), MaxValueValidator(Decimal('50.0'))],
+        help_text="Maximum acceptable slippage percentage"
+    )
+    
+    mev_protection_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether MEV (Maximum Extractable Value) protection is enabled"
+    )
+    
+    analysis_depth = models.CharField(
+        max_length=15,
+        choices=AnalysisDepth.choices,
+        default=AnalysisDepth.STANDARD,
+        help_text="Depth of analysis for smart lane trading"
     )
     
     # Trading Parameters
@@ -271,15 +352,17 @@ class BotConfiguration(TimestampMixin):
         help_text="Whether trades require manual approval"
     )
     
-    # Chain Configuration
+    # Chain Configuration - Made optional for compatibility
     enabled_chains = models.ManyToManyField(
         'trading.Chain',
         related_name='bot_configurations',
+        blank=True,
         help_text="Enabled blockchain networks"
     )
     enabled_dexes = models.ManyToManyField(
         'trading.DEX',
         related_name='bot_configurations',
+        blank=True,
         help_text="Enabled decentralized exchanges"
     )
     
@@ -338,17 +421,144 @@ class BotConfiguration(TimestampMixin):
             models.Index(fields=['trading_mode']),
             models.Index(fields=['is_default']),
             models.Index(fields=['last_used_at']),
+            models.Index(fields=['risk_tolerance_level']),  # New index
+            models.Index(fields=['mev_protection_enabled']),  # New index
         ]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.trading_mode})"
 
     def clean(self) -> None:
-        """Validate configuration settings."""
-        if self.daily_loss_limit_usd > self.total_bankroll_usd:
-            raise ValidationError("Daily loss limit cannot exceed total bankroll")
-        if self.max_position_size_usd > self.total_bankroll_usd:
-            raise ValidationError("Max position size cannot exceed total bankroll")
+        """Validate configuration settings with comprehensive error handling."""
+        try:
+            logger.debug(f"Validating BotConfiguration: {self.name}")
+            
+            # Existing validations
+            if self.daily_loss_limit_usd and self.total_bankroll_usd:
+                if self.daily_loss_limit_usd > self.total_bankroll_usd:
+                    error_msg = "Daily loss limit cannot exceed total bankroll"
+                    logger.warning(f"Validation error for {self.name}: {error_msg}")
+                    raise ValidationError(error_msg)
+            
+            if self.max_position_size_usd and self.total_bankroll_usd:
+                if self.max_position_size_usd > self.total_bankroll_usd:
+                    error_msg = "Max position size cannot exceed total bankroll"
+                    logger.warning(f"Validation error for {self.name}: {error_msg}")
+                    raise ValidationError(error_msg)
+            
+            # New validations for added fields
+            if self.execution_timeout_ms:
+                if self.trading_mode == 'FAST_LANE' and self.execution_timeout_ms > 1000:
+                    logger.warning(f"Fast lane timeout of {self.execution_timeout_ms}ms is high - consider reducing for optimal performance")
+                
+                if self.execution_timeout_ms < 100:
+                    error_msg = "Execution timeout cannot be less than 100ms"
+                    logger.error(f"Validation error for {self.name}: {error_msg}")
+                    raise ValidationError(error_msg)
+            
+            if self.max_slippage_percent:
+                if self.max_slippage_percent > Decimal('10.0'):
+                    logger.warning(f"High slippage tolerance of {self.max_slippage_percent}% for {self.name}")
+                
+                if self.max_slippage_percent < Decimal('0.1'):
+                    error_msg = "Slippage cannot be less than 0.1%"
+                    logger.error(f"Validation error for {self.name}: {error_msg}")
+                    raise ValidationError(error_msg)
+            
+            # Validate fast lane specific settings
+            if self.trading_mode == 'FAST_LANE':
+                if self.analysis_depth == 'COMPREHENSIVE':
+                    logger.warning(f"Fast lane config {self.name} using comprehensive analysis - may impact speed")
+                
+                if not self.mev_protection_enabled:
+                    logger.warning(f"Fast lane config {self.name} has MEV protection disabled - high risk")
+            
+            logger.debug(f"Successfully validated BotConfiguration: {self.name}")
+            
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during validation of {self.name}: {e}", exc_info=True)
+            raise ValidationError(f"Configuration validation failed: {e}")
+
+    def save(self, *args, **kwargs):
+        """Override save to add logging and validation."""
+        try:
+            logger.debug(f"Saving BotConfiguration: {self.name} for user: {self.user.username}")
+            
+            # Run validation
+            self.full_clean()
+            
+            # Update version on changes (excluding created_at updates)
+            if self.pk and not kwargs.get('update_fields') == ['last_used_at']:
+                original = BotConfiguration.objects.get(pk=self.pk)
+                if (original.max_position_size_usd != self.max_position_size_usd or
+                    original.risk_tolerance_level != self.risk_tolerance_level or
+                    original.execution_timeout_ms != self.execution_timeout_ms or
+                    original.max_slippage_percent != self.max_slippage_percent or
+                    original.mev_protection_enabled != self.mev_protection_enabled or
+                    original.analysis_depth != self.analysis_depth):
+                    self.version += 1
+                    logger.info(f"Updated version to {self.version} for config: {self.name}")
+            
+            super().save(*args, **kwargs)
+            logger.info(f"Successfully saved BotConfiguration: {self.name} (ID: {self.config_id})")
+            
+        except Exception as e:
+            logger.error(f"Error saving BotConfiguration {self.name} for user {self.user.username}: {e}", exc_info=True)
+            raise
+
+    @property
+    def is_fast_lane(self) -> bool:
+        """Check if this is a fast lane configuration."""
+        return self.trading_mode == 'FAST_LANE'
+
+    @property 
+    def is_smart_lane(self) -> bool:
+        """Check if this is a smart lane configuration."""
+        return self.trading_mode == 'SMART_LANE'
+
+    @property
+    def risk_score(self) -> int:
+        """Calculate a risk score based on configuration parameters."""
+        try:
+            score = 0
+            
+            # Risk tolerance component (0-40 points)
+            risk_scores = {
+                'VERY_LOW': 0,
+                'LOW': 10,
+                'MEDIUM': 20,
+                'HIGH': 30,
+                'VERY_HIGH': 40
+            }
+            score += risk_scores.get(self.risk_tolerance_level, 20)
+            
+            # Position size component (0-30 points)
+            if self.max_position_size_usd and self.total_bankroll_usd:
+                position_ratio = float(self.max_position_size_usd / self.total_bankroll_usd)
+                if position_ratio > 0.5:
+                    score += 30
+                elif position_ratio > 0.3:
+                    score += 20
+                elif position_ratio > 0.1:
+                    score += 10
+            
+            # Slippage component (0-20 points)
+            if self.max_slippage_percent:
+                if self.max_slippage_percent > Decimal('5.0'):
+                    score += 20
+                elif self.max_slippage_percent > Decimal('2.0'):
+                    score += 10
+            
+            # MEV protection component (-10 points if enabled, +10 if disabled)
+            score += -10 if self.mev_protection_enabled else 10
+            
+            return max(0, min(100, score))
+            
+        except Exception as e:
+            logger.error(f"Error calculating risk score for {self.name}: {e}", exc_info=True)
+            return 50  # Default medium risk
 
 
 class TokenWhitelistEntry(TimestampMixin):
@@ -412,6 +622,16 @@ class TokenWhitelistEntry(TimestampMixin):
 
     def __str__(self) -> str:
         return f"{self.token.symbol} whitelisted in {self.config.name}"
+
+    def save(self, *args, **kwargs):
+        """Override save to add logging."""
+        try:
+            logger.debug(f"Saving TokenWhitelistEntry for token: {self.token.symbol} in config: {self.config.name}")
+            super().save(*args, **kwargs)
+            logger.info(f"Successfully whitelisted token {self.token.symbol} in {self.config.name}")
+        except Exception as e:
+            logger.error(f"Error saving whitelist entry for {self.token.symbol}: {e}", exc_info=True)
+            raise
 
 
 class TokenBlacklistEntry(TimestampMixin):
@@ -516,9 +736,25 @@ class TokenBlacklistEntry(TimestampMixin):
     @property
     def is_active(self) -> bool:
         """Check if blacklist entry is currently active."""
-        if not self.is_permanent and self.expires_at:
-            return timezone.now() < self.expires_at
-        return True
+        try:
+            if not self.is_permanent and self.expires_at:
+                is_active = timezone.now() < self.expires_at
+                logger.debug(f"Blacklist entry for {self.token.symbol} is {'active' if is_active else 'expired'}")
+                return is_active
+            return True
+        except Exception as e:
+            logger.error(f"Error checking blacklist status for {self.token.symbol}: {e}", exc_info=True)
+            return True  # Err on the side of caution
+
+    def save(self, *args, **kwargs):
+        """Override save to add logging."""
+        try:
+            logger.debug(f"Saving TokenBlacklistEntry for token: {self.token.symbol} with reason: {self.reason}")
+            super().save(*args, **kwargs)
+            logger.warning(f"Blacklisted token {self.token.symbol} in {self.config.name} - Reason: {self.reason}")
+        except Exception as e:
+            logger.error(f"Error saving blacklist entry for {self.token.symbol}: {e}", exc_info=True)
+            raise
 
 
 class TradingSession(TimestampMixin):
@@ -571,7 +807,7 @@ class TradingSession(TimestampMixin):
         default=SessionStatus.STARTING
     )
     trading_mode = models.CharField(
-        max_length=10,
+        max_length=15,  # Increased to match BotConfiguration
         choices=BotConfiguration.TradingMode.choices
     )
     
@@ -715,28 +951,58 @@ class TradingSession(TimestampMixin):
     @property
     def total_pnl_usd(self) -> Decimal:
         """Calculate total PnL (realized + unrealized)."""
-        return self.realized_pnl_usd + self.unrealized_pnl_usd
+        try:
+            return self.realized_pnl_usd + self.unrealized_pnl_usd
+        except Exception as e:
+            logger.error(f"Error calculating total PnL for session {self.name}: {e}", exc_info=True)
+            return Decimal('0')
 
     @property
     def duration_hours(self) -> Optional[float]:
         """Calculate session duration in hours."""
-        end_time = self.stopped_at or timezone.now()
-        delta = end_time - self.started_at
-        return delta.total_seconds() / 3600
+        try:
+            end_time = self.stopped_at or timezone.now()
+            delta = end_time - self.started_at
+            return delta.total_seconds() / 3600
+        except Exception as e:
+            logger.error(f"Error calculating duration for session {self.name}: {e}", exc_info=True)
+            return None
 
     @property
     def success_rate_percent(self) -> Optional[Decimal]:
         """Calculate trade success rate percentage."""
-        if self.trades_executed > 0:
-            return (Decimal(self.successful_trades) / Decimal(self.trades_executed)) * 100
-        return None
+        try:
+            if self.trades_executed > 0:
+                return (Decimal(self.successful_trades) / Decimal(self.trades_executed)) * 100
+            return None
+        except Exception as e:
+            logger.error(f"Error calculating success rate for session {self.name}: {e}", exc_info=True)
+            return None
 
     @property
     def roi_percent(self) -> Optional[Decimal]:
         """Calculate return on investment percentage."""
-        if self.starting_balance_usd > 0:
-            return (self.total_pnl_usd / self.starting_balance_usd) * 100
-        return None
+        try:
+            if self.starting_balance_usd > 0:
+                return (self.total_pnl_usd / self.starting_balance_usd) * 100
+            return None
+        except Exception as e:
+            logger.error(f"Error calculating ROI for session {self.name}: {e}", exc_info=True)
+            return None
+
+    def save(self, *args, **kwargs):
+        """Override save to add logging."""
+        try:
+            logger.debug(f"Saving TradingSession: {self.name} with status: {self.status}")
+            super().save(*args, **kwargs)
+            
+            # Log significant status changes
+            if self.status in ['ACTIVE', 'COMPLETED', 'FAILED', 'EMERGENCY_STOP']:
+                logger.info(f"TradingSession {self.name} status changed to: {self.status}")
+                
+        except Exception as e:
+            logger.error(f"Error saving TradingSession {self.name}: {e}", exc_info=True)
+            raise
 
 
 class Alert(TimestampMixin):
@@ -905,9 +1171,29 @@ class Alert(TimestampMixin):
     @property
     def is_expired(self) -> bool:
         """Check if alert has expired."""
-        if self.expires_at:
-            return timezone.now() > self.expires_at
-        return False
+        try:
+            if self.expires_at:
+                is_expired = timezone.now() > self.expires_at
+                logger.debug(f"Alert {self.title} is {'expired' if is_expired else 'active'}")
+                return is_expired
+            return False
+        except Exception as e:
+            logger.error(f"Error checking alert expiration for {self.title}: {e}", exc_info=True)
+            return False
+
+    def save(self, *args, **kwargs):
+        """Override save to add logging."""
+        try:
+            logger.debug(f"Saving Alert: {self.title} ({self.alert_type}) for user: {self.user.username}")
+            super().save(*args, **kwargs)
+            
+            # Log critical alerts
+            if self.severity in ['ERROR', 'CRITICAL']:
+                logger.warning(f"Critical alert created: {self.title} for user {self.user.username}")
+                
+        except Exception as e:
+            logger.error(f"Error saving Alert {self.title}: {e}", exc_info=True)
+            raise
 
 
 class SystemStatus(TimestampMixin):
@@ -1048,21 +1334,47 @@ class SystemStatus(TimestampMixin):
 
     @property
     def overall_status(self) -> str:
-        """Calculate overall system status."""
-        statuses = [
-            self.trading_engine_status,
-            self.risk_engine_status,
-            self.wallet_service_status,
-            self.api_service_status,
-        ]
-        
-        if any(status == self.ServiceStatus.MAJOR_OUTAGE for status in statuses):
-            return self.ServiceStatus.MAJOR_OUTAGE
-        elif any(status == self.ServiceStatus.PARTIAL_OUTAGE for status in statuses):
-            return self.ServiceStatus.PARTIAL_OUTAGE
-        elif any(status == self.ServiceStatus.DEGRADED for status in statuses):
+        """Calculate overall system status with proper error handling."""
+        try:
+            statuses = [
+                self.trading_engine_status,
+                self.risk_engine_status,
+                self.wallet_service_status,
+                self.api_service_status,
+            ]
+            
+            if any(status == self.ServiceStatus.MAJOR_OUTAGE for status in statuses):
+                return self.ServiceStatus.MAJOR_OUTAGE
+            elif any(status == self.ServiceStatus.PARTIAL_OUTAGE for status in statuses):
+                return self.ServiceStatus.PARTIAL_OUTAGE
+            elif any(status == self.ServiceStatus.DEGRADED for status in statuses):
+                return self.ServiceStatus.DEGRADED
+            elif any(status == self.ServiceStatus.MAINTENANCE for status in statuses):
+                return self.ServiceStatus.MAINTENANCE
+            else:
+                return self.ServiceStatus.OPERATIONAL
+                
+        except Exception as e:
+            logger.error(f"Error calculating overall system status: {e}", exc_info=True)
             return self.ServiceStatus.DEGRADED
-        elif any(status == self.ServiceStatus.MAINTENANCE for status in statuses):
-            return self.ServiceStatus.MAINTENANCE
-        else:
-            return self.ServiceStatus.OPERATIONAL
+
+    def save(self, *args, **kwargs):
+        """Override save to add logging and status change notifications."""
+        try:
+            logger.debug(f"Saving SystemStatus with overall status: {self.overall_status}")
+            
+            # Check for status changes if this is an update
+            if self.pk:
+                try:
+                    previous = SystemStatus.objects.get(pk=self.pk)
+                    if previous.overall_status != self.overall_status:
+                        logger.warning(f"System status changed from {previous.overall_status} to {self.overall_status}")
+                except SystemStatus.DoesNotExist:
+                    pass  # New record
+            
+            super().save(*args, **kwargs)
+            logger.info(f"SystemStatus saved - Overall: {self.overall_status}")
+            
+        except Exception as e:
+            logger.error(f"Error saving SystemStatus: {e}", exc_info=True)
+            raise
