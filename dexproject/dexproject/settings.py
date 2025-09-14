@@ -4,6 +4,8 @@ Enhanced Django settings for dexproject with Web3 integration
 This settings file includes Web3 configuration, testnet support, and 
 enhanced trading engine settings for both development and production.
 
+UPDATED: Now includes Fast Lane engine integration settings.
+
 File: dexproject/dexproject/settings.py
 """
 
@@ -184,6 +186,42 @@ MAX_GAS_PRICE_GWEI = Decimal(os.getenv('MAX_GAS_PRICE_GWEI', '100.0' if TESTNET_
 EXECUTION_TIMEOUT_SECONDS = int(os.getenv('EXECUTION_TIMEOUT_SECONDS', '60' if TESTNET_MODE else '30'))
 
 # =============================================================================
+# FAST LANE ENGINE CONFIGURATION
+# =============================================================================
+
+# Engine Operation Mode
+ENGINE_MOCK_MODE = os.getenv('ENGINE_MOCK_MODE', 'True').lower() == 'true'
+
+# Fast Lane Performance Configuration
+FAST_LANE_ENABLED = os.getenv('FAST_LANE_ENABLED', 'True').lower() == 'true'
+FAST_LANE_TARGET_MS = int(os.getenv('FAST_LANE_TARGET_MS', '500'))
+FAST_LANE_SLA_MS = int(os.getenv('FAST_LANE_SLA_MS', '300'))
+
+# Engine Integration Settings
+ENGINE_AUTO_START = os.getenv('ENGINE_AUTO_START', 'False').lower() == 'true'
+ENGINE_DEFAULT_CHAIN = int(os.getenv('ENGINE_DEFAULT_CHAIN', '84532'))  # Base Sepolia
+
+# Risk Cache Configuration for Dashboard
+RISK_CACHE_TTL = int(os.getenv('RISK_CACHE_TTL', '3600'))
+RISK_CACHE_MAX_SIZE = int(os.getenv('RISK_CACHE_MAX_SIZE', '10000'))
+
+# Circuit Breaker Configuration
+ENGINE_CIRCUIT_BREAKER_THRESHOLD = int(os.getenv('ENGINE_CIRCUIT_BREAKER_THRESHOLD', '5'))
+ENGINE_CIRCUIT_BREAKER_RECOVERY_TIME = int(os.getenv('ENGINE_CIRCUIT_BREAKER_RECOVERY_TIME', '60'))
+
+# Dashboard Metrics Configuration
+DASHBOARD_METRICS_CACHE_TIMEOUT = int(os.getenv('DASHBOARD_METRICS_CACHE_TIMEOUT', '30'))
+DASHBOARD_SSE_UPDATE_INTERVAL = int(os.getenv('DASHBOARD_SSE_UPDATE_INTERVAL', '2'))
+
+# Phase Development Control
+SMART_LANE_ENABLED = os.getenv('SMART_LANE_ENABLED', 'False').lower() == 'true'  # Phase 5
+MEMPOOL_MONITORING_ENABLED = os.getenv('MEMPOOL_MONITORING_ENABLED', 'True').lower() == 'true'  # Phase 3
+
+# Development and Testing
+FORCE_MOCK_DATA = os.getenv('FORCE_MOCK_DATA', 'False').lower() == 'true'
+ENGINE_DEBUG_LOGGING = os.getenv('ENGINE_DEBUG_LOGGING', 'False').lower() == 'true'
+
+# =============================================================================
 # BLOCKCHAIN RPC CONFIGURATION 
 # =============================================================================
 
@@ -336,6 +374,14 @@ LOGGING = {
     },
 }
 
+# Add Fast Lane engine logging configuration
+if ENGINE_DEBUG_LOGGING:
+    LOGGING['loggers']['dashboard.engine_service'] = {
+        'handlers': ['console', 'file'],
+        'level': 'DEBUG',
+        'propagate': False,
+    }
+
 # Create logs directory if it doesn't exist
 (BASE_DIR / 'logs').mkdir(exist_ok=True)
 
@@ -481,11 +527,15 @@ if not TESTNET_MODE and DEFAULT_CHAIN_ID in [11155111, 84532, 421614]:
 
 # Print configuration summary for development
 if DEBUG:
-    print(f"🔧 DEX Trading Bot Configuration:")
+    print(f"DEX Trading Bot Configuration:")
     print(f"   Trading Mode: {TRADING_MODE}")
     print(f"   Testnet Mode: {TESTNET_MODE}")
+    print(f"   Engine Mock Mode: {ENGINE_MOCK_MODE}")
+    print(f"   Fast Lane Enabled: {FAST_LANE_ENABLED}")
     print(f"   Default Chain: {DEFAULT_CHAIN_ID}")
     print(f"   Supported Chains: {SUPPORTED_CHAINS}")
     print(f"   Max Portfolio: ${MAX_PORTFOLIO_SIZE_USD}")
     print(f"   Has Alchemy Key: {'Yes' if ALCHEMY_API_KEY else 'No'}")
     print(f"   Has Wallet Key: {'Yes' if WALLET_PRIVATE_KEY else 'No (will create dev wallet)'}")
+    print(f"   Fast Lane Target: {FAST_LANE_TARGET_MS}ms")
+    print(f"   Smart Lane: {'Enabled' if SMART_LANE_ENABLED else 'Phase 5 Pending'}")

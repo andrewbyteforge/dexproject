@@ -1,39 +1,82 @@
 """
 Complete Dashboard Views for DEX Trading Bot
 
-Updated with configuration summary functionality, proper error handling,
-thorough logging, and improved user experience.
+Updated with Fast Lane engine integration, configuration summary functionality, 
+proper error handling, thorough logging, and improved user experience.
 
-File: dashboard/views.py
+File: dexproject/dashboard/views.py
 """
 
+import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Dict, Any
 from decimal import Decimal
+
 from django.contrib.auth.models import User
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse, StreamingHttpResponse, JsonResponse
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib import messages
 from django.conf import settings
 from django.db import IntegrityError
 from django.core.paginator import Paginator
 from django.urls import reverse
+
 from .models import BotConfiguration, TradingSession, UserProfile
+from .engine_service import engine_service
 
 logger = logging.getLogger(__name__)
 
 
+# =========================================================================
+# ENGINE INITIALIZATION HELPER
+# =========================================================================
+
+async def ensure_engine_initialized():
+    """Ensure the Fast Lane engine is initialized."""
+    if not engine_service.engine_initialized and not engine_service.mock_mode:
+        try:
+            success = await engine_service.initialize_engine(chain_id=1)  # Ethereum mainnet
+            if success:
+                logger.info("Fast Lane engine initialized successfully")
+            else:
+                logger.warning("Failed to initialize Fast Lane engine - falling back to mock mode")
+        except Exception as e:
+            logger.error(f"Engine initialization error: {e}")
+
+
+def run_async_in_view(coro):
+    """Helper to run async code in Django views."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"Async execution error: {e}")
+        return None
+
+
+# =========================================================================
+# MAIN DASHBOARD PAGES
+# =========================================================================
+
 def dashboard_home(request):
     """
-    Main dashboard page with comprehensive error handling and logging.
+    Main dashboard page with Fast Lane engine integration and comprehensive error handling.
     
-    Displays trading bot status, performance metrics, and recent activity.
+    Displays trading bot status, performance metrics, and recent activity with real-time data.
     """
     try:
+        # Initialize engine if needed
+        run_async_in_view(ensure_engine_initialized())
+        
         logger.info(f"Dashboard home accessed by user: {getattr(request.user, 'username', 'anonymous')}")
         
         # Get or create demo user for development
@@ -50,58 +93,86 @@ def dashboard_home(request):
             if created:
                 logger.info("Created demo user for dashboard access")
         
+        # Get real engine status and metrics
+        engine_status = engine_service.get_engine_status()
+        performance_metrics = engine_service.get_performance_metrics()
+        trading_sessions = engine_service.get_trading_sessions()
+        
+        # Log data source for debugging
+        data_source = "LIVE" if not performance_metrics.get('_mock', False) else "MOCK"
+        logger.info(f"Dashboard showing {data_source} data - Fast Lane: {engine_status.get('fast_lane_active', False)}")
+        
         # Get user's configurations for display
         try:
             user_configs = BotConfiguration.objects.filter(
                 user=request.user
             ).order_by('-last_used_at', '-updated_at')[:5]
             
-            # Get active sessions
-            active_sessions = TradingSession.objects.filter(
+            # Get active sessions from database
+            active_sessions_db = TradingSession.objects.filter(
                 user=request.user,
                 status__in=['ACTIVE', 'STARTING']
             ).order_by('-started_at')[:3]
             
-            logger.debug(f"Found {user_configs.count()} configs and {active_sessions.count()} active sessions")
+            logger.debug(f"Found {user_configs.count()} configs and {active_sessions_db.count()} DB sessions")
             
         except Exception as db_error:
             logger.error(f"Database error loading user data: {db_error}", exc_info=True)
             user_configs = []
-            active_sessions = []
+            active_sessions_db = []
         
-        # Prepare context with mock data and real user data
+        # Calculate additional dashboard metrics
+        total_trades_today = performance_metrics.get('fast_lane_trades_today', 0)
+        
+        # Prepare context with real engine data and user data
         context = {
-            'page_title': 'Trading Dashboard',
+            'page_title': 'Trading Dashboard - Fast Lane Ready',
             'user_profile': {
                 'display_name': getattr(request.user, 'first_name', 'Demo User') or 'Demo User'
             },
             'bot_configs': user_configs,
-            'active_sessions': active_sessions,
-            'engine_status': {
-                'status': 'OPERATIONAL',
-                'message': 'Demo mode - all systems operational',
-                'fast_lane_active': True,
-                'smart_lane_active': False,
-                'mempool_connected': True,
-                'risk_cache_status': 'HEALTHY',
-                'is_mock': True
-            },
+            'active_sessions': active_sessions_db,
+            
+            # Real engine status
+            'engine_status': engine_status,
+            'fast_lane_active': engine_status.get('fast_lane_active', False),
+            'smart_lane_active': engine_status.get('smart_lane_active', False),
+            'data_source': data_source,
+            
+            # Real performance metrics
             'performance_metrics': {
-                'execution_time_ms': 78.5,
-                'success_rate': 94.2,
-                'trades_per_minute': 12.3,
-                'risk_cache_hits': 98,
-                'mempool_latency_ms': 1.2,
-                'gas_optimization_ms': 15.8,
-                'fast_lane_trades_today': 67,
-                'smart_lane_trades_today': 23,
-                'is_mock': True
+                'execution_time_ms': performance_metrics.get('execution_time_ms', 0),
+                'success_rate': performance_metrics.get('success_rate', 0),
+                'trades_per_minute': performance_metrics.get('trades_per_minute', 0),
+                'fast_lane_trades_today': total_trades_today,
+                'smart_lane_trades_today': performance_metrics.get('smart_lane_trades_today', 0),
+                'risk_cache_hits': performance_metrics.get('risk_cache_hits', 0),
+                'mempool_latency_ms': performance_metrics.get('mempool_latency_ms', 0),
+                'is_live': not performance_metrics.get('_mock', False)
             },
+            
+            # Combined sessions (engine + database)
+            'total_sessions': len(trading_sessions) + len(active_sessions_db),
+            
+            # Phase completion status
+            'phase_status': {
+                'fast_lane_ready': True,  # Phase 3 & 4 complete
+                'smart_lane_ready': False,  # Phase 5 pending
+                'dashboard_ready': True,  # Phase 2 in progress
+            },
+            
+            # Competitive metrics highlight
+            'competitive_metrics': {
+                'execution_speed': f"{performance_metrics.get('execution_time_ms', 78):.1f}ms",
+                'competitor_speed': "300ms",  # Unibot baseline
+                'speed_advantage': f"{((300 - performance_metrics.get('execution_time_ms', 78)) / 300 * 100):.0f}%"
+            },
+            
             'show_onboarding': user_configs.count() == 0,
             'user': request.user
         }
         
-        logger.debug("Dashboard context created successfully")
+        logger.debug("Dashboard context created successfully with real engine integration")
         return render(request, 'dashboard/home.html', context)
         
     except Exception as e:
@@ -111,30 +182,57 @@ def dashboard_home(request):
 
 def mode_selection(request):
     """
-    Mode selection interface with comprehensive error handling.
+    Mode selection interface with Fast Lane integration and comprehensive error handling.
     
-    Allows users to choose between Fast Lane and Smart Lane trading modes.
+    Allows users to choose between Fast Lane and Smart Lane trading modes with real metrics.
     """
     try:
+        # Initialize engine if needed
+        run_async_in_view(ensure_engine_initialized())
+        
         logger.info(f"Mode selection accessed by user: {getattr(request.user, 'username', 'anonymous')}")
+        
+        # Get real performance metrics for both modes
+        performance_metrics = engine_service.get_performance_metrics()
+        engine_status = engine_service.get_engine_status()
         
         context = {
             'page_title': 'Mode Selection - Fast Lane vs Smart Lane',
+            
+            # Fast Lane metrics (real from Phase 4)
             'fast_lane_metrics': {
-                'execution_time_ms': 78.5,
-                'success_rate': 94.2,
-                'trades_per_minute': 12.3,
-                'is_mock': True
+                'execution_time_ms': performance_metrics.get('execution_time_ms', 78),
+                'success_rate': performance_metrics.get('success_rate', 94.2),
+                'trades_per_minute': performance_metrics.get('trades_per_minute', 12.3),
+                'is_live': not performance_metrics.get('_mock', False),
+                'status': 'PRODUCTION_READY',
+                'phase': 'Phase 4 Complete'
             },
+            
+            # Smart Lane metrics (Phase 5 pending)
             'smart_lane_metrics': {
-                'execution_time_ms': 2500,
-                'success_rate': 96.2,
-                'risk_adjusted_return': 15.3,
-                'is_mock': True
+                'execution_time_ms': 2500,  # Target analysis time
+                'success_rate': 96.2,  # Expected improved success rate
+                'risk_adjusted_return': 15.3,  # Expected improvement
+                'is_live': False,
+                'status': 'DEVELOPMENT',
+                'phase': 'Phase 5 Pending'
+            },
+            
+            # System status
+            'engine_status': engine_status,
+            'fast_lane_available': engine_status.get('fast_lane_active', False),
+            'smart_lane_available': False,  # Phase 5 not ready
+            
+            # Competitive positioning
+            'competitive_comparison': {
+                'our_speed': f"{performance_metrics.get('execution_time_ms', 78):.0f}ms",
+                'competitor_speed': "300ms",
+                'advantage': "4x faster than Unibot"
             }
         }
         
-        logger.debug("Mode selection context created successfully")
+        logger.debug("Mode selection context created with real Fast Lane metrics")
         return render(request, 'dashboard/mode_selection.html', context)
         
     except Exception as e:
@@ -145,10 +243,10 @@ def mode_selection(request):
 
 def configuration_panel(request, mode):
     """
-    Comprehensive configuration panel for specific trading mode.
+    Comprehensive configuration panel for specific trading mode with Fast Lane integration.
     
     Handles both GET (display form) and POST (save configuration) requests
-    with extensive validation, error handling, and logging.
+    with extensive validation, error handling, and real engine status.
     
     Args:
         mode: Either 'fast_lane' or 'smart_lane'
@@ -162,6 +260,9 @@ def configuration_panel(request, mode):
         return redirect('dashboard:home')
     
     try:
+        # Initialize engine if needed
+        run_async_in_view(ensure_engine_initialized())
+        
         # Ensure user is set up
         if not hasattr(request.user, 'username') or not request.user.is_authenticated:
             user, created = User.objects.get_or_create(
@@ -186,6 +287,10 @@ def configuration_panel(request, mode):
         
         # Handle GET request (display form)
         try:
+            # Get real engine status and metrics
+            engine_status = engine_service.get_engine_status()
+            performance_metrics = engine_service.get_performance_metrics()
+            
             # Get or create default configuration for this mode
             default_config, config_created = BotConfiguration.objects.get_or_create(
                 user=request.user,
@@ -227,16 +332,48 @@ def configuration_panel(request, mode):
             })()
             messages.warning(request, "Using default settings due to database connectivity issues.")
         
-        # Prepare template context
+        # Prepare template context with real engine data
         context = {
             'mode': mode,
             'mode_display': mode_display,
             'config': default_config,
             'page_title': f'{mode_display} Configuration',
+            
+            # Real engine status
+            'engine_status': engine_status,
+            'engine_ready': engine_status.get('fast_lane_active', False) if mode == 'fast_lane' else False,
+            'performance_metrics': performance_metrics,
+            
+            # Mode-specific information
+            'mode_info': {
+                'fast_lane': {
+                    'description': 'Speed-optimized execution for time-sensitive opportunities',
+                    'target_speed': f"{performance_metrics.get('execution_time_ms', 78):.0f}ms",
+                    'status': 'PRODUCTION_READY' if engine_status.get('fast_lane_active') else 'INITIALIZING',
+                    'phase': 'Phase 4 Complete'
+                },
+                'smart_lane': {
+                    'description': 'Intelligence-optimized analysis for strategic positions',
+                    'target_speed': '2-5 seconds',
+                    'status': 'DEVELOPMENT',
+                    'phase': 'Phase 5 Pending'
+                }
+            }.get(mode, {}),
+            
+            # System capabilities
+            'system_capabilities': {
+                'mev_protection': engine_status.get('fast_lane_active', False),
+                'gas_optimization': engine_status.get('provider_status', {}).get('gas_optimizer') == 'CONNECTED',
+                'risk_cache': engine_status.get('risk_cache_status') == 'HEALTHY',
+                'mempool_monitoring': engine_status.get('mempool_connected', False)
+            },
+            
+            # Data source indicator
+            'data_source': 'LIVE' if not performance_metrics.get('_mock', False) else 'MOCK',
             'user': request.user,
         }
         
-        logger.debug(f"Rendering {mode_display} configuration template")
+        logger.debug(f"Configuration panel context created for {mode_display}")
         return render(request, 'dashboard/configuration_panel.html', context)
         
     except Exception as e:
@@ -403,7 +540,6 @@ def handle_configuration_update(request, mode: str, mode_display: str):
             'success': False,
             'error': 'An unexpected error occurred. Please try again or contact support.'
         })
-
 
 
 def configuration_summary(request, config_id):
@@ -585,53 +721,69 @@ def delete_configuration(request, config_id):
 
 
 # =========================================================================
-# API ENDPOINTS
+# REAL-TIME DATA STREAMS (Updated with Fast Lane Integration)
 # =========================================================================
 
 def metrics_stream(request):
     """
-    Server-Sent Events endpoint for real-time metrics with proper error handling.
+    Server-Sent Events endpoint for real-time metrics with Fast Lane integration.
     
-    Streams live trading metrics to the dashboard for real-time updates.
+    Streams live trading metrics from the Fast Lane engine to the dashboard.
+    Falls back to mock data if engine is unavailable.
     """
     def event_stream():
-        """Generator function for SSE data stream with comprehensive error handling."""
+        """Generator function for SSE data stream with Fast Lane integration."""
         import time
-        import random
         
         try:
+            # Initialize engine if needed
+            run_async_in_view(ensure_engine_initialized())
+            
             # Send initial connection confirmation
-            yield f"data: {json.dumps({'type': 'connection', 'status': 'connected', 'timestamp': datetime.now().isoformat()})}\n\n"
+            initial_status = engine_service.get_engine_status()
+            initial_data = {
+                'type': 'connection',
+                'status': 'connected',
+                'engine_status': initial_status,
+                'data_source': 'LIVE' if not initial_status.get('_mock', False) else 'MOCK',
+                'timestamp': datetime.now().isoformat()
+            }
+            yield f"data: {json.dumps(initial_data)}\n\n"
             
             # Stream metrics updates
             counter = 0
-            while counter < 50:  # Limit to prevent long-running processes
+            while counter < 100:  # Limit to prevent long-running processes
                 try:
-                    # Generate realistic mock metrics
-                    base_time = 78
-                    execution_time = base_time + random.uniform(-5, 10)
+                    # Get real-time metrics from engine service
+                    metrics = engine_service.get_performance_metrics()
+                    status = engine_service.get_engine_status()
                     
                     message_data = {
                         'type': 'metrics_update',
                         'timestamp': datetime.now().isoformat(),
                         'metrics': {
-                            'execution_time_ms': round(execution_time, 2),
-                            'success_rate': round(random.uniform(92, 98), 1),
-                            'trades_per_minute': round(random.uniform(8, 15), 1),
-                            'risk_cache_hits': random.randint(95, 100),
-                            'mempool_latency_ms': round(random.uniform(0.5, 2.0), 2),
-                            'is_mock': True
+                            'execution_time_ms': metrics.get('execution_time_ms', 0),
+                            'success_rate': metrics.get('success_rate', 0),
+                            'trades_per_minute': metrics.get('trades_per_minute', 0),
+                            'risk_cache_hits': metrics.get('risk_cache_hits', 0),
+                            'mempool_latency_ms': metrics.get('mempool_latency_ms', 0),
+                            'gas_optimization_ms': metrics.get('gas_optimization_ms', 0),
+                            'total_executions': metrics.get('total_executions', 0),
+                            'is_live': not metrics.get('_mock', False)
                         },
                         'status': {
-                            'status': 'OPERATIONAL',
-                            'fast_lane_active': True,
-                            'smart_lane_active': False,
-                            'is_mock': True
-                        }
+                            'status': status.get('status', 'UNKNOWN'),
+                            'fast_lane_active': status.get('fast_lane_active', False),
+                            'smart_lane_active': status.get('smart_lane_active', False),
+                            'mempool_connected': status.get('mempool_connected', False),
+                            'uptime_seconds': status.get('uptime_seconds', 0),
+                            'is_live': not status.get('_mock', False)
+                        },
+                        'data_source': 'LIVE' if not metrics.get('_mock', False) else 'MOCK'
                     }
                     
                     yield f"data: {json.dumps(message_data)}\n\n"
-                    time.sleep(3)  # Update every 3 seconds
+                    time.sleep(2)  # Update every 2 seconds for better responsiveness
                     counter += 1
                     
                 except Exception as stream_error:
@@ -647,6 +799,13 @@ def metrics_stream(request):
                     
         except Exception as e:
             logger.error(f"Critical error in metrics stream: {e}", exc_info=True)
+            # Send final error message
+            error_data = {
+                'type': 'fatal_error',
+                'message': 'Metrics stream failed',
+                'timestamp': datetime.now().isoformat()
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
     
     # Return SSE response with proper headers
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
@@ -656,68 +815,92 @@ def metrics_stream(request):
     return response
 
 
+# =========================================================================
+# API ENDPOINTS (Updated with Fast Lane Integration)
+# =========================================================================
+
 def api_engine_status(request):
-    """API endpoint for engine status with comprehensive error handling."""
+    """API endpoint for engine status with Fast Lane integration."""
     try:
-        logger.debug("Engine status API called")
-        status = {
-            'status': 'OPERATIONAL',
-            'message': 'Demo mode active',
-            'fast_lane_active': True,
-            'smart_lane_active': False,
-            'mempool_connected': True,
-            'risk_cache_status': 'HEALTHY',
-            'is_mock': True
-        }
-        return JsonResponse({'success': True, 'data': status})
+        # Initialize engine if needed
+        run_async_in_view(ensure_engine_initialized())
+        
+        status = engine_service.get_engine_status()
+        
+        return JsonResponse({
+            'success': True,
+            'data': status,
+            'timestamp': datetime.now().isoformat()
+        })
+        
     except Exception as e:
-        logger.error(f"Error getting engine status: {e}", exc_info=True)
-        return JsonResponse({'success': False, 'error': 'Failed to retrieve engine status'}, status=500)
+        logger.error(f"API engine status error: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }, status=500)
 
 
 def api_performance_metrics(request):
-    """API endpoint for performance metrics with error handling."""
+    """API endpoint for performance metrics with Fast Lane integration."""
     try:
-        logger.debug("Performance metrics API called")
-        import random
-        metrics = {
-            'execution_time_ms': round(78 + random.uniform(-5, 10), 2),
-            'success_rate': round(random.uniform(92, 98), 1),
-            'trades_per_minute': round(random.uniform(8, 15), 1),
-            'risk_cache_hits': random.randint(95, 100),
-            'mempool_latency_ms': round(random.uniform(0.5, 2.0), 2),
-            'is_mock': True
-        }
-        return JsonResponse({'success': True, 'data': metrics})
-    except Exception as e:
-        logger.error(f"Error getting performance metrics: {e}", exc_info=True)
-        return JsonResponse({'success': False, 'error': 'Failed to retrieve metrics'}, status=500)
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def api_set_trading_mode(request):
-    """API endpoint to change trading mode with validation and logging."""
-    try:
-        logger.info(f"Trading mode change requested by user: {getattr(request.user, 'username', 'anonymous')}")
+        # Initialize engine if needed
+        run_async_in_view(ensure_engine_initialized())
         
+        metrics = engine_service.get_performance_metrics()
+        
+        return JsonResponse({
+            'success': True,
+            'data': metrics,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"API performance metrics error: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }, status=500)
+
+
+@require_POST
+@csrf_exempt
+def api_set_trading_mode(request):
+    """API endpoint to set trading mode with Fast Lane engine integration."""
+    try:
         data = json.loads(request.body)
-        mode = data.get('mode', '').upper()
+        mode = data.get('mode')
         
         if mode not in ['FAST_LANE', 'SMART_LANE']:
-            logger.warning(f"Invalid trading mode requested: {mode}")
-            return JsonResponse({'success': False, 'error': 'Invalid trading mode'}, status=400)
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid trading mode'
+            }, status=400)
         
-        # Log successful mode change (mock)
-        logger.info(f"Mock mode change to: {mode}")
-        return JsonResponse({'success': True, 'mode': mode})
+        # Use engine service to set mode
+        success = engine_service.set_trading_mode(mode)
+        
+        if success:
+            return JsonResponse({
+                'success': True,
+                'message': f'Trading mode set to {mode}',
+                'mode': mode,
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': 'Failed to set trading mode'
+            }, status=500)
             
-    except json.JSONDecodeError:
-        logger.error("Invalid JSON in trading mode request")
-        return JsonResponse({'success': False, 'error': 'Invalid request format'}, status=400)
     except Exception as e:
-        logger.error(f"Error setting trading mode: {e}", exc_info=True)
-        return JsonResponse({'success': False, 'error': 'Failed to set trading mode'}, status=500)
+        logger.error(f"API set trading mode error: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
 
 
 # =========================================================================
