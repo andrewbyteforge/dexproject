@@ -1,548 +1,454 @@
 """
-Trading Session Management Views
+Session Management Views for Dashboard
 
-Handles trading session lifecycle: start, stop, monitor, and manage sessions.
-Split from the original monolithic views.py file for better organization.
+Handles trading session lifecycle including start, stop, and status monitoring.
+Integrates with both Fast Lane and Smart Lane execution engines.
 
-File: dashboard/views/sessions.py
+Path: dashboard/views/sessions.py
 """
 
 import logging
-import uuid
-from datetime import datetime
-from typing import Dict, Any, Optional
+import json
+import asyncio
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional, List
+from decimal import Decimal
 
-from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse, JsonResponse, HttpRequest
-from django.contrib import messages
-from django.views.decorators.http import require_POST
+from django.http import JsonResponse, HttpRequest
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
-from django.db import IntegrityError
+from django.db import transaction
+from django.core.exceptions import ValidationError
+from django.utils import timezone as django_timezone
+from django.core.cache import cache
 
-from ..models import BotConfiguration, TradingSession
-from ..engine_service import engine_service
+from trading.models import TradingSession, BotConfiguration
+from dashboard.engine_service import DashboardEngineService
 
 logger = logging.getLogger(__name__)
 
 
-@require_POST
 @login_required
-def start_trading_session(request: HttpRequest) -> HttpResponse:
+@require_http_methods(["POST"])
+def start_session(request: HttpRequest) -> JsonResponse:
     """
-    Start a new trading session with specified configuration.
-    
-    Creates a new trading session using the selected configuration and
-    initializes the appropriate trading engine (Fast Lane or Smart Lane).
+    Start a new trading session with the specified configuration.
     
     Args:
-        request: Django HTTP request object with configuration_id
+        request: HTTP request with session configuration
         
     Returns:
-        Redirect to session monitoring page or error page
+        JsonResponse: Session start status and session ID
     """
     try:
-        logger.info(f"Start trading session requested by user: {request.user.username}")
+        logger.info(f"Starting trading session for user: {request.user.username}")
         
-        # Get configuration ID from POST data
-        config_id = request.POST.get('configuration_id')
+        # Parse request data
+        data = json.loads(request.body) if request.body else {}
+        
+        # Validate required fields
+        mode = data.get('mode', 'FAST_LANE')
+        config_id = data.get('config_id')
+        
         if not config_id:
-            messages.error(request, "Configuration ID is required.")
-            return redirect('dashboard:configuration_list')
+            return JsonResponse({
+                'success': False,
+                'error': 'Configuration ID is required'
+            }, status=400)
         
-        # Get the configuration
+        # Load bot configuration
         try:
-            config = get_object_or_404(BotConfiguration, id=config_id, user=request.user)
+            bot_config = BotConfiguration.objects.get(
+                id=config_id,
+                user=request.user
+            )
         except BotConfiguration.DoesNotExist:
-            logger.warning(f"Configuration {config_id} not found for user: {request.user.username}")
-            messages.error(request, "Configuration not found.")
-            return redirect('dashboard:configuration_list')
+            logger.warning(f"Configuration {config_id} not found for user {request.user.id}")
+            return JsonResponse({
+                'success': False,
+                'error': 'Configuration not found'
+            }, status=404)
         
-        # Validate engine availability
-        engine_status = engine_service.get_engine_status()
-        if not _can_start_session(config, engine_status):
-            error_msg = _get_session_start_error_message(config, engine_status)
-            messages.error(request, error_msg)
-            return redirect('dashboard:configuration_summary', config_id=config_id)
-        
-        # Check for existing active sessions
-        existing_sessions = TradingSession.objects.filter(
+        # Check for existing active session
+        active_session = TradingSession.objects.filter(
             user=request.user,
-            is_active=True
-        ).count()
+            status='RUNNING'
+        ).first()
         
-        max_concurrent_sessions = 3  # Configurable limit
-        if existing_sessions >= max_concurrent_sessions:
-            messages.error(request, 
-                f"Maximum concurrent sessions ({max_concurrent_sessions}) reached. "
-                "Please stop an existing session first."
-            )
-            return redirect('dashboard:configuration_summary', config_id=config_id)
+        if active_session:
+            logger.info(f"User {request.user.username} already has active session: {active_session.session_id}")
+            return JsonResponse({
+                'success': False,
+                'error': 'An active session already exists',
+                'session_id': str(active_session.session_id)
+            }, status=400)
         
-        # Create trading session
-        session = TradingSession.objects.create(
-            user=request.user,
-            configuration=config,
-            session_id=uuid.uuid4(),
-            is_active=True,
-            status='STARTING',
-            trading_mode=config.trading_mode
-        )
-        
-        # Initialize session with engine
-        initialization_result = _initialize_trading_session(session, config)
-        
-        if initialization_result['success']:
-            session.status = 'RUNNING'
-            session.save()
+        # Create new trading session
+        with transaction.atomic():
+            # Get initial capital from config or use default
+            initial_capital = Decimal(str(bot_config.config_data.get('initial_capital', 1000.0)))
             
-            logger.info(f"Trading session started successfully: {session.session_id}")
-            messages.success(request, 
-                f"Trading session started with configuration '{config.name}'"
-            )
-            
-            return redirect('dashboard:session_monitor', session_id=session.session_id)
-        else:
-            # Initialization failed
-            session.status = 'FAILED'
-            session.is_active = False
-            session.error_message = initialization_result.get('error', 'Initialization failed')
-            session.save()
-            
-            logger.error(f"Session initialization failed: {initialization_result.get('error')}")
-            messages.error(request, 
-                f"Failed to start trading session: {initialization_result.get('error')}"
+            session = TradingSession.objects.create(
+                user=request.user,
+                bot_config=bot_config,
+                name=f"{mode} Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                trading_mode=mode,
+                status='INITIALIZING',
+                config_snapshot=bot_config.config_data,
+                starting_balance_usd=initial_capital,
+                current_balance_usd=initial_capital,
+                realized_pnl_usd=Decimal('0.00'),
+                unrealized_pnl_usd=Decimal('0.00'),
+                total_fees_usd=Decimal('0.00'),
+                max_drawdown_usd=Decimal('0.00'),
+                max_drawdown_percent=Decimal('0.00'),
+                average_execution_time_ms=Decimal('0.00'),
+                average_slippage_percent=Decimal('0.00'),
+                trades_executed=0,
+                successful_trades=0,
+                failed_trades=0,
+                total_opportunities=0,
+                error_count=0,
+                daily_loss_usd=Decimal('0.00'),
+                daily_limit_hit=False,
+                emergency_stop_triggered=False
             )
             
-            return redirect('dashboard:configuration_summary', config_id=config_id)
-        
+            logger.info(f"Created session {session.session_id} in database")
+            
+            # Initialize engine service
+            engine_service = DashboardEngineService()
+            
+            # Start the appropriate engine
+            if mode == 'FAST_LANE':
+                # Start Fast Lane engine
+                engine_result = asyncio.run(
+                    engine_service.start_fast_lane_session(
+                        session_id=str(session.session_id),
+                        config=bot_config.config_data
+                    )
+                )
+            else:
+                # Start Smart Lane engine (Phase 5)
+                engine_result = asyncio.run(
+                    engine_service.start_smart_lane_session(
+                        session_id=str(session.session_id),
+                        config=bot_config.config_data
+                    )
+                )
+            
+            # Update session status based on engine result
+            if engine_result.get('success'):
+                session.status = 'RUNNING'
+                session.started_at = django_timezone.now()
+                session.last_activity_at = django_timezone.now()
+                session.save()
+                
+                logger.info(f"Successfully started {mode} session: {session.session_id}")
+                
+                return JsonResponse({
+                    'success': True,
+                    'session_id': str(session.session_id),
+                    'mode': mode,
+                    'status': 'RUNNING',
+                    'message': f'{mode.replace("_", " ").title()} session started successfully',
+                    'started_at': session.started_at.isoformat()
+                })
+            else:
+                # Engine start failed
+                session.status = 'FAILED'
+                session.last_error = engine_result.get('error', 'Unknown engine error')
+                session.stopped_at = django_timezone.now()
+                session.save()
+                
+                logger.error(f"Failed to start engine for session: {session.session_id} - {session.last_error}")
+                
+                return JsonResponse({
+                    'success': False,
+                    'error': engine_result.get('error', 'Failed to start trading engine'),
+                    'session_id': str(session.session_id)
+                }, status=500)
+                
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in request body")
+        return JsonResponse({
+            'success': False,
+            'error': 'Invalid JSON data'
+        }, status=400)
     except Exception as e:
-        logger.error(f"Error starting trading session: {e}", exc_info=True)
-        messages.error(request, "Error starting trading session.")
-        return redirect('dashboard:home')
+        logger.error(f"Unexpected error starting session: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': f'Server error: {str(e)}'
+        }, status=500)
 
 
-@require_POST
 @login_required
-def stop_trading_session(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
+@require_http_methods(["POST"])
+def stop_session(request: HttpRequest) -> JsonResponse:
     """
     Stop an active trading session.
     
-    Gracefully stops the specified trading session, ensuring all pending
-    operations are completed and resources are properly cleaned up.
-    
     Args:
-        request: Django HTTP request object
-        session_id: UUID of the session to stop
+        request: HTTP request with session ID
         
     Returns:
-        Redirect to appropriate page with status message
+        JsonResponse: Session stop status
     """
     try:
-        logger.info(f"Stop trading session requested: {session_id} by user: {request.user.username}")
+        logger.info(f"Stopping trading session for user: {request.user.username}")
         
-        # Get the trading session
-        try:
-            session = get_object_or_404(TradingSession, 
-                session_id=session_id, 
+        # Parse request data
+        data = json.loads(request.body) if request.body else {}
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            # Try to find active session
+            session = TradingSession.objects.filter(
                 user=request.user,
-                is_active=True
-            )
-        except TradingSession.DoesNotExist:
-            logger.warning(f"Active session {session_id} not found for user: {request.user.username}")
-            messages.error(request, "Active trading session not found.")
-            return redirect('dashboard:home')
-        
-        # Stop the session with engine
-        stop_result = _stop_trading_session(session)
-        
-        if stop_result['success']:
-            # Update session status
-            session.is_active = False
-            session.status = 'STOPPED'
-            session.ended_at = datetime.now()
-            session.trades_executed = stop_result.get('trades_executed', 0)
-            session.total_volume = stop_result.get('total_volume', 0)
-            session.save()
+                status='RUNNING'
+            ).first()
             
-            logger.info(f"Trading session stopped successfully: {session_id}")
-            messages.success(request, 
-                f"Trading session stopped. Executed {session.trades_executed} trades."
-            )
+            if not session:
+                logger.warning(f"No active session found for user {request.user.username}")
+                return JsonResponse({
+                    'success': False,
+                    'error': 'No active session found'
+                }, status=404)
         else:
-            # Force stop even if engine stop failed
-            session.is_active = False
-            session.status = 'FORCE_STOPPED'
-            session.ended_at = datetime.now()
-            session.error_message = stop_result.get('error', 'Stop operation failed')
-            session.save()
+            # Load specific session
+            try:
+                session = TradingSession.objects.get(
+                    session_id=session_id,
+                    user=request.user
+                )
+            except TradingSession.DoesNotExist:
+                logger.warning(f"Session {session_id} not found for user {request.user.id}")
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Session not found'
+                }, status=404)
+        
+        # Check if session is already stopped
+        if session.status in ['STOPPED', 'COMPLETED', 'FAILED']:
+            logger.info(f"Session {session.session_id} is already {session.status}")
+            return JsonResponse({
+                'success': False,
+                'error': f'Session is already {session.status.lower()}',
+                'status': session.status
+            }, status=400)
+        
+        # Stop the engine
+        engine_service = DashboardEngineService()
+        engine_result = asyncio.run(
+            engine_service.stop_session(str(session.session_id))
+        )
+        
+        # Update session status
+        with transaction.atomic():
+            session.status = 'STOPPED'
+            session.stopped_at = django_timezone.now()
+            session.last_activity_at = django_timezone.now()
             
-            logger.warning(f"Trading session force stopped: {session_id}")
-            messages.warning(request, 
-                f"Trading session force stopped due to error: {stop_result.get('error')}"
-            )
+            # Calculate final metrics
+            if session.started_at and session.stopped_at:
+                duration = (session.stopped_at - session.started_at).total_seconds()
+                logger.info(f"Session {session.session_id} ran for {duration:.1f} seconds")
+            
+            # Calculate final P&L
+            session.realized_pnl_usd = session.current_balance_usd - session.starting_balance_usd
+            
+            session.save()
         
-        return redirect('dashboard:session_summary', session_id=session_id)
+        logger.info(f"Successfully stopped session: {session.session_id}")
         
-    except Exception as e:
-        logger.error(f"Error stopping trading session {session_id}: {e}", exc_info=True)
-        messages.error(request, "Error stopping trading session.")
-        return redirect('dashboard:home')
-
-
-@login_required
-def session_monitor(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
-    """
-    Real-time monitoring interface for active trading session.
-    
-    Displays live trading session metrics, recent trades, and performance
-    statistics with real-time updates via SSE integration.
-    
-    Args:
-        request: Django HTTP request object
-        session_id: UUID of the session to monitor
-        
-    Returns:
-        HttpResponse with session monitoring template
-    """
-    try:
-        logger.debug(f"Session monitor accessed: {session_id} by user: {request.user.username}")
-        
-        # Get the trading session
-        try:
-            session = get_object_or_404(TradingSession, 
-                session_id=session_id, 
-                user=request.user
-            )
-        except TradingSession.DoesNotExist:
-            logger.warning(f"Session {session_id} not found for user: {request.user.username}")
-            messages.error(request, "Trading session not found.")
-            return redirect('dashboard:home')
-        
-        # Get session metrics from engine
-        session_metrics = _get_session_metrics(session)
-        
-        # Get recent trades (would be from database in real implementation)
-        recent_trades = _get_recent_trades(session, limit=20)
-        
-        # Get performance statistics
-        performance_stats = _calculate_session_performance(session, session_metrics)
-        
-        context = {
-            'page_title': f'Session Monitor - {session.configuration.name}',
-            'session': session,
-            'session_metrics': session_metrics,
-            'recent_trades': recent_trades,
-            'performance_stats': performance_stats,
-            'configuration': session.configuration,
-            'is_active': session.is_active,
-            'can_stop': session.is_active and session.status == 'RUNNING',
-            'real_time_updates': True,  # Enable SSE updates
-            'user': request.user
-        }
-        
-        return render(request, 'dashboard/session_monitor.html', context)
-        
-    except Exception as e:
-        logger.error(f"Error in session monitor for {session_id}: {e}", exc_info=True)
-        messages.error(request, "Error loading session monitor.")
-        return redirect('dashboard:home')
-
-
-@login_required
-def session_summary(request: HttpRequest, session_id: uuid.UUID) -> HttpResponse:
-    """
-    Display comprehensive summary of completed trading session.
-    
-    Shows detailed session results, trade history, performance analysis,
-    and provides options for session review and reporting.
-    
-    Args:
-        request: Django HTTP request object
-        session_id: UUID of the session to summarize
-        
-    Returns:
-        HttpResponse with session summary template
-    """
-    try:
-        logger.debug(f"Session summary accessed: {session_id} by user: {request.user.username}")
-        
-        # Get the trading session
-        try:
-            session = get_object_or_404(TradingSession, 
-                session_id=session_id, 
-                user=request.user
-            )
-        except TradingSession.DoesNotExist:
-            logger.warning(f"Session {session_id} not found for user: {request.user.username}")
-            messages.error(request, "Trading session not found.")
-            return redirect('dashboard:home')
-        
-        # Get comprehensive session data
-        session_data = _get_comprehensive_session_data(session)
-        
-        # Calculate detailed performance metrics
-        performance_analysis = _calculate_detailed_performance(session)
-        
-        # Get trade history
-        trade_history = _get_session_trade_history(session)
-        
-        context = {
-            'page_title': f'Session Summary - {session.configuration.name}',
-            'session': session,
-            'session_data': session_data,
-            'performance_analysis': performance_analysis,
-            'trade_history': trade_history,
-            'configuration': session.configuration,
-            'duration_minutes': _calculate_session_duration(session),
-            'can_restart': not session.is_active,
-            'user': request.user
-        }
-        
-        return render(request, 'dashboard/session_summary.html', context)
-        
-    except Exception as e:
-        logger.error(f"Error in session summary for {session_id}: {e}", exc_info=True)
-        messages.error(request, "Error loading session summary.")
-        return redirect('dashboard:home')
-
-
-@login_required
-def session_list(request: HttpRequest) -> HttpResponse:
-    """
-    Display list of user's trading sessions with filtering and pagination.
-    
-    Shows all trading sessions for the current user with options to filter
-    by status, configuration, date range, and search functionality.
-    
-    Args:
-        request: Django HTTP request object
-        
-    Returns:
-        HttpResponse with session list template
-    """
-    try:
-        logger.debug(f"Session list accessed by user: {request.user.username}")
-        
-        # Get user's sessions
-        sessions = TradingSession.objects.filter(user=request.user).order_by('-created_at')
-        
-        # Apply filters
-        status_filter = request.GET.get('status', '')
-        if status_filter:
-            sessions = sessions.filter(status=status_filter)
-        
-        config_filter = request.GET.get('configuration', '')
-        if config_filter:
-            sessions = sessions.filter(configuration_id=config_filter)
-        
-        mode_filter = request.GET.get('mode', '')
-        if mode_filter:
-            sessions = sessions.filter(trading_mode=mode_filter)
-        
-        # Pagination
-        from django.core.paginator import Paginator
-        paginator = Paginator(sessions, 15)  # Show 15 sessions per page
-        page_number = request.GET.get('page', 1)
-        page_obj = paginator.get_page(page_number)
-        
-        # Get user's configurations for filter dropdown
-        user_configs = BotConfiguration.objects.filter(user=request.user)
-        
-        # Calculate summary statistics
-        stats = _calculate_session_list_stats(sessions)
-        
-        context = {
-            'page_title': 'Trading Sessions',
-            'sessions': page_obj,
-            'user_configs': user_configs,
-            'stats': stats,
-            'filters': {
-                'status': status_filter,
-                'configuration': config_filter,
-                'mode': mode_filter
-            },
-            'user': request.user
-        }
-        
-        return render(request, 'dashboard/session_list.html', context)
-        
-    except Exception as e:
-        logger.error(f"Error in session list: {e}", exc_info=True)
-        messages.error(request, "Error loading session list.")
-        return redirect('dashboard:home')
-
-
-# =========================================================================
-# HELPER FUNCTIONS
-# =========================================================================
-
-def _can_start_session(config: BotConfiguration, engine_status: Dict[str, Any]) -> bool:
-    """Check if a trading session can be started with this configuration."""
-    # Check overall engine status
-    if engine_status.get('status') not in ['RUNNING', 'READY']:
-        return False
-    
-    # Check mode-specific availability
-    if config.trading_mode == 'FAST_LANE':
-        return engine_status.get('fast_lane_active', False)
-    elif config.trading_mode == 'SMART_LANE':
-        return engine_status.get('smart_lane_active', False)
-    
-    return False
-
-
-def _get_session_start_error_message(config: BotConfiguration, engine_status: Dict[str, Any]) -> str:
-    """Get appropriate error message for session start failure."""
-    overall_status = engine_status.get('status', 'UNKNOWN')
-    
-    if overall_status not in ['RUNNING', 'READY']:
-        return f"Trading engine is not ready (Status: {overall_status}). Please wait or contact support."
-    
-    if config.trading_mode == 'FAST_LANE':
-        if not engine_status.get('fast_lane_active', False):
-            return "Fast Lane is not currently active. Please check engine status."
-    elif config.trading_mode == 'SMART_LANE':
-        if not engine_status.get('smart_lane_active', False):
-            return "Smart Lane is not currently active. Phase 5 integration may be in progress."
-    
-    return "Unable to start session with current engine configuration."
-
-
-def _initialize_trading_session(session: TradingSession, config: BotConfiguration) -> Dict[str, Any]:
-    """Initialize trading session with the engine."""
-    try:
-        # This would integrate with the actual engine initialization
-        # For now, simulate successful initialization
-        
-        logger.info(f"Initializing session {session.session_id} with {config.trading_mode} mode")
-        
-        # Simulate initialization based on mode
-        if config.trading_mode == 'FAST_LANE':
-            # Initialize Fast Lane components
-            initialization_time = 2  # seconds
-        else:  # SMART_LANE
-            # Initialize Smart Lane components
-            initialization_time = 5  # seconds
-        
-        return {
+        return JsonResponse({
             'success': True,
-            'initialization_time': initialization_time,
-            'mode': config.trading_mode
-        }
+            'session_id': str(session.session_id),
+            'status': 'STOPPED',
+            'message': 'Trading session stopped successfully',
+            'final_balance': float(session.current_balance_usd),
+            'starting_balance': float(session.starting_balance_usd),
+            'total_trades': session.trades_executed,
+            'successful_trades': session.successful_trades,
+            'failed_trades': session.failed_trades,
+            'pnl': float(session.realized_pnl_usd),
+            'pnl_percent': float((session.realized_pnl_usd / session.starting_balance_usd * 100) if session.starting_balance_usd > 0 else 0),
+            'stopped_at': session.stopped_at.isoformat()
+        })
         
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in request body")
+        return JsonResponse({
+            'success': False,
+            'error': 'Invalid JSON data'
+        }, status=400)
     except Exception as e:
-        logger.error(f"Session initialization error: {e}")
-        return {
+        logger.error(f"Unexpected error stopping session: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': f'Server error: {str(e)}'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def get_session_status(request: HttpRequest) -> JsonResponse:
+    """
+    Get the status of trading sessions.
+    
+    Args:
+        request: HTTP request with optional session_id parameter
+        
+    Returns:
+        JsonResponse: Session status information
+    """
+    try:
+        session_id = request.GET.get('session_id')
+        
+        if session_id:
+            # Get specific session status
+            try:
+                session = TradingSession.objects.get(
+                    session_id=session_id,
+                    user=request.user
+                )
+                
+                # Get real-time metrics from engine
+                engine_service = DashboardEngineService()
+                engine_metrics = asyncio.run(
+                    engine_service.get_session_metrics(str(session.session_id))
+                )
+                
+                # Build comprehensive session status
+                session_data = {
+                    'session_id': str(session.session_id),
+                    'name': session.name,
+                    'mode': session.trading_mode,
+                    'status': session.status,
+                    'started_at': session.started_at.isoformat() if session.started_at else None,
+                    'stopped_at': session.stopped_at.isoformat() if session.stopped_at else None,
+                    'last_activity': session.last_activity_at.isoformat() if session.last_activity_at else None,
+                    
+                    # Financial metrics
+                    'current_balance': float(session.current_balance_usd),
+                    'starting_balance': float(session.starting_balance_usd),
+                    'realized_pnl': float(session.realized_pnl_usd),
+                    'unrealized_pnl': float(session.unrealized_pnl_usd),
+                    'total_pnl': float(session.realized_pnl_usd + session.unrealized_pnl_usd),
+                    'pnl_percent': float(
+                        ((session.current_balance_usd - session.starting_balance_usd) / 
+                         session.starting_balance_usd * 100)
+                        if session.starting_balance_usd > 0 else 0
+                    ),
+                    
+                    # Trading metrics
+                    'trades_executed': session.trades_executed,
+                    'successful_trades': session.successful_trades,
+                    'failed_trades': session.failed_trades,
+                    'success_rate': float(
+                        (session.successful_trades / session.trades_executed * 100)
+                        if session.trades_executed > 0 else 0
+                    ),
+                    'total_opportunities': session.total_opportunities,
+                    'opportunity_conversion': float(
+                        (session.trades_executed / session.total_opportunities * 100)
+                        if session.total_opportunities > 0 else 0
+                    ),
+                    
+                    # Performance metrics
+                    'avg_execution_time_ms': float(session.average_execution_time_ms),
+                    'avg_slippage_percent': float(session.average_slippage_percent),
+                    'total_fees': float(session.total_fees_usd),
+                    'max_drawdown_usd': float(session.max_drawdown_usd),
+                    'max_drawdown_percent': float(session.max_drawdown_percent),
+                    
+                    # Risk metrics
+                    'daily_loss': float(session.daily_loss_usd),
+                    'daily_limit_hit': session.daily_limit_hit,
+                    'emergency_stop_triggered': session.emergency_stop_triggered,
+                    'error_count': session.error_count,
+                    'last_error': session.last_error,
+                    
+                    # Engine metrics (real-time)
+                    'engine_metrics': engine_metrics
+                }
+                
+                return JsonResponse({
+                    'success': True,
+                    'session': session_data
+                })
+                
+            except TradingSession.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Session not found'
+                }, status=404)
+        
+        else:
+            # Get all user sessions
+            sessions = TradingSession.objects.filter(
+                user=request.user
+            ).order_by('-created_at')[:10]  # Last 10 sessions
+            
+            # Get active session if exists
+            active_session = sessions.filter(status='RUNNING').first()
+            
+            # Build session list
+            session_list = []
+            for s in sessions:
+                session_list.append({
+                    'session_id': str(s.session_id),
+                    'name': s.name,
+                    'mode': s.trading_mode,
+                    'status': s.status,
+                    'started_at': s.started_at.isoformat() if s.started_at else None,
+                    'stopped_at': s.stopped_at.isoformat() if s.stopped_at else None,
+                    'pnl': float(s.realized_pnl_usd),
+                    'pnl_percent': float(
+                        ((s.current_balance_usd - s.starting_balance_usd) / 
+                         s.starting_balance_usd * 100)
+                        if s.starting_balance_usd > 0 else 0
+                    ),
+                    'trades': s.trades_executed,
+                    'success_rate': float(
+                        (s.successful_trades / s.trades_executed * 100)
+                        if s.trades_executed > 0 else 0
+                    ),
+                    'duration_minutes': float(
+                        ((s.stopped_at or django_timezone.now()) - s.started_at).total_seconds() / 60
+                        if s.started_at else 0
+                    )
+                })
+            
+            return JsonResponse({
+                'success': True,
+                'active_session': {
+                    'session_id': str(active_session.session_id),
+                    'mode': active_session.trading_mode,
+                    'status': active_session.status,
+                    'current_balance': float(active_session.current_balance_usd),
+                    'pnl': float(active_session.realized_pnl_usd),
+                    'trades_executed': active_session.trades_executed,
+                    'started_at': active_session.started_at.isoformat() if active_session.started_at else None
+                } if active_session else None,
+                'recent_sessions': session_list,
+                'total_sessions': TradingSession.objects.filter(user=request.user).count(),
+                'total_pnl_all_time': float(
+                    TradingSession.objects.filter(user=request.user).aggregate(
+                        total=models.Sum('realized_pnl_usd')
+                    )['total'] or 0
+                )
+            })
+            
+    except Exception as e:
+        logger.error(f"Error getting session status: {e}", exc_info=True)
+        return JsonResponse({
             'success': False,
             'error': str(e)
-        }
+        }, status=500)
 
 
-def _stop_trading_session(session: TradingSession) -> Dict[str, Any]:
-    """Stop trading session with the engine."""
-    try:
-        # This would integrate with the actual engine stop procedures
-        logger.info(f"Stopping session {session.session_id}")
-        
-        # Simulate session stopping
-        return {
-            'success': True,
-            'trades_executed': session.trades_executed,
-            'total_volume': float(session.total_volume or 0),
-            'stop_time': datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Session stop error: {e}")
-        return {
-            'success': False,
-            'error': str(e)
-        }
-
-
-def _get_session_metrics(session: TradingSession) -> Dict[str, Any]:
-    """Get real-time session metrics from engine."""
-    # This would integrate with real engine metrics
-    return {
-        'trades_executed': session.trades_executed,
-        'successful_trades': session.trades_executed - 1,  # Mock
-        'failed_trades': 1,  # Mock
-        'total_volume': float(session.total_volume or 0),
-        'average_execution_time': 85.5,  # Mock
-        'success_rate': 95.0,  # Mock
-        'uptime_seconds': (datetime.now() - session.created_at).total_seconds(),
-        'is_active': session.is_active
-    }
-
-
-def _get_recent_trades(session: TradingSession, limit: int = 20) -> list:
-    """Get recent trades for the session."""
-    # This would query actual trade records
-    return []  # Mock - would return list of trade objects
-
-
-def _calculate_session_performance(session: TradingSession, metrics: Dict[str, Any]) -> Dict[str, Any]:
-    """Calculate session performance statistics."""
-    return {
-        'total_trades': metrics.get('trades_executed', 0),
-        'success_rate': metrics.get('success_rate', 0),
-        'average_execution_time': metrics.get('average_execution_time', 0),
-        'total_volume': metrics.get('total_volume', 0),
-        'profit_loss': 0.0,  # Would be calculated from actual trades
-        'efficiency_score': 85.0  # Mock calculation
-    }
-
-
-def _get_comprehensive_session_data(session: TradingSession) -> Dict[str, Any]:
-    """Get comprehensive session data for summary."""
-    return {
-        'session_id': str(session.session_id),
-        'configuration_name': session.configuration.name,
-        'trading_mode': session.trading_mode,
-        'status': session.status,
-        'created_at': session.created_at,
-        'ended_at': session.ended_at,
-        'duration': _calculate_session_duration(session),
-        'trades_executed': session.trades_executed,
-        'total_volume': float(session.total_volume or 0)
-    }
-
-
-def _calculate_detailed_performance(session: TradingSession) -> Dict[str, Any]:
-    """Calculate detailed performance analysis."""
-    return {
-        'execution_efficiency': 85.0,  # Mock
-        'risk_management_score': 92.0,  # Mock
-        'strategy_effectiveness': 78.0,  # Mock
-        'overall_performance': 85.0  # Mock
-    }
-
-
-def _get_session_trade_history(session: TradingSession) -> list:
-    """Get trade history for the session."""
-    # This would query actual trade records
-    return []  # Mock - would return detailed trade history
-
-
-def _calculate_session_duration(session: TradingSession) -> int:
-    """Calculate session duration in minutes."""
-    if session.ended_at:
-        duration = session.ended_at - session.created_at
-    else:
-        duration = datetime.now() - session.created_at
-    
-    return int(duration.total_seconds() / 60)
-
-
-def _calculate_session_list_stats(sessions) -> Dict[str, Any]:
-    """Calculate statistics for session list."""
-    total_sessions = sessions.count()
-    active_sessions = sessions.filter(is_active=True).count()
-    completed_sessions = sessions.filter(status='STOPPED').count()
-    
-    return {
-        'total_sessions': total_sessions,
-        'active_sessions': active_sessions,
-        'completed_sessions': completed_sessions,
-        'success_rate': 85.0 if total_sessions > 0 else 0  # Mock calculation
-    }
+# Import models at the end to avoid circular imports
+from django.db import models
