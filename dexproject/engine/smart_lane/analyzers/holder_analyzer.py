@@ -209,7 +209,7 @@ class HolderAnalyzer(BaseAnalyzer):
             logger.debug(
                 f"Holder distribution analysis completed for {token_address[:10]}... "
                 f"Risk: {risk_score:.3f}, Confidence: {confidence:.3f} "
-                f"({len(whale_holders)} whales, {distribution_metrics.get('total_holders', 0)} total holders, "
+                f"({len(whale_holders)} whales, {getattr(distribution_metrics, 'total_holders', 0)} total holders, "
                 f"{analysis_time_ms:.1f}ms)"
             )
             

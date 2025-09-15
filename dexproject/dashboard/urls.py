@@ -33,4 +33,12 @@ urlpatterns = [
     
     # Performance metrics API endpoint
     path('api/performance-metrics/', views.get_performance_metrics, name='performance_metrics'),
+    
+    # Smart Lane URLs
+    path('smart-lane/', views.smart_lane_dashboard, name='smart_lane_dashboard'),
+    path('smart-lane/demo/', views.smart_lane_demo, name='smart_lane_demo'),
+    path('smart-lane/config/', views.smart_lane_config, name='smart_lane_config'),
+    path('smart-lane/analyze/', views.smart_lane_analyze, name='smart_lane_analyze'),
+    path('api/smart-lane/analyze/', views.api_smart_lane_analyze, name='api_smart_lane_analyze'),
+    path('api/smart-lane/thought-log/<str:analysis_id>/', views.api_get_thought_log, name='api_get_thought_log'),
 ]

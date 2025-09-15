@@ -130,6 +130,16 @@ class TechnicalAnalyzer(BaseAnalyzer):
         """Get the risk category this analyzer handles."""
         return RiskCategory.TECHNICAL_ANALYSIS
     
+
+    def _normalize_price_data(self, price_data: Any) -> List[Dict[str, Any]]:
+        """Normalize price data to a consistent format."""
+        if isinstance(price_data, list):
+            return price_data
+        elif isinstance(price_data, dict):
+            return price_data.get('prices', [])
+        else:
+            return []
+
     async def analyze(
         self,
         token_address: str,
@@ -166,8 +176,9 @@ class TechnicalAnalyzer(BaseAnalyzer):
             self.performance_stats['cache_misses'] += 1
             
             # Get price and volume data
-            price_data = await self._fetch_price_data(token_address, context)
-            if not price_data or len(price_data.get('prices', [])) < 24:
+            raw_price_data = await self._fetch_price_data(token_address, context)
+        price_data = self._normalize_price_data(raw_price_data)
+            if not price_data or (isinstance(price_data, dict) and len(price_data.get('prices', [])) < 24) or (isinstance(price_data, list) and len(price_data) < 24):
                 return self._create_error_risk_score("Insufficient price data for technical analysis")
             
             # Perform multi-timeframe analysis
@@ -1072,6 +1083,137 @@ class TechnicalAnalyzer(BaseAnalyzer):
             return "EXCELLENT"
 
 
+
+    async def analyze_timeframe(
+        self,
+        token_address: str,
+        timeframe: str,
+        context: Dict[str, Any]
+    ) -> Optional[TechnicalSignal]:
+        """
+        Analyze a specific timeframe.
+        
+        Args:
+            timeframe: Timeframe to analyze (e.g., '5m', '1h')
+            context: Market context with price data
+            
+        Returns:
+            Technical signal for the timeframe or None
+        """
+        try:
+            # Get price data for timeframe
+            price_data = await self._fetch_price_data(timeframe, context)
+            
+            if not price_data:
+                return None
+            
+            # Calculate indicators
+            indicators = self._calculate_indicators(price_data)
+            
+            # Determine signal
+            signal_type = self._determine_signal(indicators)
+            strength = self._calculate_signal_strength(indicators)
+            
+            # Find price targets
+            price_targets = self._find_price_targets(price_data, indicators)
+            
+            return TechnicalSignal(
+                timeframe=timeframe,
+                signal=signal_type,
+                strength=strength,
+                indicators=indicators,
+                price_targets=price_targets,
+                confidence=strength * 0.8  # Confidence based on signal strength
+            )
+            
+        except Exception as e:
+            logger.warning(f"Error analyzing timeframe {timeframe}: {e}")
+            return None
+    
+    async def _fetch_price_data(
+        self,
+        timeframe: str,
+        context: Dict[str, Any]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Fetch price data for the timeframe."""
+        # Mock implementation - would fetch real data in production
+        await asyncio.sleep(0.01)
+        
+        # Return mock price data
+        current_price = context.get('current_price', 1.0)
+        return [
+            {'open': current_price * 0.98, 'high': current_price * 1.02, 
+             'low': current_price * 0.97, 'close': current_price, 'volume': 1000}
+            for _ in range(20)
+        ]
+    
+    def _calculate_indicators(
+        self,
+        price_data: List[Dict[str, Any]]
+    ) -> Dict[str, float]:
+        """Calculate technical indicators."""
+        if not price_data:
+            return {}
+        
+        closes = [p['close'] for p in price_data]
+        
+        # Simple indicators (mock)
+        sma = sum(closes) / len(closes) if closes else 0
+        current = closes[-1] if closes else 0
+        
+        return {
+            'sma': sma,
+            'rsi': 50.0,  # Mock RSI
+            'macd': 0.01,  # Mock MACD
+            'volume_trend': 1.0,
+            'price_vs_sma': (current - sma) / sma if sma else 0
+        }
+    
+    def _determine_signal(self, indicators: Dict[str, float]) -> str:
+        """Determine signal from indicators."""
+        if not indicators:
+            return 'NEUTRAL'
+        
+        price_vs_sma = indicators.get('price_vs_sma', 0)
+        rsi = indicators.get('rsi', 50)
+        
+        if price_vs_sma > 0.02 and rsi < 70:
+            return 'BUY'
+        elif price_vs_sma < -0.02 and rsi > 30:
+            return 'SELL'
+        else:
+            return 'NEUTRAL'
+    
+    def _calculate_signal_strength(self, indicators: Dict[str, float]) -> float:
+        """Calculate signal strength."""
+        if not indicators:
+            return 0.5
+        
+        # Simple strength calculation
+        price_vs_sma = abs(indicators.get('price_vs_sma', 0))
+        strength = min(1.0, price_vs_sma * 10)
+        
+        return max(0.1, min(1.0, strength))
+    
+    def _find_price_targets(
+        self,
+        price_data: List[Dict[str, Any]],
+        indicators: Dict[str, float]
+    ) -> Dict[str, float]:
+        """Find support and resistance levels."""
+        if not price_data:
+            return {}
+        
+        highs = [p['high'] for p in price_data]
+        lows = [p['low'] for p in price_data]
+        current = price_data[-1]['close']
+        
+        return {
+            'support': min(lows) if lows else current * 0.95,
+            'resistance': max(highs) if highs else current * 1.05,
+            'take_profit': current * 1.1,
+            'stop_loss': current * 0.95
+        }
 # Export the analyzer class
 __all__ = [
     'TechnicalAnalyzer', 

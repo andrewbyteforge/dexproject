@@ -1,477 +1,129 @@
-{% extends 'dashboard/base.html' %}
+{% extends "dashboard/base.html" %}
 {% load static %}
 
-{% block title %}Smart Lane Demo - DEX Trading Bot{% endblock %}
-
-{% block extra_css %}
-<style>
-/* Smart Lane specific styling */
-.smart-lane-accent {
-    color: #6f42c1 !important;
-}
-
-.smart-lane-card {
-    border-left: 4px solid #6f42c1;
-}
-
-.thought-log-step {
-    background: rgba(111, 66, 193, 0.05);
-    border-left: 3px solid #6f42c1;
-    padding: 0.75rem;
-    margin-bottom: 0.5rem;
-    border-radius: 0 0.375rem 0.375rem 0;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 0.875rem;
-    line-height: 1.4;
-}
-
-.risk-score-bar {
-    height: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    background: #e9ecef;
-}
-
-.risk-score-fill {
-    height: 100%;
-    transition: width 0.3s ease;
-}
-
-.risk-low { background: linear-gradient(90deg, #28a745, #20c997); }
-.risk-medium { background: linear-gradient(90deg, #ffc107, #fd7e14); }
-.risk-high { background: linear-gradient(90deg, #fd7e14, #dc3545); }
-
-.signal-badge {
-    font-size: 0.75rem;
-    padding: 0.25rem 0.5rem;
-}
-
-.analysis-section {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.5rem;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-}
-
-.demo-header {
-    background: linear-gradient(135deg, #6f42c1, #563d7c);
-    color: white;
-    padding: 2rem;
-    border-radius: 0.5rem;
-    margin-bottom: 2rem;
-    text-align: center;
-}
-
-.mock-indicator {
-    position: fixed;
-    top: 80px;
-    right: 20px;
-    z-index: 1050;
-    background: rgba(255, 193, 7, 0.9);
-    color: #856404;
-    padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border: 1px solid #ffeaa7;
-}
-</style>
-{% endblock %}
+{% block title %}Smart Lane Demo - {{ page_title }}{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <!-- Mock Mode Indicator -->
-    {% if is_mock_mode %}
-    <div class="mock-indicator">
-        <i class="bi bi-info-circle me-1"></i>
-        Demo Mode - Using Mock Data
-    </div>
-    {% endif %}
-
-    <!-- Demo Header -->
-    <div class="demo-header">
-        <h1 class="display-4 mb-3">
-            <i class="bi bi-cpu me-3"></i>Smart Lane Intelligence Demo
-        </h1>
-        <p class="lead mb-4">
-            Experience comprehensive AI-powered token analysis with full transparency
-        </p>
-        <div class="row text-center">
-            <div class="col-md-3">
-                <div class="h3 mb-1">{{ smart_lane_metrics.analysis_time_ms }}ms</div>
-                <small>Analysis Time</small>
-            </div>
-            <div class="col-md-3">
-                <div class="h3 mb-1">{{ smart_lane_metrics.success_rate|floatformat:1 }}%</div>
-                <small>Success Rate</small>
-            </div>
-            <div class="col-md-3">
-                <div class="h3 mb-1">{{ smart_lane_metrics.cache_hit_ratio }}%</div>
-                <small>Cache Hit Ratio</small>
-            </div>
-            <div class="col-md-3">
-                <div class="h3 mb-1">{{ smart_lane_metrics.analyses_today }}</div>
-                <small>Analyses Today</small>
-            </div>
-        </div>
-    </div>
-
-    {% if demo_analysis %}
-    <!-- Analysis Overview -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card card-glass smart-lane-card">
-                <div class="card-header">
+<div class="container-fluid py-4">
+    <h1 class="h3 mb-4">
+        <i class="bi bi-brain text-primary me-2"></i>
+        Smart Lane Intelligence Demo
+    </h1>
+    
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
                     <h5 class="mb-0">
-                        <i class="bi bi-search smart-lane-accent me-2"></i>
-                        Analysis Overview
+                        <i class="bi bi-cpu me-2"></i>
+                        Analysis Example
                     </h5>
                 </div>
                 <div class="card-body">
+                    {% if demo_analysis %}
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>Token Information</h6>
+                            <p class="text-muted mb-1">Address: {{ demo_analysis.token_address }}</p>
+                            <p class="text-muted">Symbol: {{ demo_analysis.token_symbol }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Analysis Results</h6>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Risk Score:</span>
+                                <span class="badge bg-success">{{ demo_analysis.risk_score|floatformat:2 }}</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span>Confidence:</span>
+                                <span class="badge bg-info">{{ demo_analysis.confidence|floatformat:0 }}%</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>Action:</span>
+                                <span class="badge bg-primary">{{ demo_analysis.action }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    
                     <div class="row">
-                        <div class="col-md-8">
-                            <h6 class="text-muted mb-2">TOKEN ADDRESS</h6>
-                            <code class="fs-6">{{ demo_token_address }}</code>
-                            
-                            <div class="mt-3">
-                                <h6 class="text-muted mb-2">ANALYSIS TIMESTAMP</h6>
-                                <span class="text-light">{{ demo_analysis.timestamp }}</span>
-                            </div>
-                            
-                            <div class="mt-3">
-                                <h6 class="text-muted mb-2">ANALYSIS ID</h6>
-                                <code class="small">{{ demo_analysis.analysis_id }}</code>
-                            </div>
+                        <div class="col-md-4">
+                            <h6>Position Sizing</h6>
+                            <p class="fs-4 text-primary">{{ demo_analysis.position_size }}%</p>
                         </div>
-                        <div class="col-md-4 text-end">
-                            <div class="mb-3">
-                                <h6 class="text-muted mb-2">OVERALL RISK SCORE</h6>
-                                <div class="h2 smart-lane-accent mb-2">
-                                    {{ demo_analysis.overall_risk_score|floatformat:3 }}
-                                </div>
-                                <div class="risk-score-bar">
-                                    <div class="risk-score-fill 
-                                        {% if demo_analysis.overall_risk_score < 0.4 %}risk-low
-                                        {% elif demo_analysis.overall_risk_score < 0.7 %}risk-medium
-                                        {% else %}risk-high{% endif %}"
-                                        style="width: {{ demo_analysis.overall_risk_score|floatformat:0|add:'%' }}">
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="mb-3">
-                                <h6 class="text-muted mb-2">CONFIDENCE</h6>
-                                <div class="h4 text-success">
-                                    {{ demo_analysis.confidence_score|floatformat:1|add:'%' }}
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <h6 class="text-muted mb-2">RECOMMENDATION</h6>
-                                <span class="badge 
-                                    {% if demo_analysis.recommended_action == 'BUY' %}bg-success
-                                    {% elif demo_analysis.recommended_action == 'HOLD' %}bg-warning
-                                    {% elif demo_analysis.recommended_action == 'AVOID' %}bg-danger
-                                    {% else %}bg-secondary{% endif %} fs-6 px-3 py-2">
-                                    {{ demo_analysis.recommended_action }}
-                                </span>
-                            </div>
+                        <div class="col-md-4">
+                            <h6>Stop Loss</h6>
+                            <p class="fs-4 text-danger">-{{ demo_analysis.stop_loss }}%</p>
+                        </div>
+                        <div class="col-md-4">
+                            <h6>Take Profits</h6>
+                            <p class="fs-6 text-success">
+                                {% for tp in demo_analysis.take_profits %}
+                                +{{ tp }}%{% if not forloop.last %}, {% endif %}
+                                {% endfor %}
+                            </p>
                         </div>
                     </div>
+                    
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            Analysis completed in {{ demo_analysis.analysis_time }}ms
+                        </small>
+                    </div>
+                    {% else %}
+                    <p>No analysis data available. Run an analysis to see results.</p>
+                    {% endif %}
                 </div>
             </div>
         </div>
-    </div>
-
-    <!-- Risk Category Analysis -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="analysis-section">
-                <h5 class="smart-lane-accent mb-4">
-                    <i class="bi bi-shield-check me-2"></i>Risk Category Analysis
-                </h5>
-                
-                <div class="row">
-                    {% for category, details in demo_analysis.risk_categories.items %}
-                    <div class="col-md-6 col-lg-4 mb-4">
-                        <div class="card card-glass h-100">
-                            <div class="card-body">
-                                <h6 class="card-title text-uppercase small text-muted mb-3">
-                                    {{ category|title|replace:'_',' ' }}
-                                </h6>
-                                
-                                <div class="mb-3">
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
-                                        <span class="small text-muted">Risk Score</span>
-                                        <span class="fw-bold">{{ details.score|floatformat:2 }}</span>
-                                    </div>
-                                    <div class="risk-score-bar">
-                                        <div class="risk-score-fill 
-                                            {% if details.score < 0.4 %}risk-low
-                                            {% elif details.score < 0.7 %}risk-medium
-                                            {% else %}risk-high{% endif %}"
-                                            style="width: {{ details.score|floatformat:0|add:'%' }}">
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <span class="small text-muted">Confidence</span>
-                                        <span class="fw-bold text-success">{{ details.confidence|floatformat:0|add:'%' }}</span>
-                                    </div>
-                                </div>
-                                
-                                <div>
-                                    <p class="card-text small text-light">{{ details.details }}</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Technical Signals -->
-    {% if demo_analysis.technical_signals %}
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="analysis-section">
-                <h5 class="smart-lane-accent mb-4">
-                    <i class="bi bi-graph-up me-2"></i>Technical Analysis Signals
-                </h5>
-                
-                <div class="row">
-                    {% for signal in demo_analysis.technical_signals %}
-                    <div class="col-md-6 mb-3">
-                        <div class="card card-glass">
-                            <div class="card-body">
-                                <div class="d-flex justify-content-between align-items-start mb-2">
-                                    <h6 class="card-title mb-0">{{ signal.signal_type|title|replace:'_',' ' }}</h6>
-                                    <span class="signal-badge badge 
-                                        {% if signal.strength > 0.7 %}bg-success
-                                        {% elif signal.strength > 0.5 %}bg-warning
-                                        {% else %}bg-secondary{% endif %}">
-                                        {{ signal.timeframe }}
-                                    </span>
-                                </div>
-                                
-                                <div class="mb-2">
-                                    <small class="text-muted">Signal Strength: </small>
-                                    <span class="fw-bold">{{ signal.strength|floatformat:1 }}</span>
-                                </div>
-                                
-                                <p class="card-text small text-light mb-0">{{ signal.description }}</p>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Position Sizing & Exit Strategy -->
-    <div class="row mb-4">
-        {% if demo_analysis.position_sizing %}
-        <div class="col-md-6">
-            <div class="analysis-section h-100">
-                <h5 class="smart-lane-accent mb-4">
-                    <i class="bi bi-pie-chart me-2"></i>Position Sizing Strategy
-                </h5>
-                
-                <div class="mb-4">
-                    <h6 class="text-muted mb-2">RECOMMENDED SIZE</h6>
-                    <div class="h3 text-info mb-2">
-                        {{ demo_analysis.position_sizing.recommended_size_percent|floatformat:1 }}%
-                    </div>
-                    <small class="text-muted">of portfolio</small>
-                </div>
-                
-                <div class="mb-4">
-                    <h6 class="text-muted mb-2">RISK PER TRADE</h6>
-                    <div class="h5 text-warning">
-                        {{ demo_analysis.position_sizing.risk_per_trade_percent|floatformat:1 }}%
-                    </div>
-                </div>
-                
-                <div>
-                    <h6 class="text-muted mb-2">REASONING</h6>
-                    <p class="text-light small">{{ demo_analysis.position_sizing.reasoning }}</p>
-                </div>
-            </div>
-        </div>
-        {% endif %}
         
-        {% if demo_analysis.exit_strategy %}
-        <div class="col-md-6">
-            <div class="analysis-section h-100">
-                <h5 class="smart-lane-accent mb-4">
-                    <i class="bi bi-box-arrow-right me-2"></i>Exit Strategy
-                </h5>
-                
-                <div class="mb-3">
-                    <h6 class="text-muted mb-2">STRATEGY TYPE</h6>
-                    <span class="badge bg-info fs-6 px-3 py-2">
-                        {{ demo_analysis.exit_strategy.strategy_name|title|replace:'_',' ' }}
-                    </span>
+        <div class="col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clock-history me-2"></i>
+                        Smart Lane Features
+                    </h5>
                 </div>
-                
-                <div class="row mb-4">
-                    <div class="col-6">
-                        <h6 class="text-muted mb-2">STOP LOSS</h6>
-                        <div class="h4 text-danger">
-                            {{ demo_analysis.exit_strategy.stop_loss_percent|floatformat:1 }}%
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <h6 class="text-muted mb-2">TAKE PROFIT</h6>
-                        <div class="h4 text-success">
-                            +{{ demo_analysis.exit_strategy.take_profit_percent|floatformat:1 }}%
-                        </div>
-                    </div>
-                </div>
-                
-                <div>
-                    <h6 class="text-muted mb-2">DESCRIPTION</h6>
-                    <p class="text-light small">{{ demo_analysis.exit_strategy.description }}</p>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- AI Thought Log -->
-    {% if demo_analysis.thought_log %}
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="analysis-section">
-                <h5 class="smart-lane-accent mb-4">
-                    <i class="bi bi-lightbulb me-2"></i>AI Thought Log
-                    <small class="text-muted ms-2">(Full Reasoning Transparency)</small>
-                </h5>
-                
-                <div class="thought-log-container">
-                    {% for step in demo_analysis.thought_log %}
-                    <div class="thought-log-step">
-                        <i class="bi bi-arrow-right-short smart-lane-accent me-2"></i>{{ step }}
-                    </div>
-                    {% endfor %}
-                </div>
-                
-                <div class="mt-3 text-center">
-                    <small class="text-muted">
-                        <i class="bi bi-clock me-1"></i>
-                        Analysis completed in {{ demo_analysis.analysis_time_ms }}ms
-                    </small>
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Demo Actions -->
-    <div class="row">
-        <div class="col-12 text-center">
-            <div class="card card-glass">
                 <div class="card-body">
-                    <h5 class="card-title smart-lane-accent mb-3">Ready to Get Started?</h5>
-                    <p class="card-text text-muted mb-4">
-                        Experience the power of Smart Lane analysis with your own trading configurations
-                    </p>
+                    <ul class="list-unstyled">
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle text-success me-2"></i>
+                            8 Risk Analysis Categories
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle text-success me-2"></i>
+                            AI Thought Log Generation
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle text-success me-2"></i>
+                            Advanced Position Sizing
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle text-success me-2"></i>
+                            Multi-Level Exit Strategies
+                        </li>
+                        <li class="mb-2">
+                            <i class="bi bi-check-circle text-success me-2"></i>
+                            Sub-500ms Analysis Time
+                        </li>
+                    </ul>
                     
-                    <div class="d-flex gap-3 justify-content-center">
-                        <a href="{% url 'dashboard:configuration_panel' mode='smart_lane' %}" 
-                           class="btn btn-primary btn-lg">
-                            <i class="bi bi-gear me-2"></i>Configure Smart Lane
-                        </a>
-                        
-                        <a href="{% url 'dashboard:mode_selection' %}" 
-                           class="btn btn-outline-light btn-lg">
-                            <i class="bi bi-arrow-left me-2"></i>Back to Mode Selection
-                        </a>
-                        
-                        <button class="btn btn-outline-info btn-lg" onclick="runNewAnalysis()">
-                            <i class="bi bi-arrow-clockwise me-2"></i>Run New Analysis
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    {% else %}
-    <!-- Error State -->
-    <div class="row">
-        <div class="col-12">
-            <div class="card card-glass border-warning">
-                <div class="card-body text-center">
-                    <i class="bi bi-exclamation-triangle text-warning display-4 mb-3"></i>
-                    <h5 class="card-title">Demo Analysis Unavailable</h5>
-                    <p class="card-text text-muted mb-4">
-                        Unable to load Smart Lane demo analysis. 
-                        {% if error %}Error: {{ error }}{% endif %}
-                    </p>
+                    <hr>
                     
-                    <div class="d-flex gap-3 justify-content-center">
-                        <button class="btn btn-warning" onclick="location.reload()">
-                            <i class="bi bi-arrow-clockwise me-2"></i>Retry Demo
-                        </button>
-                        
-                        <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-light">
-                            <i class="bi bi-arrow-left me-2"></i>Back to Mode Selection
+                    <div class="d-grid gap-2">
+                        <a href="{% url 'dashboard:smart_lane_analyze' %}" class="btn btn-primary">
+                            <i class="bi bi-play-circle me-2"></i>
+                            Run Analysis
+                        </a>
+                        <a href="{% url 'dashboard:smart_lane_config' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-gear me-2"></i>
+                            Configure
                         </a>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    {% endif %}
 </div>
-
-<script>
-// Demo interaction functions
-function runNewAnalysis() {
-    // Show loading state
-    const button = event.target;
-    const originalText = button.innerHTML;
-    button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Analyzing...';
-    button.disabled = true;
-    
-    // Simulate analysis time then reload
-    setTimeout(() => {
-        location.reload();
-    }, 2000);
-}
-
-// Initialize demo features
-document.addEventListener('DOMContentLoaded', function() {
-    // Add hover effects to risk category cards
-    const riskCards = document.querySelectorAll('.analysis-section .card');
-    riskCards.forEach(card => {
-        card.addEventListener('mouseenter', function() {
-            this.style.transform = 'translateY(-2px)';
-            this.style.transition = 'transform 0.2s ease';
-        });
-        
-        card.addEventListener('mouseleave', function() {
-            this.style.transform = 'translateY(0)';
-        });
-    });
-    
-    // Animate risk score bars
-    const riskBars = document.querySelectorAll('.risk-score-fill');
-    riskBars.forEach(bar => {
-        const width = bar.style.width;
-        bar.style.width = '0%';
-        setTimeout(() => {
-            bar.style.width = width;
-        }, 500);
-    });
-});
-</script>
 {% endblock %}

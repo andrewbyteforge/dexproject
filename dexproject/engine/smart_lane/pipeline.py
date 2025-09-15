@@ -266,9 +266,9 @@ class SmartLanePipeline:
             strategy_start = time.time()
             
             # Generate position sizing recommendation
-            position_size = await self.position_sizer.calculate_position_size(
-                risk_score=analysis_result.overall_risk_score,
-                confidence=analysis_result.overall_confidence,
+            position_size = self.position_sizer.calculate_position_size(
+                overall_overall_risk_score=analysis_result.overall_risk_score,
+                analysis_confidence=analysis_result.overall_confidence,
                 technical_signals=technical_signals,
                 context=context
             )
