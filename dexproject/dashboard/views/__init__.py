@@ -231,6 +231,71 @@ except ImportError:
             }
         })
 
+# SMART LANE IMPORTS - NEW ADDITION
+try:
+    from .smart_lane import (
+        smart_lane_dashboard,
+        smart_lane_demo,
+        smart_lane_config,
+        smart_lane_analyze,
+        api_smart_lane_analyze,
+        api_get_thought_log,
+    )
+    print("Smart Lane views imported successfully")
+except ImportError as e:
+    print(f"Warning: Could not import Smart Lane views: {e}")
+    
+    # Create placeholder functions if smart_lane.py doesn't exist
+    @login_required
+    def smart_lane_dashboard(request):
+        """Placeholder Smart Lane dashboard."""
+        return render(request, 'dashboard/smart_lane_dashboard.html', {
+            'page_title': 'Smart Lane Intelligence',
+            'smart_lane_enabled': False,
+            'error': 'Smart Lane views not available'
+        })
+    
+    @login_required
+    def smart_lane_demo(request):
+        """Placeholder Smart Lane demo."""
+        return render(request, 'dashboard/smart_lane_demo.html', {
+            'page_title': 'Smart Lane Demo',
+            'smart_lane_enabled': False,
+            'error': 'Smart Lane views not available'
+        })
+    
+    @login_required
+    def smart_lane_config(request):
+        """Placeholder Smart Lane config."""
+        return render(request, 'dashboard/smart_lane_config.html', {
+            'page_title': 'Smart Lane Configuration',
+            'error': 'Smart Lane views not available'
+        })
+    
+    @login_required
+    def smart_lane_analyze(request):
+        """Placeholder Smart Lane analyze."""
+        return render(request, 'dashboard/smart_lane_analyze.html', {
+            'page_title': 'Smart Lane Analysis',
+            'error': 'Smart Lane views not available'
+        })
+    
+    @login_required
+    def api_smart_lane_analyze(request):
+        """Placeholder Smart Lane API."""
+        return JsonResponse({
+            'success': False,
+            'error': 'Smart Lane API not available'
+        })
+    
+    @login_required
+    def api_get_thought_log(request, analysis_id):
+        """Placeholder thought log API."""
+        return JsonResponse({
+            'success': False,
+            'error': 'Thought log API not available'
+        })
+
 # Export all views
 __all__ = [
     # Main views
@@ -253,4 +318,12 @@ __all__ = [
     
     # Performance metrics
     'get_performance_metrics',
+    
+    # Smart Lane views - NEW ADDITION
+    'smart_lane_dashboard',
+    'smart_lane_demo',
+    'smart_lane_config',
+    'smart_lane_analyze',
+    'api_smart_lane_analyze',
+    'api_get_thought_log',
 ]
