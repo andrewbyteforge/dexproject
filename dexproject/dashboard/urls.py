@@ -1,11 +1,11 @@
 """
 Dashboard URL Configuration
 
-URL patterns for the dashboard app including main dashboard,
+Complete URL patterns for the dashboard app including main dashboard,
 mode selection, configuration panels, and API endpoints.
 
-FIXED: Updated 'configuration' URL name to 'configuration_panel' to match 
-       the reverse() calls in views.py and removed duplicate patterns.
+COMPLETE VERSION: Now includes all Smart Lane functionality since 
+the functions have been added to views.py
 
 File: dashboard/urls.py
 """
@@ -21,63 +21,61 @@ urlpatterns = [
     # Core user interface pages for dashboard navigation and functionality
     # =========================================================================
     
-    # Dashboard home page - main landing page with overview metrics
+    # Dashboard home page - main landing page with dual-engine overview
     path('', views.dashboard_home, name='home'),
     
     # Mode selection page - choose between Fast Lane and Smart Lane trading
     path('mode-selection/', views.mode_selection, name='mode_selection'),
     
     # Configuration panel for selected trading mode (Fast Lane or Smart Lane)
-    # FIXED: Changed name from 'configuration' to 'configuration_panel' 
-    # to match the reverse() calls in configuration_summary view
     path('config/<str:mode>/', views.configuration_panel, name='configuration_panel'),
     
     # =========================================================================
     # CONFIGURATION MANAGEMENT
-    # URLs for managing saved bot configurations
+    # URLs for managing saved bot configurations (enhanced for dual-engine)
     # =========================================================================
     
     # Configuration summary page - shows details of a saved configuration
     path('config/summary/<int:config_id>/', views.configuration_summary, name='configuration_summary'),
     
-    # Configuration list page - shows all user's saved configurations
+    # Configuration list page - shows all user's saved configurations with filtering
     path('configs/', views.configuration_list, name='configuration_list'), 
     
     # Delete configuration with confirmation
     path('config/delete/<int:config_id>/', views.delete_configuration, name='delete_configuration'),
     
     # =========================================================================
-    # REAL-TIME DATA STREAMS (SERVER-SENT EVENTS)
-    # WebSocket-like streaming endpoints for live dashboard updates
+    # SMART LANE SPECIFIC PAGES
+    # URLs for Smart Lane analysis and demonstration features
     # =========================================================================
     
-    # Server-sent events endpoint for streaming real-time trading metrics
-    path('metrics/stream/', views.metrics_stream, name='metrics_stream'),
+    # Smart Lane demonstration page with sample analysis
+    path('smart-lane/demo/', views.smart_lane_demo, name='smart_lane_demo'),
     
     # =========================================================================
-    # JSON API ENDPOINTS
-    # RESTful API endpoints for AJAX calls and external integrations
+    # API ENDPOINTS
+    # RESTful API endpoints for real-time data and engine control
     # =========================================================================
     
-    # Get current trading engine status and health metrics
+    # Engine status API - comprehensive status for both Fast Lane and Smart Lane
     path('api/engine-status/', views.api_engine_status, name='api_engine_status'),
     
-    # Get performance metrics data for charts and dashboards
+    # Performance metrics API - metrics for both engines
     path('api/metrics/', views.api_performance_metrics, name='api_metrics'),
     
-    # Set active trading mode (Fast Lane vs Smart Lane)
+    # Trading mode control API - set mode for dual-engine system
     path('api/set-mode/', views.api_set_trading_mode, name='api_set_mode'),
     
+    # Smart Lane analysis API - comprehensive token analysis
+    path('api/smart-lane/analyze/', views.api_smart_lane_analyze, name='api_smart_lane_analyze'),
+    
     # =========================================================================
-    # TRADING SESSION MANAGEMENT
-    # Control active trading sessions and their lifecycle
+    # REAL-TIME DATA STREAMS
+    # Server-Sent Events endpoints for live dashboard updates
     # =========================================================================
     
-    # Start a new trading session with specified configuration
-    path('session/start/', views.start_trading_session, name='start_session'),
-    
-    # Stop an active trading session by session ID
-    path('session/stop/<uuid:session_id>/', views.stop_trading_session, name='stop_session'),
+    # Live dashboard feed - SSE stream with dual-engine metrics
+    path('metrics/stream/', views.metrics_stream, name='metrics_stream'),
     
     # =========================================================================
     # DEVELOPMENT AND DEBUGGING ENDPOINTS
@@ -92,15 +90,4 @@ urlpatterns = [
     
     # Minimal dashboard without template dependencies for emergency access
     path('minimal/', views.minimal_dashboard, name='minimal_dashboard'),
-    
-    # =========================================================================
-    # COMMENTED DEBUG ENDPOINTS
-    # Additional debug endpoints that can be enabled during development
-    # =========================================================================
-    
-    # Debug mode selection page (uncomment if needed for testing)
-    # path('debug-mode-selection/', views.debug_mode_selection, name='debug_mode_selection'),
-    
-    # Debug configuration panel (uncomment if needed for testing)
-    # path('debug-config/<str:mode>/', views.debug_configuration_panel, name='debug_configuration'),
 ]

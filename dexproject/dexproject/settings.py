@@ -213,13 +213,20 @@ ENGINE_CIRCUIT_BREAKER_RECOVERY_TIME = int(os.getenv('ENGINE_CIRCUIT_BREAKER_REC
 DASHBOARD_METRICS_CACHE_TIMEOUT = int(os.getenv('DASHBOARD_METRICS_CACHE_TIMEOUT', '30'))
 DASHBOARD_SSE_UPDATE_INTERVAL = int(os.getenv('DASHBOARD_SSE_UPDATE_INTERVAL', '2'))
 
-# Phase Development Control
-SMART_LANE_ENABLED = os.getenv('SMART_LANE_ENABLED', 'False').lower() == 'true'  # Phase 5
+# Phase Development Control - Define these variables early
+SMART_LANE_ENABLED = os.getenv('SMART_LANE_ENABLED', 'True').lower() == 'true'  # Phase 5
 MEMPOOL_MONITORING_ENABLED = os.getenv('MEMPOOL_MONITORING_ENABLED', 'True').lower() == 'true'  # Phase 3
 
 # Development and Testing
 FORCE_MOCK_DATA = os.getenv('FORCE_MOCK_DATA', 'False').lower() == 'true'
 ENGINE_DEBUG_LOGGING = os.getenv('ENGINE_DEBUG_LOGGING', 'False').lower() == 'true'
+
+# Additional Phase 5 settings
+SMART_LANE_MOCK_MODE = os.getenv('SMART_LANE_MOCK_MODE', 'True').lower() == 'true'
+SMART_LANE_CACHE_TTL = int(os.getenv('SMART_LANE_CACHE_TTL', '300'))  # 5 minutes cache
+
+# SSE Configuration for dashboard
+SSE_MAX_ITERATIONS = int(os.getenv('SSE_MAX_ITERATIONS', '150'))  # Allow longer SSE streams
 
 # =============================================================================
 # BLOCKCHAIN RPC CONFIGURATION 
@@ -518,6 +525,10 @@ if TESTNET_MODE:
     except ImportError as e:
         print(f"Warning: Could not import testnet configuration: {e}")
 
+# =============================================================================
+# FINAL VALIDATION AND CONFIGURATION SUMMARY
+# =============================================================================
+
 # Final validation
 if TRADING_MODE == 'LIVE' and TESTNET_MODE:
     raise ValueError("Cannot use LIVE trading mode with TESTNET_MODE=True")
@@ -539,3 +550,5 @@ if DEBUG:
     print(f"   Has Wallet Key: {'Yes' if WALLET_PRIVATE_KEY else 'No (will create dev wallet)'}")
     print(f"   Fast Lane Target: {FAST_LANE_TARGET_MS}ms")
     print(f"   Smart Lane: {'Enabled' if SMART_LANE_ENABLED else 'Phase 5 Pending'}")
+    print(f"   Smart Lane Mock Mode: {'Yes' if SMART_LANE_MOCK_MODE else 'No'}")
+    print(f"   SSE Max Iterations: {SSE_MAX_ITERATIONS}")

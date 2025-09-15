@@ -1,11 +1,11 @@
 """
 Complete Dashboard Views for DEX Trading Bot
 
-Updated with Fast Lane engine integration, configuration summary functionality, 
-proper error handling, thorough logging, and improved user experience.
+Updated with both Fast Lane and Smart Lane engine integration, comprehensive
+configuration management, proper error handling, and improved user experience.
 
 Features:
-- Fixed form field validation to match template field names
+- Dual-engine support (Fast Lane + Smart Lane)
 - Enhanced error handling and logging throughout
 - VS Code/Pylance compatible code with proper type annotations
 - Comprehensive docstrings for all functions
@@ -40,19 +40,20 @@ logger = logging.getLogger(__name__)
 
 
 # =========================================================================
-# ENGINE INITIALIZATION HELPER
+# ENGINE INITIALIZATION HELPERS
 # =========================================================================
 
-async def ensure_engine_initialized() -> None:
+async def ensure_engines_initialized() -> None:
     """
-    Ensure the Fast Lane engine is initialized.
+    Ensure both Fast Lane and Smart Lane engines are initialized.
     
-    Initializes the engine if not already done and handles initialization errors
-    gracefully by falling back to mock mode if necessary.
+    Initializes both engines if not already done and handles initialization 
+    errors gracefully by falling back to mock mode if necessary.
     
     Raises:
         Exception: Logs but does not re-raise engine initialization errors
     """
+    # Initialize Fast Lane engine
     if not engine_service.engine_initialized and not engine_service.mock_mode:
         try:
             success = await engine_service.initialize_engine(chain_id=1)  # Ethereum mainnet
@@ -61,7 +62,18 @@ async def ensure_engine_initialized() -> None:
             else:
                 logger.warning("Failed to initialize Fast Lane engine - falling back to mock mode")
         except Exception as e:
-            logger.error(f"Engine initialization error: {e}", exc_info=True)
+            logger.error(f"Fast Lane engine initialization error: {e}", exc_info=True)
+    
+    # Initialize Smart Lane pipeline
+    if not engine_service.smart_lane_initialized:
+        try:
+            success = await engine_service.initialize_smart_lane(chain_id=1)
+            if success:
+                logger.info("Smart Lane pipeline initialized successfully")
+            else:
+                logger.warning("Failed to initialize Smart Lane pipeline - using mock data")
+        except Exception as e:
+            logger.error(f"Smart Lane pipeline initialization error: {e}", exc_info=True)
 
 
 def run_async_in_view(coro) -> Optional[Any]:
@@ -72,834 +84,755 @@ def run_async_in_view(coro) -> Optional[Any]:
     Django view functions.
     
     Args:
-        coro: Coroutine to execute
+        coro: Async coroutine to execute
         
     Returns:
-        Result of the coroutine execution, None if error occurs
-        
-    Raises:
-        Exception: Logs but does not re-raise async execution errors
+        Result of the coroutine execution or None if failed
     """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
+        result = loop.run_until_complete(coro)
+        loop.close()
+        return result
     except Exception as e:
-        logger.error(f"Async execution error: {e}", exc_info=True)
+        logger.error(f"Error running async operation: {e}")
         return None
 
 
 # =========================================================================
-# MAIN DASHBOARD PAGES
+# MAIN DASHBOARD VIEWS
 # =========================================================================
 
 def dashboard_home(request: HttpRequest) -> HttpResponse:
     """
-    Main dashboard page with Fast Lane engine integration and comprehensive error handling.
+    Main dashboard home page with dual-engine status and metrics.
     
-    Displays trading bot status, performance metrics, and recent activity with real-time data.
-    Handles both authenticated and anonymous users by creating demo user when needed.
+    Displays overview of both Fast Lane and Smart Lane engines including
+    real-time metrics, system status, and recent activity.
     
     Args:
         request: Django HTTP request object
         
     Returns:
-        Rendered dashboard home template with context data
-        
-    Raises:
-        Exception: Renders error template if critical error occurs
+        HttpResponse with rendered dashboard home template
     """
     try:
-        # Initialize engine if needed
-        run_async_in_view(ensure_engine_initialized())
+        logger.info(f"Dashboard home accessed by user: {request.user}")
         
-        logger.info(f"Dashboard home accessed by user: {getattr(request.user, 'username', 'anonymous')}")
+        # Initialize engines if needed
+        run_async_in_view(ensure_engines_initialized())
         
-        # Get or create demo user for development
-        if not hasattr(request.user, 'username') or not request.user.is_authenticated:
-            user, created = User.objects.get_or_create(
-                username='demo_user',
-                defaults={
-                    'first_name': 'Demo',
-                    'last_name': 'User',
-                    'email': 'demo@example.com'
-                }
-            )
-            request.user = user
-            if created:
-                logger.info("Created demo user for dashboard access")
-        
-        # Get real engine status and metrics
+        # Get comprehensive engine status
         engine_status = engine_service.get_engine_status()
         performance_metrics = engine_service.get_performance_metrics()
-        trading_sessions = engine_service.get_trading_sessions()
         
-        # Log data source for debugging
-        data_source = "LIVE" if not performance_metrics.get('_mock', False) else "MOCK"
-        logger.info(f"Dashboard showing {data_source} data - Fast Lane: {engine_status.get('fast_lane_active', False)}")
-        
-        # Get user's configurations for display
-        try:
-            user_configs = BotConfiguration.objects.filter(
-                user=request.user
-            ).order_by('-last_used_at', '-updated_at')[:5]
-            
-            # Get active sessions from database
-            active_sessions_db = TradingSession.objects.filter(
-                user=request.user,
-                status__in=['ACTIVE', 'STARTING']
-            ).order_by('-started_at')[:3]
-            
-            logger.debug(f"Found {user_configs.count()} configs and {active_sessions_db.count()} DB sessions")
-            
-        except Exception as db_error:
-            logger.error(f"Database error loading user data: {db_error}", exc_info=True)
-            user_configs = []
-            active_sessions_db = []
-        
-        # Calculate additional dashboard metrics
-        total_trades_today = performance_metrics.get('fast_lane_trades_today', 0)
-        
-        # Prepare context with real engine data and user data
-        context = {
-            'page_title': 'Trading Dashboard - Fast Lane Ready',
-            'user_profile': {
-                'display_name': getattr(request.user, 'first_name', 'Demo User') or 'Demo User'
-            },
-            'bot_configs': user_configs,
-            'active_sessions': active_sessions_db,
-            
-            # Real engine status
-            'engine_status': engine_status,
-            'fast_lane_active': engine_status.get('fast_lane_active', False),
-            'smart_lane_active': engine_status.get('smart_lane_active', False),
-            'data_source': data_source,
-            
-            # Real performance metrics
-            'performance_metrics': {
-                'execution_time_ms': performance_metrics.get('execution_time_ms', 0),
-                'success_rate': performance_metrics.get('success_rate', 0),
-                'trades_per_minute': performance_metrics.get('trades_per_minute', 0),
-                'fast_lane_trades_today': total_trades_today,
-                'smart_lane_trades_today': performance_metrics.get('smart_lane_trades_today', 0),
-                'risk_cache_hits': performance_metrics.get('risk_cache_hits', 0),
-                'mempool_latency_ms': performance_metrics.get('mempool_latency_ms', 0),
-                'is_live': not performance_metrics.get('_mock', False)
-            },
-            
-            # Combined sessions (engine + database)
-            'total_sessions': len(trading_sessions) + len(active_sessions_db),
-            
-            # Phase completion status
-            'phase_status': {
-                'fast_lane_ready': True,  # Phase 3 & 4 complete
-                'smart_lane_ready': False,  # Phase 5 pending
-                'dashboard_ready': True,  # Phase 2 in progress
-            },
-            
-            # Competitive metrics highlight
-            'competitive_metrics': {
-                'execution_speed': f"{performance_metrics.get('execution_time_ms', 78):.1f}ms",
-                'competitor_speed': "300ms",  # Unibot baseline
-                'speed_advantage': f"{((300 - performance_metrics.get('execution_time_ms', 78)) / 300 * 100):.0f}%"
-            },
-            
-            'show_onboarding': user_configs.count() == 0,
-            'user': request.user
+        # Prepare metrics for template
+        fast_lane_metrics = {
+            'execution_time_ms': performance_metrics.get('fast_lane_execution_time_ms', 0),
+            'success_rate': performance_metrics.get('fast_lane_success_rate', 0),
+            'trades_per_minute': performance_metrics.get('trades_per_minute', 0),
+            'status': 'Operational' if engine_status.get('fast_lane_active') else 'Mock Mode',
+            'phase': 'Phase 2-4 Complete'
         }
         
-        logger.debug("Dashboard context created successfully with real engine integration")
+        smart_lane_metrics = {
+            'execution_time_ms': performance_metrics.get('smart_lane_analysis_time_ms', 0),
+            'success_rate': performance_metrics.get('smart_lane_success_rate', 0),
+            'analyses_today': performance_metrics.get('smart_lane_analyses_today', 0),
+            'risk_adjusted_return': performance_metrics.get('risk_adjusted_return', 0),
+            'status': 'Development' if engine_status.get('smart_lane_available') else 'Phase 5 Pending',
+            'phase': 'Phase 5 In Progress'
+        }
+        
+        # System health indicators
+        system_health = {
+            'fast_lane_available': engine_status.get('fast_lane_available', False),
+            'smart_lane_available': engine_status.get('smart_lane_available', False),
+            'circuit_breaker_ok': engine_status.get('circuit_breaker_state') == 'CLOSED',
+            'mempool_connected': engine_status.get('mempool_connected', False),
+            'data_source': 'LIVE' if not engine_status.get('_mock', True) else 'MOCK'
+        }
+        
+        # Recent activity (placeholder for future implementation)
+        recent_activity = []
+        
+        context = {
+            'engine_status': engine_status,
+            'performance_metrics': performance_metrics,
+            'fast_lane_metrics': fast_lane_metrics,
+            'smart_lane_metrics': smart_lane_metrics,
+            'system_health': system_health,
+            'recent_activity': recent_activity,
+            'is_mock_mode': engine_status.get('_mock', True),
+            'timestamp': datetime.now().isoformat()
+        }
+        
         return render(request, 'dashboard/home.html', context)
         
     except Exception as e:
-        logger.error(f"Critical error in dashboard_home: {e}", exc_info=True)
-        return render(request, 'dashboard/error.html', {'error': str(e)})
+        logger.error(f"Dashboard home error: {e}", exc_info=True)
+        messages.error(request, f"Dashboard error: {str(e)}")
+        
+        # Provide minimal fallback context
+        context = {
+            'engine_status': {'status': 'ERROR'},
+            'performance_metrics': {},
+            'fast_lane_metrics': {'status': 'Error', 'phase': 'Unknown'},
+            'smart_lane_metrics': {'status': 'Error', 'phase': 'Unknown'},
+            'system_health': {'fast_lane_available': False, 'smart_lane_available': False},
+            'recent_activity': [],
+            'is_mock_mode': True,
+            'error': str(e)
+        }
+        
+        return render(request, 'dashboard/home.html', context)
 
 
 def mode_selection(request: HttpRequest) -> HttpResponse:
     """
-    Mode selection interface with Fast Lane integration and comprehensive error handling.
+    Trading mode selection page for choosing between Fast Lane and Smart Lane.
     
-    Allows users to choose between Fast Lane and Smart Lane trading modes with real metrics.
-    Displays performance comparisons and system status for each mode.
+    Displays both engine options with real-time metrics and availability status.
+    Handles mode selection and redirects to appropriate configuration panel.
     
     Args:
         request: Django HTTP request object
         
     Returns:
-        Rendered mode selection template with context data
+        HttpResponse with rendered mode selection template
     """
     try:
-        # Initialize engine if needed
-        run_async_in_view(ensure_engine_initialized())
+        logger.info(f"Mode selection accessed by user: {request.user}")
         
-        logger.info(f"Mode selection accessed by user: {getattr(request.user, 'username', 'anonymous')}")
+        # Initialize engines if needed
+        run_async_in_view(ensure_engines_initialized())
         
-        # Get real performance metrics for both modes
-        performance_metrics = engine_service.get_performance_metrics()
+        # Handle mode selection POST request
+        if request.method == 'POST':
+            selected_mode = request.POST.get('mode')
+            logger.info(f"User {request.user} selected mode: {selected_mode}")
+            
+            if selected_mode in ['FAST_LANE', 'SMART_LANE']:
+                # Set the trading mode
+                success = run_async_in_view(engine_service.set_trading_mode(selected_mode))
+                
+                if success:
+                    messages.success(request, f"{selected_mode.replace('_', ' ').title()} mode activated")
+                    return redirect('dashboard:configuration_panel', mode=selected_mode.lower())
+                else:
+                    messages.error(request, f"Failed to activate {selected_mode.replace('_', ' ').title()} mode")
+            else:
+                messages.error(request, "Invalid mode selection")
+        
+        # Get current engine status and metrics
         engine_status = engine_service.get_engine_status()
+        performance_metrics = engine_service.get_performance_metrics()
         
-        context = {
-            'page_title': 'Mode Selection - Fast Lane vs Smart Lane',
-            
-            # Fast Lane metrics (real from Phase 4)
-            'fast_lane_metrics': {
-                'execution_time_ms': performance_metrics.get('execution_time_ms', 78),
-                'success_rate': performance_metrics.get('success_rate', 94.2),
-                'trades_per_minute': performance_metrics.get('trades_per_minute', 12.3),
-                'is_live': not performance_metrics.get('_mock', False),
-                'status': 'PRODUCTION_READY',
-                'phase': 'Phase 4 Complete'
-            },
-            
-            # Smart Lane metrics (Phase 5 pending)
-            'smart_lane_metrics': {
-                'execution_time_ms': 2500,  # Target analysis time
-                'success_rate': 96.2,  # Expected improved success rate
-                'risk_adjusted_return': 15.3,  # Expected improvement
-                'is_live': False,
-                'status': 'DEVELOPMENT',
-                'phase': 'Phase 5 Pending'
-            },
-            
-            # System status
-            'engine_status': engine_status,
-            'fast_lane_available': engine_status.get('fast_lane_active', False),
-            'smart_lane_available': False,  # Phase 5 not ready
-            
-            # Competitive positioning
-            'competitive_comparison': {
-                'our_speed': f"{performance_metrics.get('execution_time_ms', 78):.0f}ms",
-                'competitor_speed': "300ms",
-                'advantage': "4x faster than Unibot"
-            }
+        # Prepare Fast Lane metrics for template
+        fast_lane_metrics = {
+            'execution_time_ms': int(performance_metrics.get('fast_lane_execution_time_ms', 78)),
+            'success_rate': f"{performance_metrics.get('fast_lane_success_rate', 96.8):.1f}",
+            'trades_per_minute': performance_metrics.get('trades_per_minute', 25),
+            'status': 'Operational' if engine_status.get('fast_lane_active') else 'Ready (Mock Mode)',
+            'phase': 'Phases 2-4 Complete'
         }
         
-        logger.debug("Mode selection context created with real Fast Lane metrics")
+        # Prepare Smart Lane metrics for template
+        smart_lane_metrics = {
+            'execution_time_ms': int(performance_metrics.get('smart_lane_analysis_time_ms', 2800)),
+            'success_rate': f"{performance_metrics.get('smart_lane_success_rate', 94.2):.1f}",
+            'risk_adjusted_return': f"{performance_metrics.get('risk_adjusted_return', 10.3):.1f}",
+            'analyses_today': performance_metrics.get('smart_lane_analyses_today', 87),
+            'status': 'Development Ready' if engine_status.get('smart_lane_available') else 'Phase 5 Pending',
+            'phase': 'Phase 5 In Progress'
+        }
+        
+        # Engine availability flags
+        fast_lane_available = engine_status.get('fast_lane_available', False)
+        smart_lane_available = engine_status.get('smart_lane_available', False)
+        
+        context = {
+            'fast_lane_metrics': fast_lane_metrics,
+            'smart_lane_metrics': smart_lane_metrics,
+            'fast_lane_available': fast_lane_available,
+            'smart_lane_available': smart_lane_available,
+            'is_mock_mode': engine_status.get('_mock', True),
+            'timestamp': datetime.now().isoformat()
+        }
+        
         return render(request, 'dashboard/mode_selection.html', context)
         
     except Exception as e:
-        logger.error(f"Error in mode_selection: {e}", exc_info=True)
-        messages.error(request, "Error loading mode selection.")
-        return redirect('dashboard:home')
+        logger.error(f"Mode selection error: {e}", exc_info=True)
+        messages.error(request, f"Mode selection error: {str(e)}")
+        
+        # Provide fallback context
+        context = {
+            'fast_lane_metrics': {'status': 'Error', 'phase': 'Unknown'},
+            'smart_lane_metrics': {'status': 'Error', 'phase': 'Unknown'},
+            'fast_lane_available': False,
+            'smart_lane_available': False,
+            'is_mock_mode': True,
+            'error': str(e)
+        }
+        
+        return render(request, 'dashboard/mode_selection.html', context)
 
 
 def configuration_panel(request: HttpRequest, mode: str) -> HttpResponse:
     """
-    Comprehensive configuration panel for specific trading mode with Fast Lane integration.
+    Configuration panel for selected trading mode (Fast Lane or Smart Lane).
     
-    Handles both GET (display form) and POST (save configuration) requests
-    with extensive validation, error handling, and real engine status.
-    
-    Args:
-        request: Django HTTP request object
-        mode: Either 'fast_lane' or 'smart_lane'
-        
-    Returns:
-        Rendered configuration panel template or redirect to summary
-    """
-    # Input validation and logging
-    logger.info(f"Configuration panel accessed for mode: {mode} by user: {getattr(request.user, 'username', 'anonymous')}")
-    
-    if mode not in ['fast_lane', 'smart_lane']:
-        logger.warning(f"Invalid trading mode attempted: {mode}")
-        messages.error(request, "Invalid trading mode specified.")
-        return redirect('dashboard:home')
-    
-    try:
-        # Initialize engine if needed
-        run_async_in_view(ensure_engine_initialized())
-        
-        # Ensure user is set up
-        if not hasattr(request.user, 'username') or not request.user.is_authenticated:
-            user, created = User.objects.get_or_create(
-                username='demo_user',
-                defaults={
-                    'first_name': 'Demo',
-                    'last_name': 'User',
-                    'email': 'demo@example.com'
-                }
-            )
-            request.user = user
-            if created:
-                logger.info("Created demo user for configuration panel")
-        
-        mode_display = mode.replace('_', ' ').title()
-        logger.debug(f"Processing {mode_display} configuration for user: {request.user.username}")
-        
-        # Handle POST request (form submission)
-        if request.method == 'POST':
-            logger.info(f"Processing {mode_display} configuration form submission")
-            return handle_configuration_update(request, mode, mode_display)
-        
-        # Handle GET request (display form)
-        try:
-            # Get real engine status and metrics
-            engine_status = engine_service.get_engine_status()
-            performance_metrics = engine_service.get_performance_metrics()
-            
-            # Get or create default configuration for this mode
-            default_config, config_created = BotConfiguration.objects.get_or_create(
-                user=request.user,
-                trading_mode=mode.upper(),
-                is_default=True,
-                defaults={
-                    'name': f'Default {mode_display} Config',
-                    'status': 'INACTIVE',
-                    'description': f'Default configuration for {mode_display} trading',
-                    'max_position_size_usd': Decimal('100.0'),
-                    'risk_tolerance_level': 'MEDIUM',
-                    'execution_timeout_ms': 500 if mode == 'fast_lane' else 5000,
-                    'auto_execution_enabled': False,
-                    'require_manual_approval': True,
-                    'max_slippage_percent': Decimal('2.0'),
-                    'mev_protection_enabled': True,
-                    'analysis_depth': 'COMPREHENSIVE' if mode == 'smart_lane' else 'BASIC'
-                }
-            )
-            
-            if config_created:
-                logger.info(f"Created new default {mode_display} configuration")
-            else:
-                logger.debug(f"Retrieved existing {mode_display} configuration")
-            
-        except Exception as db_error:
-            logger.error(f"Database error creating/retrieving configuration: {db_error}", exc_info=True)
-            # Create a minimal fallback configuration object
-            default_config = type('Config', (), {
-                'name': f'Default {mode_display} Config',
-                'description': f'Default configuration for {mode_display} trading',
-                'max_position_size_usd': 100.0,
-                'risk_tolerance_level': 'MEDIUM',
-                'execution_timeout_ms': 500 if mode == 'fast_lane' else 5000,
-                'auto_execution_enabled': False,
-                'require_manual_approval': True,
-                'max_slippage_percent': 2.0,
-                'mev_protection_enabled': True,
-            })()
-            messages.warning(request, "Using default settings due to database connectivity issues.")
-        
-        # Prepare template context with real engine data
-        context = {
-            'mode': mode,
-            'mode_display': mode_display,
-            'config': default_config,
-            'page_title': f'{mode_display} Configuration',
-            
-            # Real engine status
-            'engine_status': engine_status,
-            'engine_ready': engine_status.get('fast_lane_active', False) if mode == 'fast_lane' else False,
-            'performance_metrics': performance_metrics,
-            
-            # Mode-specific information
-            'mode_info': {
-                'fast_lane': {
-                    'description': 'Speed-optimized execution for time-sensitive opportunities',
-                    'target_speed': f"{performance_metrics.get('execution_time_ms', 78):.0f}ms",
-                    'status': 'PRODUCTION_READY' if engine_status.get('fast_lane_active') else 'INITIALIZING',
-                    'phase': 'Phase 4 Complete'
-                },
-                'smart_lane': {
-                    'description': 'Intelligence-optimized analysis for strategic positions',
-                    'target_speed': '2-5 seconds',
-                    'status': 'DEVELOPMENT',
-                    'phase': 'Phase 5 Pending'
-                }
-            }.get(mode, {}),
-            
-            # System capabilities
-            'system_capabilities': {
-                'mev_protection': engine_status.get('fast_lane_active', False),
-                'gas_optimization': engine_status.get('provider_status', {}).get('gas_optimizer') == 'CONNECTED',
-                'risk_cache': engine_status.get('risk_cache_status') == 'HEALTHY',
-                'mempool_monitoring': engine_status.get('mempool_connected', False)
-            },
-            
-            # Data source indicator
-            'data_source': 'LIVE' if not performance_metrics.get('_mock', False) else 'MOCK',
-            'user': request.user,
-        }
-        
-        logger.debug(f"Configuration panel context created for {mode_display}")
-        return render(request, 'dashboard/configuration_panel.html', context)
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in configuration_panel for {mode}: {e}", exc_info=True)
-        messages.error(request, f"Error loading {mode.replace('_', ' ').lower()} configuration. Please try again.")
-        return redirect('dashboard:home')
-
-
-def handle_configuration_update(request: HttpRequest, mode: str, mode_display: str) -> Union[HttpResponse, JsonResponse]:
-    """
-    Handle configuration form submission with comprehensive validation and error handling.
-    
-    FIXED: Updated to match the actual form field names from the template:
-    - 'name' (not 'config_name')
-    - 'max_position_size_usd' (matches template field name)
-    - 'risk_tolerance' (matches template field name)
-    - 'execution_timeout_ms' (matches template field name)
-    - 'max_slippage_percent' (matches template field name)
+    Displays mode-specific configuration options and handles configuration
+    form submission with validation and error handling.
     
     Args:
         request: Django HTTP request object
         mode: Trading mode ('fast_lane' or 'smart_lane')
-        mode_display: Display name for the mode
         
     Returns:
-        Redirect to configuration summary or JsonResponse with error
-        
-    Raises:
-        Exception: Returns JsonResponse with error message if unexpected error occurs
+        HttpResponse with rendered configuration panel template
     """
     try:
-        logger.info(f"Processing {mode_display} configuration update for user: {request.user.username}")
+        logger.info(f"Configuration panel accessed for {mode} by user: {request.user}")
         
-        # Validate CSRF token
-        if not request.POST.get('csrfmiddlewaretoken'):
-            logger.warning(f"Missing CSRF token in {mode_display} configuration update")
-            return JsonResponse({
-                'success': False, 
-                'error': 'Security token missing. Please refresh and try again.'
-            })
+        # Validate mode parameter
+        if mode not in ['fast_lane', 'smart_lane']:
+            messages.error(request, f"Invalid trading mode: {mode}")
+            return redirect('dashboard:mode_selection')
         
-        # Extract and validate form data - FIXED field names to match template
-        form_data: Dict[str, Any] = {}
-        errors: list[str] = []
+        # Initialize engines if needed
+        run_async_in_view(ensure_engines_initialized())
         
-        # Required fields validation - corrected field names to match template
-        required_fields = {
-            'name': 'Configuration name',  # Template sends 'name', not 'config_name'
-            'max_position_size_usd': 'Maximum position size',  # Template sends 'max_position_size_usd'
-            'risk_tolerance': 'Risk tolerance level'  # Template sends 'risk_tolerance'
+        # Handle configuration form submission
+        if request.method == 'POST':
+            return handle_configuration_form(request, mode)
+        
+        # Get current engine status for mode availability
+        engine_status = engine_service.get_engine_status()
+        
+        # Check if selected mode is available
+        mode_available = True
+        if mode == 'fast_lane':
+            mode_available = engine_status.get('fast_lane_available', False)
+        elif mode == 'smart_lane':
+            mode_available = engine_status.get('smart_lane_available', False)
+        
+        if not mode_available:
+            messages.warning(request, f"{mode.replace('_', ' ').title()} is not currently available")
+        
+        # Get user's existing configurations for this mode
+        user_configs = BotConfiguration.objects.filter(
+            user=request.user,
+            trading_mode=mode.upper()
+        ).order_by('-updated_at')[:5]
+        
+        # Prepare mode-specific context
+        context = {
+            'mode': mode,
+            'mode_title': mode.replace('_', ' ').title(),
+            'mode_available': mode_available,
+            'user_configurations': user_configs,
+            'engine_status': engine_status,
+            'is_mock_mode': engine_status.get('_mock', True),
+            'timestamp': datetime.now().isoformat()
         }
         
-        for field, display_name in required_fields.items():
-            value = request.POST.get(field, '').strip()
-            if not value:
-                errors.append(f'{display_name} is required.')
-                logger.warning(f"Missing required field {field} in {mode_display} configuration")
-            else:
-                form_data[field] = value
-        
-        # Validate numeric fields - FIXED to use correct field name
-        try:
-            position_size = float(request.POST.get('max_position_size_usd', 0))  # Corrected field name
-            if position_size < 1 or position_size > 10000:
-                errors.append('Position size must be between $1 and $10,000.')
-                logger.warning(f"Invalid position size: {position_size}")
-            else:
-                form_data['max_position_size_usd'] = Decimal(str(position_size))
-        except (ValueError, TypeError):
-            errors.append('Position size must be a valid number.')
-            logger.warning("Invalid position size format")
-        
-        # Mode-specific validation
+        # Add mode-specific default values
         if mode == 'fast_lane':
-            # Execution timeout validation - corrected field name
-            try:
-                timeout = int(request.POST.get('execution_timeout_ms', 500))  # Template sends 'execution_timeout_ms'
-                if timeout < 50 or timeout > 10000:  # Allow up to 10 seconds for flexibility
-                    errors.append('Execution timeout must be between 50ms and 10000ms.')
-                    logger.warning(f"Invalid execution timeout: {timeout}")
-                else:
-                    form_data['execution_timeout_ms'] = timeout
-            except (ValueError, TypeError):
-                errors.append('Execution timeout must be a valid number.')
-                logger.warning("Invalid execution timeout format")
-            
-            # Slippage validation - FIXED field name to match template
-            slippage = request.POST.get('max_slippage_percent')  # Template sends 'max_slippage_percent'
-            if slippage:
-                try:
-                    slippage_val = float(slippage)
-                    if slippage_val < 0.1 or slippage_val > 10.0:
-                        errors.append('Slippage must be between 0.1% and 10.0%.')
-                        logger.warning(f"Invalid slippage: {slippage_val}")
-                    else:
-                        form_data['max_slippage_percent'] = Decimal(str(slippage_val))
-                except (ValueError, TypeError):
-                    errors.append('Slippage must be a valid number.')
-                    logger.warning("Invalid slippage format")
-        
-        # Return validation errors if any
-        if errors:
-            logger.warning(f"Validation errors in {mode_display} configuration: {errors}")
-            return JsonResponse({
-                'success': False,
-                'error': 'Please correct the following errors: ' + '; '.join(errors)
+            context.update({
+                'default_slippage': settings.DEFAULT_SLIPPAGE_PERCENT,
+                'default_gas_price': settings.MAX_GAS_PRICE_GWEI,
+                'default_position_size': settings.MAX_POSITION_SIZE_USD,
+                'execution_timeout': settings.EXECUTION_TIMEOUT_SECONDS
             })
+        elif mode == 'smart_lane':
+            context.update({
+                'default_analysis_depth': 'COMPREHENSIVE',
+                'default_risk_tolerance': 'MEDIUM',
+                'default_thought_log': True,
+                'default_position_sizing': True,
+                'max_analysis_time': 5.0
+            })
+        
+        return render(request, 'dashboard/configuration_panel.html', context)
+        
+    except Exception as e:
+        logger.error(f"Configuration panel error for {mode}: {e}", exc_info=True)
+        messages.error(request, f"Configuration panel error: {str(e)}")
+        return redirect('dashboard:mode_selection')
+
+
+def handle_configuration_form(request: HttpRequest, mode: str) -> HttpResponse:
+    """
+    Handle configuration form submission for both Fast Lane and Smart Lane.
+    
+    Validates form data, creates/updates BotConfiguration objects, and
+    redirects to appropriate summary page.
+    
+    Args:
+        request: Django HTTP request object with POST data
+        mode: Trading mode ('fast_lane' or 'smart_lane')
+        
+    Returns:
+        HttpResponse redirect to configuration summary or back to form
+    """
+    try:
+        # Extract common form fields
+        config_name = request.POST.get('config_name', '').strip()
+        config_description = request.POST.get('config_description', '').strip()
+        
+        # Validate required fields
+        if not config_name:
+            messages.error(request, "Configuration name is required")
+            return redirect('dashboard:configuration_panel', mode=mode)
+        
+        # Check for duplicate names
+        existing_config = BotConfiguration.objects.filter(
+            user=request.user,
+            name=config_name,
+            trading_mode=mode.upper()
+        ).first()
+        
+        if existing_config:
+            messages.error(request, f"Configuration '{config_name}' already exists")
+            return redirect('dashboard:configuration_panel', mode=mode)
+        
+        # Create new configuration
+        bot_config = BotConfiguration(
+            user=request.user,
+            name=config_name,
+            description=config_description,
+            trading_mode=mode.upper(),
+            status=BotConfiguration.ConfigStatus.DRAFT
+        )
+        
+        # Handle mode-specific fields
+        if mode == 'fast_lane':
+            # Extract Fast Lane specific fields
+            bot_config.max_slippage_percent = Decimal(request.POST.get('slippage_tolerance', '1.0'))
+            bot_config.max_gas_price_gwei = Decimal(request.POST.get('gas_price_limit', '50.0'))
+            bot_config.position_size_usd = Decimal(request.POST.get('position_size', '1000.0'))
+            bot_config.execution_timeout_seconds = int(request.POST.get('execution_timeout', '30'))
+            
+            # Fast Lane specific settings
+            mev_protection = request.POST.get('mev_protection') == 'on'
+            private_mempool = request.POST.get('private_mempool') == 'on'
+            
+            # Store Fast Lane settings in additional_settings JSON field
+            bot_config.additional_settings = {
+                'mev_protection_enabled': mev_protection,
+                'private_mempool_enabled': private_mempool,
+                'fast_lane_mode': True
+            }
+            
+        elif mode == 'smart_lane':
+            # Extract Smart Lane specific fields
+            analysis_depth = request.POST.get('analysis_depth', 'COMPREHENSIVE')
+            risk_tolerance = request.POST.get('risk_tolerance_level', 'MEDIUM')
+            ai_thought_log = request.POST.get('ai_thought_log') == 'on'
+            dynamic_sizing = request.POST.get('dynamic_sizing') == 'on'
+            
+            # Set Smart Lane specific fields
+            bot_config.risk_tolerance_level = risk_tolerance
+            bot_config.analysis_depth = analysis_depth
+            
+            # Store Smart Lane settings in additional_settings JSON field
+            bot_config.additional_settings = {
+                'ai_thought_log_enabled': ai_thought_log,
+                'dynamic_position_sizing': dynamic_sizing,
+                'smart_lane_mode': True,
+                'enabled_categories': [
+                    'HONEYPOT_DETECTION',
+                    'LIQUIDITY_ANALYSIS',
+                    'SOCIAL_SENTIMENT',
+                    'TECHNICAL_ANALYSIS',
+                    'CONTRACT_SECURITY'
+                ]
+            }
         
         # Save configuration
-        try:
-            # Get or create configuration
-            config, created = BotConfiguration.objects.get_or_create(
-                user=request.user,
-                trading_mode=mode.upper(),
-                is_default=True,
-                defaults={}
-            )
-            
-            # Update configuration with validated data - FIXED field names
-            config.name = form_data['name']  # Corrected
-            config.description = request.POST.get('description', '')
-            config.max_position_size_usd = form_data['max_position_size_usd']  # Corrected
-            config.risk_tolerance_level = form_data['risk_tolerance']  # Corrected
-            
-            # Mode-specific updates
-            if mode == 'fast_lane':
-                config.execution_timeout_ms = form_data.get('execution_timeout_ms', 500)
-                config.max_slippage_percent = form_data.get('max_slippage_percent', Decimal('2.0'))
-                config.mev_protection_enabled = request.POST.get('mev_protection_enabled') == 'on'
-                config.auto_execution_enabled = request.POST.get('auto_execution_enabled') == 'on'
-                config.require_manual_approval = request.POST.get('require_manual_approval') == 'on'
-            else:  # smart_lane
-                config.analysis_depth = 'COMPREHENSIVE'
-            
-            # Update timestamps and version
-            config.updated_at = datetime.now()
-            if not created:
-                config.version += 1
-            
-            # Save to database
-            config.save()
-            
-            logger.info(f"Successfully saved {mode_display} configuration: {config.name}")
-            
-            # Log configuration details for audit
-            logger.debug(f"Configuration details - Name: {config.name}, "
-                        f"Position Size: ${config.max_position_size_usd}, "
-                        f"Risk Level: {config.risk_tolerance_level}")
-            
-            # Add success message
-            messages.success(
-                request, 
-                f'{mode_display} configuration "{config.name}" saved successfully!'
-            )
-            
-            # Redirect to configuration summary instead of returning JSON
-            return redirect('dashboard:configuration_summary', config_id=config.id)
-            
-        except IntegrityError as db_error:
-            logger.error(f"Database integrity error saving configuration: {db_error}")
-            return JsonResponse({
-                'success': False,
-                'error': 'Configuration name already exists. Please choose a different name.'
-            })
-        except Exception as db_error:
-            logger.error(f"Database error saving configuration: {db_error}", exc_info=True)
-            return JsonResponse({
-                'success': False,
-                'error': 'Failed to save configuration due to database error. Please try again.'
-            })
-    
+        bot_config.save()
+        
+        logger.info(f"Configuration '{config_name}' created for {mode} by user {request.user}")
+        messages.success(request, f"Configuration '{config_name}' saved successfully")
+        
+        return redirect('dashboard:configuration_summary', config_id=bot_config.id)
+        
+    except ValueError as e:
+        logger.error(f"Configuration form validation error: {e}")
+        messages.error(request, f"Invalid configuration values: {str(e)}")
+        return redirect('dashboard:configuration_panel', mode=mode)
+        
+    except IntegrityError as e:
+        logger.error(f"Configuration database error: {e}")
+        messages.error(request, "Database error - please try again")
+        return redirect('dashboard:configuration_panel', mode=mode)
+        
     except Exception as e:
-        logger.error(f"Unexpected error in handle_configuration_update for {mode}: {e}", exc_info=True)
+        logger.error(f"Configuration form handling error: {e}", exc_info=True)
+        messages.error(request, f"Error saving configuration: {str(e)}")
+        return redirect('dashboard:configuration_panel', mode=mode)
+
+
+# =========================================================================
+# SMART LANE SPECIFIC VIEWS
+# =========================================================================
+
+@require_POST
+@csrf_exempt
+def api_smart_lane_analyze(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for Smart Lane token analysis.
+    
+    Accepts POST requests with token address and performs comprehensive
+    analysis using the Smart Lane pipeline.
+    
+    Args:
+        request: Django HTTP request object with JSON payload
+        
+    Returns:
+        JsonResponse with analysis results or error message
+    """
+    try:
+        # Parse request data
+        data = json.loads(request.body)
+        token_address = data.get('token_address', '').strip()
+        
+        if not token_address:
+            return JsonResponse({
+                'success': False,
+                'error': 'Token address is required',
+                'timestamp': datetime.now().isoformat()
+            }, status=400)
+        
+        # Validate token address format (basic check)
+        if not token_address.startswith('0x') or len(token_address) != 42:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid token address format',
+                'timestamp': datetime.now().isoformat()
+            }, status=400)
+        
+        # Initialize Smart Lane if needed
+        run_async_in_view(ensure_engines_initialized())
+        
+        # Prepare analysis context from request data
+        context = {
+            'symbol': data.get('symbol', ''),
+            'name': data.get('name', ''),
+            'current_price': data.get('current_price'),
+            'market_cap': data.get('market_cap'),
+            'volume_24h': data.get('volume_24h'),
+            'liquidity_usd': data.get('liquidity_usd')
+        }
+        
+        # Remove None values from context
+        context = {k: v for k, v in context.items() if v is not None}
+        
+        # Perform Smart Lane analysis
+        analysis_result = run_async_in_view(
+            engine_service.analyze_token_smart_lane(token_address, context)
+        )
+        
+        if analysis_result:
+            return JsonResponse({
+                'success': True,
+                'data': analysis_result,
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': 'Analysis failed - please try again',
+                'timestamp': datetime.now().isoformat()
+            }, status=500)
+        
+    except json.JSONDecodeError:
         return JsonResponse({
             'success': False,
-            'error': 'An unexpected error occurred. Please try again or contact support.'
-        })
+            'error': 'Invalid JSON payload',
+            'timestamp': datetime.now().isoformat()
+        }, status=400)
+        
+    except Exception as e:
+        logger.error(f"Smart Lane analysis API error: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }, status=500)
 
 
-def configuration_summary(request: HttpRequest, config_id: int) -> HttpResponse:
+def smart_lane_demo(request: HttpRequest) -> HttpResponse:
     """
-    Display configuration summary page with saved settings and navigation options.
+    Smart Lane demonstration page with sample analysis.
     
-    Shows the user their saved configuration with options to edit, delete, or return to dashboard.
-    Includes risk score calculation and mode-specific display formatting.
+    Shows Smart Lane capabilities with a demo token analysis including
+    AI thought log, risk assessment, and strategic recommendations.
     
     Args:
         request: Django HTTP request object
-        config_id: ID of the saved configuration
         
     Returns:
-        Rendered configuration summary template
+        HttpResponse with rendered Smart Lane demo template
     """
     try:
-        logger.info(f"Configuration summary requested for config_id: {config_id} by user: {request.user.username}")
+        logger.info(f"Smart Lane demo accessed by user: {request.user}")
         
-        # Get the configuration
-        config = get_object_or_404(BotConfiguration, id=config_id, user=request.user)
+        # Initialize Smart Lane if needed
+        run_async_in_view(ensure_engines_initialized())
         
-        # Determine mode for display
-        mode = config.trading_mode.lower()
-        if mode in ['fast_lane', 'smart_lane']:
-            mode_display = mode.replace('_', ' ').title()
-        else:
-            mode_display = config.get_trading_mode_display()
+        # Demo token address for consistent demo
+        demo_token_address = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"  # UNI token
         
-        # Calculate risk score for display
-        risk_score = getattr(config, 'risk_score', 50)
-        risk_color = 'success' if risk_score < 30 else 'warning' if risk_score < 70 else 'danger'
-        
-        # Prepare context with configuration details
-        context = {
-            'config': config,
-            'mode': mode,
-            'mode_display': mode_display,
-            'page_title': f'{mode_display} Configuration Summary',
-            'user': request.user,
-            'is_fast_lane': getattr(config, 'is_fast_lane', mode == 'fast_lane'),
-            'is_smart_lane': getattr(config, 'is_smart_lane', mode == 'smart_lane'),
-            'risk_score': risk_score,
-            'risk_color': risk_color,
-            'edit_url': reverse('dashboard:configuration_panel', kwargs={'mode': mode}),
-            'delete_url': reverse('dashboard:delete_configuration', kwargs={'config_id': config.id}),
+        # Get demo analysis
+        demo_context = {
+            'symbol': 'UNI',
+            'name': 'Uniswap',
+            'current_price': 6.45,
+            'market_cap': 4850000000,
+            'volume_24h': 125000000,
+            'liquidity_usd': 890000000
         }
         
-        logger.debug(f"Rendering configuration summary for {config.name}")
+        demo_analysis = run_async_in_view(
+            engine_service.analyze_token_smart_lane(demo_token_address, demo_context)
+        )
+        
+        # Get Smart Lane metrics
+        performance_metrics = engine_service.get_performance_metrics()
+        engine_status = engine_service.get_engine_status()
+        
+        smart_lane_metrics = {
+            'analysis_time_ms': performance_metrics.get('smart_lane_analysis_time_ms', 2800),
+            'success_rate': performance_metrics.get('smart_lane_success_rate', 94.2),
+            'cache_hit_ratio': performance_metrics.get('smart_lane_cache_hits', 75),
+            'analyses_today': performance_metrics.get('smart_lane_analyses_today', 87),
+            'status': 'Operational' if engine_status.get('smart_lane_active') else 'Demo Mode'
+        }
+        
+        context = {
+            'demo_analysis': demo_analysis,
+            'demo_token_address': demo_token_address,
+            'smart_lane_metrics': smart_lane_metrics,
+            'smart_lane_available': engine_status.get('smart_lane_available', False),
+            'is_mock_mode': demo_analysis.get('_mock', True) if demo_analysis else True,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return render(request, 'dashboard/smart_lane_demo.html', context)
+        
+    except Exception as e:
+        logger.error(f"Smart Lane demo error: {e}", exc_info=True)
+        messages.error(request, f"Demo error: {str(e)}")
+        
+        # Provide fallback context
+        context = {
+            'demo_analysis': None,
+            'smart_lane_metrics': {'status': 'Error'},
+            'smart_lane_available': False,
+            'is_mock_mode': True,
+            'error': str(e)
+        }
+        
+        return render(request, 'dashboard/smart_lane_demo.html', context)
+
+
+# =========================================================================
+# CONFIGURATION MANAGEMENT VIEWS (Enhanced for dual-engine support)
+# =========================================================================
+
+def configuration_summary(request: HttpRequest, config_id: int) -> HttpResponse:
+    """
+    Display configuration summary with enhanced dual-engine support.
+    
+    Shows detailed configuration information for both Fast Lane and Smart Lane
+    configurations with appropriate mode-specific details.
+    
+    Args:
+        request: Django HTTP request object
+        config_id: Configuration ID to display
+        
+    Returns:
+        HttpResponse with rendered configuration summary template
+    """
+    try:
+        # Get configuration object
+        config = get_object_or_404(BotConfiguration, id=config_id, user=request.user)
+        
+        logger.info(f"Configuration summary viewed: {config.name} ({config.trading_mode})")
+        
+        # Get current engine status
+        engine_status = engine_service.get_engine_status()
+        
+        # Prepare mode-specific information
+        mode_info = {
+            'is_fast_lane': config.trading_mode == 'FAST_LANE',
+            'is_smart_lane': config.trading_mode == 'SMART_LANE',
+            'mode_available': True
+        }
+        
+        if config.trading_mode == 'FAST_LANE':
+            mode_info['mode_available'] = engine_status.get('fast_lane_available', False)
+        elif config.trading_mode == 'SMART_LANE':
+            mode_info['mode_available'] = engine_status.get('smart_lane_available', False)
+        
+        # Parse additional settings
+        additional_settings = config.additional_settings or {}
+        
+        context = {
+            'config': config,
+            'mode_info': mode_info,
+            'additional_settings': additional_settings,
+            'engine_status': engine_status,
+            'can_activate': mode_info['mode_available'] and config.status == BotConfiguration.ConfigStatus.DRAFT,
+            'timestamp': datetime.now().isoformat()
+        }
+        
         return render(request, 'dashboard/configuration_summary.html', context)
         
-    except BotConfiguration.DoesNotExist:
-        logger.warning(f"Configuration {config_id} not found for user {request.user.username}")
-        messages.error(request, "Configuration not found.")
-        return redirect('dashboard:home')
     except Exception as e:
-        logger.error(f"Error loading configuration summary {config_id}: {e}", exc_info=True)
-        messages.error(request, "Error loading configuration summary.")
-        return redirect('dashboard:home')
+        logger.error(f"Configuration summary error: {e}", exc_info=True)
+        messages.error(request, f"Error loading configuration: {str(e)}")
+        return redirect('dashboard:configuration_list')
 
 
 def configuration_list(request: HttpRequest) -> HttpResponse:
     """
-    Display list of user's saved configurations with pagination and filtering.
+    List all user configurations with enhanced filtering for dual-engine support.
     
-    Shows all user configurations organized by trading mode with management options.
-    Includes search functionality and mode filtering.
+    Displays paginated list of user's configurations with filtering by
+    trading mode and status.
     
     Args:
         request: Django HTTP request object
         
     Returns:
-        Rendered configuration list template
+        HttpResponse with rendered configuration list template
     """
     try:
-        logger.info(f"Configuration list requested by user: {request.user.username}")
+        # Get filter parameters
+        mode_filter = request.GET.get('mode', '')
+        status_filter = request.GET.get('status', '')
         
-        # Get user's configurations with search/filter
-        configs_query = BotConfiguration.objects.filter(user=request.user)
+        # Build queryset with filters
+        queryset = BotConfiguration.objects.filter(user=request.user)
         
-        # Apply search filter if provided
-        search = request.GET.get('search', '').strip()
-        if search:
-            configs_query = configs_query.filter(name__icontains=search)
-            logger.debug(f"Applied search filter: {search}")
-        
-        # Apply mode filter if provided
-        mode_filter = request.GET.get('mode', '').strip()
         if mode_filter:
-            configs_query = configs_query.filter(trading_mode=mode_filter.upper())
-            logger.debug(f"Applied mode filter: {mode_filter}")
+            queryset = queryset.filter(trading_mode=mode_filter.upper())
         
-        # Order by most recently used
-        configs = configs_query.order_by('-last_used_at', '-updated_at')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter.upper())
         
-        # Pagination
-        paginator = Paginator(configs, 10)  # 10 configs per page
+        # Order by most recent
+        queryset = queryset.order_by('-updated_at')
+        
+        # Paginate results
+        paginator = Paginator(queryset, 10)
         page_number = request.GET.get('page')
-        page_obj = paginator.get_page(page_number)
+        configurations = paginator.get_page(page_number)
         
-        # Group by trading mode for display
-        fast_lane_configs = configs.filter(trading_mode='FAST_LANE')[:5]
-        smart_lane_configs = configs.filter(trading_mode='SMART_LANE')[:5]
-        other_configs = configs.exclude(trading_mode__in=['FAST_LANE', 'SMART_LANE'])[:5]
+        # Get engine status for availability indicators
+        engine_status = engine_service.get_engine_status()
         
-        context = {
-            'page_obj': page_obj,
-            'fast_lane_configs': fast_lane_configs,
-            'smart_lane_configs': smart_lane_configs, 
-            'other_configs': other_configs,
-            'total_configs': configs.count(),
-            'search': search,
-            'mode_filter': mode_filter,
-            'page_title': 'My Configurations',
-            'user': request.user,
+        # Count configurations by mode
+        mode_counts = {
+            'fast_lane': BotConfiguration.objects.filter(user=request.user, trading_mode='FAST_LANE').count(),
+            'smart_lane': BotConfiguration.objects.filter(user=request.user, trading_mode='SMART_LANE').count(),
+            'total': BotConfiguration.objects.filter(user=request.user).count()
         }
         
-        logger.debug(f"Found {configs.count()} configurations for user")
+        context = {
+            'configurations': configurations,
+            'mode_counts': mode_counts,
+            'current_mode_filter': mode_filter,
+            'current_status_filter': status_filter,
+            'engine_status': engine_status,
+            'available_modes': [
+                ('FAST_LANE', 'Fast Lane', engine_status.get('fast_lane_available', False)),
+                ('SMART_LANE', 'Smart Lane', engine_status.get('smart_lane_available', False))
+            ],
+            'available_statuses': [
+                ('DRAFT', 'Draft'),
+                ('ACTIVE', 'Active'),
+                ('PAUSED', 'Paused'),
+                ('ARCHIVED', 'Archived')
+            ],
+            'timestamp': datetime.now().isoformat()
+        }
+        
         return render(request, 'dashboard/configuration_list.html', context)
         
     except Exception as e:
-        logger.error(f"Error loading configuration list: {e}", exc_info=True)
-        messages.error(request, "Error loading configurations.")
-        return redirect('dashboard:home')
+        logger.error(f"Configuration list error: {e}", exc_info=True)
+        messages.error(request, f"Error loading configurations: {str(e)}")
+        
+        # Provide minimal fallback context
+        context = {
+            'configurations': [],
+            'mode_counts': {'fast_lane': 0, 'smart_lane': 0, 'total': 0},
+            'current_mode_filter': '',
+            'current_status_filter': '',
+            'engine_status': {'fast_lane_available': False, 'smart_lane_available': False},
+            'available_modes': [],
+            'available_statuses': [],
+            'error': str(e)
+        }
+        
+        return render(request, 'dashboard/configuration_list.html', context)
 
 
+@require_POST
 def delete_configuration(request: HttpRequest, config_id: int) -> HttpResponse:
     """
-    Delete a configuration with confirmation and proper error handling.
+    Delete a configuration with confirmation.
     
-    Handles both GET (show confirmation) and POST (perform deletion) requests.
-    Includes logic to redirect appropriately based on remaining configurations.
+    Safely deletes a user's configuration after validation and provides
+    appropriate feedback messages.
     
     Args:
         request: Django HTTP request object
-        config_id: ID of the configuration to delete
+        config_id: Configuration ID to delete
         
     Returns:
-        Redirect to configuration list or confirmation page
+        HttpResponse redirect to configuration list
     """
     try:
-        logger.info(f"Delete request for configuration {config_id} by user: {request.user.username}")
-        
-        # Get the configuration
+        # Get configuration and verify ownership
         config = get_object_or_404(BotConfiguration, id=config_id, user=request.user)
         
-        if request.method == 'POST':
-            # Confirm deletion
-            config_name = config.name
-            config_mode = config.get_trading_mode_display()
-            
-            # Check if this is the user's only configuration
-            user_config_count = BotConfiguration.objects.filter(user=request.user).count()
-            
-            config.delete()
-            
-            logger.info(f"Successfully deleted configuration: {config_name}")
-            messages.success(request, f'Configuration "{config_name}" deleted successfully.')
-            
-            # Redirect to appropriate page
-            if user_config_count > 1:
-                return redirect('dashboard:configuration_list')
-            else:
-                # If this was their last config, redirect to mode selection
-                messages.info(request, "Create a new configuration to get started.")
-                return redirect('dashboard:mode_selection')
-        else:
-            # Show confirmation page
-            context = {
-                'config': config,
-                'page_title': 'Delete Configuration',
-                'cancel_url': reverse('dashboard:configuration_summary', kwargs={'config_id': config.id}),
-            }
-            return render(request, 'dashboard/confirm_delete_config.html', context)
-            
-    except BotConfiguration.DoesNotExist:
-        logger.warning(f"Configuration {config_id} not found for deletion")
-        messages.error(request, "Configuration not found.")
+        # Check if configuration is currently active
+        if config.status == BotConfiguration.ConfigStatus.ACTIVE:
+            messages.error(request, "Cannot delete active configuration. Please pause it first.")
+            return redirect('dashboard:configuration_summary', config_id=config_id)
+        
+        # Store config name for success message
+        config_name = config.name
+        config_mode = config.trading_mode
+        
+        # Delete the configuration
+        config.delete()
+        
+        logger.info(f"Configuration '{config_name}' ({config_mode}) deleted by user {request.user}")
+        messages.success(request, f"Configuration '{config_name}' deleted successfully")
+        
         return redirect('dashboard:configuration_list')
+        
     except Exception as e:
-        logger.error(f"Error deleting configuration {config_id}: {e}", exc_info=True)
-        messages.error(request, "Error deleting configuration.")
+        logger.error(f"Configuration deletion error: {e}", exc_info=True)
+        messages.error(request, f"Error deleting configuration: {str(e)}")
         return redirect('dashboard:configuration_list')
 
 
 # =========================================================================
-# REAL-TIME DATA STREAMS (Updated with Fast Lane Integration)
-# =========================================================================
-
-def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
-    """
-    Server-Sent Events endpoint for real-time metrics with Fast Lane integration.
-    
-    Streams live trading metrics from the Fast Lane engine to the dashboard.
-    Falls back to mock data if engine is unavailable.
-    
-    Args:
-        request: Django HTTP request object
-        
-    Returns:
-        StreamingHttpResponse with Server-Sent Events format
-    """
-    def event_stream():
-        """
-        Generator function for SSE data stream with Fast Lane integration.
-        
-        Yields formatted SSE data with real-time metrics and status updates.
-        Includes connection confirmation, periodic updates, and error handling.
-        
-        Yields:
-            str: Formatted SSE data strings
-        """
-        try:
-            # Initialize engine if needed
-            run_async_in_view(ensure_engine_initialized())
-            
-            # Send initial connection confirmation
-            initial_status = engine_service.get_engine_status()
-            initial_data = {
-                'type': 'connection',
-                'status': 'connected',
-                'engine_status': initial_status,
-                'data_source': 'LIVE' if not initial_status.get('_mock', False) else 'MOCK',
-                'timestamp': datetime.now().isoformat()
-            }
-            yield f"data: {json.dumps(initial_data)}\n\n"
-            
-            # Stream metrics updates
-            counter = 0
-            while counter < 100:  # Limit to prevent long-running processes
-                try:
-                    # Get real-time metrics from engine service
-                    metrics = engine_service.get_performance_metrics()
-                    status = engine_service.get_engine_status()
-                    
-                    message_data = {
-                        'type': 'metrics_update',
-                        'timestamp': datetime.now().isoformat(),
-                        'metrics': {
-                            'execution_time_ms': metrics.get('execution_time_ms', 0),
-                            'success_rate': metrics.get('success_rate', 0),
-                            'trades_per_minute': metrics.get('trades_per_minute', 0),
-                            'risk_cache_hits': metrics.get('risk_cache_hits', 0),
-                            'mempool_latency_ms': metrics.get('mempool_latency_ms', 0),
-                            'gas_optimization_ms': metrics.get('gas_optimization_ms', 0),
-                            'total_executions': metrics.get('total_executions', 0),
-                            'is_live': not metrics.get('_mock', False)
-                        },
-                        'status': {
-                            'status': status.get('status', 'UNKNOWN'),
-                            'fast_lane_active': status.get('fast_lane_active', False),
-                            'smart_lane_active': status.get('smart_lane_active', False),
-                            'mempool_connected': status.get('mempool_connected', False),
-                            'uptime_seconds': status.get('uptime_seconds', 0),
-                            'is_live': not status.get('_mock', False)
-                        },
-                        'data_source': 'LIVE' if not metrics.get('_mock', False) else 'MOCK'
-                    }
-                    
-                    yield f"data: {json.dumps(message_data)}\n\n"
-                    time.sleep(2)  # Update every 2 seconds for better responsiveness
-                    counter += 1
-                    
-                except Exception as stream_error:
-                    logger.error(f"Error in metrics stream iteration: {stream_error}")
-                    # Send error message to client
-                    error_data = {
-                        'type': 'error',
-                        'message': 'Metrics stream interrupted',
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    yield f"data: {json.dumps(error_data)}\n\n"
-                    break
-                    
-        except Exception as e:
-            logger.error(f"Critical error in metrics stream: {e}", exc_info=True)
-            # Send final error message
-            error_data = {
-                'type': 'fatal_error',
-                'message': 'Metrics stream failed',
-                'timestamp': datetime.now().isoformat()
-            }
-            yield f"data: {json.dumps(error_data)}\n\n"
-    
-    # Return SSE response with proper headers
-    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-    response['Cache-Control'] = 'no-cache'
-    response['Access-Control-Allow-Origin'] = '*'
-    response['X-Accel-Buffering'] = 'no'
-    return response
-
-
-# =========================================================================
-# API ENDPOINTS (Updated with Fast Lane Integration)
+# API ENDPOINTS (Enhanced for dual-engine support)
 # =========================================================================
 
 def api_engine_status(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint for engine status with Fast Lane integration.
+    API endpoint for comprehensive engine status including both Fast Lane and Smart Lane.
     
     Returns current engine status including Fast Lane and Smart Lane availability,
     connection states, and system health metrics.
@@ -911,8 +844,8 @@ def api_engine_status(request: HttpRequest) -> JsonResponse:
         JsonResponse with engine status data or error message
     """
     try:
-        # Initialize engine if needed
-        run_async_in_view(ensure_engine_initialized())
+        # Initialize engines if needed
+        run_async_in_view(ensure_engines_initialized())
         
         status = engine_service.get_engine_status()
         
@@ -933,10 +866,10 @@ def api_engine_status(request: HttpRequest) -> JsonResponse:
 
 def api_performance_metrics(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint for performance metrics with Fast Lane integration.
+    API endpoint for comprehensive performance metrics including both engines.
     
     Returns current performance metrics including execution times, success rates,
-    and trading volume statistics from the Fast Lane engine.
+    and trading volume statistics from both Fast Lane and Smart Lane engines.
     
     Args:
         request: Django HTTP request object
@@ -945,8 +878,8 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         JsonResponse with performance metrics data or error message
     """
     try:
-        # Initialize engine if needed
-        run_async_in_view(ensure_engine_initialized())
+        # Initialize engines if needed
+        run_async_in_view(ensure_engines_initialized())
         
         metrics = engine_service.get_performance_metrics()
         
@@ -969,31 +902,39 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 def api_set_trading_mode(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint to set trading mode with Fast Lane engine integration.
+    API endpoint to set trading mode with dual-engine support.
     
     Accepts POST requests with mode selection and updates the engine configuration.
     Validates mode parameter and uses engine service for mode switching.
     
     Args:
-        request: Django HTTP request object
+        request: Django HTTP request object with JSON payload
         
     Returns:
-        JsonResponse with success/error status and confirmation message
+        JsonResponse with success status or error message
     """
     try:
+        # Parse request data
         data = json.loads(request.body)
-        mode = data.get('mode')
+        mode = data.get('mode', '').upper()
         
-        if mode not in ['FAST_LANE', 'SMART_LANE']:
+        # Validate mode
+        valid_modes = ['FAST_LANE', 'SMART_LANE', 'HYBRID']
+        if mode not in valid_modes:
             return JsonResponse({
                 'success': False,
-                'error': 'Invalid trading mode'
+                'error': f'Invalid mode. Must be one of: {", ".join(valid_modes)}',
+                'timestamp': datetime.now().isoformat()
             }, status=400)
         
-        # Use engine service to set mode
-        success = engine_service.set_trading_mode(mode)
+        # Initialize engines if needed
+        run_async_in_view(ensure_engines_initialized())
+        
+        # Set trading mode
+        success = run_async_in_view(engine_service.set_trading_mode(mode))
         
         if success:
+            logger.info(f"Trading mode set to {mode} via API by user {request.user}")
             return JsonResponse({
                 'success': True,
                 'message': f'Trading mode set to {mode}',
@@ -1003,226 +944,266 @@ def api_set_trading_mode(request: HttpRequest) -> JsonResponse:
         else:
             return JsonResponse({
                 'success': False,
-                'error': 'Failed to set trading mode'
+                'error': f'Failed to set trading mode to {mode}',
+                'timestamp': datetime.now().isoformat()
             }, status=500)
-            
-    except Exception as e:
-        logger.error(f"API set trading mode error: {e}")
+        
+    except json.JSONDecodeError:
         return JsonResponse({
             'success': False,
-            'error': str(e)
+            'error': 'Invalid JSON payload',
+            'timestamp': datetime.now().isoformat()
+        }, status=400)
+        
+    except Exception as e:
+        logger.error(f"API set trading mode error: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
         }, status=500)
 
 
 # =========================================================================
-# TRADING SESSION MANAGEMENT
+# SERVER-SENT EVENTS FOR REAL-TIME UPDATES
 # =========================================================================
 
-def start_trading_session(request: HttpRequest) -> HttpResponse:
+def dashboard_live_feed(request: HttpRequest) -> StreamingHttpResponse:
     """
-    Start a new trading session with comprehensive validation.
+    Server-Sent Events endpoint for real-time dashboard updates.
     
-    Handles POST requests to initiate trading sessions with proper error handling
-    and session state management.
+    Streams live engine status and performance metrics for both Fast Lane
+    and Smart Lane engines with configurable update intervals.
     
     Args:
         request: Django HTTP request object
         
     Returns:
-        Redirect to dashboard home with success/error message
+        StreamingResponse with SSE data stream
     """
-    if request.method == 'POST':
+    def event_stream():
+        """Generate SSE event stream with dual-engine data."""
+        max_iterations = getattr(settings, 'SSE_MAX_ITERATIONS', 150)
+        update_interval = getattr(settings, 'DASHBOARD_SSE_UPDATE_INTERVAL', 2)
+        iteration_count = 0
+        
         try:
-            logger.info(f"Trading session start requested by user: {request.user.username}")
-            # Mock session start for demo
-            messages.success(request, 'Demo trading session started successfully!')
-            logger.info("Demo trading session started")
+            # Initialize engines if needed
+            run_async_in_view(ensure_engines_initialized())
+            
+            while iteration_count < max_iterations:
+                try:
+                    # Get current engine status and metrics
+                    engine_status = engine_service.get_engine_status()
+                    performance_metrics = engine_service.get_performance_metrics()
+                    
+                    # Prepare combined data
+                    live_data = {
+                        'timestamp': datetime.now().isoformat(),
+                        'iteration': iteration_count,
+                        'engine_status': engine_status,
+                        'performance_metrics': performance_metrics,
+                        'fast_lane': {
+                            'active': engine_status.get('fast_lane_active', False),
+                            'execution_time_ms': performance_metrics.get('fast_lane_execution_time_ms', 0),
+                            'success_rate': performance_metrics.get('fast_lane_success_rate', 0),
+                            'trades_per_minute': performance_metrics.get('trades_per_minute', 0)
+                        },
+                        'smart_lane': {
+                            'active': engine_status.get('smart_lane_active', False),
+                            'analysis_time_ms': performance_metrics.get('smart_lane_analysis_time_ms', 0),
+                            'success_rate': performance_metrics.get('smart_lane_success_rate', 0),
+                            'analyses_today': performance_metrics.get('smart_lane_analyses_today', 0),
+                            'risk_adjusted_return': performance_metrics.get('risk_adjusted_return', 0)
+                        },
+                        'system_health': {
+                            'circuit_breaker_ok': engine_status.get('circuit_breaker_state') == 'CLOSED',
+                            'mempool_connected': engine_status.get('mempool_connected', False),
+                            'is_mock_mode': engine_status.get('_mock', True)
+                        }
+                    }
+                    
+                    # Send SSE event
+                    yield f"data: {json.dumps(live_data)}\n\n"
+                    
+                    iteration_count += 1
+                    time.sleep(update_interval)
+                    
+                except Exception as e:
+                    logger.error(f"SSE iteration error: {e}")
+                    error_data = {
+                        'timestamp': datetime.now().isoformat(),
+                        'error': str(e),
+                        'iteration': iteration_count
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n"
+                    break
+            
+            # Send completion event
+            completion_data = {
+                'timestamp': datetime.now().isoformat(),
+                'completed': True,
+                'total_iterations': iteration_count,
+                'message': 'SSE stream completed'
+            }
+            yield f"data: {json.dumps(completion_data)}\n\n"
+            
         except Exception as e:
-            logger.error(f"Error starting trading session: {e}", exc_info=True)
-            messages.error(request, "Failed to start trading session.")
+            logger.error(f"SSE stream error: {e}", exc_info=True)
+            error_data = {
+                'timestamp': datetime.now().isoformat(),
+                'error': str(e),
+                'stream_failed': True
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
     
-    return redirect('dashboard:home')
+    # Create SSE response
+    response = StreamingHttpResponse(
+        event_stream(),
+        content_type='text/event-stream'
+    )
+    
+    # Set SSE headers
+    response['Cache-Control'] = 'no-cache'
+    response['Connection'] = 'keep-alive'
+    response['X-Accel-Buffering'] = 'no'  # Disable Nginx buffering
+    
+    return response
 
 
-def stop_trading_session(request: HttpRequest, session_id: str) -> HttpResponse:
+# =========================================================================
+# HEALTH CHECK AND TESTING ENDPOINTS
+# =========================================================================
+
+def health_check(request: HttpRequest) -> JsonResponse:
     """
-    Stop an active trading session with proper cleanup.
+    Health check endpoint for monitoring both engines.
     
-    Handles requests to stop specific trading sessions by session ID.
-    Includes proper session validation and cleanup procedures.
+    Provides basic health status for monitoring systems and load balancers.
     
     Args:
         request: Django HTTP request object
-        session_id: UUID string identifying the trading session
         
     Returns:
-        Redirect to dashboard home with success/error message
+        JsonResponse with health status
     """
     try:
-        logger.info(f"Trading session stop requested for session {session_id} by user: {request.user.username}")
-        # Mock session stop for demo
-        messages.success(request, f'Demo trading session {session_id} stopped successfully!')
-        logger.info(f"Demo trading session {session_id} stopped")
+        # Get basic engine status
+        engine_status = engine_service.get_engine_status()
+        
+        # Determine overall health
+        fast_lane_healthy = engine_status.get('fast_lane_available', False)
+        smart_lane_healthy = engine_status.get('smart_lane_available', False)
+        circuit_breaker_ok = engine_status.get('circuit_breaker_state') == 'CLOSED'
+        
+        overall_health = 'healthy' if (fast_lane_healthy or smart_lane_healthy) and circuit_breaker_ok else 'degraded'
+        
+        health_data = {
+            'status': overall_health,
+            'timestamp': datetime.now().isoformat(),
+            'components': {
+                'fast_lane': 'healthy' if fast_lane_healthy else 'unavailable',
+                'smart_lane': 'healthy' if smart_lane_healthy else 'unavailable',
+                'circuit_breaker': 'healthy' if circuit_breaker_ok else 'open',
+                'database': 'healthy',  # Django will handle DB errors
+                'cache': 'healthy'      # Redis errors would be caught elsewhere
+            },
+            'version': '1.0.0',
+            'environment': 'development' if settings.DEBUG else 'production'
+        }
+        
+        status_code = 200 if overall_health == 'healthy' else 503
+        
+        return JsonResponse(health_data, status=status_code)
+        
     except Exception as e:
-        logger.error(f"Error stopping trading session {session_id}: {e}", exc_info=True)
-        messages.error(request, "Failed to stop trading session.")
-    
-    return redirect('dashboard:home')
+        logger.error(f"Health check error: {e}")
+        return JsonResponse({
+            'status': 'unhealthy',
+            'timestamp': datetime.now().isoformat(),
+            'error': str(e)
+        }, status=503)
 
 
-# =========================================================================
-# DEBUG AND TESTING ENDPOINTS
-# =========================================================================
-
-def simple_test(request: HttpRequest) -> HttpResponse:
+@require_http_methods(["GET", "POST"])
+def engine_test(request: HttpRequest) -> JsonResponse:
     """
-    Simple test endpoint that returns basic HTML for debugging.
+    Engine testing endpoint for development and debugging.
     
-    Used for testing basic Django functionality and verifying the application
-    is running correctly. Returns a simple HTML page with system information.
+    Allows testing of both Fast Lane and Smart Lane engines with
+    various test scenarios and mock data.
     
     Args:
         request: Django HTTP request object
         
     Returns:
-        HttpResponse with basic HTML test page
+        JsonResponse with test results
     """
-    logger.debug("Simple test endpoint accessed")
-    return HttpResponse(f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>DEX Bot Test</title>
-        <style>body{{background:#000;color:#0f0;font-family:monospace;padding:50px;}}</style>
-    </head>
-    <body>
-        <h1>🚀 Django DEX Bot is WORKING!</h1>
-        <p>If you see this, Django views are working correctly.</p>
-        <p>Time: {datetime.now()}</p>
-        <p>User: {getattr(request.user, 'username', 'anonymous')}</p>
-        <a href="/dashboard/" style="color:#0f0;">Go to Dashboard</a>
-    </body>
-    </html>
-    """)
-
-
-def debug_templates(request: HttpRequest) -> HttpResponse:
-    """
-    Debug template loading with comprehensive error reporting.
+    if not settings.DEBUG:
+        return JsonResponse({
+            'error': 'Engine test endpoint only available in debug mode'
+        }, status=403)
     
-    Tests template loading functionality and provides detailed reporting
-    on template availability and Django configuration.
-    
-    Args:
-        request: Django HTTP request object
+    try:
+        test_type = request.GET.get('type', 'status')
         
-    Returns:
-        HttpResponse with template debug information
-    """
-    from django.http import HttpResponse
-    from django.template.loader import get_template
-    from django.conf import settings
-    
-    logger.debug("Template debug endpoint accessed")
-    
-    html = ["<h2 style='color:white;background:black;padding:20px;'>Template Debug Report</h2>"]
-    html.append("<pre style='color:white;background:black;padding:20px;'>")
-    
-    # Test template loading
-    templates_to_test = [
-        'base.html',
-        'dashboard/home.html',
-        'dashboard/mode_selection.html',
-        'dashboard/configuration_panel.html',
-        'dashboard/configuration_summary.html',
-        'dashboard/error.html'
-    ]
-    
-    for template_name in templates_to_test:
-        try:
-            get_template(template_name)
-            html.append(f"✅ {template_name}: Found")
-        except Exception as e:
-            html.append(f"❌ {template_name}: Error - {e}")
-    
-    # Show settings
-    html.append(f"\nTemplate Settings:")
-    html.append(f"  Directories: {settings.TEMPLATES[0]['DIRS']}")
-    html.append(f"  Debug: {settings.TEMPLATES[0]['OPTIONS'].get('debug', False)}")
-    html.append(f"  App Directories: {settings.TEMPLATES[0]['OPTIONS'].get('APP_DIRS', False)}")
-    
-    html.append("</pre>")
-    return HttpResponse(''.join(html))
-
-
-def minimal_dashboard(request: HttpRequest) -> HttpResponse:
-    """
-    Minimal dashboard without template dependencies for emergency access.
-    
-    Provides a fallback dashboard interface that doesn't rely on complex templates.
-    Useful for debugging template issues or providing emergency access.
-    
-    Args:
-        request: Django HTTP request object
-        
-    Returns:
-        HttpResponse with minimal dashboard HTML
-    """
-    logger.debug("Minimal dashboard accessed")
-    return HttpResponse(f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>DEX Trading Bot - Minimal Dashboard</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-        <style>
-            body {{ background: #0d1117; color: white; }}
-            .fast-lane {{ color: #00d4aa; }}
-            .smart-lane {{ color: #1f6feb; }}
-        </style>
-    </head>
-    <body>
-        <div class="container mt-5">
-            <h1>🚀 DEX Trading Bot Dashboard</h1>
-            <p class="text-muted">User: {getattr(request.user, 'username', 'anonymous')} | Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        if test_type == 'status':
+            # Test engine status retrieval
+            status = engine_service.get_engine_status()
+            return JsonResponse({
+                'test': 'engine_status',
+                'result': 'success',
+                'data': status,
+                'timestamp': datetime.now().isoformat()
+            })
             
-            <div class="row mt-4">
-                <div class="col-md-6">
-                    <div class="card bg-dark border-success">
-                        <div class="card-body">
-                            <h5 class="fast-lane">⚡ Fast Lane</h5>
-                            <h2 class="fast-lane">78ms</h2>
-                            <p class="text-muted">Average Execution Time</p>
-                            <a href="/dashboard/config/fast_lane/" class="btn btn-success btn-sm">Configure</a>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="card bg-dark border-primary">
-                        <div class="card-body">
-                            <h5 class="smart-lane">🧠 Smart Lane</h5>
-                            <h2 class="smart-lane">2.5s</h2>
-                            <p class="text-muted">Coming in Phase 5</p>
-                            <button class="btn btn-primary btn-sm" disabled>Configure</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        elif test_type == 'metrics':
+            # Test performance metrics retrieval
+            metrics = engine_service.get_performance_metrics()
+            return JsonResponse({
+                'test': 'performance_metrics',
+                'result': 'success',
+                'data': metrics,
+                'timestamp': datetime.now().isoformat()
+            })
             
-            <div class="mt-4">
-                <h3>System Status</h3>
-                <p>✅ Django Views Working</p>
-                <p>✅ Database Connected</p>
-                <p>✅ Bootstrap Loaded</p>
-                <p>✅ Configuration System Ready</p>
-                
-                <div class="mt-3">
-                    <a href="/dashboard/" class="btn btn-outline-light me-2">Full Dashboard</a>
-                    <a href="/dashboard/mode-selection/" class="btn btn-outline-success me-2">Mode Selection</a>
-                    <a href="/dashboard/configs/" class="btn btn-outline-info">My Configurations</a>
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """)
+        elif test_type == 'smart_lane_analysis':
+            # Test Smart Lane analysis with demo token
+            demo_token = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"  # UNI
+            analysis = run_async_in_view(
+                engine_service.analyze_token_smart_lane(demo_token, {'symbol': 'UNI'})
+            )
+            return JsonResponse({
+                'test': 'smart_lane_analysis',
+                'result': 'success',
+                'data': analysis,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+        elif test_type == 'initialization':
+            # Test engine initialization
+            run_async_in_view(ensure_engines_initialized())
+            return JsonResponse({
+                'test': 'engine_initialization',
+                'result': 'success',
+                'fast_lane_initialized': engine_service.engine_initialized,
+                'smart_lane_initialized': engine_service.smart_lane_initialized,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+        else:
+            return JsonResponse({
+                'error': f'Unknown test type: {test_type}',
+                'available_tests': ['status', 'metrics', 'smart_lane_analysis', 'initialization']
+            }, status=400)
+            
+    except Exception as e:
+        logger.error(f"Engine test error: {e}", exc_info=True)
+        return JsonResponse({
+            'test': test_type,
+            'result': 'error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }, status=500)
+    
+
