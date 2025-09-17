@@ -40,7 +40,7 @@ from eth_utils import to_checksum_address, to_hex
 from ..config import EngineConfig, get_config
 from .relay import PrivateRelayManager, PriorityLevel, RelayType
 from ..communications.django_bridge import DjangoBridge
-from ...shared.schemas import (
+from shared.schemas import (
     BaseMessage, MessageType, RiskLevel, ChainType
 )
 

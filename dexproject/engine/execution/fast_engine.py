@@ -30,7 +30,7 @@ import redis.asyncio as redis
 # Internal imports
 from ..config import config
 from ..utils import ProviderManager, safe_decimal, format_currency
-from .gas_optimizer import GasOptimizer
+from .gas_optimizer import GasOptimizationEngine as GasOptimizer
 from .nonce_manager import NonceManager
 from ..cache.risk_cache import FastRiskCache
 
@@ -343,7 +343,9 @@ class FastLaneExecutionEngine:
     async def _initialize_components(self) -> None:
         """Initialize all engine components."""
         # Provider manager for Web3 connectivity
-        self.provider_manager = ProviderManager(chain_id=self.chain_id)
+        # Get chain config instead of passing chain_id directly
+        chain_config = config.get_chain_config(self.chain_id)  
+        self.provider_manager = ProviderManager(chain_config)
         self.web3 = await self.provider_manager.get_web3()
         
         # Gas optimization

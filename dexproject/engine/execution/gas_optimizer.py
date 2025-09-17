@@ -39,7 +39,7 @@ from eth_typing import HexStr
 from ..config import EngineConfig, get_config
 from ..mempool.protection import ProtectionRecommendation, PriorityLevel, ProtectionAction
 from ..communications.django_bridge import DjangoBridge
-from ...shared.schemas import ChainType
+from shared.schemas import ChainType
 
 
 logger = logging.getLogger(__name__)

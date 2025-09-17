@@ -37,7 +37,7 @@ import redis.asyncio as redis
 # Internal imports
 from ..config import config
 from ..utils import safe_decimal
-from ...shared.schemas import RiskLevel, RiskCategory
+from shared.schemas import RiskLevel, RiskCategory
 
 
 logger = logging.getLogger(__name__)

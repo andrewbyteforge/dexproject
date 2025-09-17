@@ -37,7 +37,7 @@ from eth_typing import ChecksumAddress, HexStr
 # Import engine components
 from ..config import EngineConfig, get_config
 from ..communications.django_bridge import DjangoBridge
-from ...shared.schemas import (
+from shared.schemas import (
     BaseMessage, MessageType, DecisionType, ChainType
 )
 

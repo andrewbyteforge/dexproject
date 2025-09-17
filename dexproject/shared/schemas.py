@@ -724,3 +724,26 @@ def validate_transaction_hash(tx_hash: str) -> bool:
     return tx_hash.startswith('0x') and len(tx_hash) == 66
 
 logger.info(f"Shared message schemas loaded successfully (Pydantic: {PYDANTIC_AVAILABLE})")
+
+
+
+
+
+
+
+
+# Add these classes to shared/schemas.py
+
+class RiskLevel(Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+class RiskCategory(Enum):
+    LIQUIDITY = "liquidity"
+    VOLATILITY = "volatility"
+    HONEYPOT = "honeypot"
+    CONTRACT = "contract"
+    MARKET = "market"
+    TECHNICAL = "technical"

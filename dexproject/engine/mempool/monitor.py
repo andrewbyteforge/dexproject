@@ -45,7 +45,7 @@ from .protection import (
 )
 from ..execution.gas_optimizer import GasOptimizationEngine, GasMetrics, NetworkCongestion
 from ..communications.django_bridge import DjangoBridge
-from ...shared.schemas import ChainType, PairSource
+from shared.schemas import ChainType, PairSource
 
 
 logger = logging.getLogger(__name__)
