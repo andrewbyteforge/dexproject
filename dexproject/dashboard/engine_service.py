@@ -706,6 +706,108 @@ class DashboardEngineService:
             return False
 
 
+
+
+
+
+
+# Fix for dashboard/engine_service.py
+# This fixes the mock mode Fast Lane activation issue
+
+def _generate_mock_status(self) -> Dict[str, Any]:
+    """Generate realistic mock engine status based on Phase 4 achievements."""
+    # FIXED: Ensure Fast Lane is always active in mock mode
+    import random
+    from datetime import datetime, timedelta
+    
+    return {
+        'timestamp': datetime.now().isoformat(),
+        'status': 'OPERATIONAL',
+        'message': 'All systems operational (mock mode)',
+        
+        # FIXED: These should be True in mock mode to enable buttons
+        'fast_lane_available': True,  
+        'smart_lane_available': True, # Show in UI but will be disabled by Phase 5 check
+        'fast_lane_active': True,     # This was the key fix!
+        'smart_lane_active': False,   # Phase 5 not ready
+        
+        'mock_mode': True,
+        'circuit_breaker_state': 'CLOSED',
+        'circuit_breaker_failures': 0,
+        '_mock': True,
+        
+        # Connection status
+        'mempool_connected': True,
+        'pairs_monitored': random.randint(40, 60),
+        'pending_transactions': random.randint(150, 300),
+        
+        # Smart Lane mock data (for Phase 5 preview)
+        'smart_lane_status': 'RUNNING',
+        'smart_lane_analyses_completed': random.randint(120, 180),
+        'smart_lane_success_rate': round(random.uniform(92, 98), 2),
+        'smart_lane_avg_time_ms': random.randint(2800, 3200),
+        'smart_lane_cache_hit_ratio': random.randint(60, 80),
+        
+        # System details
+        'fast_lane_status': 'MOCK',
+        'risk_cache_status': 'HEALTHY',
+        'provider_status': {
+            'alchemy': 'CONNECTED',
+            'ankr': 'CONNECTED', 
+            'infura': 'CONNECTED',
+            'gas_optimizer': 'CONNECTED',
+            'nonce_manager': 'CONNECTED'
+        },
+        'uptime_seconds': 3600 + random.randint(0, 7200),
+        'queue_status': {
+            'pending': random.randint(0, 5),
+            'max_size': 1000
+        },
+        'wallet': {
+            'configured': True,
+            'address': '0x742d35Cc63C7aEc567d54C1a4b1E0De57D5Ce1D1'
+        },
+        'last_trade_timestamp': (datetime.now() - timedelta(minutes=random.randint(1, 10))).isoformat(),
+        '_timestamp': datetime.now().isoformat()
+    }
+
+
+def _generate_mock_metrics(self) -> Dict[str, Any]:
+    """Generate realistic mock performance metrics based on Phase 4 test results."""
+    import random
+    from datetime import datetime
+    
+    # Use actual Phase 4 test results as baseline (78ms execution, 94% success rate)
+    base_execution_time = 78.0
+    execution_time = base_execution_time + random.uniform(-10, 15)
+    
+    return {
+        'execution_time_ms': round(execution_time, 2),
+        'average_execution_time_ms': round(base_execution_time + random.uniform(-5, 5), 2),
+        'success_rate': round(random.uniform(92, 98), 1),
+        'trades_per_minute': round(random.uniform(8, 15), 1),
+        'total_executions': random.randint(45, 120),
+        'successful_executions': random.randint(40, 115),
+        'risk_cache_hits': random.randint(95, 100),
+        'mempool_latency_ms': round(random.uniform(0.5, 2.0), 2),
+        'gas_optimization_ms': round(random.uniform(12, 18), 2),
+        'nonce_allocation_ms': round(random.uniform(0.1, 0.5), 2),
+        'fast_lane_trades_today': random.randint(45, 120),
+        'smart_lane_trades_today': 0,  # Phase 5 not implemented
+        '_mock': True,
+        '_timestamp': datetime.now().isoformat()
+    }
+
+
+
+
+
+
+
+
+
+
+
 # =============================================================================
 # GLOBAL SERVICE INSTANCE
 # =============================================================================
