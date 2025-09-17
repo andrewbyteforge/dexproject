@@ -408,7 +408,6 @@ function selectMode(mode) {
     cards.forEach(card => {
         const button = card.querySelector('button');
         if (button && !button.disabled) {
-            const originalText = button.innerHTML;
             button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Setting up...';
             button.disabled = true;
         }
@@ -416,15 +415,28 @@ function selectMode(mode) {
     
     // Set trading mode and redirect to configuration
     setTradingMode(mode).then(() => {
-        // Redirect to appropriate configuration panel
         if (mode === 'SMART_LANE') {
             window.location.href = "{% url 'dashboard:configuration_panel' mode='smart_lane' %}";
         } else {
             window.location.href = "{% url 'dashboard:configuration_panel' mode='fast_lane' %}";
         }
     }).catch((error) => {
-        console.log('Trading mode set successfully:', data);
-        return data;
+        console.error('Failed to set trading mode:', error);
+
+        // Restore button states
+        cards.forEach(card => {
+            const button = card.querySelector('button');
+            if (button) {
+                if (mode === 'SMART_LANE') {
+                    button.innerHTML = '<i class="bi bi-cpu me-2"></i>Choose Smart Lane';
+                } else {
+                    button.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Choose Fast Lane';
+                }
+                button.disabled = false;
+            }
+        });
+
+        alert('Failed to set trading mode. Please try again.');
     });
 }
 
@@ -455,13 +467,34 @@ function getCookie(name) {
     return cookieValue;
 }
 
+function setTradingMode(mode) {
+    return fetch('{% url "dashboard:api_set_trading_mode" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ mode: mode })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to set trading mode');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (!data.success) {
+            throw new Error(data.error || 'Unknown error');
+        }
+        return data;
+    });
+}
+
 // Initialize page functionality
 document.addEventListener('DOMContentLoaded', function() {
-    // Add hover effects and interactions
     const modeCards = document.querySelectorAll('.mode-card');
     
     modeCards.forEach(card => {
-        // Skip disabled cards
         const disabledOverlay = card.querySelector('.disabled-overlay');
         if (disabledOverlay) return;
         
@@ -474,16 +507,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Add click handlers for cards
     modeCards.forEach(card => {
         const disabledOverlay = card.querySelector('.disabled-overlay');
         if (disabledOverlay) return;
         
         card.addEventListener('click', function(e) {
-            // Prevent double-click if button was clicked directly
             if (e.target.tagName === 'BUTTON') return;
             
-            // Determine mode from card classes
             if (this.classList.contains('fast-lane-card')) {
                 selectMode('FAST_LANE');
             } else if (this.classList.contains('smart-lane-card')) {
@@ -492,7 +522,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Animate metrics on page load
     setTimeout(() => {
         const metrics = document.querySelectorAll('.metric-value');
         metrics.forEach(metric => {
@@ -508,44 +537,4 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 200);
 });
 </script>
-{% endblock %}.error('Failed to set trading mode:', error);
-        
-        // Restore button states
-        cards.forEach(card => {
-            const button = card.querySelector('button');
-            if (button) {
-                if (mode === 'SMART_LANE') {
-                    button.innerHTML = '<i class="bi bi-cpu me-2"></i>Choose Smart Lane';
-                } else {
-                    button.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Choose Fast Lane';
-                }
-                button.disabled = false;
-            }
-        });
-        
-        alert('Failed to set trading mode. Please try again.');
-    });
-}
-
-function setTradingMode(mode) {
-    return fetch('{% url "dashboard:api_set_trading_mode" %}', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCookie('csrftoken')
-        },
-        body: JSON.stringify({
-            mode: mode
-        })
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Failed to set trading mode');
-        }
-        return response.json();
-    })
-    .then(data => {
-        if (!data.success) {
-            throw new Error(data.error || 'Unknown error');
-        }
-        console
+{% endblock %}

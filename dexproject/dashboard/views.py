@@ -225,6 +225,9 @@ def dashboard_home(request: HttpRequest) -> HttpResponse:
         })
 
 
+
+
+
 def mode_selection(request: HttpRequest) -> HttpResponse:
     """
     Mode selection page for choosing between Fast Lane and Smart Lane.
@@ -273,7 +276,7 @@ def mode_selection(request: HttpRequest) -> HttpResponse:
             
             # System status
             'engine_status': engine_status,
-            'fast_lane_available': engine_status.get('fast_lane_active', False),
+            'fast_lane_available': True if engine_status.get('mock_mode', False) else engine_status.get('fast_lane_active', False),
             'smart_lane_available': False,  # Phase 5 not ready
             
             # Competitive positioning
@@ -291,6 +294,14 @@ def mode_selection(request: HttpRequest) -> HttpResponse:
         logger.error(f"Error in mode_selection: {e}", exc_info=True)
         messages.error(request, "Error loading mode selection.")
         return redirect('dashboard:home')
+
+
+
+
+
+
+
+
 
 
 def configuration_panel(request: HttpRequest, mode: str) -> HttpResponse:
