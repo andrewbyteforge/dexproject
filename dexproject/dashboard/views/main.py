@@ -255,7 +255,7 @@ def configuration_panel(request: HttpRequest, mode: str) -> HttpResponse:
     """
     Configuration panel for selected trading mode with enhanced form validation.
     
-    FIXED: Anonymous user handling and improved error messaging.
+    FIXED: Enhanced anonymous user handling to prevent authentication redirects.
     
     Handles both Fast Lane and Smart Lane configuration with mode-specific options.
     Includes comprehensive form validation and error handling.
@@ -268,8 +268,9 @@ def configuration_panel(request: HttpRequest, mode: str) -> HttpResponse:
         HttpResponse with configuration panel or redirect to summary
     """
     try:
-        # FIXED: Handle anonymous users properly
+        # FIXED: Handle anonymous users FIRST before any other operations
         if not request.user.is_authenticated:
+            logger.info("Anonymous user accessing configuration panel, creating demo user")
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -278,7 +279,10 @@ def configuration_panel(request: HttpRequest, mode: str) -> HttpResponse:
                     'email': 'demo@example.com'
                 }
             )
+            # Important: Set the user on the request object
             request.user = user
+            if created:
+                logger.info("Created demo user for configuration panel access")
         
         logger.info(f"Configuration panel accessed for mode: {mode} by user: {request.user.username}")
         

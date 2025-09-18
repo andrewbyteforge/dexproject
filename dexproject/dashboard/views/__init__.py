@@ -39,12 +39,29 @@ try:
     from .config import configuration_panel
 except ImportError:
     # Create placeholder if config.py doesn't exist
-    @login_required
+    # FIXED: Removed @login_required decorator
     def configuration_panel(request, mode='FAST_LANE'):
         """Configuration panel view for Fast Lane or Smart Lane."""
-        from trading.models import BotConfiguration
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
         
-        user_configs = BotConfiguration.objects.filter(user=request.user)
+        # FIXED: Import from dashboard.models instead of trading.models
+        try:
+            from dashboard.models import BotConfiguration
+            user_configs = BotConfiguration.objects.filter(user=request.user)
+        except ImportError:
+            # Fallback if model doesn't exist
+            user_configs = []
         
         context = {
             'mode': mode,
@@ -62,18 +79,43 @@ try:
     )
 except ImportError:
     # Create placeholder functions if file doesn't exist
-    @login_required
+    # FIXED: Removed @login_required decorators
     def dashboard_settings(request):
         """Placeholder settings view."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         return render(request, 'dashboard/settings.html', {
             'user': request.user,
             'page_title': 'Settings',
             'active_page': 'settings',
         })
     
-    @login_required
     def dashboard_analytics(request):
         """Placeholder analytics view."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         return render(request, 'dashboard/analytics.html', {
             'user': request.user,
             'page_title': 'Analytics',
@@ -90,13 +132,27 @@ try:
     )
 except ImportError:
     # Create placeholder functions if file doesn't exist
+    # FIXED: Removed @login_required decorators from all placeholder functions
     
-    @login_required
     @require_http_methods(["POST"])
     def save_configuration(request):
         """Save bot configuration."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         try:
-            from trading.models import BotConfiguration
+            # FIXED: Import from dashboard.models instead of trading.models
+            from dashboard.models import BotConfiguration
             data = json.loads(request.body)
             
             config = BotConfiguration.objects.create(
@@ -112,15 +168,30 @@ except ImportError:
                 'config_id': config.id,
                 'message': 'Configuration saved successfully'
             })
+        except ImportError:
+            return JsonResponse({'success': False, 'error': 'Configuration model not available'})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
     
-    @login_required
     @require_http_methods(["POST"])
     def load_configuration(request):
         """Load a bot configuration."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         try:
-            from trading.models import BotConfiguration
+            # FIXED: Import from dashboard.models instead of trading.models
+            from dashboard.models import BotConfiguration
             data = json.loads(request.body)
             config_id = data.get('config_id')
             
@@ -139,15 +210,30 @@ except ImportError:
                     'is_active': config.is_active
                 }
             })
+        except ImportError:
+            return JsonResponse({'success': False, 'error': 'Configuration model not available'})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
     
-    @login_required
     @require_http_methods(["POST"])
     def delete_configuration(request):
         """Delete a bot configuration."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         try:
-            from trading.models import BotConfiguration
+            # FIXED: Import from dashboard.models instead of trading.models
+            from dashboard.models import BotConfiguration
             data = json.loads(request.body)
             config_id = data.get('config_id')
             
@@ -161,15 +247,30 @@ except ImportError:
                 'success': True,
                 'message': 'Configuration deleted successfully'
             })
+        except ImportError:
+            return JsonResponse({'success': False, 'error': 'Configuration model not available'})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
     
-    @login_required
     @require_http_methods(["GET"])
     def get_configurations(request):
         """Get all user configurations."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         try:
-            from trading.models import BotConfiguration
+            # FIXED: Import from dashboard.models instead of trading.models
+            from dashboard.models import BotConfiguration
             configs = BotConfiguration.objects.filter(user=request.user)
             
             return JsonResponse({
@@ -185,6 +286,8 @@ except ImportError:
                     for c in configs
                 ]
             })
+        except ImportError:
+            return JsonResponse({'success': False, 'error': 'Configuration model not available'})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
 
@@ -197,17 +300,15 @@ try:
     )
 except ImportError:
     # Create placeholder functions if file doesn't exist
-    @login_required
+    # FIXED: Removed @login_required decorators
     def start_session(request):
         """Placeholder start session view."""
         return JsonResponse({'success': False, 'error': 'Session management not implemented'})
     
-    @login_required
     def stop_session(request):
         """Placeholder stop session view."""
         return JsonResponse({'success': False, 'error': 'Session management not implemented'})
     
-    @login_required
     def get_session_status(request):
         """Placeholder session status view."""
         return JsonResponse({'success': False, 'error': 'Session management not implemented'})
@@ -219,7 +320,7 @@ try:
     )
 except ImportError:
     # Create placeholder function if file doesn't exist
-    @login_required
+    # FIXED: Removed @login_required decorator
     def get_performance_metrics(request):
         """Placeholder performance metrics view."""
         return JsonResponse({
@@ -250,41 +351,93 @@ except ImportError as e:
     print(f"Warning: Could not import Smart Lane views: {e}")
     
     # Create placeholder functions if smart_lane.py doesn't exist
-    @login_required
+    # FIXED: Removed @login_required decorators from all Smart Lane functions
     def smart_lane_dashboard(request):
         """Placeholder Smart Lane dashboard."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         return render(request, 'dashboard/smart_lane_dashboard.html', {
             'page_title': 'Smart Lane Intelligence',
             'smart_lane_enabled': False,
-            'error': 'Smart Lane views not available'
+            'error': 'Smart Lane views not available',
+            'user': request.user
         })
     
-    @login_required
     def smart_lane_demo(request):
         """Placeholder Smart Lane demo."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         return render(request, 'dashboard/smart_lane_demo.html', {
             'page_title': 'Smart Lane Demo',
             'smart_lane_enabled': False,
-            'error': 'Smart Lane views not available'
+            'error': 'Smart Lane views not available',
+            'user': request.user
         })
     
-    @login_required
     def smart_lane_config(request):
         """Placeholder Smart Lane config."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         return render(request, 'dashboard/smart_lane_config.html', {
             'page_title': 'Smart Lane Configuration',
-            'error': 'Smart Lane views not available'
+            'error': 'Smart Lane views not available',
+            'user': request.user
         })
     
-    @login_required
     def smart_lane_analyze(request):
         """Placeholder Smart Lane analyze."""
+        # Handle anonymous users
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            user, created = User.objects.get_or_create(
+                username='demo_user',
+                defaults={
+                    'first_name': 'Demo',
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
+                }
+            )
+            request.user = user
+            
         return render(request, 'dashboard/smart_lane_analyze.html', {
             'page_title': 'Smart Lane Analysis',
-            'error': 'Smart Lane views not available'
+            'error': 'Smart Lane views not available',
+            'user': request.user
         })
     
-    @login_required
     def api_smart_lane_analyze(request):
         """Placeholder Smart Lane API."""
         return JsonResponse({
@@ -292,7 +445,6 @@ except ImportError as e:
             'error': 'Smart Lane API not available'
         })
     
-    @login_required
     def api_get_thought_log(request, analysis_id):
         """Placeholder thought log API."""
         return JsonResponse({

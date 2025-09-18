@@ -11,6 +11,7 @@ Path: dashboard/urls.py
 
 from django.urls import path
 from . import views
+from django.http import JsonResponse
 
 app_name = 'dashboard'
 
@@ -86,4 +87,6 @@ urlpatterns = [
     path('smart-lane/analyze/', views.smart_lane_analyze, name='smart_lane_analyze'),
     path('api/smart-lane/analyze/', views.api_smart_lane_analyze, name='api_smart_lane_analyze'),
     path('api/smart-lane/thought-log/<str:analysis_id>/', views.api_get_thought_log, name='api_get_thought_log'),
+    # Add this temporary URL pattern to test
+path('api/test/', lambda request: JsonResponse({'test': 'works'}), name='test_api'),
 ]
