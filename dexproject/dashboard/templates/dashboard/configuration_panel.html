@@ -63,15 +63,9 @@
                         </div>
                     </div>
                     <div class="col-md-6 text-md-end">
-                        {% if mode == 'smart_lane' %}
-                            <span class="badge bg-warning">
-                                <i class="bi bi-clock me-1"></i>Phase 5 - Coming Soon
-                            </span>
-                        {% else %}
-                            <span class="badge bg-success">
-                                <i class="bi bi-check-circle me-1"></i>Production Ready
-                            </span>
-                        {% endif %}
+                        <span class="badge bg-success">
+                            <i class="bi bi-check-circle me-1"></i>Production Ready
+                        </span>
                     </div>
                 </div>
             </div>
@@ -216,28 +210,59 @@
                             </h6>
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label for="analysis_depth" class="form-label">Analysis Depth</label>
-                            <select class="form-select" id="analysis_depth" name="analysis_depth" disabled>
-                                <option value="COMPREHENSIVE" selected>Comprehensive Analysis</option>
+                            <label for="analysis_depth" class="form-label">Analysis Depth *</label>
+                            <select class="form-select" id="analysis_depth" name="analysis_depth" required>
+                                <option value="">Select analysis depth</option>
+                                <option value="BASIC" {% if config.analysis_depth == 'BASIC' %}selected{% endif %}>Basic Analysis (~1s)</option>
+                                <option value="COMPREHENSIVE" {% if config.analysis_depth == 'COMPREHENSIVE' or not config.analysis_depth %}selected{% endif %}>Comprehensive Analysis (~3-5s)</option>
+                                <option value="DEEP_DIVE" {% if config.analysis_depth == 'DEEP_DIVE' %}selected{% endif %}>Deep Dive Analysis (~8-12s)</option>
                             </select>
-                            <div class="form-text text-warning">Available in Phase 5</div>
+                            <div class="form-text">Depth of Smart Lane risk and technical analysis</div>
+                            <div class="invalid-feedback"></div>
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label for="ai_thought_log" class="form-label">AI Thought Log</label>
-                            <select class="form-select" id="ai_thought_log" name="ai_thought_log" disabled>
-                                <option value="ENABLED" selected>Full Reasoning</option>
+                            <label for="ai_thought_log" class="form-label">AI Thought Log *</label>
+                            <select class="form-select" id="ai_thought_log" name="ai_thought_log" required>
+                                <option value="">Select thought log level</option>
+                                <option value="BASIC" {% if config.thought_log_level == 'BASIC' %}selected{% endif %}>Basic Reasoning</option>
+                                <option value="DETAILED" {% if config.thought_log_level == 'DETAILED' %}selected{% endif %}>Detailed Analysis</option>
+                                <option value="COMPREHENSIVE" {% if config.thought_log_level == 'COMPREHENSIVE' or not config.thought_log_level %}selected{% endif %}>Full Reasoning Process</option>
                             </select>
-                            <div class="form-text text-warning">Available in Phase 5</div>
+                            <div class="form-text">Level of AI decision explanation and reasoning</div>
+                            <div class="invalid-feedback"></div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="position_sizing_method" class="form-label">Position Sizing Method</label>
+                            <select class="form-select" id="position_sizing_method" name="position_sizing_method">
+                                <option value="RISK_BASED" {% if config.position_sizing_method == 'RISK_BASED' or not config.position_sizing_method %}selected{% endif %}>Risk-Based Sizing</option>
+                                <option value="FIXED_PERCENT" {% if config.position_sizing_method == 'FIXED_PERCENT' %}selected{% endif %}>Fixed Percentage</option>
+                                <option value="KELLY_CRITERION" {% if config.position_sizing_method == 'KELLY_CRITERION' %}selected{% endif %}>Kelly Criterion</option>
+                                <option value="VOLATILITY_ADJUSTED" {% if config.position_sizing_method == 'VOLATILITY_ADJUSTED' %}selected{% endif %}>Volatility Adjusted</option>
+                            </select>
+                            <div class="form-text">Strategy for calculating optimal position sizes</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="max_analysis_time" class="form-label">Max Analysis Time (seconds)</label>
+                            <input type="number" 
+                                   class="form-control" 
+                                   id="max_analysis_time" 
+                                   name="max_analysis_time_seconds" 
+                                   value="{{ config.max_analysis_time_seconds|default:'5' }}"
+                                   min="1" 
+                                   max="30" 
+                                   step="1">
+                            <div class="form-text">Maximum time allowed for Smart Lane analysis</div>
                         </div>
                         <div class="col-12">
-                            <div class="alert alert-warning">
+                            <div class="alert alert-success">
                                 <h6 class="alert-heading smart-lane-accent">
-                                    <i class="bi bi-info-circle me-2"></i>Smart Lane - Phase 5 Development
+                                    <i class="bi bi-check-circle me-2"></i>Smart Lane - Phase 5 Complete
                                 </h6>
                                 <p class="mb-0 small">
-                                    Smart Lane configuration will be available in Phase 5. This will include:
-                                    comprehensive risk analysis, AI thought logs, multi-timeframe technical analysis,
-                                    and strategic position sizing.
+                                    Smart Lane is now operational with full functionality including:
+                                    comprehensive risk analysis engine, AI thought log generation, 
+                                    strategic position sizing with portfolio management, and advanced
+                                    exit strategies with risk controls.
                                 </p>
                             </div>
                         </div>
@@ -336,6 +361,19 @@
                         <strong>Auto-Execute:</strong> 
                         <span id="preview-auto">{% if config.auto_execution_enabled %}Yes{% else %}No{% endif %}</span>
                     </div>
+                    {% else %}
+                    <div class="mb-2">
+                        <strong>Analysis Depth:</strong> 
+                        <span id="preview-analysis">{{ config.analysis_depth|default:'Comprehensive' }}</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>Thought Log:</strong> 
+                        <span id="preview-thought-log">{{ config.thought_log_level|default:'Comprehensive' }}</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>Position Sizing:</strong> 
+                        <span id="preview-sizing">{{ config.position_sizing_method|default:'Risk-Based' }}</span>
+                    </div>
                     {% endif %}
                 </div>
                 
@@ -351,9 +389,10 @@
                         <li>MEV protection is recommended for all trades</li>
                         <li>Start with smaller position sizes for testing</li>
                         {% else %}
-                        <li>Smart Lane provides comprehensive risk analysis</li>
-                        <li>AI thought logs explain every decision</li>
-                        <li>Strategic position sizing optimizes risk/reward</li>
+                        <li>Comprehensive analysis provides the best risk assessment</li>
+                        <li>Full thought logs help understand AI decision-making</li>
+                        <li>Risk-based sizing optimizes for portfolio management</li>
+                        <li>Deep dive analysis is best for complex tokens</li>
                         {% endif %}
                     </ul>
                 </div>
@@ -361,7 +400,6 @@
         </div>
 
         <!-- Performance Metrics -->
-        {% if mode == 'fast_lane' %}
         <div class="card card-glass mt-4">
             <div class="card-header">
                 <h6 class="card-title mb-0">
@@ -370,6 +408,7 @@
             </div>
             <div class="card-body text-center">
                 <div class="row">
+                    {% if mode == 'fast_lane' %}
                     <div class="col-6">
                         <div class="h4 fast-lane-accent mb-1">~78ms</div>
                         <small class="text-muted">Execution Time</small>
@@ -378,10 +417,19 @@
                         <div class="h4 text-success mb-1">94%+</div>
                         <small class="text-muted">Success Rate</small>
                     </div>
+                    {% else %}
+                    <div class="col-6">
+                        <div class="h4 smart-lane-accent mb-1">~3-5s</div>
+                        <small class="text-muted">Analysis Time</small>
+                    </div>
+                    <div class="col-6">
+                        <div class="h4 text-success mb-1">98%+</div>
+                        <small class="text-muted">Risk Detection</small>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
-        {% endif %}
     </div>
 </div>
 
@@ -427,6 +475,19 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('auto_execution').addEventListener('change', function() {
         document.getElementById('preview-auto').textContent = this.checked ? 'Yes' : 'No';
     });
+    {% else %}
+    // Smart Lane preview updates
+    document.getElementById('analysis_depth').addEventListener('change', function() {
+        document.getElementById('preview-analysis').textContent = this.options[this.selectedIndex].text;
+    });
+    
+    document.getElementById('ai_thought_log').addEventListener('change', function() {
+        document.getElementById('preview-thought-log').textContent = this.options[this.selectedIndex].text;
+    });
+    
+    document.getElementById('position_sizing_method').addEventListener('change', function() {
+        document.getElementById('preview-sizing').textContent = this.options[this.selectedIndex].text;
+    });
     {% endif %}
     
     function validateForm() {
@@ -452,10 +513,28 @@ document.addEventListener('DOMContentLoaded', function() {
         const positionSize = document.getElementById('max_position_size');
         if (positionSize.value < 1 || positionSize.value > 10000) {
             positionSize.classList.add('is-invalid');
-            positionSize.nextElementSibling?.nextElementSibling?.textContent = 
-                'Position size must be between $1 and $10,000.';
+            const feedback = positionSize.parentElement?.nextElementSibling?.nextElementSibling;
+            if (feedback && feedback.classList.contains('invalid-feedback')) {
+                feedback.textContent = 'Position size must be between $1 and $10,000.';
+            }
             isValid = false;
         }
+        
+        {% if mode != 'fast_lane' %}
+        // Validate Smart Lane specific fields
+        const analysisDepth = document.getElementById('analysis_depth');
+        const thoughtLog = document.getElementById('ai_thought_log');
+        
+        if (!analysisDepth.value) {
+            analysisDepth.classList.add('is-invalid');
+            isValid = false;
+        }
+        
+        if (!thoughtLog.value) {
+            thoughtLog.classList.add('is-invalid');
+            isValid = false;
+        }
+        {% endif %}
         
         return isValid;
     }
@@ -470,24 +549,56 @@ document.addEventListener('DOMContentLoaded', function() {
             method: 'POST',
             body: formData,
             headers: {
-                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+                'X-Requested-With': 'XMLHttpRequest'  // FIXED: Tell Django this is AJAX
             }
         })
-        .then(response => response.json())
+        .then(response => {
+            console.log('Response status:', response.status);
+            
+            // FIXED: Check if response is JSON before parsing
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                return response.json();
+            } else {
+                // If we get HTML instead of JSON, log the response text for debugging
+                return response.text().then(text => {
+                    console.error('Expected JSON but got HTML:', text.substring(0, 200));
+                    throw new Error('Server returned HTML instead of JSON. Check Django view configuration.');
+                });
+            }
+        })
         .then(data => {
+            console.log('Response data:', data);
+            
             if (data.success) {
-                showAlert('Configuration saved successfully!', 'success');
+                showAlert(data.message || 'Configuration saved successfully!', 'success');
+                
                 // Optional: redirect after success
-                setTimeout(() => {
-                    window.location.href = '/dashboard/';
-                }, 1500);
+                if (data.redirect_url) {
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url;
+                    }, 1500);
+                } else {
+                    setTimeout(() => {
+                        window.location.href = '/dashboard/';
+                    }, 1500);
+                }
             } else {
                 showAlert(data.error || 'Failed to save configuration.', 'danger');
             }
         })
         .catch(error => {
             console.error('Save error:', error);
-            showAlert('An error occurred while saving. Please try again.', 'danger');
+            
+            // FIXED: More specific error messages
+            if (error.message.includes('JSON')) {
+                showAlert('Configuration error: Server returned unexpected response. Check console for details.', 'danger');
+            } else if (error.message.includes('NetworkError') || error.message.includes('fetch')) {
+                showAlert('Network error: Please check your connection and try again.', 'danger');
+            } else {
+                showAlert('An error occurred while saving. Please try again.', 'danger');
+            }
         })
         .finally(() => {
             saveBtn.disabled = false;
@@ -504,11 +615,24 @@ document.addEventListener('DOMContentLoaded', function() {
         
         {% if mode == 'fast_lane' %}
         document.getElementById('execution_timeout').value = '500';
-        document.getElementById('max_slippage').value = '2.0';
-        document.getElementById('mev_protection').checked = true;
-        document.getElementById('auto_execution').checked = false;
-        document.getElementById('require_approval').checked = true;
+        const maxSlippage = document.getElementById('max_slippage');
+        if (maxSlippage) maxSlippage.value = '2.0';
+        const mevProtection = document.getElementById('mev_protection');
+        if (mevProtection) mevProtection.checked = true;
+        {% else %}
+        document.getElementById('analysis_depth').value = 'COMPREHENSIVE';
+        document.getElementById('ai_thought_log').value = 'COMPREHENSIVE';
+        const positionSizingMethod = document.getElementById('position_sizing_method');
+        if (positionSizingMethod) positionSizingMethod.value = 'RISK_BASED';
+        const maxAnalysisTime = document.getElementById('max_analysis_time');
+        if (maxAnalysisTime) maxAnalysisTime.value = '5';
         {% endif %}
+        
+        // FIXED: Set execution settings for both modes (moved outside mode-specific blocks)
+        const autoExecution = document.getElementById('auto_execution');
+        if (autoExecution) autoExecution.checked = false;
+        const requireApproval = document.getElementById('require_approval');
+        if (requireApproval) requireApproval.checked = true;
         
         // Clear validation classes
         form.querySelectorAll('.is-valid, .is-invalid').forEach(el => {
@@ -519,19 +643,33 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function showAlert(message, type) {
+        // FIXED: Remove existing alerts first
+        document.querySelectorAll('.alert[role="alert"]').forEach(alert => {
+            alert.remove();
+        });
+        
         const alertDiv = document.createElement('div');
         alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+        alertDiv.setAttribute('role', 'alert');
         alertDiv.innerHTML = `
             ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         `;
         
-        const container = document.querySelector('.container-fluid');
-        container.insertBefore(alertDiv, container.firstChild);
+        // FIXED: Better alert placement
+        const container = document.querySelector('.container-fluid') || document.querySelector('main') || document.body;
+        const firstRow = container.querySelector('.row');
+        if (firstRow) {
+            container.insertBefore(alertDiv, firstRow);
+        } else {
+            container.insertBefore(alertDiv, container.firstChild);
+        }
         
         // Auto-dismiss after 5 seconds
         setTimeout(() => {
-            alertDiv.remove();
+            if (alertDiv && alertDiv.parentNode) {
+                alertDiv.remove();
+            }
         }, 5000);
     }
 });

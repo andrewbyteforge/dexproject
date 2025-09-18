@@ -593,194 +593,224 @@ def mode_selection(request: HttpRequest) -> HttpResponse:
         return redirect('dashboard:home')
 
 
-def configuration_panel(request: HttpRequest, mode: str) -> HttpResponse:
-    """
-    Comprehensive configuration panel for specific trading mode with Fast Lane and Smart Lane integration.
+def configuration_panel(request, mode):
+    """Configuration panel that returns JSON for AJAX requests."""
     
-    UPDATED: Added Smart Lane configuration support with strategy components
-    
-    Handles both GET (display form) and POST (save configuration) requests with proper
-    validation and error handling. Provides mode-specific configuration options.
-    
-    Args:
-        request: Django HTTP request object
-        mode: Trading mode ('fast_lane' or 'smart_lane')
-        
-    Returns:
-        Rendered configuration panel template or redirect on success
-    """
-    try:
-        # Initialize engines if needed
-        run_async_in_view(ensure_engine_initialized())
-        
-        # Initialize Smart Lane if needed and mode is smart_lane
-        if mode == 'smart_lane' and smart_lane_available and smart_lane_pipeline is None:
-            success = run_async_in_view(initialize_smart_lane_pipeline())
-            if not success:
-                logger.warning("Smart Lane initialization failed in configuration panel")
-                messages.warning(request, "Smart Lane initialization failed. Some features may not be available.")
-        
-        logger.info(f"Configuration panel accessed: mode={mode} by user: {getattr(request.user, 'username', 'anonymous')}")
-        
-        # Validate mode parameter
-        valid_modes = ['fast_lane', 'smart_lane']
-        if mode not in valid_modes:
-            logger.warning(f"Invalid configuration mode: {mode}")
-            messages.error(request, f"Invalid mode: {mode}")
-            return redirect('dashboard:mode_selection')
-        
-        # Check Smart Lane availability
-        if mode == 'smart_lane':
-            if not smart_lane_available:
-                logger.warning("Smart Lane configuration requested but not available")
-                messages.warning(request, "Smart Lane is not available in this environment")
-                return redirect('dashboard:mode_selection')
-            
-            if smart_lane_pipeline is None:
-                messages.warning(request, "Smart Lane is available but not initialized. Some features may be limited.")
-        
-        # Get or create demo user if needed
-        if not hasattr(request.user, 'username') or not request.user.is_authenticated:
-            user, created = User.objects.get_or_create(
-                username='demo_user',
-                defaults={
-                    'first_name': 'Demo',
-                    'last_name': 'User',
-                    'email': 'demo@example.com'
+    # Handle anonymous users
+    if not request.user.is_authenticated:
+        from django.contrib.auth.models import User
+        user, created = User.objects.get_or_create(
+            username='demo_user',
+            defaults={'first_name': 'Demo', 'last_name': 'User', 'email': 'demo@example.com'}
+        )
+        request.user = user
+
+    # Validate mode
+    valid_modes = ['fast_lane', 'smart_lane']
+    if mode not in valid_modes:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': f'Invalid mode: {mode}'})
+        messages.error(request, f"Invalid mode: {mode}")
+        return redirect('dashboard:mode_selection')
+
+    # CRITICAL: Handle POST requests with JSON responses for AJAX
+    if request.method == 'POST':
+        # Check if this is an AJAX request
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            try:
+                logger.info(f"Processing AJAX configuration save for mode: {mode}")
+                
+                # Extract form data
+                config_data = {
+                    'name': request.POST.get('name', '').strip(),
+                    'description': request.POST.get('description', '').strip(),
+                    'max_position_size_usd': request.POST.get('max_position_size_usd', '100'),
+                    'risk_tolerance': request.POST.get('risk_tolerance', 'MEDIUM'),
+                    'auto_execution_enabled': request.POST.get('auto_execution_enabled') == 'on',
+                    'require_manual_approval': request.POST.get('require_manual_approval') == 'on',
                 }
-            )
-            request.user = user
+                
+                # Mode-specific data extraction
+                if mode == 'fast_lane':
+                    config_data.update({
+                        'execution_timeout_ms': request.POST.get('execution_timeout_ms', '500'),
+                        'max_slippage_percent': request.POST.get('max_slippage_percent', '2.0'),
+                        'mev_protection_enabled': request.POST.get('mev_protection_enabled') == 'on'
+                    })
+                elif mode == 'smart_lane':
+                    config_data.update({
+                        'analysis_depth': request.POST.get('analysis_depth', 'COMPREHENSIVE'),
+                        'ai_thought_log': request.POST.get('ai_thought_log', 'COMPREHENSIVE'),
+                        'position_sizing_method': request.POST.get('position_sizing_method', 'RISK_BASED'),
+                        'max_analysis_time_seconds': request.POST.get('max_analysis_time_seconds', '5')
+                    })
+                
+                # Basic validation
+                if not config_data['name']:
+                    return JsonResponse({'success': False, 'error': 'Configuration name is required'})
+                
+                if len(config_data['name']) > 100:
+                    return JsonResponse({'success': False, 'error': 'Configuration name must be 100 characters or less'})
+                
+                # Try to save the configuration
+                try:
+                    # Import your model - adjust the import path as needed
+                    from dashboard.models import BotConfiguration
+                    
+                    # Create or update configuration
+                    config, created = BotConfiguration.objects.update_or_create(
+                        user=request.user,
+                        name=config_data['name'],
+                        trading_mode=mode.upper(),
+                        defaults={
+                            'config_data': config_data,
+                            'is_active': True
+                        }
+                    )
+                    
+                    # Deactivate other configs of the same mode
+                    BotConfiguration.objects.filter(
+                        user=request.user,
+                        trading_mode=mode.upper()
+                    ).exclude(id=config.id).update(is_active=False)
+                    
+                    action = 'created' if created else 'updated'
+                    logger.info(f"Configuration {action}: {config.name} (ID: {config.id})")
+                    
+                    return JsonResponse({
+                        'success': True,
+                        'message': f'Configuration "{config_data["name"]}" {action} successfully!',
+                        'config_id': config.id,
+                        'redirect_url': '/dashboard/'
+                    })
+                    
+                except Exception as db_error:
+                    logger.error(f"Database error saving configuration: {db_error}")
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Database error. Please try again.'
+                    })
+                
+            except Exception as e:
+                logger.error(f"Error in AJAX configuration save: {e}", exc_info=True)
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Server error. Please try again.'
+                })
+        else:
+            # Handle non-AJAX POST requests (traditional form submission)
+            logger.info("Processing traditional form submission")
+            # Your existing POST logic here, or redirect to prevent issues
+            messages.info(request, "Please use the form interface to save configurations.")
+            return redirect(request.path)
+    
+    # Handle GET requests (display the form)
+    try:
+        # Get user's existing configurations
+        try:
+            from dashboard.models import BotConfiguration
+            user_configs = BotConfiguration.objects.filter(
+                user=request.user,
+                trading_mode=mode.upper()
+            ).order_by('-created_at')
+            active_config = user_configs.filter(is_active=True).first()
+        except:
+            user_configs = []
+            active_config = None
         
-        # Handle POST request (save configuration)
-        if request.method == 'POST':
-            return _handle_configuration_save_with_smart_lane(request, mode)
+        context = {
+            'page_title': f'{mode.replace("_", " ").title()} Configuration',
+            'mode': mode,
+            'mode_display': mode.replace('_', ' ').title(),
+            'config': active_config.config_data if active_config else {},
+            'user_configs': user_configs,
+            'user': request.user,
+        }
         
-        # Handle GET request (display form)
-        return _handle_configuration_display_with_smart_lane(request, mode)
+        return render(request, 'dashboard/configuration_panel.html', context)
         
     except Exception as e:
-        logger.error(f"Error in configuration_panel for mode {mode}: {e}", exc_info=True)
+        logger.error(f"Error loading configuration form: {e}", exc_info=True)
         messages.error(request, "Error loading configuration panel.")
         return redirect('dashboard:mode_selection')
 
 
-def _handle_configuration_save_with_smart_lane(request: HttpRequest, mode: str) -> HttpResponse:
-    """Handle saving configuration from POST request with Smart Lane support."""
+
+
+
+
+
+
+
+
+
+
+
+
+
+def _handle_configuration_post_json(request, mode):
+    """FIXED: Handle POST and return JSON response."""
     try:
-        # Base configuration data
+        # Extract form data
         config_data = {
-            'name': request.POST.get('config_name', '').strip(),
-            'trading_mode': mode.upper(),
+            'name': request.POST.get('name', '').strip(),
+            'description': request.POST.get('description', '').strip(),
+            'max_position_size_usd': float(request.POST.get('max_position_size_usd', 100)),
+            'risk_tolerance': request.POST.get('risk_tolerance', 'MEDIUM'),
+            'auto_execution_enabled': request.POST.get('auto_execution_enabled') == 'on',
+            'require_manual_approval': request.POST.get('require_manual_approval') == 'on'
         }
         
         if mode == 'fast_lane':
-            # Fast Lane specific configuration
             config_data.update({
-                'max_position_size_usd': Decimal(request.POST.get('max_position_size', '100')),
-                'max_slippage_percent': Decimal(request.POST.get('max_slippage', '2.0')),
-                'stop_loss_percent': Decimal(request.POST.get('stop_loss', '10.0')),
-                'take_profit_percent': Decimal(request.POST.get('take_profit', '20.0')),
-                'auto_execution_enabled': request.POST.get('auto_execution') == 'on',
-                'gas_price_strategy': request.POST.get('gas_price_strategy', 'FAST'),
-                'mev_protection': request.POST.get('mev_protection') == 'on',
-                'flashbots_relay': request.POST.get('flashbots_relay') == 'on'
+                'execution_timeout_ms': int(request.POST.get('execution_timeout_ms', 500)),
+                'max_slippage_percent': float(request.POST.get('max_slippage_percent', 2.0)),
+                'mev_protection_enabled': request.POST.get('mev_protection_enabled') == 'on'
             })
-        
-        else:  # smart_lane
-            # Smart Lane specific configuration (NEW Phase 5)
+        elif mode == 'smart_lane':
             config_data.update({
-                # Analysis settings
                 'analysis_depth': request.POST.get('analysis_depth', 'COMPREHENSIVE'),
-                'enabled_categories': request.POST.getlist('enabled_categories'),
-                'max_analysis_time': float(request.POST.get('max_analysis_time', 5.0)),
-                'thought_log_enabled': request.POST.get('thought_log_enabled') == 'on',
-                'thought_log_detail_level': request.POST.get('thought_log_detail_level', 'FULL'),
-                
-                # Risk management
-                'max_acceptable_risk_score': float(request.POST.get('max_acceptable_risk_score', 0.7)),
-                'min_confidence_threshold': float(request.POST.get('min_confidence_threshold', 0.3)),
-                
-                # Position sizing (NEW)
+                'ai_thought_log': request.POST.get('ai_thought_log', 'COMPREHENSIVE'),
                 'position_sizing_method': request.POST.get('position_sizing_method', 'RISK_BASED'),
-                'max_position_size_percent': float(request.POST.get('max_position_size_percent', 10.0)),
-                'risk_per_trade_percent': float(request.POST.get('risk_per_trade_percent', 2.0)),
-                
-                # Exit strategies (NEW)
-                'exit_strategy_type': request.POST.get('exit_strategy_type', 'BALANCED'),
-                'use_trailing_stops': request.POST.get('use_trailing_stops') == 'on',
-                'max_hold_time_hours': int(request.POST.get('max_hold_time_hours', 48)),
-                
-                # Technical analysis
-                'technical_timeframes': request.POST.getlist('technical_timeframes')
+                'max_analysis_time_seconds': float(request.POST.get('max_analysis_time_seconds', 5.0))
             })
-            
-            # Validate Smart Lane specific settings
-            if config_data['max_analysis_time'] > 10.0:
-                messages.warning(request, "Analysis time capped at 10 seconds for performance")
-                config_data['max_analysis_time'] = 10.0
-            
-            if config_data['max_position_size_percent'] > 25.0:
-                messages.warning(request, "Position size capped at 25% for risk management")
-                config_data['max_position_size_percent'] = 25.0
         
-        # Validate required fields
+        # Basic validation
         if not config_data['name']:
-            messages.error(request, "Configuration name is required.")
-            return _handle_configuration_display_with_smart_lane(request, mode, config_data)
+            return JsonResponse({'success': False, 'error': 'Configuration name is required'})
         
         # Create or update configuration
-        config, created = BotConfiguration.objects.get_or_create(
+        config, created = BotConfiguration.objects.update_or_create(
             user=request.user,
             name=config_data['name'],
-            defaults=config_data
+            trading_mode=mode.upper(),
+            defaults={'config_data': config_data, 'is_active': True}
         )
         
-        if not created:
-            # Update existing configuration
-            for key, value in config_data.items():
-                setattr(config, key, value)
-            config.save()
-            logger.info(f"Updated {mode} configuration: {config.name} for user: {request.user.username}")
-            messages.success(request, f'{mode.title().replace("_", " ")} configuration "{config.name}" updated successfully!')
-        else:
-            logger.info(f"Created new {mode} configuration: {config.name} for user: {request.user.username}")
-            messages.success(request, f'{mode.title().replace("_", " ")} configuration "{config.name}" saved successfully!')
+        logger.info(f"Configuration {'created' if created else 'updated'}: {config.name}")
         
-        # For Smart Lane, test the configuration if possible
-        if mode == 'smart_lane' and smart_lane_available and smart_lane_pipeline:
-            try:
-                # Test configuration with strategy components
-                if smart_lane_available:
-                    # Quick validation test
-                    test_context = {
-                        'symbol': 'TEST',
-                        'name': 'Test Token',
-                        'current_price': 1.0,
-                        'market_cap': 1000000
-                    }
-                    
-                    logger.info(f"Smart Lane configuration validated: {config.name}")
-                    messages.info(request, "Smart Lane configuration validated and ready for use")
-                    
-            except Exception as e:
-                logger.warning(f"Smart Lane configuration test failed: {e}")
-                messages.warning(request, "Configuration saved but validation test failed")
-        
-        # Redirect to configuration summary
-        return redirect('dashboard:configuration_summary', config_id=config.id)
+        return JsonResponse({
+            'success': True,
+            'message': f'Configuration "{config_data["name"]}" {"created" if created else "updated"} successfully!',
+            'config_id': config.id,
+            'redirect_url': '/dashboard/'
+        })
         
     except ValueError as e:
-        logger.error(f"Validation error in configuration save: {e}")
-        messages.error(request, "Invalid configuration values. Please check your inputs.")
-        return _handle_configuration_display_with_smart_lane(request, mode, request.POST.dict())
-    except IntegrityError as e:
-        logger.error(f"Database integrity error: {e}")
-        messages.error(request, "Configuration name already exists. Please choose a different name.")
-        return _handle_configuration_display_with_smart_lane(request, mode, request.POST.dict())
+        return JsonResponse({'success': False, 'error': f'Invalid values: {str(e)}'})
     except Exception as e:
         logger.error(f"Error saving configuration: {e}", exc_info=True)
-        messages.error(request, "Error saving configuration. Please try again.")
-        return _handle_configuration_display_with_smart_lane(request, mode, request.POST.dict())
+        return JsonResponse({'success': False, 'error': 'Error saving configuration. Please try again.'})
+
+
+
+
+
+
+
+
+
+
 
 
 def _handle_configuration_display_with_smart_lane(request: HttpRequest, mode: str, form_data: Optional[Dict] = None) -> HttpResponse:
