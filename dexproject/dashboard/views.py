@@ -827,6 +827,137 @@ the wallet integration functionality.
 File: dexproject/dashboard/views.py (additional functions)
 """
 
+
+
+
+# =========================================================================
+# ENGINE STATUS API ENDPOINT
+# Critical endpoint for engine status monitoring - REQUIRED BY URLS.PY
+# =========================================================================
+
+@require_http_methods(["GET"])
+def api_engine_status(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for engine status with Fast Lane integration.
+    
+    Returns JSON response with current engine status, performance metrics,
+    and system health information for both Fast Lane and Smart Lane.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        JsonResponse with engine status data
+    """
+    try:
+        logger.debug(f"Engine status API called by user: {request.user.username if request.user.is_authenticated else 'anonymous'}")
+        
+        # Initialize engine if needed
+        run_async_in_view(ensure_engine_initialized())
+        
+        # Get Fast Lane status
+        fast_lane_status = engine_service.get_engine_status()
+        fast_lane_metrics = engine_service.get_performance_metrics()
+        
+        # Get Smart Lane status if available
+        smart_lane_status = {'status': 'UNAVAILABLE', 'pipeline_initialized': False}
+        try:
+            from .smart_lane_features import get_smart_lane_status
+            smart_lane_status = get_smart_lane_status()
+        except ImportError:
+            logger.debug("Smart Lane features not available")
+        
+        # Determine overall system status
+        overall_status = 'OPERATIONAL' if (
+            fast_lane_status.get('status') == 'OPERATIONAL' and
+            fast_lane_status.get('fast_lane_active', False)
+        ) else 'DEGRADED'
+        
+        # Compile comprehensive status
+        status_data = {
+            'timestamp': timezone.now().isoformat(),
+            'system': {
+                'overall_status': overall_status,
+                'data_source': 'LIVE' if not fast_lane_metrics.get('_mock', False) else 'MOCK',
+                'uptime_seconds': fast_lane_status.get('uptime_seconds', 0),
+                'user': request.user.username if request.user.is_authenticated else 'anonymous'
+            },
+            'fast_lane': {
+                'status': fast_lane_status.get('status', 'UNKNOWN'),
+                'active': fast_lane_status.get('fast_lane_active', False),
+                'initialized': fast_lane_status.get('engine_initialized', False),
+                'execution_time_ms': fast_lane_metrics.get('execution_time_ms', 0),
+                'success_rate': fast_lane_metrics.get('success_rate', 0),
+                'pairs_monitored': fast_lane_status.get('pairs_monitored', 0),
+                'last_update': fast_lane_status.get('last_update', ''),
+                'mempool_connected': fast_lane_status.get('mempool_connected', False),
+                'websocket_status': fast_lane_status.get('websocket_status', 'DISCONNECTED'),
+                'processing_queue_size': fast_lane_status.get('processing_queue_size', 0)
+            },
+            'smart_lane': {
+                'status': smart_lane_status.get('status', 'UNAVAILABLE'),
+                'pipeline_initialized': smart_lane_status.get('pipeline_initialized', False),
+                'analyses_completed': smart_lane_status.get('analyses_completed', 0),
+                'active_models': smart_lane_status.get('active_models', 0),
+                'last_analysis': smart_lane_status.get('last_analysis', ''),
+                'ai_confidence': smart_lane_status.get('ai_confidence', 0)
+            },
+            'performance': {
+                'fast_lane': {
+                    'avg_execution_time': fast_lane_metrics.get('execution_time_ms', 0),
+                    'success_rate': fast_lane_metrics.get('success_rate', 0),
+                    'total_processed': fast_lane_metrics.get('total_processed', 0),
+                    'errors_count': fast_lane_metrics.get('errors_count', 0)
+                },
+                'smart_lane': {
+                    'analyses_completed': smart_lane_status.get('analyses_completed', 0),
+                    'average_confidence': smart_lane_status.get('ai_confidence', 0),
+                    'processing_time_avg': smart_lane_status.get('processing_time_avg', 0)
+                }
+            },
+            'health_checks': {
+                'database': True,  # If we're here, database is working
+                'engine_service': fast_lane_status.get('status') == 'OPERATIONAL',
+                'websocket_connection': fast_lane_status.get('websocket_status') == 'CONNECTED',
+                'mempool_access': fast_lane_status.get('mempool_connected', False),
+                'smart_lane_ai': smart_lane_status.get('status') not in ['ERROR', 'UNAVAILABLE']
+            },
+            'configuration': {
+                'mock_mode': fast_lane_metrics.get('_mock', True),
+                'debug_mode': getattr(settings, 'DEBUG', False),
+                'environment': getattr(settings, 'ENVIRONMENT', 'development')
+            }
+        }
+        
+        # Add user-specific information if authenticated
+        if request.user.is_authenticated:
+            # Get user's active sessions
+            active_sessions = TradingSession.objects.filter(
+                user=request.user,
+                is_active=True
+            ).count()
+            
+            status_data['user_context'] = {
+                'active_sessions': active_sessions,
+                'total_configurations': BotConfiguration.objects.filter(user=request.user).count(),
+                'last_login': request.user.last_login.isoformat() if request.user.last_login else None
+            }
+        
+        logger.debug(f"Engine status API response prepared successfully")
+        return JsonResponse(status_data)
+        
+    except Exception as e:
+        logger.error(f"Error in api_engine_status: {e}", exc_info=True)
+        return JsonResponse({
+            'error': 'Failed to get engine status',
+            'message': str(e),
+            'timestamp': timezone.now().isoformat(),
+            'system': {
+                'overall_status': 'ERROR',
+                'data_source': 'UNKNOWN'
+            }
+        }, status=500)
+
 @require_http_methods(["GET"])
 def api_get_allocation_settings(request: HttpRequest) -> JsonResponse:
     """
@@ -1274,3 +1405,36 @@ def custom_500(request):
         'error_code': 500,
         'message': 'An unexpected error occurred. Please try again later.'
     }, status=500)
+
+
+
+"""
+Missing API Engine Status Function Stub
+
+Add this function to your dashboard/views.py file to resolve the Django URL resolution error.
+This function stub provides the missing api_engine_status endpoint that your URLs are trying to reference.
+
+File: dashboard/views.py (add this function to the existing file)
+
+INSTRUCTIONS:
+1. Copy this function and paste it into your dashboard/views.py file
+2. Add it after the existing API endpoints section around line 800+
+3. Make sure it's properly indented and follows the existing code style
+"""
+
+# =========================================================================
+# ENGINE STATUS API ENDPOINT
+# Critical endpoint for engine status monitoring - REQUIRED BY URLS.PY
+# =========================================================================
+
+
+
+
+
+
+
+
+
+
+
+

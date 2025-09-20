@@ -75,7 +75,7 @@ urlpatterns = [
     # =========================================================================
     
     # Engine status and performance (confirmed existing)
-    path('api/engine/status/', views.api_engine_status, name='api_engine_status'),
+    # path('api/engine/status/', views.api_engine_status, name='api_engine_status'),
     path('api/engine/performance/', views.api_performance_metrics, name='api_performance_metrics'),
     
     # =========================================================================
