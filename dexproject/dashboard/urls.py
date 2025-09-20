@@ -9,7 +9,10 @@ File: dexproject/dashboard/urls.py
 
 from django.urls import path
 from django.http import JsonResponse
+from django.utils import timezone
+from datetime import datetime
 from . import views
+
 
 app_name = 'dashboard'
 
@@ -76,7 +79,7 @@ urlpatterns = [
     
     # Engine status and performance (confirmed existing)
     # path('api/engine/status/', views.api_engine_status, name='api_engine_status'),
-    path('api/engine/performance/', views.api_performance_metrics, name='api_performance_metrics'),
+    # path('api/engine/performance/', views.api_performance_metrics, name='api_performance_metrics'),
     
     # =========================================================================
     # SMART LANE SPECIFIC URLS
@@ -96,16 +99,9 @@ urlpatterns = [
     # =========================================================================
     
     # Configuration management pages (confirmed existing)
-    path('configs/', views.configuration_list, name='configuration_list'),
-    path('configs/<int:config_id>/', views.configuration_summary, name='configuration_summary'),
+    # path('configs/', views.configuration_list, name='configuration_list'),
+    # path('configs/<int:config_id>/', views.configuration_summary, name='configuration_summary'),
     
-    # =========================================================================
-    # HEALTH CHECK AND SYSTEM ENDPOINTS
-    # =========================================================================
-    
-    # System health and monitoring (confirmed existing)
-    path('health/', views.health_check, name='health_check'),
-    path('engine/test/', views.engine_test, name='engine_test'),
     
     # =========================================================================
     # TEST AND DEBUG ENDPOINTS
@@ -123,4 +119,34 @@ urlpatterns = [
     # path('debug/', views.debug_dashboard, name='debug_dashboard'),
     # path('debug/templates/', views.debug_templates, name='debug_templates'),
     # path('minimal/', views.minimal_dashboard, name='minimal_dashboard'),
+
+
+
+
+    # =========================================================================
+    # HEALTH CHECK AND SYSTEM ENDPOINTS - CONFIRMED EXISTING
+    # =========================================================================
+    
+    # System health endpoint that exists in views.py
+    # path('health/', views.dashboard_health_check, name='health_check'),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ]

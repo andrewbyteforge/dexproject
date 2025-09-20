@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Dashboard Settings - DEX Trading Bot{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'dashboard/css/settings.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <!-- Sidebar Navigation -->
+        <div class="col-md-2 sidebar">
+            <div class="d-flex flex-column flex-shrink-0 p-3 text-white bg-dark">
+                <h4>Settings</h4>
+                <hr>
+                <ul class="nav nav-pills flex-column mb-auto">
+                    <li class="nav-item">
+                        <a href="#general" class="nav-link active" data-bs-toggle="pill">
+                            General
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#trading" class="nav-link" data-bs-toggle="pill">
+                            Trading
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#wallet" class="nav-link" data-bs-toggle="pill">
+                            Wallet
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#notifications" class="nav-link" data-bs-toggle="pill">
+                            Notifications
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#system" class="nav-link" data-bs-toggle="pill">
+                            System
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="col-md-10 main-content">
+            <!-- Header -->
+            <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                <h1 class="h2">Dashboard Settings</h1>
+                <div class="btn-toolbar mb-2 mb-md-0">
+                    <button type="button" class="btn btn-outline-secondary btn-sm">
+                        Export Settings
+                    </button>
+                    <button type="button" class="btn btn-primary btn-sm ms-2">
+                        Save All Changes
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tab Content -->
+            <div class="tab-content">
+                <!-- General Settings -->
+                <div class="tab-pane fade show active" id="general">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">General Settings</h5>
+                        </div>
+                        <div class="card-body">
+                            <form method="post">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="update_preferences">
+                                
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="timezone" class="form-label">Timezone</label>
+                                            <select class="form-select" id="timezone" name="timezone">
+                                                <option value="UTC">UTC</option>
+                                                <option value="America/New_York">Eastern Time</option>
+                                                <option value="America/Chicago">Central Time</option>
+                                                <option value="America/Los_Angeles">Pacific Time</option>
+                                                <option value="Europe/London">London</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="theme" class="form-label">Theme</label>
+                                            <select class="form-select" id="theme" name="theme">
+                                                <option value="auto">Auto</option>
+                                                <option value="light">Light</option>
+                                                <option value="dark">Dark</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="enable_sound" name="enable_sound" checked>
+                                        <label class="form-check-label" for="enable_sound">
+                                            Enable sound notifications
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <button type="submit" class="btn btn-primary">Save General Settings</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trading Settings -->
+                <div class="tab-pane fade" id="trading">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Trading Configuration</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h6>Current Chain</h6>
+                                    <p class="text-muted">Chain ID: {{ current_chain }}</p>
+                                    
+                                    <h6>Supported Chains</h6>
+                                    <ul class="list-unstyled">
+                                        {% for chain in supported_chains %}
+                                        <li><span class="badge bg-secondary">{{ chain }}</span></li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6>Trading Mode</h6>
+                                    <p class="text-muted">{% if testnet_mode %}Testnet{% else %}Mainnet{% endif %} Mode</p>
+                                    
+                                    <h6>Total Configurations</h6>
+                                    <p class="text-muted">{{ config_count }} saved configurations</p>
+                                </div>
+                            </div>
+
+                            <div class="alert alert-info">
+                                <strong>Note:</strong> Trading settings are configured per session. Use the configuration panel to set up specific trading parameters.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wallet Settings -->
+                <div class="tab-pane fade" id="wallet">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Wallet & Fund Allocation</h5>
+                        </div>
+                        <div class="card-body">
+                            {% if wallet_info.connected %}
+                            <div class="alert alert-success">
+                                <strong>Wallet Connected:</strong> {{ wallet_info.address|truncatechars:20 }}
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h6>Balance</h6>
+                                    <p>{{ wallet_info.balance_eth }} ETH</p>
+                                    <p class="text-muted">${{ wallet_info.balance_usd }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6>Trading Allocation</h6>
+                                    <p>{{ wallet_info.trading_allocation.available_for_trading }} ETH available</p>
+                                    <p class="text-muted">Risk Level: {{ wallet_info.trading_allocation.risk_level|title }}</p>
+                                </div>
+                            </div>
+                            {% else %}
+                            <div class="alert alert-warning">
+                                <strong>No Wallet Connected</strong><br>
+                                Connect your wallet to configure fund allocation settings.
+                            </div>
+                            {% endif %}
+
+                            <button type="button" class="btn btn-outline-primary" onclick="openAllocationModal()">
+                                Configure Fund Allocation
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notifications Settings -->
+                <div class="tab-pane fade" id="notifications">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">Notification Preferences</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="email_alerts" name="email_alerts" checked>
+                                    <label class="form-check-label" for="email_alerts">
+                                        Email alerts for trading events
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="browser_notifications" name="browser_notifications">
+                                    <label class="form-check-label" for="browser_notifications">
+                                        Browser notifications
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="trade_confirmations" name="trade_confirmations" checked>
+                                    <label class="form-check-label" for="trade_confirmations">
+                                        Trade execution confirmations
+                                    </label>
+                                </div>
+                            </div>
+
+                            <button type="button" class="btn btn-primary">Save Notification Settings</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Settings -->
+                <div class="tab-pane fade" id="system">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">System Status</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h6>System Health</h6>
+                                    <ul class="list-unstyled">
+                                        <li>
+                                            <span class="badge {% if system_status.engine_operational %}bg-success{% else %}bg-danger{% endif %}">
+                                                Engine: {% if system_status.engine_operational %}Operational{% else %}Offline{% endif %}
+                                            </span>
+                                        </li>
+                                        <li>
+                                            <span class="badge {% if system_status.database_connected %}bg-success{% else %}bg-danger{% endif %}">
+                                                Database: {% if system_status.database_connected %}Connected{% else %}Disconnected{% endif %}
+                                            </span>
+                                        </li>
+                                        <li>
+                                            <span class="badge {% if system_status.wallet_service_available %}bg-success{% else %}bg-warning{% endif %}">
+                                                Wallet Service: {% if system_status.wallet_service_available %}Available{% else %}Unavailable{% endif %}
+                                            </span>
+                                        </li>
+                                        <li>
+                                            <span class="badge {% if system_status.live_data_available %}bg-success{% else %}bg-warning{% endif %}">
+                                                Data: {% if system_status.live_data_available %}Live{% else %}Mock{% endif %}
+                                            </span>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6>Cache Management</h6>
+                                    <p class="text-muted">Clear system cache to refresh data</p>
+                                    <form method="post" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="clear_cache">
+                                        <button type="submit" class="btn btn-outline-warning btn-sm">
+                                            Clear Cache
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+
+                            <hr>
+
+                            <div class="row">
+                                <div class="col-12">
+                                    <h6>Debug Information</h6>
+                                    <div class="bg-light p-3 rounded">
+                                        <small>
+                                            <strong>User:</strong> {{ user.username }}<br>
+                                            <strong>Configurations:</strong> {{ config_count }}<br>
+                                            <strong>Testnet Mode:</strong> {% if testnet_mode %}Enabled{% else %}Disabled{% endif %}<br>
+                                            <strong>Current Chain:</strong> {{ current_chain }}
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Fund Allocation Modal (placeholder) -->
+<div class="modal fade" id="allocationModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Fund Allocation Settings</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Fund allocation configuration will be implemented here.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary">Save Settings</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openAllocationModal() {
+    var modal = new bootstrap.Modal(document.getElementById('allocationModal'));
+    modal.show();
+}
+
+// Initialize tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
+{% endblock %}

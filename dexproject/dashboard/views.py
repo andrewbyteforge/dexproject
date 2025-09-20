@@ -764,7 +764,8 @@ def dashboard_analytics(request: HttpRequest) -> HttpResponse:
 # HEALTH CHECK AND DEBUG
 # =========================================================================
 
-def health_check(request: HttpRequest) -> JsonResponse:
+@require_http_methods(["GET"])
+def dashboard_health_check(request: HttpRequest) -> JsonResponse:
     """
     Health check endpoint for monitoring.
     
@@ -816,16 +817,6 @@ def health_check(request: HttpRequest) -> JsonResponse:
             'error': str(e),
             'timestamp': timezone.now().isoformat()
         }, status=500)
-    
-
-"""
-Additional Wallet API Endpoints
-
-Add these functions to your dashboard/views.py file to complete
-the wallet integration functionality.
-
-File: dexproject/dashboard/views.py (additional functions)
-"""
 
 
 
@@ -1406,26 +1397,6 @@ def custom_500(request):
         'message': 'An unexpected error occurred. Please try again later.'
     }, status=500)
 
-
-
-"""
-Missing API Engine Status Function Stub
-
-Add this function to your dashboard/views.py file to resolve the Django URL resolution error.
-This function stub provides the missing api_engine_status endpoint that your URLs are trying to reference.
-
-File: dashboard/views.py (add this function to the existing file)
-
-INSTRUCTIONS:
-1. Copy this function and paste it into your dashboard/views.py file
-2. Add it after the existing API endpoints section around line 800+
-3. Make sure it's properly indented and follows the existing code style
-"""
-
-# =========================================================================
-# ENGINE STATUS API ENDPOINT
-# Critical endpoint for engine status monitoring - REQUIRED BY URLS.PY
-# =========================================================================
 
 
 
