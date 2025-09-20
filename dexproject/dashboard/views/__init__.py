@@ -338,15 +338,36 @@ except ImportError:
 
 # SMART LANE IMPORTS - NEW ADDITION
 try:
-    from .smart_lane import (
+    from dashboard.smart_lane_features import (
         smart_lane_dashboard,
         smart_lane_demo,
         smart_lane_config,
         smart_lane_analyze,
-        api_smart_lane_analyze,
-        api_get_thought_log,
     )
     print("Smart Lane views imported successfully")
+   
+    # Import API functions from api_endpoints
+    try:
+        from dashboard.api_endpoints import (
+            api_smart_lane_analyze,
+            api_get_thought_log,
+        )
+        print("Smart Lane API endpoints imported successfully")
+    except ImportError as api_error:
+        print(f"Warning: Could not import Smart Lane API endpoints: {api_error}")
+        # Create placeholder API functions
+        def api_smart_lane_analyze(request):
+            return JsonResponse({
+                'success': False,
+                'error': 'Smart Lane API not available'
+            })
+        
+        def api_get_thought_log(request, analysis_id):
+            return JsonResponse({
+                'success': False,
+                'error': 'Thought log API not available'
+            })
+
 except ImportError as e:
     print(f"Warning: Could not import Smart Lane views: {e}")
     

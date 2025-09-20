@@ -1,1014 +1,817 @@
-{% extends 'base.html' %}
-
-{% block title %}{{ mode_display }} Configuration - DEX Trading Bot{% endblock %}
-
-{% block content %}
-<!-- Header Section -->
+<!-- Smart Lane Configuration Section (ACTIVATED) -->
 <div class="row mb-4">
     <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <h1 class="h3 mb-1">
-                    {% if mode == 'fast_lane' %}
-                        <i class="bi bi-lightning-charge-fill fast-lane-accent me-2"></i>
-                        Fast Lane Configuration
-                    {% else %}
-                        <i class="bi bi-cpu-fill smart-lane-accent me-2"></i>
-                        Smart Lane Configuration
-                    {% endif %}
-                </h1>
-                <p class="text-muted mb-0">
-                    Configure settings for {{ mode_display|lower }} trading execution
-                </p>
-            </div>
-            <div>
-                <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-light me-2">
-                    <i class="bi bi-arrow-left me-1"></i>Back to Selection
-                </a>
-                <a href="{% url 'dashboard:home' %}" class="btn btn-outline-secondary">
-                    <i class="bi bi-house me-1"></i>Dashboard
-                </a>
-            </div>
+        <h6 class="text-uppercase text-muted mb-3">
+            <i class="bi bi-cpu smart-lane-accent me-1"></i>Smart Lane Intelligence Settings
+        </h6>
+    </div>
+    
+    <!-- Analysis Configuration -->
+    <div class="col-md-6 mb-3">
+        <label for="analysis_depth" class="form-label">Analysis Depth *</label>
+        <select class="form-select" id="analysis_depth" name="analysis_depth" required>
+            <option value="">Select analysis depth</option>
+            <option value="BASIC" {% if config.analysis_depth == 'BASIC' %}selected{% endif %}>
+                Basic Analysis (~1-2s) - Honeypot + Liquidity
+            </option>
+            <option value="COMPREHENSIVE" {% if config.analysis_depth == 'COMPREHENSIVE' or not config.analysis_depth %}selected{% endif %}>
+                Comprehensive Analysis (~3-5s) - All Analyzers
+            </option>
+            <option value="DEEP_DIVE" {% if config.analysis_depth == 'DEEP_DIVE' %}selected{% endif %}>
+                Deep Dive Analysis (~8-12s) - Maximum Detail
+            </option>
+        </select>
+        <div class="form-text">Depth of Smart Lane risk and technical analysis</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- AI Thought Log Configuration -->
+    <div class="col-md-6 mb-3">
+        <label for="ai_thought_log" class="form-label">AI Thought Log Level *</label>
+        <select class="form-select" id="ai_thought_log" name="ai_thought_log" required>
+            <option value="">Select thought log level</option>
+            <option value="BASIC" {% if config.thought_log_level == 'BASIC' %}selected{% endif %}>
+                Basic Reasoning - Key decisions only
+            </option>
+            <option value="DETAILED" {% if config.thought_log_level == 'DETAILED' %}selected{% endif %}>
+                Detailed Analysis - Step-by-step process
+            </option>
+            <option value="COMPREHENSIVE" {% if config.thought_log_level == 'COMPREHENSIVE' or not config.thought_log_level %}selected{% endif %}>
+                Full Reasoning Process - Complete AI thinking
+            </option>
+        </select>
+        <div class="form-text">Level of AI decision explanation and transparency</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Risk Assessment Configuration -->
+    <div class="col-md-6 mb-3">
+        <label for="risk_tolerance" class="form-label">Risk Tolerance *</label>
+        <select class="form-select" id="risk_tolerance" name="risk_tolerance" required>
+            <option value="">Select risk tolerance</option>
+            <option value="CONSERVATIVE" {% if config.risk_tolerance == 'CONSERVATIVE' %}selected{% endif %}>
+                Conservative - Only low-risk opportunities
+            </option>
+            <option value="MODERATE" {% if config.risk_tolerance == 'MODERATE' or not config.risk_tolerance %}selected{% endif %}>
+                Moderate - Balanced risk-reward approach
+            </option>
+            <option value="AGGRESSIVE" {% if config.risk_tolerance == 'AGGRESSIVE' %}selected{% endif %}>
+                Aggressive - Higher risk for higher rewards
+            </option>
+        </select>
+        <div class="form-text">Overall risk tolerance for Smart Lane decisions</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Position Sizing Method -->
+    <div class="col-md-6 mb-3">
+        <label for="position_sizing_method" class="form-label">Position Sizing Method *</label>
+        <select class="form-select" id="position_sizing_method" name="position_sizing_method" required>
+            <option value="">Select position sizing method</option>
+            <option value="FIXED_PERCENTAGE" {% if config.position_sizing_method == 'FIXED_PERCENTAGE' or not config.position_sizing_method %}selected{% endif %}>
+                Fixed Percentage - Consistent portfolio allocation
+            </option>
+            <option value="KELLY_CRITERION" {% if config.position_sizing_method == 'KELLY_CRITERION' %}selected{% endif %}>
+                Kelly Criterion - Mathematically optimal sizing
+            </option>
+            <option value="RISK_PARITY" {% if config.position_sizing_method == 'RISK_PARITY' %}selected{% endif %}>
+                Risk Parity - Equal risk contribution
+            </option>
+            <option value="VOLATILITY_ADJUSTED" {% if config.position_sizing_method == 'VOLATILITY_ADJUSTED' %}selected{% endif %}>
+                Volatility Adjusted - Size based on token volatility
+            </option>
+        </select>
+        <div class="form-text">Method for calculating optimal position sizes</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Portfolio Allocation -->
+    <div class="col-md-6 mb-3">
+        <label for="max_portfolio_allocation" class="form-label">Max Portfolio Allocation *</label>
+        <div class="input-group">
+            <input type="number" 
+                   class="form-control" 
+                   id="max_portfolio_allocation" 
+                   name="max_portfolio_allocation" 
+                   min="1" 
+                   max="50" 
+                   step="0.5"
+                   value="{{ config.max_portfolio_allocation|default:10 }}" 
+                   required>
+            <span class="input-group-text">%</span>
         </div>
+        <div class="form-text">Maximum percentage of portfolio for single position</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Minimum Confidence Threshold -->
+    <div class="col-md-6 mb-3">
+        <label for="min_confidence_threshold" class="form-label">Minimum Confidence Threshold *</label>
+        <div class="input-group">
+            <input type="number" 
+                   class="form-control" 
+                   id="min_confidence_threshold" 
+                   name="min_confidence_threshold" 
+                   min="50" 
+                   max="95" 
+                   step="5"
+                   value="{{ config.min_confidence_threshold|default:75 }}" 
+                   required>
+            <span class="input-group-text">%</span>
+        </div>
+        <div class="form-text">Minimum AI confidence required before executing trades</div>
+        <div class="invalid-feedback"></div>
     </div>
 </div>
 
-<!-- Mode Status Card -->
+<!-- Analyzer Configuration -->
 <div class="row mb-4">
     <div class="col-12">
-        <div class="card card-glass">
-            <div class="card-body">
-                <div class="row align-items-center">
-                    <div class="col-md-6">
-                        <div class="d-flex align-items-center">
-                            <div class="me-3">
-                                {% if mode == 'fast_lane' %}
-                                    <i class="bi bi-lightning-charge-fill fast-lane-accent" style="font-size: 2.5rem;"></i>
-                                {% else %}
-                                    <i class="bi bi-cpu-fill smart-lane-accent" style="font-size: 2.5rem;"></i>
-                                {% endif %}
-                            </div>
-                            <div>
-                                <h5 class="mb-1 {% if mode == 'fast_lane' %}fast-lane-accent{% else %}smart-lane-accent{% endif %}">
-                                    {{ mode_display }}
-                                </h5>
-                                <p class="text-muted mb-0">
-                                    {% if mode == 'fast_lane' %}
-                                        Speed-optimized execution for time-sensitive opportunities
-                                    {% else %}
-                                        Intelligence-optimized analysis for strategic positions
-                                    {% endif %}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 text-md-end">
-                        <span class="badge bg-success">
-                            <i class="bi bi-check-circle me-1"></i>Production Ready
-                        </span>
-                    </div>
+        <h6 class="text-uppercase text-muted mb-3">
+            <i class="bi bi-shield-check smart-lane-accent me-1"></i>Risk Analyzer Configuration
+        </h6>
+    </div>
+    
+    <!-- Honeypot Detection -->
+    <div class="col-md-6 mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" 
+                   type="checkbox" 
+                   id="enable_honeypot_detection" 
+                   name="enable_honeypot_detection" 
+                   {% if config.enable_honeypot_detection != False %}checked{% endif %}>
+            <label class="form-check-label" for="enable_honeypot_detection">
+                <strong>Honeypot Detection</strong>
+            </label>
+        </div>
+        <small class="text-muted">Detect and avoid honeypot/scam contracts</small>
+    </div>
+    
+    <!-- Liquidity Analysis -->
+    <div class="col-md-6 mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" 
+                   type="checkbox" 
+                   id="enable_liquidity_analysis" 
+                   name="enable_liquidity_analysis" 
+                   {% if config.enable_liquidity_analysis != False %}checked{% endif %}>
+            <label class="form-check-label" for="enable_liquidity_analysis">
+                <strong>Liquidity Analysis</strong>
+            </label>
+        </div>
+        <small class="text-muted">Analyze pool depth, volume, and liquidity health</small>
+    </div>
+    
+    <!-- Social Sentiment Analysis -->
+    <div class="col-md-6 mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" 
+                   type="checkbox" 
+                   id="enable_social_sentiment" 
+                   name="enable_social_sentiment" 
+                   {% if config.enable_social_sentiment != False %}checked{% endif %}>
+            <label class="form-check-label" for="enable_social_sentiment">
+                <strong>Social Sentiment Analysis</strong>
+            </label>
+        </div>
+        <small class="text-muted">Monitor social media and community sentiment</small>
+    </div>
+    
+    <!-- Technical Analysis -->
+    <div class="col-md-6 mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" 
+                   type="checkbox" 
+                   id="enable_technical_analysis" 
+                   name="enable_technical_analysis" 
+                   {% if config.enable_technical_analysis != False %}checked{% endif %}>
+            <label class="form-check-label" for="enable_technical_analysis">
+                <strong>Technical Analysis</strong>
+            </label>
+        </div>
+        <small class="text-muted">RSI, MACD, moving averages, and trend analysis</small>
+    </div>
+    
+    <!-- Contract Security Analysis -->
+    <div class="col-md-6 mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" 
+                   type="checkbox" 
+                   id="enable_contract_security" 
+                   name="enable_contract_security" 
+                   {% if config.enable_contract_security != False %}checked{% endif %}>
+            <label class="form-check-label" for="enable_contract_security">
+                <strong>Contract Security Analysis</strong>
+            </label>
+        </div>
+        <small class="text-muted">Verify contract code, ownership, and security</small>
+    </div>
+</div>
+
+<!-- Technical Analysis Specific Settings -->
+<div class="row mb-4" id="technical-analysis-settings">
+    <div class="col-12">
+        <h6 class="text-uppercase text-muted mb-3">
+            <i class="bi bi-graph-up smart-lane-accent me-1"></i>Technical Analysis Settings
+        </h6>
+    </div>
+    
+    <!-- Technical Indicators -->
+    <div class="col-12 mb-3">
+        <label class="form-label">Technical Indicators *</label>
+        <div class="row">
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="indicator_rsi" 
+                           name="technical_indicators" 
+                           value="RSI" 
+                           {% if 'RSI' in config.technical_indicators or not config.technical_indicators %}checked{% endif %}>
+                    <label class="form-check-label" for="indicator_rsi">RSI</label>
                 </div>
             </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="indicator_macd" 
+                           name="technical_indicators" 
+                           value="MACD" 
+                           {% if 'MACD' in config.technical_indicators or not config.technical_indicators %}checked{% endif %}>
+                    <label class="form-check-label" for="indicator_macd">MACD</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="indicator_bb" 
+                           name="technical_indicators" 
+                           value="BOLLINGER_BANDS" 
+                           {% if 'BOLLINGER_BANDS' in config.technical_indicators %}checked{% endif %}>
+                    <label class="form-check-label" for="indicator_bb">Bollinger Bands</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="indicator_ma" 
+                           name="technical_indicators" 
+                           value="MOVING_AVERAGES" 
+                           {% if 'MOVING_AVERAGES' in config.technical_indicators or not config.technical_indicators %}checked{% endif %}>
+                    <label class="form-check-label" for="indicator_ma">Moving Averages</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="indicator_volume" 
+                           name="technical_indicators" 
+                           value="VOLUME" 
+                           {% if 'VOLUME' in config.technical_indicators or not config.technical_indicators %}checked{% endif %}>
+                    <label class="form-check-label" for="indicator_volume">Volume Analysis</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="indicator_stoch" 
+                           name="technical_indicators" 
+                           value="STOCHASTIC" 
+                           {% if 'STOCHASTIC' in config.technical_indicators %}checked{% endif %}>
+                    <label class="form-check-label" for="indicator_stoch">Stochastic</label>
+                </div>
+            </div>
+        </div>
+        <div class="form-text">Select technical indicators for analysis (minimum 2 recommended)</div>
+    </div>
+    
+    <!-- Timeframes -->
+    <div class="col-12 mb-3">
+        <label class="form-label">Analysis Timeframes *</label>
+        <div class="row">
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="timeframe_1m" 
+                           name="technical_timeframes" 
+                           value="1m" 
+                           {% if '1m' in config.technical_timeframes %}checked{% endif %}>
+                    <label class="form-check-label" for="timeframe_1m">1 Minute</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="timeframe_5m" 
+                           name="technical_timeframes" 
+                           value="5m" 
+                           {% if '5m' in config.technical_timeframes or not config.technical_timeframes %}checked{% endif %}>
+                    <label class="form-check-label" for="timeframe_5m">5 Minutes</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="timeframe_15m" 
+                           name="technical_timeframes" 
+                           value="15m" 
+                           {% if '15m' in config.technical_timeframes or not config.technical_timeframes %}checked{% endif %}>
+                    <label class="form-check-label" for="timeframe_15m">15 Minutes</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="timeframe_1h" 
+                           name="technical_timeframes" 
+                           value="1h" 
+                           {% if '1h' in config.technical_timeframes or not config.technical_timeframes %}checked{% endif %}>
+                    <label class="form-check-label" for="timeframe_1h">1 Hour</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="timeframe_4h" 
+                           name="technical_timeframes" 
+                           value="4h" 
+                           {% if '4h' in config.technical_timeframes or not config.technical_timeframes %}checked{% endif %}>
+                    <label class="form-check-label" for="timeframe_4h">4 Hours</label>
+                </div>
+            </div>
+            <div class="col-md-2 col-4 mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" 
+                           type="checkbox" 
+                           id="timeframe_1d" 
+                           name="technical_timeframes" 
+                           value="1d" 
+                           {% if '1d' in config.technical_timeframes %}checked{% endif %}>
+                    <label class="form-check-label" for="timeframe_1d">1 Day</label>
+                </div>
+            </div>
+        </div>
+        <div class="form-text">Select timeframes for technical analysis (recommended: 5m, 15m, 1h, 4h)</div>
+    </div>
+</div>
+
+<!-- Exit Strategy Configuration -->
+<div class="row mb-4">
+    <div class="col-12">
+        <h6 class="text-uppercase text-muted mb-3">
+            <i class="bi bi-box-arrow-right smart-lane-accent me-1"></i>Exit Strategy Configuration
+        </h6>
+    </div>
+    
+    <!-- Stop Loss Configuration -->
+    <div class="col-md-6 mb-3">
+        <label for="stop_loss_percentage" class="form-label">Stop Loss *</label>
+        <div class="input-group">
+            <input type="number" 
+                   class="form-control" 
+                   id="stop_loss_percentage" 
+                   name="stop_loss_percentage" 
+                   min="1" 
+                   max="50" 
+                   step="0.5"
+                   value="{{ config.stop_loss_percentage|default:10 }}" 
+                   required>
+            <span class="input-group-text">%</span>
+        </div>
+        <div class="form-text">Automatic exit when position loses this percentage</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Take Profit Configuration -->
+    <div class="col-md-6 mb-3">
+        <label for="take_profit_percentage" class="form-label">Take Profit *</label>
+        <div class="input-group">
+            <input type="number" 
+                   class="form-control" 
+                   id="take_profit_percentage" 
+                   name="take_profit_percentage" 
+                   min="5" 
+                   max="500" 
+                   step="5"
+                   value="{{ config.take_profit_percentage|default:25 }}" 
+                   required>
+            <span class="input-group-text">%</span>
+        </div>
+        <div class="form-text">Automatic exit when position gains this percentage</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Trailing Stop Configuration -->
+    <div class="col-md-6 mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" 
+                   type="checkbox" 
+                   id="enable_trailing_stop" 
+                   name="enable_trailing_stop" 
+                   {% if config.enable_trailing_stop %}checked{% endif %}>
+            <label class="form-check-label" for="enable_trailing_stop">
+                <strong>Enable Trailing Stop</strong>
+            </label>
+        </div>
+        <small class="text-muted">Automatically adjust stop loss as price moves favorably</small>
+    </div>
+    
+    <!-- Trailing Stop Distance -->
+    <div class="col-md-6 mb-3" id="trailing-stop-distance" {% if not config.enable_trailing_stop %}style="display: none;"{% endif %}>
+        <label for="trailing_stop_distance" class="form-label">Trailing Stop Distance</label>
+        <div class="input-group">
+            <input type="number" 
+                   class="form-control" 
+                   id="trailing_stop_distance" 
+                   name="trailing_stop_distance" 
+                   min="1" 
+                   max="20" 
+                   step="0.5"
+                   value="{{ config.trailing_stop_distance|default:5 }}">
+            <span class="input-group-text">%</span>
+        </div>
+        <div class="form-text">Distance to maintain trailing stop from peak price</div>
+    </div>
+</div>
+
+<!-- Performance and Cache Settings -->
+<div class="row mb-4">
+    <div class="col-12">
+        <h6 class="text-uppercase text-muted mb-3">
+            <i class="bi bi-speedometer2 smart-lane-accent me-1"></i>Performance & Cache Settings
+        </h6>
+    </div>
+    
+    <!-- Analysis Timeout -->
+    <div class="col-md-6 mb-3">
+        <label for="analysis_timeout" class="form-label">Analysis Timeout *</label>
+        <div class="input-group">
+            <input type="number" 
+                   class="form-control" 
+                   id="analysis_timeout" 
+                   name="analysis_timeout" 
+                   min="10" 
+                   max="120" 
+                   step="5"
+                   value="{{ config.analysis_timeout|default:30 }}" 
+                   required>
+            <span class="input-group-text">seconds</span>
+        </div>
+        <div class="form-text">Maximum time to wait for analysis completion</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Cache Strategy -->
+    <div class="col-md-6 mb-3">
+        <label for="cache_strategy" class="form-label">Cache Strategy *</label>
+        <select class="form-select" id="cache_strategy" name="cache_strategy" required>
+            <option value="">Select cache strategy</option>
+            <option value="AGGRESSIVE" {% if config.cache_strategy == 'AGGRESSIVE' %}selected{% endif %}>
+                Aggressive - Cache everything for speed
+            </option>
+            <option value="BALANCED" {% if config.cache_strategy == 'BALANCED' or not config.cache_strategy %}selected{% endif %}>
+                Balanced - Cache key data only
+            </option>
+            <option value="CONSERVATIVE" {% if config.cache_strategy == 'CONSERVATIVE' %}selected{% endif %}>
+                Conservative - Minimal caching for accuracy
+            </option>
+        </select>
+        <div class="form-text">Caching strategy balancing speed vs. data freshness</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Cache TTL -->
+    <div class="col-md-6 mb-3">
+        <label for="cache_ttl" class="form-label">Cache Expiry Time *</label>
+        <div class="input-group">
+            <input type="number" 
+                   class="form-control" 
+                   id="cache_ttl" 
+                   name="cache_ttl" 
+                   min="60" 
+                   max="3600" 
+                   step="60"
+                   value="{{ config.cache_ttl|default:300 }}" 
+                   required>
+            <span class="input-group-text">seconds</span>
+        </div>
+        <div class="form-text">How long to cache analysis results</div>
+        <div class="invalid-feedback"></div>
+    </div>
+    
+    <!-- Parallel Analysis -->
+    <div class="col-md-6 mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" 
+                   type="checkbox" 
+                   id="enable_parallel_analysis" 
+                   name="enable_parallel_analysis" 
+                   {% if config.enable_parallel_analysis != False %}checked{% endif %}>
+            <label class="form-check-label" for="enable_parallel_analysis">
+                <strong>Enable Parallel Analysis</strong>
+            </label>
+        </div>
+        <small class="text-muted">Run multiple analyzers simultaneously for faster results</small>
+    </div>
+</div>
+
+<!-- Smart Lane Status Display -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="alert alert-success">
+            <h6 class="alert-heading smart-lane-accent">
+                <i class="bi bi-check-circle me-2"></i>Smart Lane - Phase 5 Operational
+            </h6>
+            <p class="mb-0 small">
+                Smart Lane is now fully operational with comprehensive functionality including:
+                risk analysis engine, AI thought log generation, strategic position sizing 
+                with portfolio management, and advanced exit strategies with risk controls.
+            </p>
         </div>
     </div>
 </div>
 
-<!-- Configuration Form -->
-<div class="row">
-    <div class="col-lg-8">
-        <div class="card card-glass">
-            <div class="card-header">
-                <h6 class="card-title mb-0">
-                    <i class="bi bi-gear me-2"></i>{{ mode_display }} Settings
-                </h6>
-            </div>
-            <div class="card-body">
-                <form method="post" id="configForm" novalidate>
-                    {% csrf_token %}
-                    
-                    <!-- Basic Configuration -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <h6 class="text-uppercase text-muted mb-3">Basic Configuration</h6>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="config_name" class="form-label">Configuration Name *</label>
-                            <input type="text" 
-                                   class="form-control" 
-                                   id="config_name" 
-                                   name="name" 
-                                   value="{{ config.name|default:'Default Configuration' }}"
-                                   required 
-                                   maxlength="100">
-                            <div class="form-text">Unique name for this configuration</div>
-                            <div class="invalid-feedback"></div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="config_description" class="form-label">Description</label>
-                            <input type="text" 
-                                   class="form-control" 
-                                   id="config_description" 
-                                   name="description" 
-                                   value="{{ config.description|default:'' }}"
-                                   maxlength="255">
-                            <div class="form-text">Optional description for this configuration</div>
-                        </div>
-                    </div>
-
-                    <!-- Risk Management Settings -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <h6 class="text-uppercase text-muted mb-3">Risk Management</h6>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="max_position_size" class="form-label">Max Position Size (USD) *</label>
-                            <div class="input-group">
-                                <span class="input-group-text">$</span>
-                                <input type="number" 
-                                       class="form-control" 
-                                       id="max_position_size" 
-                                       name="max_position_size_usd" 
-                                       value="{{ config.max_position_size_usd|default:'100' }}"
-                                       min="1" 
-                                       max="10000" 
-                                       step="0.01"
-                                       required>
-                            </div>
-                            <div class="form-text">Maximum USD amount per trade</div>
-                            <div class="invalid-feedback"></div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="risk_tolerance" class="form-label">Risk Tolerance *</label>
-                            <select class="form-select" id="risk_tolerance" name="risk_tolerance" required>
-                                <option value="">Select risk level</option>
-                                <option value="VERY_LOW" {% if config.risk_tolerance_level == 'VERY_LOW' %}selected{% endif %}>Very Low</option>
-                                <option value="LOW" {% if config.risk_tolerance_level == 'LOW' %}selected{% endif %}>Low</option>
-                                <option value="MEDIUM" {% if config.risk_tolerance_level == 'MEDIUM' %}selected{% endif %}>Medium</option>
-                                <option value="HIGH" {% if config.risk_tolerance_level == 'HIGH' %}selected{% endif %}>High</option>
-                                <option value="VERY_HIGH" {% if config.risk_tolerance_level == 'VERY_HIGH' %}selected{% endif %}>Very High</option>
-                            </select>
-                            <div class="form-text">Overall risk tolerance level</div>
-                            <div class="invalid-feedback"></div>
-                        </div>
-                    </div>
-
-                    <!-- Mode-Specific Settings -->
-                    {% if mode == 'fast_lane' %}
-                    <!-- Fast Lane Specific Settings -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <h6 class="text-uppercase text-muted mb-3">
-                                <i class="bi bi-lightning fast-lane-accent me-1"></i>Fast Lane Settings
-                            </h6>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="execution_timeout" class="form-label">Execution Timeout (ms) *</label>
-                            <input type="number" 
-                                   class="form-control" 
-                                   id="execution_timeout" 
-                                   name="execution_timeout_ms" 
-                                   value="{{ config.execution_timeout_ms|default:'500' }}"
-                                   min="50" 
-                                   max="2000" 
-                                   step="50"
-                                   required>
-                            <div class="form-text">Maximum time to wait for execution (50-2000ms)</div>
-                            <div class="invalid-feedback"></div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="max_slippage" class="form-label">Max Slippage (%)</label>
-                            <input type="number" 
-                                   class="form-control" 
-                                   id="max_slippage" 
-                                   name="max_slippage_percent" 
-                                   value="{{ config.max_slippage_percent|default:'2.0' }}"
-                                   min="0.1" 
-                                   max="10.0" 
-                                   step="0.1">
-                            <div class="form-text">Maximum acceptable slippage percentage</div>
-                        </div>
-                        <div class="col-12 mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" 
-                                       type="checkbox" 
-                                       id="mev_protection" 
-                                       name="mev_protection_enabled" 
-                                       {% if config.mev_protection_enabled %}checked{% endif %}>
-                                <label class="form-check-label" for="mev_protection">
-                                    Enable MEV Protection (Recommended)
-                                </label>
-                                <div class="form-text">Use Flashbots private mempool to protect against MEV attacks</div>
-                            </div>
-                        </div>
-                    </div>
-                    {% else %}
-                    <!-- Smart Lane Specific Settings -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <h6 class="text-uppercase text-muted mb-3">
-                                <i class="bi bi-cpu smart-lane-accent me-1"></i>Smart Lane Settings
-                            </h6>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="analysis_depth" class="form-label">Analysis Depth *</label>
-                            <select class="form-select" id="analysis_depth" name="analysis_depth" required>
-                                <option value="">Select analysis depth</option>
-                                <option value="BASIC" {% if config.analysis_depth == 'BASIC' %}selected{% endif %}>Basic Analysis (~1s)</option>
-                                <option value="COMPREHENSIVE" {% if config.analysis_depth == 'COMPREHENSIVE' or not config.analysis_depth %}selected{% endif %}>Comprehensive Analysis (~3-5s)</option>
-                                <option value="DEEP_DIVE" {% if config.analysis_depth == 'DEEP_DIVE' %}selected{% endif %}>Deep Dive Analysis (~8-12s)</option>
-                            </select>
-                            <div class="form-text">Depth of Smart Lane risk and technical analysis</div>
-                            <div class="invalid-feedback"></div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="ai_thought_log" class="form-label">AI Thought Log *</label>
-                            <select class="form-select" id="ai_thought_log" name="ai_thought_log" required>
-                                <option value="">Select thought log level</option>
-                                <option value="BASIC" {% if config.thought_log_level == 'BASIC' %}selected{% endif %}>Basic Reasoning</option>
-                                <option value="DETAILED" {% if config.thought_log_level == 'DETAILED' %}selected{% endif %}>Detailed Analysis</option>
-                                <option value="COMPREHENSIVE" {% if config.thought_log_level == 'COMPREHENSIVE' or not config.thought_log_level %}selected{% endif %}>Full Reasoning Process</option>
-                            </select>
-                            <div class="form-text">Level of AI decision explanation and reasoning</div>
-                            <div class="invalid-feedback"></div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="position_sizing_method" class="form-label">Position Sizing Method</label>
-                            <select class="form-select" id="position_sizing_method" name="position_sizing_method">
-                                <option value="RISK_BASED" {% if config.position_sizing_method == 'RISK_BASED' or not config.position_sizing_method %}selected{% endif %}>Risk-Based Sizing</option>
-                                <option value="FIXED_PERCENT" {% if config.position_sizing_method == 'FIXED_PERCENT' %}selected{% endif %}>Fixed Percentage</option>
-                                <option value="KELLY_CRITERION" {% if config.position_sizing_method == 'KELLY_CRITERION' %}selected{% endif %}>Kelly Criterion</option>
-                                <option value="VOLATILITY_ADJUSTED" {% if config.position_sizing_method == 'VOLATILITY_ADJUSTED' %}selected{% endif %}>Volatility Adjusted</option>
-                            </select>
-                            <div class="form-text">Strategy for calculating optimal position sizes</div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="max_analysis_time" class="form-label">Max Analysis Time (seconds)</label>
-                            <input type="number" 
-                                   class="form-control" 
-                                   id="max_analysis_time" 
-                                   name="max_analysis_time_seconds" 
-                                   value="{{ config.max_analysis_time_seconds|default:'5' }}"
-                                   min="1" 
-                                   max="30" 
-                                   step="1">
-                            <div class="form-text">Maximum time allowed for Smart Lane analysis</div>
-                        </div>
-
-                        <!-- Smart Lane Risk Analysis Categories -->
-                        <div class="col-12 mb-4">
-                            <h6 class="text-uppercase text-muted mb-3">
-                                <i class="bi bi-shield-check smart-lane-accent me-1"></i>Risk Analysis Categories
-                            </h6>
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_honeypot_detection" 
-                                               name="enable_honeypot_detection" 
-                                               checked>
-                                        <label class="form-check-label" for="enable_honeypot_detection">
-                                            <strong>Honeypot Detection</strong>
-                                        </label>
-                                        <div class="form-text">Detect scam tokens and honeypots</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_liquidity_analysis" 
-                                               name="enable_liquidity_analysis" 
-                                               checked>
-                                        <label class="form-check-label" for="enable_liquidity_analysis">
-                                            <strong>Liquidity Analysis</strong>
-                                        </label>
-                                        <div class="form-text">Analyze liquidity depth and stability</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_social_sentiment" 
-                                               name="enable_social_sentiment" 
-                                               checked>
-                                        <label class="form-check-label" for="enable_social_sentiment">
-                                            <strong>Social Sentiment</strong>
-                                        </label>
-                                        <div class="form-text">Analyze social media sentiment and community</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_technical_analysis" 
-                                               name="enable_technical_analysis" 
-                                               checked>
-                                        <label class="form-check-label" for="enable_technical_analysis">
-                                            <strong>Technical Analysis</strong>
-                                        </label>
-                                        <div class="form-text">Perform chart pattern and indicator analysis</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_contract_security" 
-                                               name="enable_contract_security" 
-                                               checked>
-                                        <label class="form-check-label" for="enable_contract_security">
-                                            <strong>Contract Security</strong>
-                                        </label>
-                                        <div class="form-text">Analyze smart contract for vulnerabilities</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_holder_distribution" 
-                                               name="enable_holder_distribution" 
-                                               checked>
-                                        <label class="form-check-label" for="enable_holder_distribution">
-                                            <strong>Holder Distribution</strong>
-                                        </label>
-                                        <div class="form-text">Analyze token holder concentration</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_market_structure" 
-                                               name="enable_market_structure">
-                                        <label class="form-check-label" for="enable_market_structure">
-                                            <strong>Market Structure</strong>
-                                        </label>
-                                        <div class="form-text">Analyze market manipulation risks</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Smart Lane Risk Thresholds -->
-                        <div class="col-12 mb-4">
-                            <h6 class="text-uppercase text-muted mb-3">
-                                <i class="bi bi-speedometer smart-lane-accent me-1"></i>Risk Thresholds
-                            </h6>
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label for="max_acceptable_risk" class="form-label">Max Acceptable Risk Score</label>
-                                    <input type="range" 
-                                           class="form-range" 
-                                           id="max_acceptable_risk" 
-                                           name="max_acceptable_risk_score" 
-                                           value="0.8"
-                                           min="0.1" 
-                                           max="1.0" 
-                                           step="0.1"
-                                           oninput="updateRiskDisplay(this.value)">
-                                    <div class="d-flex justify-content-between">
-                                        <small class="text-success">Conservative (0.1)</small>
-                                        <span id="risk-value" class="fw-bold">0.8</span>
-                                        <small class="text-danger">Aggressive (1.0)</small>
-                                    </div>
-                                    <div class="form-text">Maximum risk score threshold for trade execution</div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label for="min_confidence_threshold" class="form-label">Min Confidence Threshold</label>
-                                    <input type="range" 
-                                           class="form-range" 
-                                           id="min_confidence_threshold" 
-                                           name="min_confidence_threshold" 
-                                           value="0.7"
-                                           min="0.5" 
-                                           max="0.95" 
-                                           step="0.05"
-                                           oninput="updateConfidenceDisplay(this.value)">
-                                    <div class="d-flex justify-content-between">
-                                        <small class="text-warning">Low (0.5)</small>
-                                        <span id="confidence-value" class="fw-bold">0.70</span>
-                                        <small class="text-success">High (0.95)</small>
-                                    </div>
-                                    <div class="form-text">Minimum confidence required for analysis recommendations</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Smart Lane Position Sizing -->
-                        <div class="col-12 mb-4">
-                            <h6 class="text-uppercase text-muted mb-3">
-                                <i class="bi bi-calculator smart-lane-accent me-1"></i>Advanced Position Sizing
-                            </h6>
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="enable_dynamic_sizing" 
-                                               name="enable_dynamic_sizing" 
-                                               checked>
-                                        <label class="form-check-label" for="enable_dynamic_sizing">
-                                            <strong>Enable Dynamic Position Sizing</strong>
-                                        </label>
-                                        <div class="form-text">Automatically adjust position sizes based on risk and confidence</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label for="max_position_size_percent" class="form-label">Max Position Size (%)</label>
-                                    <input type="number" 
-                                           class="form-control" 
-                                           id="max_position_size_percent" 
-                                           name="max_position_size_percent" 
-                                           value="10.0"
-                                           min="0.5" 
-                                           max="25.0" 
-                                           step="0.5">
-                                    <div class="form-text">Maximum percentage of portfolio for a single position</div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label for="risk_per_trade_percent" class="form-label">Risk Per Trade (%)</label>
-                                    <input type="number" 
-                                           class="form-control" 
-                                           id="risk_per_trade_percent" 
-                                           name="risk_per_trade_percent" 
-                                           value="2.0"
-                                           min="0.5" 
-                                           max="5.0" 
-                                           step="0.25">
-                                    <div class="form-text">Maximum portfolio percentage to risk per trade</div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label for="exit_strategy" class="form-label">Exit Strategy</label>
-                                    <select class="form-select" id="exit_strategy" name="exit_strategy">
-                                        <option value="TRAILING_STOP" selected>Trailing Stop</option>
-                                        <option value="TAKE_PROFIT_STOP_LOSS">Take Profit + Stop Loss</option>
-                                        <option value="DYNAMIC_EXIT">Dynamic Exit (AI-Based)</option>
-                                        <option value="SCALED_EXIT">Scaled Exit</option>
-                                    </select>
-                                    <div class="form-text">Strategy for exiting positions</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Smart Lane Technical Analysis -->
-                        <div class="col-12 mb-4">
-                            <h6 class="text-uppercase text-muted mb-3">
-                                <i class="bi bi-graph-up smart-lane-accent me-1"></i>Technical Analysis Settings
-                            </h6>
-                            <div class="row">
-                                <div class="col-12 mb-3">
-                                    <label class="form-label">Technical Analysis Timeframes</label>
-                                    <div class="row">
-                                        <div class="col-md-2 col-4 mb-2">
-                                            <div class="form-check">
-                                                <input class="form-check-input" 
-                                                       type="checkbox" 
-                                                       id="timeframe_1m" 
-                                                       name="technical_timeframes" 
-                                                       value="1m">
-                                                <label class="form-check-label" for="timeframe_1m">1 Minute</label>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-2 col-4 mb-2">
-                                            <div class="form-check">
-                                                <input class="form-check-input" 
-                                                       type="checkbox" 
-                                                       id="timeframe_5m" 
-                                                       name="technical_timeframes" 
-                                                       value="5m" 
-                                                       checked>
-                                                <label class="form-check-label" for="timeframe_5m">5 Minutes</label>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-2 col-4 mb-2">
-                                            <div class="form-check">
-                                                <input class="form-check-input" 
-                                                       type="checkbox" 
-                                                       id="timeframe_15m" 
-                                                       name="technical_timeframes" 
-                                                       value="15m" 
-                                                       checked>
-                                                <label class="form-check-label" for="timeframe_15m">15 Minutes</label>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-2 col-4 mb-2">
-                                            <div class="form-check">
-                                                <input class="form-check-input" 
-                                                       type="checkbox" 
-                                                       id="timeframe_1h" 
-                                                       name="technical_timeframes" 
-                                                       value="1h" 
-                                                       checked>
-                                                <label class="form-check-label" for="timeframe_1h">1 Hour</label>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-2 col-4 mb-2">
-                                            <div class="form-check">
-                                                <input class="form-check-input" 
-                                                       type="checkbox" 
-                                                       id="timeframe_4h" 
-                                                       name="technical_timeframes" 
-                                                       value="4h" 
-                                                       checked>
-                                                <label class="form-check-label" for="timeframe_4h">4 Hours</label>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-2 col-4 mb-2">
-                                            <div class="form-check">
-                                                <input class="form-check-input" 
-                                                       type="checkbox" 
-                                                       id="timeframe_1d" 
-                                                       name="technical_timeframes" 
-                                                       value="1d">
-                                                <label class="form-check-label" for="timeframe_1d">1 Day</label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="form-text">Select timeframes for technical analysis (recommended: 5m, 15m, 1h, 4h)</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-12">
-                            <div class="alert alert-success">
-                                <h6 class="alert-heading smart-lane-accent">
-                                    <i class="bi bi-check-circle me-2"></i>Smart Lane - Phase 5 Complete
-                                </h6>
-                                <p class="mb-0 small">
-                                    Smart Lane is now operational with full functionality including:
-                                    comprehensive risk analysis engine, AI thought log generation, 
-                                    strategic position sizing with portfolio management, and advanced
-                                    exit strategies with risk controls.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    <!-- Execution Settings -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <h6 class="text-uppercase text-muted mb-3">Execution Settings</h6>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" 
-                                       type="checkbox" 
-                                       id="auto_execution" 
-                                       name="auto_execution_enabled" 
-                                       {% if config.auto_execution_enabled %}checked{% endif %}>
-                                <label class="form-check-label" for="auto_execution">
-                                    Enable Auto-Execution
-                                </label>
-                                <div class="form-text">Automatically execute trades without manual approval</div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" 
-                                       type="checkbox" 
-                                       id="require_approval" 
-                                       name="require_manual_approval" 
-                                       {% if config.require_manual_approval %}checked{% endif %}>
-                                <label class="form-check-label" for="require_approval">
-                                    Require Manual Approval
-                                </label>
-                                <div class="form-text">Require confirmation before executing trades</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Form Actions -->
-                    <div class="row">
-                        <div class="col-12">
-                            <hr>
-                            <div class="d-flex justify-content-between">
-                                <div>
-                                    <button type="button" class="btn btn-outline-danger" id="resetForm">
-                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Defaults
-                                    </button>
-                                </div>
-                                <div>
-                                    <button type="button" class="btn btn-outline-secondary me-2" onclick="window.history.back()">
-                                        <i class="bi bi-x-circle me-1"></i>Cancel
-                                    </button>
-                                    <button type="submit" class="btn btn-success" id="saveConfig">
-                                        <i class="bi bi-check-circle me-1"></i>Save Configuration
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Settings Preview -->
-    <div class="col-lg-4">
-        <div class="card card-glass">
-            <div class="card-header">
-                <h6 class="card-title mb-0">
-                    <i class="bi bi-eye me-2"></i>Configuration Preview
-                </h6>
-            </div>
-            <div class="card-body">
-                <div class="small">
-                    <div class="mb-3">
-                        <strong>Mode:</strong> 
-                        <span class="{% if mode == 'fast_lane' %}fast-lane-accent{% else %}smart-lane-accent{% endif %}">
-                            {{ mode_display }}
-                        </span>
-                    </div>
-                    <div class="mb-2">
-                        <strong>Max Position:</strong> 
-                        <span id="preview-position">${{ config.max_position_size_usd|default:'100' }}</span>
-                    </div>
-                    <div class="mb-2">
-                        <strong>Risk Level:</strong> 
-                        <span id="preview-risk">{{ config.risk_tolerance_level|default:'Medium' }}</span>
-                    </div>
-                    {% if mode == 'fast_lane' %}
-                    <div class="mb-2">
-                        <strong>Timeout:</strong> 
-                        <span id="preview-timeout">{{ config.execution_timeout_ms|default:'500' }}ms</span>
-                    </div>
-                    <div class="mb-2">
-                        <strong>Auto-Execute:</strong> 
-                        <span id="preview-auto">{% if config.auto_execution_enabled %}Yes{% else %}No{% endif %}</span>
-                    </div>
-                    {% else %}
-                    <div class="mb-2">
-                        <strong>Analysis Depth:</strong> 
-                        <span id="preview-analysis">{{ config.analysis_depth|default:'Comprehensive' }}</span>
-                    </div>
-                    <div class="mb-2">
-                        <strong>Thought Log:</strong> 
-                        <span id="preview-thought-log">{{ config.thought_log_level|default:'Comprehensive' }}</span>
-                    </div>
-                    <div class="mb-2">
-                        <strong>Position Sizing:</strong> 
-                        <span id="preview-sizing">{{ config.position_sizing_method|default:'Risk-Based' }}</span>
-                    </div>
-                    <div class="mb-2">
-                        <strong>Risk Threshold:</strong> 
-                        <span id="preview-risk-threshold">0.8</span>
-                    </div>
-                    <div class="mb-2">
-                        <strong>Confidence:</strong> 
-                        <span id="preview-confidence">0.70</span>
-                    </div>
-                    {% endif %}
-                </div>
-                
-                <hr class="my-3">
-                
-                <div class="alert alert-info">
-                    <h6 class="alert-heading">
-                        <i class="bi bi-info-circle me-1"></i>Configuration Tips
-                    </h6>
-                    <ul class="small mb-0">
-                        {% if mode == 'fast_lane' %}
-                        <li>Lower timeouts improve speed but may miss opportunities</li>
-                        <li>MEV protection is recommended for all trades</li>
-                        <li>Start with smaller position sizes for testing</li>
-                        {% else %}
-                        <li>Comprehensive analysis provides the best risk assessment</li>
-                        <li>Full thought logs help understand AI decision-making</li>
-                        <li>Risk-based sizing optimizes for portfolio management</li>
-                        <li>Deep dive analysis is best for complex tokens</li>
-                        <li>Enable at least 3 risk categories for best results</li>
-                        <li>Conservative risk settings reduce false positives</li>
-                        {% endif %}
-                    </ul>
-                </div>
-            </div>
-        </div>
-
-        <!-- Performance Metrics -->
-        <div class="card card-glass mt-4">
-            <div class="card-header">
-                <h6 class="card-title mb-0">
-                    <i class="bi bi-speedometer2 me-2"></i>Expected Performance
-                </h6>
-            </div>
-            <div class="card-body text-center">
-                <div class="row">
-                    {% if mode == 'fast_lane' %}
-                    <div class="col-6">
-                        <div class="h4 fast-lane-accent mb-1">~78ms</div>
-                        <small class="text-muted">Execution Time</small>
-                    </div>
-                    <div class="col-6">
-                        <div class="h4 text-success mb-1">94%+</div>
-                        <small class="text-muted">Success Rate</small>
-                    </div>
-                    {% else %}
-                    <div class="col-6">
-                        <div class="h4 smart-lane-accent mb-1">~3-5s</div>
-                        <small class="text-muted">Analysis Time</small>
-                    </div>
-                    <div class="col-6">
-                        <div class="h4 text-success mb-1">98%+</div>
-                        <small class="text-muted">Risk Detection</small>
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-{% endblock %}
-
-{% block extra_js %}
+<!-- JavaScript for Smart Lane Configuration -->
 <script>
-// JavaScript for risk threshold sliders
-function updateRiskDisplay(value) {
-    document.getElementById('risk-value').textContent = parseFloat(value).toFixed(1);
-    document.getElementById('preview-risk-threshold').textContent = parseFloat(value).toFixed(1);
-}
-
-function updateConfidenceDisplay(value) {
-    document.getElementById('confidence-value').textContent = parseFloat(value).toFixed(2);
-    document.getElementById('preview-confidence').textContent = parseFloat(value).toFixed(2);
-}
-
 document.addEventListener('DOMContentLoaded', function() {
+    // Trailing stop toggle functionality
+    const trailingStopCheckbox = document.getElementById('enable_trailing_stop');
+    const trailingStopDistance = document.getElementById('trailing-stop-distance');
+    
+    if (trailingStopCheckbox && trailingStopDistance) {
+        trailingStopCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                trailingStopDistance.style.display = 'block';
+            } else {
+                trailingStopDistance.style.display = 'none';
+            }
+        });
+    }
+    
+    // Form validation for Smart Lane settings
     const form = document.getElementById('configForm');
-    const resetBtn = document.getElementById('resetForm');
-    const saveBtn = document.getElementById('saveConfig');
-    
-    // Form validation
-    form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        
-        if (validateForm()) {
-            saveConfiguration();
-        }
-    });
-    
-    // Reset form
-    resetBtn.addEventListener('click', function() {
-        if (confirm('Are you sure you want to reset all settings to defaults?')) {
-            resetToDefaults();
-        }
-    });
-    
-    // Live preview updates
-    document.getElementById('max_position_size').addEventListener('input', function() {
-        document.getElementById('preview-position').textContent = '$' + this.value;
-    });
-    
-    document.getElementById('risk_tolerance').addEventListener('change', function() {
-        document.getElementById('preview-risk').textContent = this.options[this.selectedIndex].text;
-    });
-    
-    {% if mode == 'fast_lane' %}
-    document.getElementById('execution_timeout').addEventListener('input', function() {
-        document.getElementById('preview-timeout').textContent = this.value + 'ms';
-    });
-    
-    document.getElementById('auto_execution').addEventListener('change', function() {
-        document.getElementById('preview-auto').textContent = this.checked ? 'Yes' : 'No';
-    });
-    {% else %}
-    // Smart Lane preview updates
-    document.getElementById('analysis_depth').addEventListener('change', function() {
-        document.getElementById('preview-analysis').textContent = this.options[this.selectedIndex].text;
-    });
-    
-    document.getElementById('ai_thought_log').addEventListener('change', function() {
-        document.getElementById('preview-thought-log').textContent = this.options[this.selectedIndex].text;
-    });
-    
-    document.getElementById('position_sizing_method').addEventListener('change', function() {
-        document.getElementById('preview-sizing').textContent = this.options[this.selectedIndex].text;
-    });
-    {% endif %}
-    
-    function validateForm() {
-        let isValid = true;
-        const inputs = form.querySelectorAll('input[required], select[required]');
-        
-        inputs.forEach(input => {
-            const feedback = input.nextElementSibling?.nextElementSibling;
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            let isValid = true;
             
-            if (!input.value.trim()) {
-                input.classList.add('is-invalid');
-                if (feedback && feedback.classList.contains('invalid-feedback')) {
-                    feedback.textContent = 'This field is required.';
-                }
+            // Validate technical indicators (at least 2 selected)
+            const technicalIndicators = document.querySelectorAll('input[name="technical_indicators"]:checked');
+            if (technicalIndicators.length < 2) {
+                alert('Please select at least 2 technical indicators for comprehensive analysis.');
                 isValid = false;
-            } else {
-                input.classList.remove('is-invalid');
-                input.classList.add('is-valid');
             }
-        });
-        
-        // Validate position size
-        const positionSize = document.getElementById('max_position_size');
-        if (positionSize.value < 1 || positionSize.value > 10000) {
-            positionSize.classList.add('is-invalid');
-            const feedback = positionSize.parentElement?.nextElementSibling?.nextElementSibling;
-            if (feedback && feedback.classList.contains('invalid-feedback')) {
-                feedback.textContent = 'Position size must be between $1 and $10,000.';
-            }
-            isValid = false;
-        }
-        
-        {% if mode != 'fast_lane' %}
-        // Validate Smart Lane specific fields
-        const analysisDepth = document.getElementById('analysis_depth');
-        const thoughtLog = document.getElementById('ai_thought_log');
-        
-        if (!analysisDepth.value) {
-            analysisDepth.classList.add('is-invalid');
-            isValid = false;
-        }
-        
-        if (!thoughtLog.value) {
-            thoughtLog.classList.add('is-invalid');
-            isValid = false;
-        }
-
-        // Validate at least one risk category is selected
-        const riskCategories = form.querySelectorAll('input[name="enable_honeypot_detection"], input[name="enable_liquidity_analysis"], input[name="enable_social_sentiment"], input[name="enable_technical_analysis"], input[name="enable_contract_security"], input[name="enable_holder_distribution"], input[name="enable_market_structure"]');
-        const anyChecked = Array.from(riskCategories).some(cb => cb.checked);
-        
-        if (!anyChecked) {
-            showAlert('Please enable at least one risk analysis category.', 'warning');
-            isValid = false;
-        }
-        {% endif %}
-        
-        return isValid;
-    }
-    
-    function saveConfiguration() {
-        saveBtn.disabled = true;
-        saveBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving...';
-        
-        const formData = new FormData(form);
-        
-        fetch(window.location.href, {
-            method: 'POST',
-            body: formData,
-            headers: {
-                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
-                'X-Requested-With': 'XMLHttpRequest'  // FIXED: Tell Django this is AJAX
-            }
-        })
-        .then(response => {
-            console.log('Response status:', response.status);
             
-            // FIXED: Check if response is JSON before parsing
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-                return response.json();
-            } else {
-                // If we get HTML instead of JSON, log the response text for debugging
-                return response.text().then(text => {
-                    console.error('Expected JSON but got HTML:', text.substring(0, 200));
-                    throw new Error('Server returned HTML instead of JSON. Check Django view configuration.');
-                });
+            // Validate timeframes (at least 2 selected)
+            const timeframes = document.querySelectorAll('input[name="technical_timeframes"]:checked');
+            if (timeframes.length < 2) {
+                alert('Please select at least 2 timeframes for technical analysis.');
+                isValid = false;
             }
-        })
-        .then(data => {
-            console.log('Response data:', data);
             
-            if (data.success) {
-                showAlert(data.message || 'Configuration saved successfully!', 'success');
-                
-                // Optional: redirect after success
-                if (data.redirect_url) {
-                    setTimeout(() => {
-                        window.location.href = data.redirect_url;
-                    }, 1500);
-                } else {
-                    setTimeout(() => {
-                        window.location.href = '/dashboard/';
-                    }, 1500);
-                }
-            } else {
-                showAlert(data.error || 'Failed to save configuration.', 'danger');
-            }
-        })
-        .catch(error => {
-            console.error('Save error:', error);
+            // Validate stop loss vs take profit
+            const stopLoss = parseFloat(document.getElementById('stop_loss_percentage').value);
+            const takeProfit = parseFloat(document.getElementById('take_profit_percentage').value);
             
-            // FIXED: More specific error messages
-            if (error.message.includes('JSON')) {
-                showAlert('Configuration error: Server returned unexpected response. Check console for details.', 'danger');
-            } else if (error.message.includes('NetworkError') || error.message.includes('fetch')) {
-                showAlert('Network error: Please check your connection and try again.', 'danger');
-            } else {
-                showAlert('An error occurred while saving. Please try again.', 'danger');
+            if (takeProfit <= stopLoss) {
+                alert('Take profit percentage should be higher than stop loss percentage.');
+                isValid = false;
             }
-        })
-        .finally(() => {
-            saveBtn.disabled = false;
-            saveBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Save Configuration';
+            
+            if (!isValid) {
+                e.preventDefault();
+            }
         });
     }
     
-    function resetToDefaults() {
-        // Reset form to default values
-        document.getElementById('config_name').value = 'Default {{ mode_display }} Config';
-        document.getElementById('config_description').value = '';
-        document.getElementById('max_position_size').value = '100';
-        document.getElementById('risk_tolerance').value = 'MEDIUM';
+    // Real-time configuration preview
+    function updateConfigurationPreview() {
+        const analysisDepth = document.getElementById('analysis_depth').value;
+        const thoughtLogLevel = document.getElementById('ai_thought_log').value;
+        const riskTolerance = document.getElementById('risk_tolerance').value;
         
-        {% if mode == 'fast_lane' %}
-        document.getElementById('execution_timeout').value = '500';
-        const maxSlippage = document.getElementById('max_slippage');
-        if (maxSlippage) maxSlippage.value = '2.0';
-        const mevProtection = document.getElementById('mev_protection');
-        if (mevProtection) mevProtection.checked = true;
-        {% else %}
-        document.getElementById('analysis_depth').value = 'COMPREHENSIVE';
-        document.getElementById('ai_thought_log').value = 'COMPREHENSIVE';
-        const positionSizingMethod = document.getElementById('position_sizing_method');
-        if (positionSizingMethod) positionSizingMethod.value = 'RISK_BASED';
-        const maxAnalysisTime = document.getElementById('max_analysis_time');
-        if (maxAnalysisTime) maxAnalysisTime.value = '5';
-
-        // Reset Smart Lane specific fields
-        document.getElementById('enable_honeypot_detection').checked = true;
-        document.getElementById('enable_liquidity_analysis').checked = true;
-        document.getElementById('enable_social_sentiment').checked = true;
-        document.getElementById('enable_technical_analysis').checked = true;
-        document.getElementById('enable_contract_security').checked = true;
-        document.getElementById('enable_holder_distribution').checked = true;
-        document.getElementById('enable_market_structure').checked = false;
-        
-        document.getElementById('max_acceptable_risk').value = '0.8';
-        document.getElementById('min_confidence_threshold').value = '0.7';
-        updateRiskDisplay('0.8');
-        updateConfidenceDisplay('0.7');
-        
-        document.getElementById('enable_dynamic_sizing').checked = true;
-        document.getElementById('max_position_size_percent').value = '10.0';
-        document.getElementById('risk_per_trade_percent').value = '2.0';
-        document.getElementById('exit_strategy').value = 'TRAILING_STOP';
-        
-        // Reset timeframes
-        document.getElementById('timeframe_1m').checked = false;
-        document.getElementById('timeframe_5m').checked = true;
-        document.getElementById('timeframe_15m').checked = true;
-        document.getElementById('timeframe_1h').checked = true;
-        document.getElementById('timeframe_4h').checked = true;
-        document.getElementById('timeframe_1d').checked = false;
-        {% endif %}
-        
-        // FIXED: Set execution settings for both modes (moved outside mode-specific blocks)
-        const autoExecution = document.getElementById('auto_execution');
-        if (autoExecution) autoExecution.checked = false;
-        const requireApproval = document.getElementById('require_approval');
-        if (requireApproval) requireApproval.checked = true;
-        
-        // Clear validation classes
-        form.querySelectorAll('.is-valid, .is-invalid').forEach(el => {
-            el.classList.remove('is-valid', 'is-invalid');
-        });
-        
-        showAlert('Form reset to default values.', 'info');
+        // Update estimated analysis time based on configuration
+        const estimatedTime = calculateEstimatedAnalysisTime(analysisDepth);
+        const timeDisplay = document.getElementById('estimated-analysis-time');
+        if (timeDisplay) {
+            timeDisplay.textContent = `Estimated analysis time: ${estimatedTime}`;
+        }
     }
     
-    function showAlert(message, type) {
-        // FIXED: Remove existing alerts first
-        document.querySelectorAll('.alert[role="alert"]').forEach(alert => {
-            alert.remove();
-        });
-        
-        const alertDiv = document.createElement('div');
-        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-        alertDiv.setAttribute('role', 'alert');
-        alertDiv.innerHTML = `
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-        `;
-        
-        // FIXED: Better alert placement
-        const container = document.querySelector('.container-fluid') || document.querySelector('main') || document.body;
-        const firstRow = container.querySelector('.row');
-        if (firstRow) {
-            container.insertBefore(alertDiv, firstRow);
-        } else {
-            container.insertBefore(alertDiv, container.firstChild);
+    function calculateEstimatedAnalysisTime(depth) {
+        switch(depth) {
+            case 'BASIC': return '1-2 seconds';
+            case 'COMPREHENSIVE': return '3-5 seconds';
+            case 'DEEP_DIVE': return '8-12 seconds';
+            default: return '3-5 seconds';
         }
-        
-        // Auto-dismiss after 5 seconds
-        setTimeout(() => {
-            if (alertDiv && alertDiv.parentNode) {
-                alertDiv.remove();
-            }
-        }, 5000);
     }
+    
+    // Add event listeners for real-time preview
+    ['analysis_depth', 'ai_thought_log', 'risk_tolerance'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.addEventListener('change', updateConfigurationPreview);
+        }
+    });
+    
+    // Initialize preview
+    updateConfigurationPreview();
+    
+    console.log('Smart Lane configuration panel initialized');
 });
+
+// Smart Lane specific validation functions
+function validateSmartLaneConfig() {
+    const errors = [];
+    
+    // Check required analyzers
+    const analyzers = ['enable_honeypot_detection', 'enable_liquidity_analysis'];
+    analyzers.forEach(analyzer => {
+        const checkbox = document.getElementById(analyzer);
+        if (checkbox && !checkbox.checked) {
+            errors.push(`${analyzer.replace('enable_', '').replace('_', ' ')} is recommended for safe trading`);
+        }
+    });
+    
+    // Check confidence threshold
+    const confidence = document.getElementById('min_confidence_threshold');
+    if (confidence && parseFloat(confidence.value) < 70) {
+        errors.push('Confidence threshold below 70% may result in risky trades');
+    }
+    
+    // Check portfolio allocation
+    const allocation = document.getElementById('max_portfolio_allocation');
+    if (allocation && parseFloat(allocation.value) > 20) {
+        errors.push('Portfolio allocation above 20% may be too risky for single positions');
+    }
+    
+    return errors;
+}
+
+// Export Smart Lane configuration
+function exportSmartLaneConfig() {
+    const formData = new FormData(document.getElementById('configForm'));
+    const config = {};
+    
+    for (let [key, value] of formData.entries()) {
+        if (config[key]) {
+            // Handle multiple values (like checkboxes)
+            if (Array.isArray(config[key])) {
+                config[key].push(value);
+            } else {
+                config[key] = [config[key], value];
+            }
+        } else {
+            config[key] = value;
+        }
+    }
+    
+    const configJson = JSON.stringify(config, null, 2);
+    const blob = new Blob([configJson], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `smart_lane_config_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+// Test Smart Lane configuration
+async function testSmartLaneConfiguration() {
+    const testButton = document.getElementById('test-config-btn');
+    if (testButton) {
+        testButton.disabled = true;
+        testButton.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing...';
+    }
+    
+    try {
+        const response = await fetch('/dashboard/api/smart-lane/test-config/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            },
+            body: JSON.stringify({
+                config: Object.fromEntries(new FormData(document.getElementById('configForm')))
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(`Configuration test successful!\nEstimated analysis time: ${result.analysis_time_ms}ms\nAll analyzers: ${result.analyzers_status}`);
+        } else {
+            alert(`Configuration test failed: ${result.error}`);
+        }
+    } catch (error) {
+        alert(`Test failed: ${error.message}`);
+    } finally {
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.innerHTML = '<i class="bi bi-play me-1"></i>Test Configuration';
+        }
+    }
+}
 </script>
-{% endblock %}
+
+<!-- Additional Smart Lane Configuration Actions -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header">
+                <h6 class="mb-0">
+                    <i class="bi bi-tools me-2"></i>Configuration Tools
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-2">
+                        <button type="button" class="btn btn-outline-info w-100" onclick="testSmartLaneConfiguration()" id="test-config-btn">
+                            <i class="bi bi-play me-1"></i>Test Configuration
+                        </button>
+                        <small class="text-muted d-block mt-1">Verify Smart Lane setup with test analysis</small>
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <button type="button" class="btn btn-outline-warning w-100" onclick="exportSmartLaneConfig()">
+                            <i class="bi bi-download me-1"></i>Export Configuration
+                        </button>
+                        <small class="text-muted d-block mt-1">Download configuration as JSON file</small>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div id="estimated-analysis-time" class="text-muted small">
+                            Estimated analysis time: 3-5 seconds
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Smart Lane Feature Summary -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card bg-dark border-success">
+            <div class="card-header bg-success">
+                <h6 class="mb-0 text-dark">
+                    <i class="bi bi-cpu me-2"></i>Smart Lane Capabilities Summary
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <h6 class="smart-lane-accent">Risk Analysis</h6>
+                        <ul class="list-unstyled small">
+                            <li><i class="bi bi-check text-success me-1"></i>Honeypot Detection</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Liquidity Analysis</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Contract Security</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Social Sentiment</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Technical Analysis</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <h6 class="smart-lane-accent">AI Intelligence</h6>
+                        <ul class="list-unstyled small">
+                            <li><i class="bi bi-check text-success me-1"></i>Thought Log Generation</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Decision Reasoning</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Confidence Scoring</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Risk Assessment</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Strategy Recommendations</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <h6 class="smart-lane-accent">Portfolio Management</h6>
+                        <ul class="list-unstyled small">
+                            <li><i class="bi bi-check text-success me-1"></i>Position Sizing</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Risk-Adjusted Returns</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Exit Strategies</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Stop Loss/Take Profit</li>
+                            <li><i class="bi bi-check text-success me-1"></i>Trailing Stops</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="alert alert-info mt-3 mb-0">
+                    <small>
+                        <i class="bi bi-lightbulb me-1"></i>
+                        <strong>Pro Tip:</strong> Start with 'Comprehensive' analysis depth and 'Moderate' risk tolerance 
+                        for the best balance of speed and accuracy. Enable all analyzers for maximum safety.
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

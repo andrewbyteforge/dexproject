@@ -4,14 +4,16 @@ Smart Lane Management Command
 Django management command for testing and managing Smart Lane functionality.
 Provides comprehensive testing, initialization, and debugging capabilities.
 
-FIXED: Updated imports to use correct module paths based on current project structure.
-Removed any references to non-existent dashboard.views.smart_lane module.
+Enhanced with complete Smart Lane integration and real-time monitoring.
 
 Usage:
     python manage.py smart_lane status
     python manage.py smart_lane test
     python manage.py smart_lane analyze <token_address>
     python manage.py smart_lane demo
+    python manage.py smart_lane init
+    python manage.py smart_lane metrics
+    python manage.py smart_lane thought-log <analysis_id>
 
 File: dashboard/management/commands/smart_lane.py
 """
@@ -20,15 +22,13 @@ import asyncio
 import json
 import time
 import logging
-from typing import Dict, Any, Optional
-from datetime import datetime
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timedelta
 
 from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
+from django.utils import timezone
 
-from dashboard.engine_service import engine_service
-
-# Set up logging
 logger = logging.getLogger(__name__)
 
 
@@ -44,64 +44,68 @@ class Command(BaseCommand):
     
     def add_arguments(self, parser) -> None:
         """Add command line arguments."""
-        subparsers = parser.add_subparsers(dest='action', help='Available actions')
-        
-        # Status command
-        status_parser = subparsers.add_parser('status', help='Show Smart Lane status')
-        status_parser.add_argument(
-            '--verbose', '-v',
-            action='store_true',
-            help='Show detailed status information'
+        parser.add_argument(
+            'action',
+            choices=['status', 'test', 'analyze', 'demo', 'init', 'metrics', 'thought-log', 'benchmark'],
+            help='Action to perform'
         )
         
-        # Test command
-        test_parser = subparsers.add_parser('test', help='Run Smart Lane tests')
-        test_parser.add_argument(
-            '--quick', '-q',
-            action='store_true',
-            help='Run quick tests only'
+        parser.add_argument(
+            'target',
+            nargs='?',
+            help='Target for action (e.g., token address for analyze, analysis_id for thought-log)'
         )
         
-        # Analyze command
-        analyze_parser = subparsers.add_parser('analyze', help='Analyze a token with Smart Lane')
-        analyze_parser.add_argument(
-            'token_address',
-            help='Token contract address to analyze'
-        )
-        analyze_parser.add_argument(
-            '--symbol',
-            help='Token symbol (optional)'
-        )
-        analyze_parser.add_argument(
-            '--save',
-            action='store_true',
-            help='Save analysis results to file'
+        parser.add_argument(
+            '--config',
+            type=str,
+            help='Configuration JSON file for analysis'
         )
         
-        # Demo command
-        demo_parser = subparsers.add_parser('demo', help='Run Smart Lane demonstration')
-        demo_parser.add_argument(
-            '--interactive', '-i',
-            action='store_true',
-            help='Interactive demo mode'
+        parser.add_argument(
+            '--depth',
+            choices=['BASIC', 'COMPREHENSIVE', 'DEEP_DIVE'],
+            default='COMPREHENSIVE',
+            help='Analysis depth for analyze command'
         )
         
-        # Initialize command
-        init_parser = subparsers.add_parser('init', help='Initialize Smart Lane pipeline')
-        init_parser.add_argument(
-            '--chain-id',
+        parser.add_argument(
+            '--count',
             type=int,
             default=1,
-            help='Blockchain chain ID (default: 1 for Ethereum)'
+            help='Number of iterations for test/demo commands'
+        )
+        
+        parser.add_argument(
+            '--export',
+            action='store_true',
+            help='Export results to file'
+        )
+        
+        parser.add_argument(
+            '--verbose',
+            action='store_true',
+            help='Enable verbose output'
+        )
+        
+        parser.add_argument(
+            '--format',
+            choices=['table', 'json', 'csv'],
+            default='table',
+            help='Output format'
         )
     
     def handle(self, *args, **options) -> None:
-        """Handle command execution based on action."""
-        action = options.get('action')
+        """Handle command execution."""
+        action = options['action']
         
-        if not action:
-            self.print_help()
-            return
+        # Set logging level based on verbosity
+        if options['verbose']:
+            logging.getLogger().setLevel(logging.DEBUG)
+        
+        self.stdout.write(
+            self.style.SUCCESS(f'🧠 Smart Lane Management - {action.upper()}')
+        )
         
         try:
             if action == 'status':
@@ -114,617 +118,699 @@ class Command(BaseCommand):
                 self.handle_demo(options)
             elif action == 'init':
                 self.handle_init(options)
-            else:
-                raise CommandError(f"Unknown action: {action}")
+            elif action == 'metrics':
+                self.handle_metrics(options)
+            elif action == 'thought-log':
+                self.handle_thought_log(options)
+            elif action == 'benchmark':
+                self.handle_benchmark(options)
                 
+        except KeyboardInterrupt:
+            self.stdout.write(self.style.WARNING('\n⚠️  Command interrupted by user'))
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"Command failed: {e}"))
-            if options.get('verbosity', 1) >= 2:
+            self.stdout.write(self.style.ERROR(f'❌ Error: {str(e)}'))
+            if options['verbose']:
                 import traceback
                 self.stdout.write(traceback.format_exc())
-    
-    def print_help(self) -> None:
-        """Print command help information."""
-        self.stdout.write(self.style.SUCCESS('=== Smart Lane Management Command ==='))
-        self.stdout.write('')
-        self.stdout.write('Available actions:')
-        self.stdout.write('  status    - Show Smart Lane status and health')
-        self.stdout.write('  test      - Run Smart Lane functionality tests')
-        self.stdout.write('  analyze   - Analyze a specific token')
-        self.stdout.write('  demo      - Run demonstration analysis')
-        self.stdout.write('  init      - Initialize Smart Lane pipeline')
-        self.stdout.write('')
-        self.stdout.write('Use --help with any action for more details')
+            raise CommandError(f'Smart Lane command failed: {e}')
     
     def handle_status(self, options: Dict[str, Any]) -> None:
-        """Handle status command."""
-        verbose = options.get('verbose', False)
+        """Display Smart Lane status information."""
+        self.stdout.write('📊 Smart Lane Status Check')
+        self.stdout.write('=' * 50)
         
-        self.stdout.write(self.style.SUCCESS('=== Smart Lane Status ==='))
-        
-        # Check Django configuration
-        self.stdout.write('\n📋 Django Configuration:')
-        smart_lane_enabled = getattr(settings, 'SMART_LANE_ENABLED', False)
-        smart_lane_mock = getattr(settings, 'SMART_LANE_MOCK_MODE', True)
-        engine_mock = getattr(settings, 'ENGINE_MOCK_MODE', True)
-        
-        self.stdout.write(f'  SMART_LANE_ENABLED: {smart_lane_enabled}')
-        self.stdout.write(f'  SMART_LANE_MOCK_MODE: {smart_lane_mock}')
-        self.stdout.write(f'  ENGINE_MOCK_MODE: {engine_mock}')
-        self.stdout.write(f'  REDIS_URL: {getattr(settings, "REDIS_URL", "Not configured")}')
-        
-        # Check engine service status
-        self.stdout.write('\n🔧 Engine Service Status:')
         try:
-            self.stdout.write(f'  Smart Lane available: {engine_service.smart_lane_available}')
-            self.stdout.write(f'  Smart Lane initialized: {engine_service.smart_lane_initialized}')
-            self.stdout.write(f'  Mock mode: {engine_service.mock_mode}')
-            self.stdout.write(f'  Circuit breaker state: {engine_service.circuit_breaker.state}')
-        except AttributeError as e:
-            self.stdout.write(f'  ⚠️  Engine service attribute missing: {e}')
-            self.stdout.write('  ℹ️  This suggests Smart Lane integration is not yet complete')
-        
-        # Get engine status
-        try:
-            status = engine_service.get_engine_status()
-            self.stdout.write('\n🧠 Smart Lane Status:')
-            self.stdout.write(f'  Status: {status.get("smart_lane_status", "UNKNOWN")}')
-            self.stdout.write(f'  Active: {status.get("smart_lane_active", False)}')
-            self.stdout.write(f'  Analyses completed: {status.get("smart_lane_analyses_completed", 0)}')
-            self.stdout.write(f'  Success rate: {status.get("smart_lane_success_rate", 0):.1f}%')
-            self.stdout.write(f'  Average analysis time: {status.get("smart_lane_avg_time_ms", 0):.1f}ms')
-            self.stdout.write(f'  Cache hit ratio: {status.get("smart_lane_cache_hit_ratio", 0):.1f}%')
+            # Import Smart Lane service
+            from dashboard.smart_lane_service import smart_lane_service
             
-            if verbose:
-                self.stdout.write(f'\n🔍 Detailed Status:')
-                self.stdout.write(json.dumps(status, indent=2, default=str))
+            # Get status information
+            pipeline_status = smart_lane_service.get_pipeline_status()
+            metrics = smart_lane_service.get_analysis_metrics()
+            
+            # Display status
+            status = pipeline_status.get('status', 'UNKNOWN')
+            status_color = self.get_status_color(status)
+            
+            self.stdout.write(f'Pipeline Status: {status_color}')
+            self.stdout.write(f'Pipeline Active: {pipeline_status.get("pipeline_active", False)}')
+            self.stdout.write(f'Analyzers Count: {pipeline_status.get("analyzers_count", 0)}')
+            self.stdout.write(f'Analysis Ready: {pipeline_status.get("analysis_ready", False)}')
+            
+            if pipeline_status.get('capabilities'):
+                self.stdout.write('\n🔧 Available Capabilities:')
+                for capability in pipeline_status['capabilities']:
+                    self.stdout.write(f'  • {capability.replace("_", " ").title()}')
+            
+            # Display metrics
+            self.stdout.write('\n📈 Performance Metrics:')
+            self.stdout.write(f'Analyses Completed: {metrics.get("analyses_completed", 0)}')
+            self.stdout.write(f'Success Rate: {metrics.get("success_rate", 0):.1f}%')
+            self.stdout.write(f'Average Analysis Time: {metrics.get("average_analysis_time_ms", 0):.1f}ms')
+            self.stdout.write(f'Cache Hit Ratio: {metrics.get("cache_hit_ratio", 0):.1%}')
+            self.stdout.write(f'Thought Logs Generated: {metrics.get("thought_logs_generated", 0)}')
+            
+            # Mock mode indicator
+            if metrics.get('_mock', False):
+                self.stdout.write(self.style.WARNING('\n⚠️  Running in mock mode'))
+            else:
+                self.stdout.write(self.style.SUCCESS('\n✅ Connected to live Smart Lane pipeline'))
                 
+        except ImportError:
+            self.stdout.write(self.style.ERROR('❌ Smart Lane service not available'))
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f'Failed to get Smart Lane status: {e}'))
-        
-        # Get performance metrics
-        try:
-            metrics = engine_service.get_performance_metrics()
-            self.stdout.write('\n📊 Performance Metrics:')
-            self.stdout.write(f'  Smart Lane calls: {metrics.get("smart_lane_calls", 0)}')
-            self.stdout.write(f'  Analysis time: {metrics.get("smart_lane_analysis_time_ms", 0):.1f}ms')
-            self.stdout.write(f'  Success rate: {metrics.get("smart_lane_success_rate", 0):.1f}%')
-            self.stdout.write(f'  Risk-adjusted return: +{metrics.get("risk_adjusted_return", 0):.1f}%')
-            
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f'Failed to get performance metrics: {e}'))
+            self.stdout.write(self.style.ERROR(f'❌ Error getting status: {e}'))
     
     def handle_test(self, options: Dict[str, Any]) -> None:
-        """Handle test command."""
-        quick = options.get('quick', False)
+        """Test Smart Lane functionality."""
+        count = options['count']
         
-        self.stdout.write(self.style.SUCCESS('=== Smart Lane Testing ==='))
-        
-        tests = []
-        
-        # Basic tests (always run)
-        tests.extend([
-            ('Engine Service Instantiation', self.test_engine_service),
-            ('Smart Lane Availability Check', self.test_smart_lane_availability),
-            ('Status Endpoint', self.test_status_endpoint),
-            ('Metrics Endpoint', self.test_metrics_endpoint),
-        ])
-        
-        # Extended tests (unless quick mode)
-        if not quick:
-            tests.extend([
-                ('Smart Lane Module Import', self.test_smart_lane_import),
-                ('Token Analysis (Mock)', self.test_token_analysis_mock),
-                ('Performance Timing', self.test_performance_timing),
-            ])
-        
-        # Run tests
-        passed = 0
-        total = len(tests)
-        
-        for test_name, test_func in tests:
-            self.stdout.write(f'\n🧪 Test: {test_name}')
-            try:
-                start_time = time.time()
-                result = test_func()
-                elapsed_ms = (time.time() - start_time) * 1000
-                
-                if result:
-                    self.stdout.write(f'  ✅ PASSED ({elapsed_ms:.1f}ms)')
-                    passed += 1
-                else:
-                    self.stdout.write(f'  ❌ FAILED ({elapsed_ms:.1f}ms)')
-                    
-            except Exception as e:
-                self.stdout.write(f'  ❌ ERROR: {e}')
-        
-        # Summary
-        self.stdout.write(f'\n📊 Test Results: {passed}/{total} tests passed')
-        success_rate = (passed / total) * 100
-        
-        if success_rate == 100:
-            self.stdout.write(self.style.SUCCESS('🎉 All tests passed! Smart Lane is operational.'))
-        elif success_rate >= 80:
-            self.stdout.write(self.style.WARNING(f'⚠️  {success_rate:.1f}% tests passed. Some issues detected.'))
-        else:
-            self.stdout.write(self.style.ERROR(f'❌ Only {success_rate:.1f}% tests passed. Major issues detected.'))
-    
-    def handle_analyze(self, options: Dict[str, Any]) -> None:
-        """Handle analyze command."""
-        token_address = options['token_address']
-        symbol = options.get('symbol', '')
-        save_results = options.get('save', False)
-        
-        self.stdout.write(self.style.SUCCESS(f'=== Analyzing Token: {token_address} ==='))
-        
-        # Validate token address
-        if not token_address.startswith('0x') or len(token_address) != 42:
-            raise CommandError('Invalid token address format. Must be 42 characters starting with 0x')
-        
-        # Prepare analysis context
-        context = {}
-        if symbol:
-            context['symbol'] = symbol
+        self.stdout.write(f'🧪 Testing Smart Lane ({count} iteration{"s" if count > 1 else ""})')
+        self.stdout.write('=' * 50)
         
         try:
-            # Check if Smart Lane is available
-            if not hasattr(engine_service, 'smart_lane_available') or not engine_service.smart_lane_available:
-                self.stdout.write(self.style.WARNING('⚠️  Smart Lane engine not available, using mock analysis'))
-                analysis = self.generate_mock_analysis(token_address, context)
-                self.display_analysis_results(analysis)
-                if save_results:
-                    self.save_analysis_results(analysis, token_address)
-                return
+            from dashboard.smart_lane_service import smart_lane_service
             
-            # Initialize Smart Lane if needed
-            self.stdout.write('🔧 Initializing Smart Lane...')
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Initialize service if needed
+            if not smart_lane_service.initialized:
+                self.stdout.write('🔄 Initializing Smart Lane service...')
+                result = asyncio.run(smart_lane_service.initialize())
+                if result:
+                    self.stdout.write(self.style.SUCCESS('✅ Service initialized'))
+                else:
+                    self.stdout.write(self.style.WARNING('⚠️  Using mock mode'))
             
-            if not engine_service.smart_lane_initialized:
-                success = loop.run_until_complete(engine_service.initialize_smart_lane())
-                if not success:
-                    self.stdout.write(self.style.WARNING('Smart Lane initialization failed, using mock mode'))
+            # Run tests
+            test_results = []
             
-            # Perform analysis
-            self.stdout.write(f'🧠 Analyzing token {token_address}...')
-            start_time = time.time()
-            
-            # Use Smart Lane analysis if available
-            if hasattr(engine_service, 'analyze_token_smart_lane'):
-                analysis = loop.run_until_complete(
-                    engine_service.analyze_token_smart_lane(token_address, context)
-                )
-            else:
-                # Fallback to mock analysis
-                self.stdout.write(self.style.WARNING('Smart Lane analysis method not available, using mock'))
-                analysis = self.generate_mock_analysis(token_address, context)
-            
-            elapsed_ms = (time.time() - start_time) * 1000
-            loop.close()
-            
-            if analysis:
-                self.stdout.write(f'✅ Analysis completed in {elapsed_ms:.1f}ms')
-                self.display_analysis_results(analysis)
+            for i in range(count):
+                if count > 1:
+                    self.stdout.write(f'\n🔄 Test iteration {i + 1}/{count}')
                 
-                if save_results:
-                    self.save_analysis_results(analysis, token_address)
-            else:
-                self.stdout.write(self.style.ERROR('❌ Analysis failed'))
+                start_time = time.time()
+                
+                # Test token address (using a known test token)
+                test_token = '0x1234567890123456789012345678901234567890'
+                
+                # Run analysis
+                self.stdout.write('🔍 Running test analysis...')
+                analysis_result = asyncio.run(
+                    smart_lane_service.run_analysis(test_token, {})
+                )
+                
+                end_time = time.time()
+                execution_time = (end_time - start_time) * 1000
+                
+                if analysis_result.get('success'):
+                    self.stdout.write(self.style.SUCCESS(f'✅ Analysis completed in {execution_time:.1f}ms'))
+                    
+                    # Display results
+                    if options['verbose']:
+                        result = analysis_result.get('result', {})
+                        self.stdout.write(f'   Risk Score: {result.get("overall_risk_score", 0):.2f}')
+                        self.stdout.write(f'   Risk Category: {result.get("risk_category", "UNKNOWN")}')
+                        self.stdout.write(f'   Recommendation: {result.get("recommendations", {}).get("action", "NONE")}')
+                    
+                    # Check thought log
+                    thought_log_id = analysis_result.get('thought_log_id')
+                    if thought_log_id:
+                        thought_log = smart_lane_service.get_thought_log(thought_log_id)
+                        if thought_log:
+                            self.stdout.write(f'✅ Thought log generated ({len(thought_log.get("reasoning_steps", []))} steps)')
+                
+                else:
+                    self.stdout.write(self.style.ERROR(f'❌ Analysis failed: {analysis_result.get("error")}'))
+                
+                test_results.append({
+                    'iteration': i + 1,
+                    'success': analysis_result.get('success', False),
+                    'execution_time_ms': execution_time,
+                    'error': analysis_result.get('error')
+                })
+                
+                # Brief pause between iterations
+                if i < count - 1:
+                    time.sleep(1)
+            
+            # Summary
+            self.stdout.write('\n📊 Test Summary:')
+            successful_tests = sum(1 for r in test_results if r['success'])
+            self.stdout.write(f'Success Rate: {successful_tests}/{count} ({successful_tests/count*100:.1f}%)')
+            
+            if test_results:
+                avg_time = sum(r['execution_time_ms'] for r in test_results if r['success']) / max(successful_tests, 1)
+                self.stdout.write(f'Average Execution Time: {avg_time:.1f}ms')
+            
+            # Export results if requested
+            if options['export']:
+                self.export_results('smart_lane_test', test_results, options)
                 
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f'Analysis error: {e}'))
-            logger.exception(f"Smart Lane analysis error for {token_address}")
+            self.stdout.write(self.style.ERROR(f'❌ Test failed: {e}'))
+            raise
+    
+    def handle_analyze(self, options: Dict[str, Any]) -> None:
+        """Analyze a specific token."""
+        token_address = options.get('target')
+        if not token_address:
+            raise CommandError('Token address is required for analyze command')
+        
+        self.stdout.write(f'🔍 Analyzing token: {token_address}')
+        self.stdout.write('=' * 50)
+        
+        try:
+            from dashboard.smart_lane_service import smart_lane_service
+            from engine.smart_lane import AnalysisDepth
+            
+            # Initialize service
+            if not smart_lane_service.initialized:
+                self.stdout.write('🔄 Initializing Smart Lane service...')
+                asyncio.run(smart_lane_service.initialize())
+            
+            # Prepare analysis configuration
+            config = {}
+            if options.get('config'):
+                with open(options['config'], 'r') as f:
+                    config = json.load(f)
+            
+            # Set analysis depth
+            depth_map = {
+                'BASIC': 'BASIC',
+                'COMPREHENSIVE': 'COMPREHENSIVE', 
+                'DEEP_DIVE': 'DEEP_DIVE'
+            }
+            config['analysis_depth'] = depth_map.get(options['depth'], 'COMPREHENSIVE')
+            
+            self.stdout.write(f'📋 Analysis Configuration:')
+            self.stdout.write(f'   Depth: {config["analysis_depth"]}')
+            self.stdout.write(f'   Token: {token_address}')
+            
+            # Run analysis
+            start_time = time.time()
+            self.stdout.write('\n🔄 Running analysis...')
+            
+            analysis_result = asyncio.run(
+                smart_lane_service.run_analysis(token_address, config)
+            )
+            
+            end_time = time.time()
+            execution_time = (end_time - start_time) * 1000
+            
+            if analysis_result.get('success'):
+                self.stdout.write(self.style.SUCCESS(f'\n✅ Analysis completed in {execution_time:.1f}ms'))
+                
+                # Display detailed results
+                result = analysis_result.get('result', {})
+                self.display_analysis_results(result, options)
+                
+                # Display thought log
+                thought_log_id = analysis_result.get('thought_log_id')
+                if thought_log_id and options['verbose']:
+                    self.display_thought_log(thought_log_id, smart_lane_service)
+                
+                # Export if requested
+                if options['export']:
+                    self.export_results('smart_lane_analysis', {
+                        'token_address': token_address,
+                        'analysis_result': analysis_result,
+                        'execution_time_ms': execution_time
+                    }, options)
+                    
+            else:
+                self.stdout.write(self.style.ERROR(f'❌ Analysis failed: {analysis_result.get("error")}'))
+                
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'❌ Analysis error: {e}'))
             raise
     
     def handle_demo(self, options: Dict[str, Any]) -> None:
-        """Handle demo command."""
-        interactive = options.get('interactive', False)
+        """Run Smart Lane demonstration."""
+        count = options['count']
         
-        self.stdout.write(self.style.SUCCESS('=== Smart Lane Demonstration ==='))
-        
-        # Demo tokens for testing
-        demo_tokens = [
-            ('0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', 'UNI', 'Uniswap'),
-            ('0xA0b86a33E6285c7C2aF97ac0A8A8A4a0885de96e', 'DEMO', 'Demo Token'),
-            ('0xdAC17F958D2ee523a2206206994597C13D831ec7', 'USDT', 'Tether USD'),
-        ]
-        
-        if interactive:
-            self.stdout.write('\n🎯 Interactive Demo Mode')
-            self.stdout.write('Available demo tokens:')
-            for i, (address, symbol, name) in enumerate(demo_tokens, 1):
-                self.stdout.write(f'  {i}. {symbol} ({name}) - {address[:10]}...')
-            
-            choice = input('\nSelect token (1-3) or enter custom address: ').strip()
-            
-            try:
-                if choice.isdigit() and 1 <= int(choice) <= len(demo_tokens):
-                    token_address, symbol, name = demo_tokens[int(choice) - 1]
-                elif choice.startswith('0x') and len(choice) == 42:
-                    token_address = choice
-                    symbol = input('Enter symbol (optional): ').strip()
-                    name = symbol
-                else:
-                    raise ValueError('Invalid selection')
-            except (ValueError, IndexError):
-                self.stdout.write(self.style.ERROR('Invalid selection, using default demo token'))
-                token_address, symbol, name = demo_tokens[0]
-        else:
-            # Use default demo token
-            token_address, symbol, name = demo_tokens[0]
-        
-        self.stdout.write(f'\n🎪 Running demo analysis for {symbol} ({name})')
-        
-        # Run analysis using the analyze handler
-        options_copy = options.copy()
-        options_copy.update({
-            'token_address': token_address,
-            'symbol': symbol,
-            'save': False
-        })
-        
-        self.handle_analyze(options_copy)
-    
-    def handle_init(self, options: Dict[str, Any]) -> None:
-        """Handle init command."""
-        chain_id = options.get('chain_id', 1)
-        
-        self.stdout.write(self.style.SUCCESS(f'=== Initializing Smart Lane (Chain {chain_id}) ==='))
-        
-        try:
-            # Check if Smart Lane initialization is available
-            if not hasattr(engine_service, 'initialize_smart_lane'):
-                self.stdout.write(self.style.WARNING('⚠️  Smart Lane initialization not available'))
-                self.stdout.write('ℹ️  Smart Lane is in Phase 5 development - using mock mode')
-                return
-                
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            self.stdout.write('🔧 Initializing Smart Lane pipeline...')
-            success = loop.run_until_complete(engine_service.initialize_smart_lane(chain_id=chain_id))
-            
-            loop.close()
-            
-            if success:
-                self.stdout.write(self.style.SUCCESS('✅ Smart Lane initialized successfully'))
-                
-                # Get status after initialization
-                status = engine_service.get_engine_status()
-                self.stdout.write(f'\n📊 Initialization Results:')
-                self.stdout.write(f'  Smart Lane active: {status.get("smart_lane_active", False)}')
-                self.stdout.write(f'  Status: {status.get("smart_lane_status", "UNKNOWN")}')
-                
-            else:
-                self.stdout.write(self.style.ERROR('❌ Smart Lane initialization failed'))
-                
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f'Initialization error: {e}'))
-            logger.exception("Smart Lane initialization error")
-            raise
-    
-    # =========================================================================
-    # TEST METHODS
-    # =========================================================================
-    
-    def test_engine_service(self) -> bool:
-        """Test engine service instantiation."""
-        try:
-            # Check basic engine service attributes
-            mock_mode = getattr(engine_service, 'mock_mode', True)
-            self.stdout.write(f'  📊 Mock mode: {mock_mode}')
-            
-            # Check if Smart Lane attributes exist
-            smart_lane_available = getattr(engine_service, 'smart_lane_available', False)
-            smart_lane_initialized = getattr(engine_service, 'smart_lane_initialized', False)
-            
-            self.stdout.write(f'  📊 Smart Lane available: {smart_lane_available}')
-            self.stdout.write(f'  📊 Smart Lane initialized: {smart_lane_initialized}')
-            
-            # Check circuit breaker
-            if hasattr(engine_service, 'circuit_breaker'):
-                self.stdout.write(f'  📊 Circuit breaker state: {engine_service.circuit_breaker.state}')
-            
-            return True
-        except Exception as e:
-            self.stdout.write(f'  ❌ Engine service error: {e}')
-            return False
-    
-    def test_smart_lane_availability(self) -> bool:
-        """Test Smart Lane component availability."""
-        try:
-            # Check engine service Smart Lane availability
-            available = getattr(engine_service, 'smart_lane_available', False)
-            self.stdout.write(f'  📊 Engine service reports Smart Lane available: {available}')
-            
-            if available:
-                self.stdout.write('  ✅ Smart Lane reported as available by engine service')
-            else:
-                self.stdout.write('  ℹ️  Smart Lane not available - likely in Phase 5 development')
-            
-            return True  # This test always passes as it's informational
-        except Exception as e:
-            self.stdout.write(f'  ❌ Smart Lane availability check error: {e}')
-            return False
-    
-    def test_smart_lane_import(self) -> bool:
-        """Test Smart Lane module imports."""
-        try:
-            # Try importing Smart Lane components directly
-            from engine.smart_lane import SmartLaneConfig, RiskCategory
-            self.stdout.write('  ✅ Smart Lane core components importable')
-            
-            try:
-                from engine.smart_lane.pipeline import SmartLanePipeline
-                self.stdout.write('  ✅ Smart Lane pipeline importable')
-            except ImportError:
-                self.stdout.write('  ⚠️  Smart Lane pipeline not yet available')
-            
-            try:
-                from engine.smart_lane.analyzers import create_analyzer
-                self.stdout.write('  ✅ Smart Lane analyzers importable')
-            except ImportError:
-                self.stdout.write('  ⚠️  Smart Lane analyzers not yet available')
-            
-            return True
-        except ImportError as e:
-            self.stdout.write(f'  ❌ Smart Lane import failed: {e}')
-            self.stdout.write('  ℹ️  This is expected if Smart Lane is in Phase 5 development')
-            return False
-    
-    def test_status_endpoint(self) -> bool:
-        """Test status endpoint."""
-        try:
-            status = engine_service.get_engine_status()
-            smart_lane_status = status.get('smart_lane_status', 'UNKNOWN')
-            self.stdout.write(f'  📊 Smart Lane status: {smart_lane_status}')
-            return smart_lane_status != 'ERROR'
-        except Exception as e:
-            self.stdout.write(f'  ❌ Status endpoint error: {e}')
-            return False
-    
-    def test_metrics_endpoint(self) -> bool:
-        """Test metrics endpoint."""
-        try:
-            metrics = engine_service.get_performance_metrics()
-            analysis_time = metrics.get('smart_lane_analysis_time_ms', 0)
-            success_rate = metrics.get('smart_lane_success_rate', 0)
-            self.stdout.write(f'  📊 Analysis time: {analysis_time:.1f}ms')
-            self.stdout.write(f'  📊 Success rate: {success_rate:.1f}%')
-            return True  # Pass if we get metrics, even if they're 0 (mock data)
-        except Exception as e:
-            self.stdout.write(f'  ❌ Metrics endpoint error: {e}')
-            return False
-    
-    def test_token_analysis_mock(self) -> bool:
-        """Test token analysis functionality with mock data."""
-        try:
-            demo_token = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"  # UNI
-            
-            # Generate mock analysis
-            analysis = self.generate_mock_analysis(demo_token, {'symbol': 'UNI'})
-            
-            if analysis:
-                self.stdout.write(f'  📊 Analysis ID: {analysis.get("analysis_id", "N/A")}')
-                self.stdout.write(f'  📊 Risk score: {analysis.get("overall_risk_score", 0):.3f}')
-                self.stdout.write(f'  📊 Confidence: {analysis.get("confidence_score", 0):.3f}')
-                self.stdout.write(f'  📊 Recommendation: {analysis.get("recommended_action", "N/A")}')
-                return True
-            else:
-                self.stdout.write('  ❌ Analysis returned no results')
-                return False
-                
-        except Exception as e:
-            self.stdout.write(f'  ❌ Token analysis error: {e}')
-            return False
-    
-    def test_performance_timing(self) -> bool:
-        """Test performance timing with mock analysis."""
-        try:
-            demo_token = "0xA0b86a33E6285c7C2aF97ac0A8A8A4a0885de96e"
-            
-            start_time = time.time()
-            analysis = self.generate_mock_analysis(demo_token, {})
-            elapsed_ms = (time.time() - start_time) * 1000
-            
-            self.stdout.write(f'  📊 Mock analysis time: {elapsed_ms:.1f}ms')
-            self.stdout.write(f'  📊 Target: <5000ms')
-            
-            # Mock analysis should be very fast
-            return analysis is not None and elapsed_ms < 1000  # 1 second for mock
-            
-        except Exception as e:
-            self.stdout.write(f'  ❌ Performance test error: {e}')
-            return False
-    
-    # =========================================================================
-    # UTILITY METHODS
-    # =========================================================================
-    
-    def generate_mock_analysis(self, token_address: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate mock analysis results for testing."""
-        import uuid
-        import random
-        
-        # Generate realistic mock data
-        risk_score = random.uniform(0.2, 0.8)
-        confidence = random.uniform(0.6, 0.95)
-        
-        # Determine action based on risk score
-        if risk_score < 0.3:
-            action = 'BUY'
-        elif risk_score < 0.5:
-            action = 'PARTIAL_BUY'
-        elif risk_score < 0.7:
-            action = 'HOLD'
-        else:
-            action = 'AVOID'
-        
-        return {
-            'token_address': token_address,
-            'analysis_id': str(uuid.uuid4()),
-            'timestamp': datetime.now().isoformat(),
-            'analysis_time_ms': random.uniform(800, 3000),
-            '_mock': True,
-            
-            # Risk Assessment
-            'overall_risk_score': risk_score,
-            'confidence_score': confidence,
-            'recommended_action': action,
-            
-            # Risk Categories
-            'risk_categories': {
-                'HONEYPOT_DETECTION': {
-                    'score': random.uniform(0.1, 0.4),
-                    'confidence': random.uniform(0.8, 0.95),
-                    'details': {'honeypot_detected': False, 'liquidity_locked': True}
-                },
-                'LIQUIDITY_ANALYSIS': {
-                    'score': random.uniform(0.2, 0.6),
-                    'confidence': random.uniform(0.7, 0.9),
-                    'details': {'liquidity_usd': 500000, 'liquidity_ratio': 0.15}
-                },
-                'SOCIAL_SENTIMENT': {
-                    'score': random.uniform(0.3, 0.7),
-                    'confidence': random.uniform(0.5, 0.8),
-                    'details': {'sentiment_score': 0.6, 'social_mentions': 150}
-                },
-                'TECHNICAL_ANALYSIS': {
-                    'score': random.uniform(0.2, 0.5),
-                    'confidence': random.uniform(0.6, 0.85),
-                    'details': {'rsi': 55, 'macd': 'BULLISH'}
-                }
-            },
-            
-            # Technical Signals
-            'technical_signals': [
-                {
-                    'signal_type': 'BUY',
-                    'strength': random.uniform(0.5, 0.8),
-                    'timeframe': '4h',
-                    'indicators': {'RSI': 45, 'MACD': 0.05}
-                }
-            ],
-            
-            # Position Sizing
-            'position_sizing': {
-                'recommended_size_percent': random.uniform(2, 8),
-                'risk_per_trade_percent': 2.0,
-                'reasoning': 'Medium risk, moderate position size recommended'
-            },
-            
-            # Exit Strategy
-            'exit_strategy': {
-                'strategy_name': 'TRAILING_STOP',
-                'stop_loss_percent': random.uniform(8, 15),
-                'take_profit_percent': random.uniform(20, 50)
-            },
-            
-            # AI Thought Log
-            'thought_log': [
-                'Analyzing contract for honeypot characteristics...',
-                'Checking liquidity depth and distribution...',
-                'Evaluating social sentiment indicators...',
-                'Running technical analysis across timeframes...',
-                f'Overall assessment: {action} recommendation with {confidence:.1%} confidence'
-            ]
-        }
-    
-    def display_analysis_results(self, analysis: Dict[str, Any]) -> None:
-        """Display analysis results in a formatted way."""
-        self.stdout.write('\n📊 Analysis Results:')
+        self.stdout.write(f'🎯 Smart Lane Demo ({count} sample{"s" if count > 1 else ""})')
         self.stdout.write('=' * 50)
         
-        # Basic info
-        self.stdout.write(f'Token Address: {analysis.get("token_address", "N/A")}')
-        self.stdout.write(f'Analysis ID: {analysis.get("analysis_id", "N/A")}')
-        self.stdout.write(f'Timestamp: {analysis.get("timestamp", "N/A")}')
-        self.stdout.write(f'Analysis Time: {analysis.get("analysis_time_ms", 0):.1f}ms')
+        # Demo tokens (mix of safe and risky for demonstration)
+        demo_tokens = [
+            ('0x1111111111111111111111111111111111111111', 'Safe Token Demo'),
+            ('0x2222222222222222222222222222222222222222', 'Medium Risk Demo'),
+            ('0x3333333333333333333333333333333333333333', 'High Risk Demo'),
+            ('0x4444444444444444444444444444444444444444', 'Honeypot Demo'),
+            ('0x5555555555555555555555555555555555555555', 'Low Liquidity Demo')
+        ]
         
-        # Show if this is mock data
-        if analysis.get('_mock', False):
-            self.stdout.write(self.style.WARNING('⚠️  MOCK DATA - Smart Lane not yet available'))
-        
-        # Risk assessment
-        self.stdout.write(f'\n🎯 Risk Assessment:')
-        risk_score = analysis.get('overall_risk_score', 0)
-        confidence = analysis.get('confidence_score', 0)
-        action = analysis.get('recommended_action', 'UNKNOWN')
-        
-        self.stdout.write(f'  Overall Risk Score: {risk_score:.3f}/1.0')
-        self.stdout.write(f'  Confidence Score: {confidence:.3f}/1.0')
-        self.stdout.write(f'  Recommended Action: {action}')
-        
-        # Risk categories
-        risk_categories = analysis.get('risk_categories', {})
-        if risk_categories:
-            self.stdout.write(f'\n🛡️  Risk Categories:')
-            for category, details in risk_categories.items():
-                score = details.get('score', 0)
-                conf = details.get('confidence', 0)
-                self.stdout.write(f'  {category}: {score:.3f} (confidence: {conf:.3f})')
-        
-        # Technical signals
-        technical_signals = analysis.get('technical_signals', [])
-        if technical_signals:
-            self.stdout.write(f'\n📈 Technical Signals:')
-            for signal in technical_signals:
-                signal_type = signal.get('signal_type', 'UNKNOWN')
-                strength = signal.get('strength', 0)
-                timeframe = signal.get('timeframe', 'N/A')
-                self.stdout.write(f'  {signal_type} ({timeframe}): {strength:.2f}')
-        
-        # Position sizing
-        position_sizing = analysis.get('position_sizing')
-        if position_sizing:
-            self.stdout.write(f'\n💰 Position Sizing:')
-            size_percent = position_sizing.get('recommended_size_percent', 0)
-            risk_percent = position_sizing.get('risk_per_trade_percent', 0)
-            reasoning = position_sizing.get('reasoning', 'N/A')
-            self.stdout.write(f'  Recommended Size: {size_percent:.1f}% of portfolio')
-            self.stdout.write(f'  Risk Per Trade: {risk_percent:.1f}%')
-            self.stdout.write(f'  Reasoning: {reasoning}')
-        
-        # Exit strategy
-        exit_strategy = analysis.get('exit_strategy')
-        if exit_strategy:
-            self.stdout.write(f'\n🚪 Exit Strategy:')
-            strategy_name = exit_strategy.get('strategy_name', 'UNKNOWN')
-            stop_loss = exit_strategy.get('stop_loss_percent', 0)
-            take_profit = exit_strategy.get('take_profit_percent', 0)
-            self.stdout.write(f'  Strategy: {strategy_name}')
-            self.stdout.write(f'  Stop Loss: -{stop_loss:.1f}%')
-            self.stdout.write(f'  Take Profit: +{take_profit:.1f}%')
-        
-        # AI Thought Log (first 5 steps)
-        thought_log = analysis.get('thought_log', [])
-        if thought_log:
-            self.stdout.write(f'\n🧠 AI Thought Log (first 5 steps):')
-            for i, step in enumerate(thought_log[:5], 1):
-                self.stdout.write(f'  {i}. {step}')
-            if len(thought_log) > 5:
-                self.stdout.write(f'  ... and {len(thought_log) - 5} more steps')
-    
-    def save_analysis_results(self, analysis: Dict[str, Any], token_address: str) -> None:
-        """Save analysis results to a JSON file."""
-        import os
-        from datetime import datetime
-        
-        # Create results directory if it doesn't exist
-        results_dir = 'smart_lane_results'
-        os.makedirs(results_dir, exist_ok=True)
-        
-        # Generate filename
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        token_short = token_address[:10]
-        filename = f'{results_dir}/analysis_{token_short}_{timestamp}.json'
-        
-        # Save results
         try:
-            with open(filename, 'w') as f:
-                json.dump(analysis, f, indent=2, default=str)
+            from dashboard.smart_lane_service import smart_lane_service
             
-            self.stdout.write(f'💾 Analysis results saved to: {filename}')
+            # Initialize service
+            if not smart_lane_service.initialized:
+                self.stdout.write('🔄 Initializing Smart Lane service...')
+                asyncio.run(smart_lane_service.initialize())
+            
+            demo_results = []
+            
+            for i in range(min(count, len(demo_tokens))):
+                token_address, description = demo_tokens[i]
+                
+                self.stdout.write(f'\n🔍 Demo {i + 1}: {description}')
+                self.stdout.write(f'   Token: {token_address}')
+                
+                # Run analysis
+                start_time = time.time()
+                analysis_result = asyncio.run(
+                    smart_lane_service.run_analysis(token_address, {})
+                )
+                end_time = time.time()
+                
+                if analysis_result.get('success'):
+                    result = analysis_result.get('result', {})
+                    
+                    # Display key metrics
+                    risk_score = result.get('overall_risk_score', 0)
+                    risk_category = result.get('risk_category', 'UNKNOWN')
+                    action = result.get('recommendations', {}).get('action', 'HOLD')
+                    confidence = result.get('recommendations', {}).get('confidence', 0)
+                    
+                    risk_color = self.get_risk_color(risk_category)
+                    action_color = self.get_action_color(action)
+                    
+                    self.stdout.write(f'   Risk Score: {risk_score:.2f}')
+                    self.stdout.write(f'   Risk Category: {risk_color}')
+                    self.stdout.write(f'   Recommendation: {action_color}')
+                    self.stdout.write(f'   Confidence: {confidence:.1%}')
+                    self.stdout.write(f'   Analysis Time: {(end_time - start_time) * 1000:.1f}ms')
+                    
+                    demo_results.append({
+                        'description': description,
+                        'token_address': token_address,
+                        'risk_score': risk_score,
+                        'risk_category': risk_category,
+                        'action': action,
+                        'confidence': confidence,
+                        'analysis_time_ms': (end_time - start_time) * 1000
+                    })
+                
+                else:
+                    self.stdout.write(self.style.ERROR(f'   ❌ Failed: {analysis_result.get("error")}'))
+                
+                # Pause between demos
+                if i < count - 1 and i < len(demo_tokens) - 1:
+                    time.sleep(2)
+            
+            # Demo summary
+            self.stdout.write('\n📊 Demo Summary:')
+            if demo_results:
+                avg_time = sum(r['analysis_time_ms'] for r in demo_results) / len(demo_results)
+                self.stdout.write(f'Average Analysis Time: {avg_time:.1f}ms')
+                
+                risk_distribution = {}
+                for result in demo_results:
+                    category = result['risk_category']
+                    risk_distribution[category] = risk_distribution.get(category, 0) + 1
+                
+                self.stdout.write('Risk Distribution:')
+                for category, count_val in risk_distribution.items():
+                    self.stdout.write(f'  {category}: {count_val}')
+            
+            # Export if requested
+            if options['export']:
+                self.export_results('smart_lane_demo', demo_results, options)
+                
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f'Failed to save results: {e}'))
+            self.stdout.write(self.style.ERROR(f'❌ Demo failed: {e}'))
+            raise
+    
+    def handle_init(self, options: Dict[str, Any]) -> None:
+        """Initialize Smart Lane service."""
+        self.stdout.write('🚀 Initializing Smart Lane Service')
+        self.stdout.write('=' * 50)
+        
+        try:
+            from dashboard.smart_lane_service import smart_lane_service
+            
+            self.stdout.write('🔄 Starting initialization...')
+            
+            start_time = time.time()
+            result = asyncio.run(smart_lane_service.initialize())
+            end_time = time.time()
+            
+            if result:
+                self.stdout.write(self.style.SUCCESS(f'✅ Smart Lane initialized successfully in {(end_time - start_time):.1f}s'))
+                
+                # Display initialization details
+                status = smart_lane_service.get_pipeline_status()
+                self.stdout.write(f'   Status: {status.get("status")}')
+                self.stdout.write(f'   Analyzers: {status.get("analyzers_count", 0)}')
+                self.stdout.write(f'   Capabilities: {len(status.get("capabilities", []))}')
+                
+            else:
+                self.stdout.write(self.style.WARNING('⚠️  Initialization completed with warnings (mock mode)'))
+                
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'❌ Initialization failed: {e}'))
+            raise
+    
+    def handle_metrics(self, options: Dict[str, Any]) -> None:
+        """Display Smart Lane metrics."""
+        self.stdout.write('📊 Smart Lane Metrics Dashboard')
+        self.stdout.write('=' * 50)
+        
+        try:
+            from dashboard.smart_lane_service import smart_lane_service
+            
+            metrics = smart_lane_service.get_analysis_metrics()
+            recent_analyses = smart_lane_service.get_recent_analyses(limit=10)
+            recent_logs = smart_lane_service.get_recent_thought_logs(limit=5)
+            
+            # Performance metrics
+            self.stdout.write('🚀 Performance Metrics:')
+            self.stdout.write(f'   Total Analyses: {metrics.get("analyses_completed", 0)}')
+            self.stdout.write(f'   Successful: {metrics.get("successful_analyses", 0)}')
+            self.stdout.write(f'   Failed: {metrics.get("failed_analyses", 0)}')
+            self.stdout.write(f'   Success Rate: {metrics.get("success_rate", 0):.1f}%')
+            self.stdout.write(f'   Avg Analysis Time: {metrics.get("average_analysis_time_ms", 0):.1f}ms')
+            self.stdout.write(f'   Cache Hit Ratio: {metrics.get("cache_hit_ratio", 0):.1%}')
+            self.stdout.write(f'   Active Analyses: {metrics.get("active_analyses", 0)}')
+            
+            # Recent analyses
+            if recent_analyses:
+                self.stdout.write('\n📈 Recent Analyses:')
+                for analysis in recent_analyses[-5:]:
+                    timestamp = datetime.fromisoformat(analysis['timestamp'].replace('Z', '+00:00'))
+                    self.stdout.write(f'   {timestamp.strftime("%H:%M:%S")} - {analysis["token_address"][:10]}... ({analysis["analysis_time_ms"]:.0f}ms)')
+            
+            # Thought logs
+            if recent_logs:
+                self.stdout.write(f'\n🧠 Recent Thought Logs: {len(recent_logs)} generated')
+            
+            # Export if requested
+            if options['export']:
+                export_data = {
+                    'metrics': metrics,
+                    'recent_analyses': recent_analyses,
+                    'recent_logs': recent_logs,
+                    'timestamp': datetime.now().isoformat()
+                }
+                self.export_results('smart_lane_metrics', export_data, options)
+                
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'❌ Metrics error: {e}'))
+            raise
+    
+    def handle_thought_log(self, options: Dict[str, Any]) -> None:
+        """Display thought log for specific analysis."""
+        analysis_id = options.get('target')
+        if not analysis_id:
+            raise CommandError('Analysis ID is required for thought-log command')
+        
+        self.stdout.write(f'🧠 Thought Log: {analysis_id}')
+        self.stdout.write('=' * 50)
+        
+        try:
+            from dashboard.smart_lane_service import smart_lane_service
+            
+            thought_log = smart_lane_service.get_thought_log(analysis_id)
+            
+            if thought_log:
+                self.display_thought_log_details(thought_log, options)
+                
+                if options['export']:
+                    self.export_results('thought_log', thought_log, options)
+            else:
+                self.stdout.write(self.style.ERROR(f'❌ Thought log not found for analysis: {analysis_id}'))
+                
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'❌ Thought log error: {e}'))
+            raise
+    
+    def handle_benchmark(self, options: Dict[str, Any]) -> None:
+        """Run Smart Lane performance benchmark."""
+        count = options.get('count', 10)
+        
+        self.stdout.write(f'⚡ Smart Lane Benchmark ({count} iterations)')
+        self.stdout.write('=' * 50)
+        
+        try:
+            from dashboard.smart_lane_service import smart_lane_service
+            
+            # Initialize service
+            if not smart_lane_service.initialized:
+                asyncio.run(smart_lane_service.initialize())
+            
+            benchmark_results = []
+            test_token = '0x1234567890123456789012345678901234567890'
+            
+            self.stdout.write('🔄 Running benchmark...')
+            
+            total_start = time.time()
+            
+            for i in range(count):
+                start_time = time.time()
+                
+                analysis_result = asyncio.run(
+                    smart_lane_service.run_analysis(test_token, {})
+                )
+                
+                end_time = time.time()
+                execution_time = (end_time - start_time) * 1000
+                
+                benchmark_results.append({
+                    'iteration': i + 1,
+                    'success': analysis_result.get('success', False),
+                    'execution_time_ms': execution_time
+                })
+                
+                if (i + 1) % 10 == 0:
+                    self.stdout.write(f'   Completed {i + 1}/{count} iterations')
+            
+            total_end = time.time()
+            total_time = total_end - total_start
+            
+            # Calculate statistics
+            successful_runs = [r for r in benchmark_results if r['success']]
+            if successful_runs:
+                times = [r['execution_time_ms'] for r in successful_runs]
+                avg_time = sum(times) / len(times)
+                min_time = min(times)
+                max_time = max(times)
+                
+                # Calculate percentiles
+                times_sorted = sorted(times)
+                p50 = times_sorted[len(times_sorted) // 2]
+                p95 = times_sorted[int(len(times_sorted) * 0.95)]
+                p99 = times_sorted[int(len(times_sorted) * 0.99)]
+                
+                # Display results
+                self.stdout.write('\n📊 Benchmark Results:')
+                self.stdout.write(f'   Total Runs: {count}')
+                self.stdout.write(f'   Successful: {len(successful_runs)}')
+                self.stdout.write(f'   Success Rate: {len(successful_runs)/count*100:.1f}%')
+                self.stdout.write(f'   Total Time: {total_time:.1f}s')
+                self.stdout.write(f'   Throughput: {count/total_time:.1f} analyses/second')
+                
+                self.stdout.write('\n⏱️  Execution Time Statistics:')
+                self.stdout.write(f'   Average: {avg_time:.1f}ms')
+                self.stdout.write(f'   Minimum: {min_time:.1f}ms')
+                self.stdout.write(f'   Maximum: {max_time:.1f}ms')
+                self.stdout.write(f'   P50 (Median): {p50:.1f}ms')
+                self.stdout.write(f'   P95: {p95:.1f}ms')
+                self.stdout.write(f'   P99: {p99:.1f}ms')
+                
+                # Performance assessment
+                if avg_time < 3000:
+                    self.stdout.write(self.style.SUCCESS('✅ Excellent performance'))
+                elif avg_time < 5000:
+                    self.stdout.write(self.style.SUCCESS('✅ Good performance'))
+                elif avg_time < 10000:
+                    self.stdout.write(self.style.WARNING('⚠️  Acceptable performance'))
+                else:
+                    self.stdout.write(self.style.ERROR('❌ Poor performance'))
+                
+                # Export if requested
+                if options['export']:
+                    export_data = {
+                        'benchmark_results': benchmark_results,
+                        'statistics': {
+                            'total_runs': count,
+                            'successful_runs': len(successful_runs),
+                            'success_rate': len(successful_runs)/count*100,
+                            'total_time_seconds': total_time,
+                            'throughput_per_second': count/total_time,
+                            'avg_time_ms': avg_time,
+                            'min_time_ms': min_time,
+                            'max_time_ms': max_time,
+                            'p50_ms': p50,
+                            'p95_ms': p95,
+                            'p99_ms': p99
+                        }
+                    }
+                    self.export_results('smart_lane_benchmark', export_data, options)
+                    
+            else:
+                self.stdout.write(self.style.ERROR('❌ No successful runs in benchmark'))
+                
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'❌ Benchmark failed: {e}'))
+            raise
+    
+    # Helper methods
+    
+    def get_status_color(self, status: str) -> str:
+        """Get colored status text."""
+        if status in ['OPERATIONAL', 'READY']:
+            return self.style.SUCCESS(status)
+        elif status in ['MOCK_MODE', 'PARTIALLY_OPERATIONAL']:
+            return self.style.WARNING(status)
+        else:
+            return self.style.ERROR(status)
+    
+    def get_risk_color(self, risk_category: str) -> str:
+        """Get colored risk category text."""
+        if risk_category == 'LOW':
+            return self.style.SUCCESS(risk_category)
+        elif risk_category == 'MEDIUM':
+            return self.style.WARNING(risk_category)
+        else:
+            return self.style.ERROR(risk_category)
+    
+    def get_action_color(self, action: str) -> str:
+        """Get colored action text."""
+        if action == 'BUY':
+            return self.style.SUCCESS(action)
+        elif action in ['HOLD', 'SELL']:
+            return self.style.WARNING(action)
+        else:
+            return self.style.ERROR(action)
+    
+    def display_analysis_results(self, result: Dict[str, Any], options: Dict[str, Any]) -> None:
+        """Display detailed analysis results."""
+        self.stdout.write('\n📊 Analysis Results:')
+        
+        # Overall assessment
+        risk_score = result.get('overall_risk_score', 0)
+        risk_category = result.get('risk_category', 'UNKNOWN')
+        
+        self.stdout.write(f'   Overall Risk Score: {risk_score:.3f}')
+        self.stdout.write(f'   Risk Category: {self.get_risk_color(risk_category)}')
+        
+        # Recommendations
+        recommendations = result.get('recommendations', {})
+        if recommendations:
+            action = recommendations.get('action', 'NONE')
+            confidence = recommendations.get('confidence', 0)
+            
+            self.stdout.write(f'   Recommended Action: {self.get_action_color(action)}')
+            self.stdout.write(f'   Confidence Level: {confidence:.1%}')
+            
+            if 'position_size_percentage' in recommendations:
+                self.stdout.write(f'   Position Size: {recommendations["position_size_percentage"]:.1f}%')
+            if 'stop_loss_percentage' in recommendations:
+                self.stdout.write(f'   Stop Loss: {recommendations["stop_loss_percentage"]:.1f}%')
+        
+        # Analyzer results (if verbose)
+        if options['verbose'] and 'analyzers' in result:
+            self.stdout.write('\n🔍 Analyzer Results:')
+            for analyzer_name, analyzer_result in result['analyzers'].items():
+                self.stdout.write(f'   {analyzer_name.replace("_", " ").title()}:')
+                
+                if 'risk_score' in analyzer_result:
+                    self.stdout.write(f'     Risk Score: {analyzer_result["risk_score"]:.3f}')
+                
+                # Analyzer-specific details
+                if analyzer_name == 'honeypot_detection':
+                    is_honeypot = analyzer_result.get('is_honeypot', False)
+                    confidence = analyzer_result.get('confidence', 0)
+                    status = 'HONEYPOT' if is_honeypot else 'SAFE'
+                    color = self.style.ERROR if is_honeypot else self.style.SUCCESS
+                    self.stdout.write(f'     Status: {color(status)} (confidence: {confidence:.1%})')
+                
+                elif analyzer_name == 'liquidity_analysis':
+                    liquidity_score = analyzer_result.get('liquidity_score', 0)
+                    pool_size = analyzer_result.get('pool_size_usd', 0)
+                    self.stdout.write(f'     Liquidity Score: {liquidity_score:.3f}')
+                    self.stdout.write(f'     Pool Size: ${pool_size:,.0f}')
+                
+                elif analyzer_name == 'social_sentiment':
+                    sentiment_score = analyzer_result.get('sentiment_score', 0)
+                    trend = analyzer_result.get('trend', 'NEUTRAL')
+                    self.stdout.write(f'     Sentiment Score: {sentiment_score:.3f}')
+                    self.stdout.write(f'     Trend: {trend}')
+    
+    def display_thought_log(self, thought_log_id: str, smart_lane_service) -> None:
+        """Display thought log information."""
+        thought_log = smart_lane_service.get_thought_log(thought_log_id)
+        if thought_log:
+            self.stdout.write('\n🧠 AI Thought Log:')
+            reasoning_steps = thought_log.get('reasoning_steps', [])
+            for i, step in enumerate(reasoning_steps[:5], 1):  # Show first 5 steps
+                self.stdout.write(f'   {i}. {step}')
+            
+            if len(reasoning_steps) > 5:
+                self.stdout.write(f'   ... and {len(reasoning_steps) - 5} more steps')
+            
+            final_decision = thought_log.get('final_decision', 'N/A')
+            confidence = thought_log.get('confidence_level', 0)
+            self.stdout.write(f'   Final Decision: {self.get_action_color(final_decision)}')
+            self.stdout.write(f'   Confidence: {confidence:.1%}')
+    
+    def display_thought_log_details(self, thought_log: Dict[str, Any], options: Dict[str, Any]) -> None:
+        """Display detailed thought log."""
+        token_address = thought_log.get('token_address', 'Unknown')
+        timestamp = thought_log.get('timestamp', 'Unknown')
+        
+        self.stdout.write(f'Token: {token_address}')
+        self.stdout.write(f'Timestamp: {timestamp}')
+        self.stdout.write(f'Analysis ID: {thought_log.get("analysis_id", "Unknown")}')
+        
+        # Reasoning steps
+        reasoning_steps = thought_log.get('reasoning_steps', [])
+        self.stdout.write(f'\n🧠 AI Reasoning Process ({len(reasoning_steps)} steps):')
+        
+        for i, step in enumerate(reasoning_steps, 1):
+            self.stdout.write(f'   {i:2d}. {step}')
+        
+        # Final decision
+        final_decision = thought_log.get('final_decision', 'N/A')
+        confidence = thought_log.get('confidence_level', 0)
+        
+        self.stdout.write(f'\n🎯 Final Decision: {self.get_action_color(final_decision)}')
+        self.stdout.write(f'   Confidence Level: {confidence:.1%}')
+        
+        # Risk factors
+        risk_factors = thought_log.get('risk_factors', [])
+        if risk_factors:
+            self.stdout.write(f'\n⚠️  Risk Factors Considered:')
+            for factor in risk_factors:
+                self.stdout.write(f'   • {factor}')
+    
+    def export_results(self, export_type: str, data: Any, options: Dict[str, Any]) -> None:
+        """Export results to file."""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        format_type = options.get('format', 'json')
+        
+        filename = f'smart_lane_{export_type}_{timestamp}.{format_type}'
+        
+        try:
+            if format_type == 'json':
+                with open(filename, 'w') as f:
+                    json.dump(data, f, indent=2, default=str)
+            
+            elif format_type == 'csv':
+                import csv
+                
+                if isinstance(data, list) and len(data) > 0:
+                    with open(filename, 'w', newline='') as f:
+                        if isinstance(data[0], dict):
+                            writer = csv.DictWriter(f, fieldnames=data[0].keys())
+                            writer.writeheader()
+                            writer.writerows(data)
+                        else:
+                            writer = csv.writer(f)
+                            writer.writerows(data)
+                else:
+                    with open(filename, 'w') as f:
+                        f.write(str(data))
+            
+            self.stdout.write(self.style.SUCCESS(f'📁 Results exported to: {filename}'))
+            
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'❌ Export failed: {e}'))
