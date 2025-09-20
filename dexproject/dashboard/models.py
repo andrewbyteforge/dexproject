@@ -10,6 +10,8 @@ Updated to include missing fields that were causing database errors:
 - max_slippage_percent
 - mev_protection_enabled
 - risk_tolerance_level
+
+Added FundAllocation model for wallet fund management.
 """
 
 import logging
@@ -1380,26 +1382,6 @@ class SystemStatus(TimestampMixin):
             raise
 
 
-"""
-Fund Allocation Model Addition
-
-Add this to your existing dashboard/models.py file to enable persistent
-storage of user fund allocation settings.
-
-File: dexproject/dashboard/models.py (addition)
-"""
-
-import uuid
-from decimal import Decimal
-from typing import Dict, Any
-
-from django.db import models
-from django.contrib.auth.models import User
-from django.core.validators import MinValueValidator, MaxValueValidator
-from django.utils import timezone
-from shared.models.mixins import TimestampMixin
-
-
 class FundAllocation(TimestampMixin):
     """
     User fund allocation settings for trading bot.
@@ -1704,69 +1686,3 @@ class FundAllocation(TimestampMixin):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
-
-
-# Add this to the existing models.py admin configuration section
-class FundAllocationAdmin(TimestampMixin):
-    """Admin interface for fund allocation settings."""
-    
-    list_display = [
-        'user', 'allocation_method', 'allocation_percentage', 'allocation_fixed_amount',
-        'risk_level', 'daily_spending_limit', 'is_active', 'last_modified_by_user'
-    ]
-    list_filter = [
-        'allocation_method', 'risk_level', 'is_active', 'auto_rebalance_enabled',
-        'stop_loss_enabled', 'last_daily_reset', 'created_at'
-    ]
-    search_fields = [
-        'user__username', 'user__email', 'notes'
-    ]
-    readonly_fields = [
-        'allocation_id', 'risk_level', 'daily_spent_today', 'last_daily_reset',
-        'total_allocated_eth', 'created_at', 'updated_at'
-    ]
-    ordering = ['-last_modified_by_user']
-    
-    fieldsets = (
-        ('User Information', {
-            'fields': ('allocation_id', 'user', 'is_active')
-        }),
-        ('Allocation Settings', {
-            'fields': (
-                'allocation_method', 'allocation_percentage', 'allocation_fixed_amount'
-            )
-        }),
-        ('Safety Settings', {
-            'fields': (
-                'daily_spending_limit', 'minimum_balance_reserve',
-                'stop_loss_enabled', 'stop_loss_percentage'
-            )
-        }),
-        ('Trading Preferences', {
-            'fields': ('auto_rebalance_enabled', 'notes')
-        }),
-        ('Status and Tracking', {
-            'fields': (
-                'risk_level', 'total_allocated_eth', 'daily_spent_today',
-                'last_daily_reset', 'settings_version'
-            ),
-            'classes': ('collapse',)
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at', 'last_modified_by_user'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def get_queryset(self, request):
-        """Optimize admin queryset with select_related."""
-        return super().get_queryset(request).select_related('user')
-
-
-# Remember to register this in admin.py:
-# from django.contrib import admin
-# from .models import FundAllocation
-# 
-# @admin.register(FundAllocation)
-# class FundAllocationAdmin(admin.ModelAdmin):
-#     # Use the configuration above

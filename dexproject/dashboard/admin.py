@@ -148,3 +148,24 @@ class SystemStatusAdmin(BaseModelAdmin):
         color = color_map.get(status, 'black')
         return format_html('<span style="color: {}; font-weight: bold;">{}</span>', color, status.replace('_', ' ').title())
     overall_status_display.short_description = 'Overall Status'
+
+
+
+from .models import FundAllocation
+
+@admin.register(FundAllocation)
+class FundAllocationAdmin(admin.ModelAdmin):
+    list_display = [
+        'user', 'allocation_method', 'allocation_percentage', 'allocation_fixed_amount',
+        'risk_level', 'daily_spending_limit', 'is_active', 'last_modified_by_user'
+    ]
+    list_filter = [
+        'allocation_method', 'risk_level', 'is_active', 'auto_rebalance_enabled',
+        'stop_loss_enabled', 'last_daily_reset', 'created_at'
+    ]
+    search_fields = ['user__username', 'user__email', 'notes']
+    readonly_fields = [
+        'allocation_id', 'risk_level', 'daily_spent_today', 'last_daily_reset',
+        'total_allocated_eth', 'created_at', 'updated_at'
+    ]
+    ordering = ['-last_modified_by_user']
