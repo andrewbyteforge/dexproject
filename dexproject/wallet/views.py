@@ -44,6 +44,7 @@ from rest_framework import status
 
 # Import our models (these will exist after migration)
 from .models import SIWESession, Wallet, WalletBalance, WalletTransaction, WalletActivity
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -65,19 +66,29 @@ def get_user_agent(request: HttpRequest) -> str:
     return request.META.get('HTTP_USER_AGENT', '')
 
 # =============================================================================
-# SIWE SERVICE PLACEHOLDER (Will be replaced after services.py is created)
+# SERVICE INITIALIZATION - REAL IMPLEMENTATION
 # =============================================================================
 
-class SIWEServicePlaceholder:
-    """Placeholder SIWE service for initial deployment."""
+# Initialize real services
+try:
+    from .services import SIWEService, WalletService
+    siwe_service = SIWEService()
+    wallet_service = WalletService()
+    logger.info("Successfully initialized real SIWE and Wallet services")
+except ImportError as e:
+    # Fallback to placeholder if services not available
+    logger.error(f"Failed to import real services: {e}")
     
-    def create_siwe_message(self, wallet_address: str, chain_id: int, **kwargs):
-        """Create a SIWE message for signing."""
-        import secrets
-        nonce = secrets.token_hex(16)
-        issued_at = timezone.now()
+    class SIWEServicePlaceholder:
+        """Placeholder SIWE service for fallback."""
         
-        message = f"""localhost:8000 wants you to sign in with your Ethereum account:
+        def create_siwe_message(self, wallet_address: str, chain_id: int, **kwargs):
+            """Create a SIWE message for signing."""
+            nonce = secrets.token_hex(16)
+            issued_at = timezone.now()
+            expiration_time = issued_at + timezone.timedelta(hours=24)
+            
+            message = f"""localhost:8000 wants you to sign in with your Ethereum account:
 {wallet_address}
 
 Sign in to DEX Auto-Trading Bot
@@ -86,20 +97,16 @@ URI: https://localhost:8000
 Version: 1
 Chain ID: {chain_id}
 Nonce: {nonce}
-Issued At: {issued_at.isoformat()}"""
-        
-        return {
-            'message': message,
-            'nonce': nonce,
-            'issued_at': issued_at,
-            'expiration_time': issued_at
-        }
-
-# Initialize placeholder service
-try:
-    from .services import siwe_service, wallet_service
-except ImportError:
-    # Use placeholder until services are created
+Issued At: {issued_at.isoformat()}
+Expiration Time: {expiration_time.isoformat()}"""
+            
+            return {
+                'message': message,
+                'nonce': nonce,
+                'issued_at': issued_at,
+                'expiration_time': expiration_time
+            }
+    
     siwe_service = SIWEServicePlaceholder()
     wallet_service = None
     logger.warning("Using placeholder SIWE service - full implementation pending")
@@ -139,6 +146,13 @@ def generate_siwe_message(request) -> Response:
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Validate wallet address format
+        if not wallet_address.startswith('0x') or len(wallet_address) != 42:
+            return Response(
+                {'error': 'Invalid wallet address format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         # Validate chain ID is supported
         supported_chains = [84532, 1, 8453]  # Base Sepolia, Ethereum, Base
         if chain_id not in supported_chains:
@@ -147,7 +161,7 @@ def generate_siwe_message(request) -> Response:
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Generate SIWE message
+        # Generate SIWE message using real service
         siwe_data = siwe_service.create_siwe_message(
             wallet_address=wallet_address,
             chain_id=chain_id
@@ -158,11 +172,12 @@ def generate_siwe_message(request) -> Response:
         return Response({
             'message': siwe_data['message'],
             'nonce': siwe_data['nonce'],
-            'issued_at': siwe_data['issued_at'].isoformat(),
-            'expiration_time': siwe_data['expiration_time'].isoformat()
+            'issued_at': siwe_data['issued_at'].isoformat() if hasattr(siwe_data['issued_at'], 'isoformat') else siwe_data['issued_at'],
+            'expiration_time': siwe_data['expiration_time'].isoformat() if hasattr(siwe_data['expiration_time'], 'isoformat') else siwe_data['expiration_time']
         })
         
     except ValidationError as e:
+        logger.warning(f"Validation error in generate_siwe_message: {e}")
         return Response(
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
@@ -194,7 +209,10 @@ def authenticate_wallet(request) -> Response:
         "success": true,
         "user_id": 123,
         "wallet_id": "uuid",
-        "session_id": "uuid"
+        "session_id": "uuid",
+        "wallet_address": "0x...",
+        "wallet_type": "METAMASK",
+        "primary_chain_id": 84532
     }
     """
     try:
@@ -215,52 +233,86 @@ def authenticate_wallet(request) -> Response:
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get client information
+        # Validate wallet address format
+        if not wallet_address.startswith('0x') or len(wallet_address) != 42:
+            return Response(
+                {'error': 'Invalid wallet address format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate signature format
+        if not signature.startswith('0x') or len(signature) != 132:
+            return Response(
+                {'error': 'Invalid signature format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get client information for security logging
         ip_address = get_client_ip(request)
         user_agent = get_user_agent(request)
         
-        # For now, create a simplified authentication
-        # TODO: Replace with full SIWE verification when services are ready
+        logger.info(f"Attempting wallet authentication for {wallet_address} from IP {ip_address}")
+        
+        # Use real wallet service if available
         if wallet_service:
-            # Use full service when available
-            async def authenticate():
-                return await wallet_service.authenticate_wallet(
-                    wallet_address=wallet_address,
-                    chain_id=chain_id,
-                    signature=signature,
-                    message=message,
-                    wallet_type=wallet_type,
-                    ip_address=ip_address,
-                    user_agent=user_agent
+            try:
+                # Run the async authentication method
+                async def authenticate():
+                    return await wallet_service.authenticate_wallet(
+                        wallet_address=wallet_address,
+                        chain_id=chain_id,
+                        signature=signature,
+                        message=message,
+                        wallet_type=wallet_type,
+                        ip_address=ip_address,
+                        user_agent=user_agent
+                    )
+                
+                auth_result = asyncio.run(authenticate())
+                user, wallet, siwe_session = auth_result
+                
+                if not user or not wallet:
+                    logger.warning(f"Authentication failed for {wallet_address} - invalid signature or user creation failed")
+                    return Response(
+                        {'error': 'Authentication failed - invalid signature'},
+                        status=status.HTTP_401_UNAUTHORIZED
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error during wallet service authentication: {e}")
+                return Response(
+                    {'error': 'Authentication service error'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-            
-            user, wallet, siwe_session = asyncio.run(authenticate())
         else:
-            # Simplified authentication for initial deployment
+            # Fallback authentication without full verification
+            logger.warning("Using fallback authentication - signature not verified")
+            
+            # Get or create user (simplified)
+            username = f"wallet_{wallet_address[:10]}"
             user, created = User.objects.get_or_create(
-                username=f"wallet_{wallet_address.lower()}",
+                username=username,
                 defaults={
-                    'first_name': 'Wallet',
-                    'last_name': f"{wallet_address[:6]}...{wallet_address[-4:]}"
+                    'email': f"{username}@wallet.local",
+                    'first_name': f"Wallet {wallet_address[:6]}",
+                    'is_active': True
                 }
             )
             
-            # Create basic wallet record
+            # Get or create wallet record
             wallet, created = Wallet.objects.get_or_create(
-                user=user,
                 address=wallet_address,
                 defaults={
-                    'name': f"Wallet {wallet_address[:10]}...",
+                    'user': user,
                     'wallet_type': wallet_type,
+                    'name': f"Wallet {wallet_address[:10]}",
                     'primary_chain_id': chain_id,
-                    'supported_chains': [chain_id]
+                    'status': Wallet.WalletStatus.CONNECTED,
+                    'last_connected_at': timezone.now()
                 }
             )
             
-            # Update connection status
-            wallet.update_connection_status()
-            
-            # Create SIWE session record
+            # Create simplified SIWE session
             siwe_session = SIWESession.objects.create(
                 user=user,
                 wallet_address=wallet_address,
@@ -269,8 +321,9 @@ def authenticate_wallet(request) -> Response:
                 uri='https://localhost:8000',
                 version='1',
                 chain_id=chain_id,
-                nonce='temp_nonce',
+                nonce=secrets.token_hex(16),
                 issued_at=timezone.now(),
+                expiration_time=timezone.now() + timezone.timedelta(hours=24),
                 message=message,
                 signature=signature,
                 status=SIWESession.SessionStatus.VERIFIED,
@@ -279,34 +332,46 @@ def authenticate_wallet(request) -> Response:
                 verified_at=timezone.now()
             )
         
-        if not user or not wallet:
-            return Response(
-                {'error': 'Authentication failed'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        
         # Log the user in to Django session
         login(request, user)
         
-        # Store SIWE session ID in Django session
-        if siwe_session:
-            request.session['siwe_session_id'] = str(siwe_session.session_id)
+        # Store session information
+        request.session['siwe_session_id'] = str(siwe_session.session_id)
         request.session['wallet_address'] = wallet.address
+        request.session['wallet_id'] = str(wallet.wallet_id)
         
-        logger.info(f"Wallet authentication successful for {wallet_address}")
+        # Log successful authentication
+        logger.info(f"Wallet authentication successful for {wallet_address} - User: {user.username}")
+        
+        # Create wallet activity log
+        try:
+            WalletActivity.objects.create(
+                wallet=wallet,
+                activity_type=WalletActivity.ActivityType.LOGIN,
+                description=f"Wallet connected via {wallet_type}",
+                ip_address=ip_address,
+                user_agent=user_agent,
+                metadata={
+                    'chain_id': chain_id,
+                    'session_id': str(siwe_session.session_id)
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create wallet activity log: {e}")
         
         return Response({
             'success': True,
             'user_id': user.id,
             'wallet_id': str(wallet.wallet_id),
-            'session_id': str(siwe_session.session_id) if siwe_session else 'temp_session',
+            'session_id': str(siwe_session.session_id),
             'wallet_address': wallet.address,
             'wallet_type': wallet.wallet_type,
-            'primary_chain_id': wallet.primary_chain_id
+            'primary_chain_id': wallet.primary_chain_id,
+            'wallet_name': wallet.get_display_name()
         })
         
     except Exception as e:
-        logger.error(f"Error authenticating wallet: {e}")
+        logger.error(f"Unexpected error in authenticate_wallet: {e}")
         return Response(
             {'error': 'Authentication failed'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -325,39 +390,43 @@ def logout_wallet(request) -> Response:
     }
     """
     try:
-        # Get client information
-        ip_address = get_client_ip(request)
-        user_agent = get_user_agent(request)
+        user = request.user
+        wallet_address = request.session.get('wallet_address')
+        siwe_session_id = request.session.get('siwe_session_id')
         
-        # Get user's active wallet
-        if hasattr(request.user, 'wallets'):
-            wallet = request.user.wallets.filter(
-                status=Wallet.WalletStatus.CONNECTED
-            ).first()
-            
-            if wallet and wallet_service:
-                # Disconnect wallet using async service
-                async def disconnect():
-                    return await wallet_service.disconnect_wallet(
-                        wallet, ip_address, user_agent
-                    )
+        # Mark SIWE session as expired
+        if siwe_session_id:
+            try:
+                siwe_session = SIWESession.objects.get(session_id=siwe_session_id)
+                siwe_session.mark_expired()
+                logger.info(f"Marked SIWE session {siwe_session_id} as expired")
+            except SIWESession.DoesNotExist:
+                logger.warning(f"SIWE session {siwe_session_id} not found for logout")
+        
+        # Update wallet status
+        if wallet_address:
+            try:
+                wallet = Wallet.objects.get(address=wallet_address, user=user)
+                wallet.status = Wallet.WalletStatus.DISCONNECTED
+                wallet.last_disconnected_at = timezone.now()
+                wallet.save(update_fields=['status', 'last_disconnected_at'])
                 
-                success = asyncio.run(disconnect())
+                # Log wallet activity
+                WalletActivity.objects.create(
+                    wallet=wallet,
+                    activity_type=WalletActivity.ActivityType.LOGOUT,
+                    description="Wallet disconnected",
+                    ip_address=get_client_ip(request),
+                    user_agent=get_user_agent(request)
+                )
                 
-                if not success:
-                    logger.warning(f"Failed to disconnect wallet {wallet.address}")
-            elif wallet:
-                # Simple disconnection
-                wallet.disconnect()
+                logger.info(f"Wallet {wallet_address} disconnected for user {user.username}")
+            except Wallet.DoesNotExist:
+                logger.warning(f"Wallet {wallet_address} not found for user {user.username}")
         
-        # Clear session data
-        request.session.pop('siwe_session_id', None)
-        request.session.pop('wallet_address', None)
-        
-        # Django logout
+        # Clear Django session
         logout(request)
-        
-        logger.info(f"User {request.user.username} logged out successfully")
+        request.session.flush()
         
         return Response({
             'success': True,
@@ -379,7 +448,7 @@ def logout_wallet(request) -> Response:
 @permission_classes([IsAuthenticated])
 def get_wallet_info(request) -> Response:
     """
-    Get current user's wallet information.
+    Get current wallet information and summary.
     
     Returns:
     {
@@ -410,13 +479,23 @@ def get_wallet_info(request) -> Response:
         
         # Get wallet summary
         if wallet_service:
-            async def get_summary():
-                return await wallet_service.get_wallet_summary(wallet)
-            
-            wallet_summary = asyncio.run(get_summary())
+            try:
+                async def get_summary():
+                    return await wallet_service.get_wallet_summary(wallet)
+                
+                wallet_summary = asyncio.run(get_summary())
+            except Exception as e:
+                logger.warning(f"Failed to get wallet summary from service: {e}")
+                wallet_summary = None
+        else:
+            wallet_summary = None
+        
+        # Build response with available data
+        if wallet_summary:
+            wallet_data = wallet_summary
         else:
             # Basic wallet info
-            wallet_summary = {
+            wallet_data = {
                 'wallet_id': str(wallet.wallet_id),
                 'address': wallet.address,
                 'name': wallet.get_display_name(),
@@ -429,7 +508,7 @@ def get_wallet_info(request) -> Response:
             }
         
         return Response({
-            'wallet': wallet_summary
+            'wallet': wallet_data
         })
         
     except Exception as e:
@@ -446,8 +525,7 @@ def get_wallet_balances(request) -> Response:
     Get wallet balances for all supported chains.
     
     Query parameters:
-    - chain_id: Optional specific chain ID
-    - refresh: Optional force refresh from blockchain (true/false)
+    - refresh: bool - Force refresh from blockchain
     
     Returns:
     {
@@ -455,13 +533,14 @@ def get_wallet_balances(request) -> Response:
             {
                 "token_symbol": "ETH",
                 "token_name": "Ethereum",
-                "balance_formatted": "1.234567890123456789",
-                "usd_value": "2468.50",
+                "balance_formatted": "1.5",
+                "usd_value": "3000.00",
                 "chain_id": 1,
-                "last_updated": "ISO timestamp"
+                "last_updated": "ISO timestamp",
+                "is_stale": false
             }
         ],
-        "total_usd_value": "2468.50"
+        "total_usd_value": "3000.00"
     }
     """
     try:
@@ -476,55 +555,30 @@ def get_wallet_balances(request) -> Response:
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Parse query parameters
-        chain_id = request.GET.get('chain_id')
-        if chain_id:
+        # Check if refresh is requested
+        refresh = request.query_params.get('refresh', '').lower() == 'true'
+        
+        # Get balances from service or database
+        if wallet_service and refresh:
             try:
-                chain_id = int(chain_id)
-            except ValueError:
-                return Response(
-                    {'error': 'Invalid chain_id parameter'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        
-        force_refresh = request.GET.get('refresh', '').lower() == 'true'
-        
-        # Get balances using async service or return mock data
-        if wallet_service:
-            async def get_balances():
-                return await wallet_service.get_wallet_balances(
-                    wallet, chain_id, force_refresh
-                )
-            
-            balances = asyncio.run(get_balances())
+                async def get_balances():
+                    return await wallet_service.get_wallet_balances(wallet, force_refresh=True)
+                
+                balances = asyncio.run(get_balances())
+            except Exception as e:
+                logger.warning(f"Failed to refresh balances from service: {e}")
+                # Fall back to database balances
+                balances = wallet.balances.all()
         else:
-            # Mock balance data for initial deployment
-            balances = [
-                {
-                    'token_symbol': 'ETH',
-                    'token_name': 'Ethereum',
-                    'balance_formatted': '0.0',
-                    'usd_value': '0.00',
-                    'chain_id': wallet.primary_chain_id,
-                    'last_updated': timezone.now().isoformat(),
-                    'is_stale': False
-                }
-            ]
+            # Get balances from database
+            balances = wallet.balances.all()
         
-        # Format response
+        # Format balance data
         balance_data = []
         total_usd = Decimal('0')
         
         for balance in balances:
-            if isinstance(balance, dict):
-                # Already formatted
-                balance_info = balance
-                if balance_info.get('usd_value'):
-                    try:
-                        total_usd += Decimal(str(balance_info['usd_value']))
-                    except:
-                        pass
-            else:
+            if hasattr(balance, 'token_symbol'):
                 # Model instance
                 balance_info = {
                     'token_symbol': balance.token_symbol,
@@ -540,6 +594,11 @@ def get_wallet_balances(request) -> Response:
                     total_usd += balance.usd_value
                 else:
                     balance_info['usd_value'] = None
+            else:
+                # Service response (dict)
+                balance_info = balance
+                if balance.get('usd_value'):
+                    total_usd += Decimal(str(balance['usd_value']))
             
             balance_data.append(balance_info)
         
@@ -589,17 +648,21 @@ def update_wallet_settings(request) -> Response:
             )
         
         data = request.data
+        updated_fields = []
         
         # Update wallet settings
         if 'name' in data:
             wallet.name = data['name']
+            updated_fields.append('name')
         
         if 'trading_enabled' in data:
             wallet.is_trading_enabled = bool(data['trading_enabled'])
+            updated_fields.append('is_trading_enabled')
         
         if 'daily_limit_usd' in data:
             try:
                 wallet.daily_limit_usd = Decimal(str(data['daily_limit_usd']))
+                updated_fields.append('daily_limit_usd')
             except (ValueError, TypeError):
                 return Response(
                     {'error': 'Invalid daily_limit_usd value'},
@@ -609,6 +672,7 @@ def update_wallet_settings(request) -> Response:
         if 'per_transaction_limit_usd' in data:
             try:
                 wallet.per_transaction_limit_usd = Decimal(str(data['per_transaction_limit_usd']))
+                updated_fields.append('per_transaction_limit_usd')
             except (ValueError, TypeError):
                 return Response(
                     {'error': 'Invalid per_transaction_limit_usd value'},
@@ -617,36 +681,28 @@ def update_wallet_settings(request) -> Response:
         
         if 'requires_confirmation' in data:
             wallet.requires_confirmation = bool(data['requires_confirmation'])
+            updated_fields.append('requires_confirmation')
         
         # Save changes
-        wallet.save()
-        
-        # Log activity if service available
-        if wallet_service:
-            async def log_activity():
-                await wallet_service._log_wallet_activity(
-                    wallet, request.user, WalletActivity.ActivityType.CONFIG_CHANGE,
-                    "Wallet settings updated",
-                    get_client_ip(request), get_user_agent(request)
-                )
+        if updated_fields:
+            wallet.save(update_fields=updated_fields)
             
-            asyncio.run(log_activity())
-        else:
-            # Create simple activity log
+            # Log wallet activity
             WalletActivity.objects.create(
                 wallet=wallet,
-                user=request.user,
-                activity_type=WalletActivity.ActivityType.CONFIG_CHANGE,
-                description="Wallet settings updated",
+                activity_type=WalletActivity.ActivityType.SETTINGS_UPDATED,
+                description=f"Updated settings: {', '.join(updated_fields)}",
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request)
+                user_agent=get_user_agent(request),
+                metadata={'updated_fields': updated_fields}
             )
-        
-        logger.info(f"Wallet settings updated for {wallet.address}")
+            
+            logger.info(f"Updated wallet settings for {wallet.address}: {updated_fields}")
         
         return Response({
             'success': True,
-            'message': 'Wallet settings updated successfully'
+            'message': 'Wallet settings updated successfully',
+            'updated_fields': updated_fields
         })
         
     except Exception as e:
@@ -667,17 +723,16 @@ def get_wallet_transactions(request) -> Response:
     Get wallet transaction history.
     
     Query parameters:
-    - chain_id: Optional specific chain ID
-    - transaction_type: Optional transaction type filter
-    - status: Optional status filter
-    - limit: Number of transactions to return (default: 50, max: 200)
-    - offset: Pagination offset
+    - chain_id: int - Filter by chain ID
+    - status: str - Filter by transaction status
+    - limit: int - Number of transactions to return (default: 50)
+    - offset: int - Pagination offset (default: 0)
     
     Returns:
     {
         "transactions": [...],
-        "total_count": 25,
-        "has_more": false
+        "total_count": 150,
+        "has_more": true
     }
     """
     try:
@@ -693,33 +748,16 @@ def get_wallet_transactions(request) -> Response:
             )
         
         # Parse query parameters
-        chain_id = request.GET.get('chain_id')
-        transaction_type = request.GET.get('transaction_type')
-        status_filter = request.GET.get('status')
-        
-        try:
-            limit = min(int(request.GET.get('limit', 50)), 200)
-            offset = int(request.GET.get('offset', 0))
-        except ValueError:
-            return Response(
-                {'error': 'Invalid limit or offset parameter'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        chain_id = request.query_params.get('chain_id')
+        status_filter = request.query_params.get('status')
+        limit = min(int(request.query_params.get('limit', 50)), 100)
+        offset = int(request.query_params.get('offset', 0))
         
         # Build query
         queryset = wallet.transactions.all()
         
         if chain_id:
-            try:
-                queryset = queryset.filter(chain_id=int(chain_id))
-            except ValueError:
-                return Response(
-                    {'error': 'Invalid chain_id parameter'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        
-        if transaction_type:
-            queryset = queryset.filter(transaction_type=transaction_type)
+            queryset = queryset.filter(chain_id=int(chain_id))
         
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -730,42 +768,32 @@ def get_wallet_transactions(request) -> Response:
         # Apply pagination
         transactions = queryset.order_by('-created_at')[offset:offset + limit]
         
-        # Format response
+        # Format transaction data
         transaction_data = []
-        for txn in transactions:
-            txn_info = {
-                'transaction_id': str(txn.transaction_id),
-                'transaction_hash': txn.transaction_hash,
-                'transaction_type': txn.transaction_type,
-                'status': txn.status,
-                'chain_id': txn.chain_id,
-                'created_at': txn.created_at.isoformat()
-            }
-            
-            # Optional fields
-            if txn.gas_used is not None:
-                txn_info['gas_used'] = txn.gas_used
-            if txn.gas_price_gwei is not None:
-                txn_info['gas_price_gwei'] = str(txn.gas_price_gwei)
-            if txn.transaction_fee_eth is not None:
-                txn_info['transaction_fee_eth'] = str(txn.transaction_fee_eth)
-            if txn.transaction_fee_usd is not None:
-                txn_info['transaction_fee_usd'] = str(txn.transaction_fee_usd)
-            if txn.block_number is not None:
-                txn_info['block_number'] = txn.block_number
-            if txn.block_timestamp is not None:
-                txn_info['block_timestamp'] = txn.block_timestamp.isoformat()
-            if txn.transaction_data:
-                txn_info['transaction_data'] = txn.transaction_data
-            if txn.error_reason:
-                txn_info['error_reason'] = txn.error_reason
-            
-            transaction_data.append(txn_info)
+        for tx in transactions:
+            transaction_data.append({
+                'transaction_id': str(tx.transaction_id),
+                'transaction_hash': tx.transaction_hash,
+                'chain_id': tx.chain_id,
+                'from_address': tx.from_address,
+                'to_address': tx.to_address,
+                'value_wei': str(tx.value_wei),
+                'value_formatted': str(tx.value_formatted),
+                'gas_used': tx.gas_used,
+                'gas_price': str(tx.gas_price),
+                'status': tx.status,
+                'block_number': tx.block_number,
+                'timestamp': tx.timestamp.isoformat() if tx.timestamp else None,
+                'created_at': tx.created_at.isoformat(),
+                'metadata': tx.metadata
+            })
         
         return Response({
             'transactions': transaction_data,
             'total_count': total_count,
-            'has_more': offset + limit < total_count
+            'has_more': offset + limit < total_count,
+            'limit': limit,
+            'offset': offset
         })
         
     except Exception as e:
@@ -782,22 +810,39 @@ def get_wallet_transactions(request) -> Response:
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_wallet_activity(request) -> Response:
-    """Get wallet activity log for security monitoring."""
+    """
+    Get wallet activity log for security monitoring.
+    
+    Query parameters:
+    - activity_type: str - Filter by activity type
+    - limit: int - Number of activities to return (default: 50)
+    - offset: int - Pagination offset (default: 0)
+    
+    Returns:
+    {
+        "activities": [...],
+        "total_count": 25
+    }
+    """
     try:
-        # Parse query parameters
-        activity_type = request.GET.get('activity_type')
+        # Get user's primary wallet
+        wallet = request.user.wallets.filter(
+            status=Wallet.WalletStatus.CONNECTED
+        ).first()
         
-        try:
-            limit = min(int(request.GET.get('limit', 50)), 100)
-            offset = int(request.GET.get('offset', 0))
-        except ValueError:
+        if not wallet:
             return Response(
-                {'error': 'Invalid limit or offset parameter'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'No connected wallet found'},
+                status=status.HTTP_404_NOT_FOUND
             )
         
-        # Build query for user's wallet activities
-        queryset = request.user.wallet_activities.all()
+        # Parse query parameters
+        activity_type = request.query_params.get('activity_type')
+        limit = min(int(request.query_params.get('limit', 50)), 100)
+        offset = int(request.query_params.get('offset', 0))
+        
+        # Build query
+        queryset = wallet.activities.all()
         
         if activity_type:
             queryset = queryset.filter(activity_type=activity_type)
@@ -808,29 +853,24 @@ def get_wallet_activity(request) -> Response:
         # Apply pagination
         activities = queryset.order_by('-created_at')[offset:offset + limit]
         
-        # Format response
+        # Format activity data
         activity_data = []
         for activity in activities:
-            activity_info = {
+            activity_data.append({
                 'activity_id': str(activity.activity_id),
                 'activity_type': activity.activity_type,
                 'description': activity.description,
-                'was_successful': activity.was_successful,
+                'ip_address': activity.ip_address,
+                'user_agent': activity.user_agent,
+                'metadata': activity.metadata,
                 'created_at': activity.created_at.isoformat()
-            }
-            
-            # Optional fields (for security, limit what's exposed)
-            if activity.ip_address:
-                activity_info['ip_address'] = activity.ip_address
-            if activity.error_message:
-                activity_info['error_message'] = activity.error_message
-            
-            activity_data.append(activity_info)
+            })
         
         return Response({
             'activities': activity_data,
             'total_count': total_count,
-            'has_more': offset + limit < total_count
+            'limit': limit,
+            'offset': offset
         })
         
     except Exception as e:
@@ -843,36 +883,52 @@ def get_wallet_activity(request) -> Response:
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_siwe_sessions(request) -> Response:
-    """Get active SIWE sessions for security monitoring."""
+    """
+    Get active SIWE sessions for security monitoring.
+    
+    Returns:
+    {
+        "sessions": [
+            {
+                "session_id": "uuid",
+                "wallet_address": "0x...",
+                "domain": "localhost:8000",
+                "status": "VERIFIED",
+                "issued_at": "ISO timestamp",
+                "expiration_time": "ISO timestamp",
+                "last_used": "ISO timestamp",
+                "ip_address": "127.0.0.1",
+                "user_agent": "Mozilla/5.0..."
+            }
+        ]
+    }
+    """
     try:
-        # Get user's SIWE sessions
-        sessions = request.user.siwe_sessions.filter(
-            status__in=[SIWESession.SessionStatus.VERIFIED, SIWESession.SessionStatus.PENDING]
+        user = request.user
+        
+        # Get active SIWE sessions for this user
+        sessions = SIWESession.objects.filter(
+            user=user,
+            status=SIWESession.SessionStatus.VERIFIED
         ).order_by('-created_at')
         
-        # Get current session ID from Django session
-        current_session_id = request.session.get('siwe_session_id')
-        
-        # Format response
+        # Format session data
         session_data = []
         for session in sessions:
-            session_info = {
+            session_data.append({
                 'session_id': str(session.session_id),
                 'wallet_address': session.wallet_address,
+                'domain': session.domain,
                 'status': session.status,
                 'chain_id': session.chain_id,
                 'issued_at': session.issued_at.isoformat(),
-                'verified_at': session.verified_at.isoformat() if session.verified_at else None,
-                'is_current': str(session.session_id) == current_session_id,
-                'is_valid': session.is_valid()
-            }
-            
-            if session.expiration_time:
-                session_info['expiration_time'] = session.expiration_time.isoformat()
-            if session.ip_address:
-                session_info['ip_address'] = session.ip_address
-            
-            session_data.append(session_info)
+                'expiration_time': session.expiration_time.isoformat(),
+                'last_used': session.last_used.isoformat() if session.last_used else None,
+                'ip_address': session.ip_address,
+                'user_agent': session.user_agent[:100] if session.user_agent else None,  # Truncate for display
+                'is_valid': session.is_valid(),
+                'created_at': session.created_at.isoformat()
+            })
         
         return Response({
             'sessions': session_data
@@ -888,7 +944,20 @@ def get_siwe_sessions(request) -> Response:
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def revoke_siwe_session(request) -> Response:
-    """Revoke a specific SIWE session."""
+    """
+    Revoke a specific SIWE session.
+    
+    Expected payload:
+    {
+        "session_id": "uuid"
+    }
+    
+    Returns:
+    {
+        "success": true,
+        "message": "Session revoked successfully"
+    }
+    """
     try:
         data = request.data
         session_id = data.get('session_id')
@@ -899,21 +968,14 @@ def revoke_siwe_session(request) -> Response:
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get and revoke the session
+        # Find and revoke the session
         try:
-            session = request.user.siwe_sessions.get(session_id=session_id)
-            session.revoke()
+            session = SIWESession.objects.get(
+                session_id=session_id,
+                user=request.user
+            )
             
-            # Log the revocation
-            if wallet_service:
-                async def log_revocation():
-                    await wallet_service._log_wallet_activity(
-                        None, request.user, WalletActivity.ActivityType.SECURITY_EVENT,
-                        f"SIWE session {session_id[:8]}... revoked",
-                        get_client_ip(request), get_user_agent(request)
-                    )
-                
-                asyncio.run(log_revocation())
+            session.mark_expired()
             
             logger.info(f"SIWE session {session_id} revoked by user {request.user.username}")
             
@@ -936,47 +998,75 @@ def revoke_siwe_session(request) -> Response:
         )
 
 # =============================================================================
-# UTILITY ENDPOINTS
+# UTILITY AND HEALTH ENDPOINTS
 # =============================================================================
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def get_supported_chains(request) -> Response:
-    """Get list of supported blockchain networks."""
+    """
+    Get supported blockchain networks.
+    
+    Returns:
+    {
+        "chains": [
+            {
+                "chain_id": 84532,
+                "name": "Base Sepolia",
+                "network": "base-sepolia",
+                "native_currency": {
+                    "name": "Ethereum",
+                    "symbol": "ETH",
+                    "decimals": 18
+                },
+                "rpc_urls": ["https://sepolia.base.org"],
+                "block_explorers": ["https://sepolia.basescan.org"],
+                "is_testnet": true
+            }
+        ]
+    }
+    """
     try:
+        # Define supported chains
         supported_chains = [
             {
                 'chain_id': 84532,
                 'name': 'Base Sepolia',
-                'is_testnet': True,
+                'network': 'base-sepolia',
                 'native_currency': {
+                    'name': 'Ethereum',
                     'symbol': 'ETH',
-                    'name': 'Ethereum'
+                    'decimals': 18
                 },
-                'rpc_url': 'https://sepolia.base.org',
-                'explorer_url': 'https://sepolia.basescan.org'
+                'rpc_urls': ['https://sepolia.base.org'],
+                'block_explorers': ['https://sepolia.basescan.org'],
+                'is_testnet': True
             },
             {
                 'chain_id': 1,
                 'name': 'Ethereum Mainnet',
-                'is_testnet': False,
+                'network': 'ethereum',
                 'native_currency': {
+                    'name': 'Ethereum',
                     'symbol': 'ETH',
-                    'name': 'Ethereum'
+                    'decimals': 18
                 },
-                'rpc_url': 'https://ethereum.publicnode.com',
-                'explorer_url': 'https://etherscan.io'
+                'rpc_urls': ['https://eth-mainnet.g.alchemy.com/v2/demo'],
+                'block_explorers': ['https://etherscan.io'],
+                'is_testnet': False
             },
             {
                 'chain_id': 8453,
                 'name': 'Base Mainnet',
-                'is_testnet': False,
+                'network': 'base',
                 'native_currency': {
+                    'name': 'Ethereum',
                     'symbol': 'ETH',
-                    'name': 'Ethereum'
+                    'decimals': 18
                 },
-                'rpc_url': 'https://mainnet.base.org',
-                'explorer_url': 'https://basescan.org'
+                'rpc_urls': ['https://base-mainnet.g.alchemy.com/v2/demo'],
+                'block_explorers': ['https://basescan.org'],
+                'is_testnet': False
             }
         ]
         
@@ -992,34 +1082,72 @@ def get_supported_chains(request) -> Response:
         )
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([AllowAny])
 def health_check(request) -> Response:
-    """Health check endpoint for wallet service."""
+    """
+    Health check for wallet service.
+    
+    Returns:
+    {
+        "status": "healthy",
+        "services": {
+            "siwe_service": "available",
+            "wallet_service": "available",
+            "database": "healthy"
+        },
+        "timestamp": "ISO timestamp"
+    }
+    """
     try:
-        # Check Web3 provider status if service available
-        provider_status = {}
-        if wallet_service and hasattr(wallet_service, 'providers'):
-            for chain_id, provider in wallet_service.providers.items():
-                try:
-                    if provider.is_connected():
-                        provider_status[str(chain_id)] = "connected"
-                    else:
-                        provider_status[str(chain_id)] = "disconnected"
-                except Exception:
-                    provider_status[str(chain_id)] = "error"
-        else:
-            provider_status = {"status": "service_not_ready"}
-        
-        return Response({
+        health_status = {
             'status': 'healthy',
-            'web3_providers': provider_status,
-            'siwe_service': 'operational',
+            'services': {},
             'timestamp': timezone.now().isoformat()
-        })
+        }
+        
+        # Check SIWE service
+        try:
+            if siwe_service:
+                # Test basic functionality
+                test_data = siwe_service.create_siwe_message(
+                    wallet_address='0x0000000000000000000000000000000000000000',
+                    chain_id=84532
+                )
+                health_status['services']['siwe_service'] = 'available' if test_data else 'limited'
+            else:
+                health_status['services']['siwe_service'] = 'unavailable'
+        except Exception as e:
+            health_status['services']['siwe_service'] = f'error: {str(e)[:50]}'
+        
+        # Check wallet service
+        try:
+            if wallet_service:
+                health_status['services']['wallet_service'] = 'available'
+            else:
+                health_status['services']['wallet_service'] = 'unavailable'
+        except Exception as e:
+            health_status['services']['wallet_service'] = f'error: {str(e)[:50]}'
+        
+        # Check database
+        try:
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            health_status['services']['database'] = 'healthy'
+        except Exception as e:
+            health_status['services']['database'] = f'error: {str(e)[:50]}'
+            health_status['status'] = 'degraded'
+        
+        # Determine overall status
+        if any('error' in str(service_status) for service_status in health_status['services'].values()):
+            health_status['status'] = 'degraded'
+        
+        return Response(health_status)
         
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return Response(
-            {'status': 'unhealthy', 'error': str(e)},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE
-        )
+        return Response({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': timezone.now().isoformat()
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
