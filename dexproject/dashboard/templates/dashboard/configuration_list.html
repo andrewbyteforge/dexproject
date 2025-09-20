@@ -207,7 +207,7 @@
                                            class="btn btn-sm btn-outline-light">
                                             <i class="bi bi-eye"></i>
                                         </a>
-                                        <a href="{% url 'dashboard:configuration_panel' mode='fast_lane' %}" 
+                                        <a href="{% url 'dashboard:configuration_panel' mode=config.trading_mode|lower %}"
                                            class="btn btn-sm btn-outline-success">
                                             <i class="bi bi-pencil"></i>
                                         </a>
@@ -273,7 +273,7 @@
                                            class="btn btn-sm btn-outline-light">
                                             <i class="bi bi-eye"></i>
                                         </a>
-                                        <a href="{% url 'dashboard:configuration_panel' mode='smart_lane' %}" 
+                                        <a href="{% url 'dashboard:configuration_panel' mode=config.trading_mode|lower %}"
                                            class="btn btn-sm btn-outline-info">
                                             <i class="bi bi-pencil"></i>
                                         </a>

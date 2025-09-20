@@ -253,6 +253,286 @@
                                    step="1">
                             <div class="form-text">Maximum time allowed for Smart Lane analysis</div>
                         </div>
+
+                        <!-- Smart Lane Risk Analysis Categories -->
+                        <div class="col-12 mb-4">
+                            <h6 class="text-uppercase text-muted mb-3">
+                                <i class="bi bi-shield-check smart-lane-accent me-1"></i>Risk Analysis Categories
+                            </h6>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_honeypot_detection" 
+                                               name="enable_honeypot_detection" 
+                                               checked>
+                                        <label class="form-check-label" for="enable_honeypot_detection">
+                                            <strong>Honeypot Detection</strong>
+                                        </label>
+                                        <div class="form-text">Detect scam tokens and honeypots</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_liquidity_analysis" 
+                                               name="enable_liquidity_analysis" 
+                                               checked>
+                                        <label class="form-check-label" for="enable_liquidity_analysis">
+                                            <strong>Liquidity Analysis</strong>
+                                        </label>
+                                        <div class="form-text">Analyze liquidity depth and stability</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_social_sentiment" 
+                                               name="enable_social_sentiment" 
+                                               checked>
+                                        <label class="form-check-label" for="enable_social_sentiment">
+                                            <strong>Social Sentiment</strong>
+                                        </label>
+                                        <div class="form-text">Analyze social media sentiment and community</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_technical_analysis" 
+                                               name="enable_technical_analysis" 
+                                               checked>
+                                        <label class="form-check-label" for="enable_technical_analysis">
+                                            <strong>Technical Analysis</strong>
+                                        </label>
+                                        <div class="form-text">Perform chart pattern and indicator analysis</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_contract_security" 
+                                               name="enable_contract_security" 
+                                               checked>
+                                        <label class="form-check-label" for="enable_contract_security">
+                                            <strong>Contract Security</strong>
+                                        </label>
+                                        <div class="form-text">Analyze smart contract for vulnerabilities</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_holder_distribution" 
+                                               name="enable_holder_distribution" 
+                                               checked>
+                                        <label class="form-check-label" for="enable_holder_distribution">
+                                            <strong>Holder Distribution</strong>
+                                        </label>
+                                        <div class="form-text">Analyze token holder concentration</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_market_structure" 
+                                               name="enable_market_structure">
+                                        <label class="form-check-label" for="enable_market_structure">
+                                            <strong>Market Structure</strong>
+                                        </label>
+                                        <div class="form-text">Analyze market manipulation risks</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Smart Lane Risk Thresholds -->
+                        <div class="col-12 mb-4">
+                            <h6 class="text-uppercase text-muted mb-3">
+                                <i class="bi bi-speedometer smart-lane-accent me-1"></i>Risk Thresholds
+                            </h6>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="max_acceptable_risk" class="form-label">Max Acceptable Risk Score</label>
+                                    <input type="range" 
+                                           class="form-range" 
+                                           id="max_acceptable_risk" 
+                                           name="max_acceptable_risk_score" 
+                                           value="0.8"
+                                           min="0.1" 
+                                           max="1.0" 
+                                           step="0.1"
+                                           oninput="updateRiskDisplay(this.value)">
+                                    <div class="d-flex justify-content-between">
+                                        <small class="text-success">Conservative (0.1)</small>
+                                        <span id="risk-value" class="fw-bold">0.8</span>
+                                        <small class="text-danger">Aggressive (1.0)</small>
+                                    </div>
+                                    <div class="form-text">Maximum risk score threshold for trade execution</div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="min_confidence_threshold" class="form-label">Min Confidence Threshold</label>
+                                    <input type="range" 
+                                           class="form-range" 
+                                           id="min_confidence_threshold" 
+                                           name="min_confidence_threshold" 
+                                           value="0.7"
+                                           min="0.5" 
+                                           max="0.95" 
+                                           step="0.05"
+                                           oninput="updateConfidenceDisplay(this.value)">
+                                    <div class="d-flex justify-content-between">
+                                        <small class="text-warning">Low (0.5)</small>
+                                        <span id="confidence-value" class="fw-bold">0.70</span>
+                                        <small class="text-success">High (0.95)</small>
+                                    </div>
+                                    <div class="form-text">Minimum confidence required for analysis recommendations</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Smart Lane Position Sizing -->
+                        <div class="col-12 mb-4">
+                            <h6 class="text-uppercase text-muted mb-3">
+                                <i class="bi bi-calculator smart-lane-accent me-1"></i>Advanced Position Sizing
+                            </h6>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="enable_dynamic_sizing" 
+                                               name="enable_dynamic_sizing" 
+                                               checked>
+                                        <label class="form-check-label" for="enable_dynamic_sizing">
+                                            <strong>Enable Dynamic Position Sizing</strong>
+                                        </label>
+                                        <div class="form-text">Automatically adjust position sizes based on risk and confidence</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="max_position_size_percent" class="form-label">Max Position Size (%)</label>
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="max_position_size_percent" 
+                                           name="max_position_size_percent" 
+                                           value="10.0"
+                                           min="0.5" 
+                                           max="25.0" 
+                                           step="0.5">
+                                    <div class="form-text">Maximum percentage of portfolio for a single position</div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="risk_per_trade_percent" class="form-label">Risk Per Trade (%)</label>
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="risk_per_trade_percent" 
+                                           name="risk_per_trade_percent" 
+                                           value="2.0"
+                                           min="0.5" 
+                                           max="5.0" 
+                                           step="0.25">
+                                    <div class="form-text">Maximum portfolio percentage to risk per trade</div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="exit_strategy" class="form-label">Exit Strategy</label>
+                                    <select class="form-select" id="exit_strategy" name="exit_strategy">
+                                        <option value="TRAILING_STOP" selected>Trailing Stop</option>
+                                        <option value="TAKE_PROFIT_STOP_LOSS">Take Profit + Stop Loss</option>
+                                        <option value="DYNAMIC_EXIT">Dynamic Exit (AI-Based)</option>
+                                        <option value="SCALED_EXIT">Scaled Exit</option>
+                                    </select>
+                                    <div class="form-text">Strategy for exiting positions</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Smart Lane Technical Analysis -->
+                        <div class="col-12 mb-4">
+                            <h6 class="text-uppercase text-muted mb-3">
+                                <i class="bi bi-graph-up smart-lane-accent me-1"></i>Technical Analysis Settings
+                            </h6>
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <label class="form-label">Technical Analysis Timeframes</label>
+                                    <div class="row">
+                                        <div class="col-md-2 col-4 mb-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input" 
+                                                       type="checkbox" 
+                                                       id="timeframe_1m" 
+                                                       name="technical_timeframes" 
+                                                       value="1m">
+                                                <label class="form-check-label" for="timeframe_1m">1 Minute</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-2 col-4 mb-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input" 
+                                                       type="checkbox" 
+                                                       id="timeframe_5m" 
+                                                       name="technical_timeframes" 
+                                                       value="5m" 
+                                                       checked>
+                                                <label class="form-check-label" for="timeframe_5m">5 Minutes</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-2 col-4 mb-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input" 
+                                                       type="checkbox" 
+                                                       id="timeframe_15m" 
+                                                       name="technical_timeframes" 
+                                                       value="15m" 
+                                                       checked>
+                                                <label class="form-check-label" for="timeframe_15m">15 Minutes</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-2 col-4 mb-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input" 
+                                                       type="checkbox" 
+                                                       id="timeframe_1h" 
+                                                       name="technical_timeframes" 
+                                                       value="1h" 
+                                                       checked>
+                                                <label class="form-check-label" for="timeframe_1h">1 Hour</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-2 col-4 mb-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input" 
+                                                       type="checkbox" 
+                                                       id="timeframe_4h" 
+                                                       name="technical_timeframes" 
+                                                       value="4h" 
+                                                       checked>
+                                                <label class="form-check-label" for="timeframe_4h">4 Hours</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-2 col-4 mb-2">
+                                            <div class="form-check">
+                                                <input class="form-check-input" 
+                                                       type="checkbox" 
+                                                       id="timeframe_1d" 
+                                                       name="technical_timeframes" 
+                                                       value="1d">
+                                                <label class="form-check-label" for="timeframe_1d">1 Day</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-text">Select timeframes for technical analysis (recommended: 5m, 15m, 1h, 4h)</div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="col-12">
                             <div class="alert alert-success">
                                 <h6 class="alert-heading smart-lane-accent">
@@ -374,6 +654,14 @@
                         <strong>Position Sizing:</strong> 
                         <span id="preview-sizing">{{ config.position_sizing_method|default:'Risk-Based' }}</span>
                     </div>
+                    <div class="mb-2">
+                        <strong>Risk Threshold:</strong> 
+                        <span id="preview-risk-threshold">0.8</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>Confidence:</strong> 
+                        <span id="preview-confidence">0.70</span>
+                    </div>
                     {% endif %}
                 </div>
                 
@@ -393,6 +681,8 @@
                         <li>Full thought logs help understand AI decision-making</li>
                         <li>Risk-based sizing optimizes for portfolio management</li>
                         <li>Deep dive analysis is best for complex tokens</li>
+                        <li>Enable at least 3 risk categories for best results</li>
+                        <li>Conservative risk settings reduce false positives</li>
                         {% endif %}
                     </ul>
                 </div>
@@ -437,6 +727,17 @@
 
 {% block extra_js %}
 <script>
+// JavaScript for risk threshold sliders
+function updateRiskDisplay(value) {
+    document.getElementById('risk-value').textContent = parseFloat(value).toFixed(1);
+    document.getElementById('preview-risk-threshold').textContent = parseFloat(value).toFixed(1);
+}
+
+function updateConfidenceDisplay(value) {
+    document.getElementById('confidence-value').textContent = parseFloat(value).toFixed(2);
+    document.getElementById('preview-confidence').textContent = parseFloat(value).toFixed(2);
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('configForm');
     const resetBtn = document.getElementById('resetForm');
@@ -534,6 +835,15 @@ document.addEventListener('DOMContentLoaded', function() {
             thoughtLog.classList.add('is-invalid');
             isValid = false;
         }
+
+        // Validate at least one risk category is selected
+        const riskCategories = form.querySelectorAll('input[name="enable_honeypot_detection"], input[name="enable_liquidity_analysis"], input[name="enable_social_sentiment"], input[name="enable_technical_analysis"], input[name="enable_contract_security"], input[name="enable_holder_distribution"], input[name="enable_market_structure"]');
+        const anyChecked = Array.from(riskCategories).some(cb => cb.checked);
+        
+        if (!anyChecked) {
+            showAlert('Please enable at least one risk analysis category.', 'warning');
+            isValid = false;
+        }
         {% endif %}
         
         return isValid;
@@ -626,6 +936,33 @@ document.addEventListener('DOMContentLoaded', function() {
         if (positionSizingMethod) positionSizingMethod.value = 'RISK_BASED';
         const maxAnalysisTime = document.getElementById('max_analysis_time');
         if (maxAnalysisTime) maxAnalysisTime.value = '5';
+
+        // Reset Smart Lane specific fields
+        document.getElementById('enable_honeypot_detection').checked = true;
+        document.getElementById('enable_liquidity_analysis').checked = true;
+        document.getElementById('enable_social_sentiment').checked = true;
+        document.getElementById('enable_technical_analysis').checked = true;
+        document.getElementById('enable_contract_security').checked = true;
+        document.getElementById('enable_holder_distribution').checked = true;
+        document.getElementById('enable_market_structure').checked = false;
+        
+        document.getElementById('max_acceptable_risk').value = '0.8';
+        document.getElementById('min_confidence_threshold').value = '0.7';
+        updateRiskDisplay('0.8');
+        updateConfidenceDisplay('0.7');
+        
+        document.getElementById('enable_dynamic_sizing').checked = true;
+        document.getElementById('max_position_size_percent').value = '10.0';
+        document.getElementById('risk_per_trade_percent').value = '2.0';
+        document.getElementById('exit_strategy').value = 'TRAILING_STOP';
+        
+        // Reset timeframes
+        document.getElementById('timeframe_1m').checked = false;
+        document.getElementById('timeframe_5m').checked = true;
+        document.getElementById('timeframe_15m').checked = true;
+        document.getElementById('timeframe_1h').checked = true;
+        document.getElementById('timeframe_4h').checked = true;
+        document.getElementById('timeframe_1d').checked = false;
         {% endif %}
         
         // FIXED: Set execution settings for both modes (moved outside mode-specific blocks)
