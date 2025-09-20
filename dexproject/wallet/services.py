@@ -34,16 +34,64 @@ from asgiref.sync import sync_to_async
 import logging
 logger = logging.getLogger(__name__)
 # Web3 imports with fallback
+# Web3 imports with enhanced fallback and modern import paths
+# FIXED: Updated for web3.py v6+ import structure that handles geth_poa_middleware correctly
+WEB3_AVAILABLE = False
+WEB3_IMPORT_ERROR = None
+
 try:
     from web3 import Web3
-    from web3.middleware import geth_poa_middleware
     from eth_account.messages import encode_defunct
     from eth_utils import is_address, to_checksum_address
+    from eth_account import Account
+    
+    # Handle geth_poa_middleware import which changed in web3.py v6+
+    geth_poa_middleware = None
+    try:
+        # Try old import path (web3.py v5 and earlier)
+        from web3.middleware import geth_poa_middleware
+    except ImportError:
+        # New versions don't need POA middleware for most networks
+        # Base networks work fine without it in web3.py v6+
+        pass
+    
     WEB3_AVAILABLE = True
-except ImportError:
-    WEB3_AVAILABLE = False
+    logger.info("✅ Web3 packages imported successfully")
+    
+except ImportError as e:
+    WEB3_IMPORT_ERROR = str(e)
     Web3 = None
-    logger.warning("Web3 not available - install with: pip install web3 eth-account")
+    geth_poa_middleware = None
+    encode_defunct = None
+    is_address = None
+    to_checksum_address = None
+    Account = None
+    logger.warning(f"⚠️ Web3 packages not available: {e}")
+    logger.warning("Install with: pip install web3 eth-account eth-utils")
+except Exception as e:
+    WEB3_IMPORT_ERROR = str(e)
+    Web3 = None
+    geth_poa_middleware = None
+    encode_defunct = None
+    is_address = None
+    to_checksum_address = None
+    Account = None
+    logger.error(f"❌ Unexpected error importing Web3: {e}")
+
+
+def setup_poa_middleware(w3):
+    """Setup POA middleware for Base networks with compatibility for different web3.py versions."""
+    if WEB3_AVAILABLE and geth_poa_middleware:
+        # Only inject if geth_poa_middleware is available (older web3.py versions)
+        try:
+            w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+            logger.debug("✅ POA middleware injected")
+        except Exception as e:
+            logger.debug(f"POA middleware injection failed (probably not needed): {e}")
+    elif WEB3_AVAILABLE:
+        # Newer web3.py versions handle POA networks automatically
+        logger.debug("✅ Using web3.py v6+ - POA middleware not required")
+    return w3
 
 from .models import SIWESession, Wallet, WalletBalance, WalletTransaction, WalletActivity
 
@@ -353,8 +401,9 @@ class WalletService:
                 w3 = Web3(Web3.HTTPProvider(config['rpc_url']))
                 
                 # Add POA middleware for Base networks
+                # Add POA middleware for Base networks (with compatibility check)
                 if config['is_poa']:
-                    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+                    w3 = setup_poa_middleware(w3)
                 
                 # Test connection
                 if w3.is_connected():

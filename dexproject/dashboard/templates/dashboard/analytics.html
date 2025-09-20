@@ -1,0 +1,234 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Analytics - DEX Trading Bot{% endblock %}
+
+{% block content %}
+<div class="container-fluid main-content">
+    <div class="row">
+        <!-- Main Content Area -->
+        <div class="col-md-10 offset-md-2 p-4">
+            
+            <!-- Page Header -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h1 class="h2 mb-2">
+                                <i class="bi bi-graph-up fast-lane-accent me-2"></i>
+                                Trading Analytics
+                            </h1>
+                            <p class="text-muted mb-0">Real-time performance metrics and trading insights</p>
+                        </div>
+                        <div>
+                            {% if performance_metrics.data_source == 'LIVE' %}
+                                <span class="badge bg-success">
+                                    <i class="bi bi-broadcast me-1"></i>Live Data
+                                </span>
+                            {% else %}
+                                <span class="badge bg-warning">
+                                    <i class="bi bi-cpu me-1"></i>Demo Mode
+                                </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Key Metrics Cards -->
+            <div class="row mb-4">
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card card-glass metric-card">
+                        <div class="card-body text-center">
+                            <i class="bi bi-lightning-charge-fill fast-lane-accent fs-1 mb-3"></i>
+                            <h3 class="card-title mb-1">{{ performance_metrics.execution_time_ms|default:"--" }}</h3>
+                            <p class="card-text text-muted small">Avg Execution Time (ms)</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card card-glass metric-card">
+                        <div class="card-body text-center">
+                            <i class="bi bi-graph-up-arrow fast-lane-accent fs-1 mb-3"></i>
+                            <h3 class="card-title mb-1">{{ performance_metrics.success_rate|default:"--" }}%</h3>
+                            <p class="card-text text-muted small">Success Rate</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card card-glass metric-card">
+                        <div class="card-body text-center">
+                            <i class="bi bi-currency-exchange fast-lane-accent fs-1 mb-3"></i>
+                            <h3 class="card-title mb-1">{{ performance_metrics.trades_per_minute|default:"--" }}</h3>
+                            <p class="card-text text-muted small">Trades per Minute</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-3 col-md-6 mb-3">
+                    <div class="card card-glass metric-card">
+                        <div class="card-body text-center">
+                            <i class="bi bi-shield-check fast-lane-accent fs-1 mb-3"></i>
+                            <h3 class="card-title mb-1">{{ engine_status.pairs_monitored|default:"--" }}</h3>
+                            <p class="card-text text-muted small">Pairs Monitored</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Overview -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card card-glass">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0 fast-lane-accent">
+                                <i class="bi bi-speedometer2 me-2"></i>Performance Overview
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="border-start border-3 border-info ps-3">
+                                        <h6 class="mb-1">Fast Lane Status</h6>
+                                        <div class="d-flex align-items-center">
+                                            {% if engine_status.fast_lane_active %}
+                                                <span class="status-indicator status-operational me-2"></span>
+                                                <span class="text-success">Active</span>
+                                            {% else %}
+                                                <span class="status-indicator status-error me-2"></span>
+                                                <span class="text-muted">Inactive</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="border-start border-3 border-primary ps-3">
+                                        <h6 class="mb-1">Smart Lane Status</h6>
+                                        <div class="d-flex align-items-center">
+                                            {% if engine_status.smart_lane_active %}
+                                                <span class="status-indicator status-operational me-2"></span>
+                                                <span class="text-success">Active</span>
+                                            {% else %}
+                                                <span class="status-indicator status-error me-2"></span>
+                                                <span class="text-muted">Inactive</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="border-start border-3 border-warning ps-3">
+                                        <h6 class="mb-1">Mempool Connection</h6>
+                                        <div class="d-flex align-items-center">
+                                            {% if engine_status.mempool_connected %}
+                                                <span class="status-indicator status-operational me-2"></span>
+                                                <span class="text-success">Connected</span>
+                                            {% else %}
+                                                <span class="status-indicator status-error me-2"></span>
+                                                <span class="text-danger">Disconnected</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-lg-3 col-md-6 mb-3">
+                                    <div class="border-start border-3 border-success ps-3">
+                                        <h6 class="mb-1">Data Source</h6>
+                                        <div class="d-flex align-items-center">
+                                            {% if performance_metrics.data_source == 'LIVE' %}
+                                                <span class="status-indicator status-operational me-2"></span>
+                                                <span class="text-success">{{ performance_metrics.data_source|default:"Unknown" }}</span>
+                                            {% else %}
+                                                <span class="status-indicator status-degraded me-2"></span>
+                                                <span class="text-warning">{{ performance_metrics.data_source|default:"Unknown" }}</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Coming Soon Section -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card card-glass border-dashed">
+                        <div class="card-body text-center py-5">
+                            <i class="bi bi-graph-up-arrow fast-lane-accent display-1 mb-4"></i>
+                            <h3 class="card-title mb-3">Advanced Analytics Coming Soon</h3>
+                            <p class="card-text text-muted mb-4 fs-5">
+                                Detailed performance charts, profit/loss tracking, and risk analysis will be available in the next update.
+                            </p>
+                            
+                            <div class="row justify-content-center">
+                                <div class="col-md-8">
+                                    <h5 class="mb-3 fast-lane-accent">Planned Features:</h5>
+                                    <div class="row text-start">
+                                        <div class="col-md-4 mb-2">
+                                            <i class="bi bi-graph-up text-info me-2"></i>Performance Charts
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <i class="bi bi-pie-chart text-info me-2"></i>Portfolio Analysis
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <i class="bi bi-shield-exclamation text-info me-2"></i>Risk Metrics
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <i class="bi bi-currency-dollar text-info me-2"></i>P&L Tracking
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <i class="bi bi-clock-history text-info me-2"></i>Historical Data
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <i class="bi bi-download text-info me-2"></i>Export Reports
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="row">
+                <div class="col-12 text-center">
+                    <a href="{% url 'dashboard:home' %}" class="btn btn-outline-light me-3">
+                        <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                    </a>
+                    <button class="btn btn-fast-lane" onclick="location.reload()">
+                        <i class="bi bi-arrow-clockwise me-2"></i>Refresh Data
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<style>
+.border-dashed {
+    border: 2px dashed rgba(0, 212, 170, 0.3) !important;
+}
+
+.metric-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+}
+
+.card-glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+</style>
+{% endblock %}

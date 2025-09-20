@@ -401,6 +401,8 @@ def dashboard_analytics(request: HttpRequest) -> HttpResponse:
     """
     Dashboard analytics page showing detailed performance metrics and charts.
     
+    FIXED: Now includes both performance_metrics AND engine_status for live data display.
+    
     Args:
         request: HTTP request object
         
@@ -422,8 +424,9 @@ def dashboard_analytics(request: HttpRequest) -> HttpResponse:
         fast_lane_configs = user_configs.filter(trading_mode='FAST_LANE').count()
         smart_lane_configs = user_configs.filter(trading_mode='SMART_LANE').count()
         
-        # Get engine metrics
+        # FIXED: Get BOTH engine metrics AND status
         performance_metrics = engine_service.get_performance_metrics()
+        engine_status = engine_service.get_engine_status()  # ← This was missing!
         
         context = {
             'user': request.user,
@@ -436,7 +439,8 @@ def dashboard_analytics(request: HttpRequest) -> HttpResponse:
                 'smart_lane_configs': smart_lane_configs,
                 'total_configs': user_configs.count()
             },
-            'performance_metrics': performance_metrics,
+            'performance_metrics': performance_metrics,  # ✅ Already there
+            'engine_status': engine_status,              # ✅ FIXED: Added this!
             'recent_sessions': user_sessions[:10],
             'chart_data': {
                 'session_history': [
@@ -453,6 +457,14 @@ def dashboard_analytics(request: HttpRequest) -> HttpResponse:
         logger.error(f"Error loading analytics page: {e}", exc_info=True)
         messages.error(request, f"Error loading analytics: {str(e)}")
         return render(request, 'dashboard/error.html', {'error': str(e)})
+
+
+
+
+
+
+
+
 
 
 # =========================================================================
