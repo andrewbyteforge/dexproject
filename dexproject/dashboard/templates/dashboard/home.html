@@ -108,6 +108,59 @@
     padding: 12px;
     margin-bottom: 20px;
 }
+
+/* Additional styles for wallet dashboard section */
+.wallet-info-card,
+.balance-info-card,
+.allocation-info-card {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    transition: all 0.3s ease;
+}
+
+.wallet-info-card:hover,
+.balance-info-card:hover,
+.allocation-info-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(0, 212, 170, 0.3) !important;
+}
+
+.balance-display {
+    font-weight: 600;
+}
+
+.balance-usd {
+    font-size: 0.9rem;
+}
+
+.allocation-display {
+    font-weight: 600;
+}
+
+.allocation-percentage {
+    font-size: 0.9rem;
+}
+
+.wallet-address {
+    font-family: 'Courier New', monospace;
+    font-weight: 500;
+}
+
+/* Animation for state transitions */
+.wallet-section-transition {
+    animation: fadeIn 0.5s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
 </style>
 {% endblock %}
 
@@ -141,6 +194,169 @@
             <div class="mock-data-warning">
                 <i class="bi bi-exclamation-triangle me-2"></i>
                 <strong>Demo Mode:</strong> Displaying simulated data. Engine connectivity will be restored automatically.
+            </div>
+        </div>
+    </div>
+
+    <!-- Wallet Integration Section -->
+    <div class="row mb-4" id="wallet-dashboard-section">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-wallet2 fast-lane-accent me-2"></i>
+                        Wallet & Funds
+                    </h5>
+                    <div id="wallet-header-status">
+                        <span class="badge bg-warning">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            Wallet Not Connected
+                        </span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    
+                    <!-- Wallet Not Connected State -->
+                    <div id="wallet-not-connected" class="text-center py-4">
+                        <i class="bi bi-wallet2 text-muted display-1 mb-3"></i>
+                        <h4 class="text-muted mb-3">Connect Your Wallet</h4>
+                        <p class="text-muted mb-4">
+                            Connect your Web3 wallet to view balances, execute trades, and manage your portfolio.
+                        </p>
+                        <button class="btn btn-fast-lane btn-lg" data-action="connect-wallet">
+                            <i class="bi bi-wallet2 me-2"></i>
+                            Connect Wallet
+                        </button>
+                        <div class="mt-3">
+                            <small class="text-muted">
+                                Supports MetaMask, WalletConnect, Coinbase Wallet, and more
+                            </small>
+                        </div>
+                    </div>
+                    
+                    <!-- Wallet Connected State -->
+                    <div id="wallet-connected" style="display: none;">
+                        <div class="row">
+                            
+                            <!-- Wallet Information -->
+                            <div class="col-md-4 mb-3">
+                                <div class="wallet-info-card p-3 border rounded">
+                                    <h6 class="text-muted mb-2">Connected Wallet</h6>
+                                    <div class="d-flex align-items-center mb-2">
+                                        <i class="bi bi-wallet2 fast-lane-accent me-2"></i>
+                                        <span id="wallet-display-address" class="wallet-address">0x0000...0000</span>
+                                        <button class="btn btn-link btn-sm p-0 ms-2" onclick="copyWalletAddress()" title="Copy address">
+                                            <i class="bi bi-copy"></i>
+                                        </button>
+                                    </div>
+                                    <div class="d-flex align-items-center">
+                                        <span class="text-muted me-2">Network:</span>
+                                        <span id="wallet-display-chain" class="badge bg-secondary">Unknown</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Balance Information -->
+                            <div class="col-md-4 mb-3">
+                                <div class="balance-info-card p-3 border rounded">
+                                    <h6 class="text-muted mb-2">Balance</h6>
+                                    <div class="balance-display mb-2">
+                                        <span id="wallet-eth-balance" class="h4 fast-lane-accent">0.0000</span>
+                                        <span class="text-muted ms-1">ETH</span>
+                                    </div>
+                                    <div class="balance-usd">
+                                        <span class="text-muted">≈ $</span>
+                                        <span id="wallet-usd-balance">0.00</span>
+                                        <span class="text-muted">USD</span>
+                                    </div>
+                                    <button class="btn btn-outline-primary btn-sm mt-2" onclick="refreshBalance()">
+                                        <i class="bi bi-arrow-clockwise me-1"></i>
+                                        Refresh
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Trading Allocation -->
+                            <div class="col-md-4 mb-3">
+                                <div class="allocation-info-card p-3 border rounded">
+                                    <h6 class="text-muted mb-2">Trading Allocation</h6>
+                                    <div class="allocation-display mb-2">
+                                        <span id="trading-allocation" class="h5 smart-lane-accent">0.0000</span>
+                                        <span class="text-muted ms-1">ETH</span>
+                                    </div>
+                                    <div class="allocation-percentage">
+                                        <span class="text-muted">Available for trading</span>
+                                    </div>
+                                    <button class="btn btn-outline-success btn-sm mt-2" onclick="configureAllocation()">
+                                        <i class="bi bi-gear me-1"></i>
+                                        Configure
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Quick Actions -->
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button class="btn btn-fast-lane btn-sm" onclick="quickBuy()">
+                                        <i class="bi bi-plus-circle me-1"></i>
+                                        Quick Buy
+                                    </button>
+                                    <button class="btn btn-smart-lane btn-sm" onclick="smartAnalyze()">
+                                        <i class="bi bi-cpu me-1"></i>
+                                        Analyze Token
+                                    </button>
+                                    <button class="btn btn-outline-warning btn-sm" onclick="viewPortfolio()">
+                                        <i class="bi bi-pie-chart me-1"></i>
+                                        Portfolio
+                                    </button>
+                                    <button class="btn btn-outline-info btn-sm" onclick="viewTransactions()">
+                                        <i class="bi bi-list-ul me-1"></i>
+                                        Transactions
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm" onclick="walletSettings()">
+                                        <i class="bi bi-gear me-1"></i>
+                                        Settings
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Security Notice -->
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <div class="alert alert-info d-flex align-items-center">
+                                    <i class="bi bi-shield-check me-2"></i>
+                                    <div>
+                                        <strong>Security:</strong> Your private keys are never stored on our servers. 
+                                        All transactions are signed locally in your wallet.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Loading State -->
+                    <div id="wallet-loading" style="display: none;" class="text-center py-4">
+                        <div class="spinner-border fast-lane-accent" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <div class="mt-3">
+                            <span id="wallet-loading-text">Connecting wallet...</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Error State -->
+                    <div id="wallet-error" style="display: none;" class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span id="wallet-error-text">Failed to connect wallet</span>
+                        <button class="btn btn-outline-danger btn-sm ms-3" onclick="retryWalletConnection()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>
+                            Retry
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -850,6 +1066,177 @@ function updateRecentAnalyses(analyses) {
     });
 }
 
+// JavaScript functions for wallet dashboard interactions
+function copyWalletAddress() {
+    const address = window.walletManager?.walletAddress;
+    if (address) {
+        navigator.clipboard.writeText(address).then(() => {
+            showToast('Wallet address copied to clipboard', 'success');
+        }).catch(() => {
+            showToast('Failed to copy address', 'error');
+        });
+    }
+}
+
+async function refreshBalance() {
+    if (!window.walletManager?.isConnected) {
+        showToast('Wallet not connected', 'warning');
+        return;
+    }
+    
+    try {
+        // Show loading state
+        const refreshBtn = event.target;
+        const originalText = refreshBtn.innerHTML;
+        refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refreshing...';
+        refreshBtn.disabled = true;
+        
+        // Get balance from wallet
+        const balance = await window.walletManager.getWalletBalance();
+        updateBalanceDisplay(balance);
+        
+        showToast('Balance updated', 'success');
+        
+    } catch (error) {
+        console.error('Failed to refresh balance:', error);
+        showToast('Failed to refresh balance', 'error');
+    } finally {
+        // Restore button state
+        const refreshBtn = event.target;
+        refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Refresh';
+        refreshBtn.disabled = false;
+    }
+}
+
+function configureAllocation() {
+    // Navigate to wallet settings or open allocation modal
+    window.location.href = '/dashboard/settings/#wallet';
+}
+
+function quickBuy() {
+    if (!window.walletManager?.isConnected) {
+        showToast('Please connect your wallet first', 'warning');
+        return;
+    }
+    
+    // Open quick buy modal or navigate to trading interface
+    showToast('Quick buy feature coming soon', 'info');
+}
+
+function smartAnalyze() {
+    if (!window.walletManager?.isConnected) {
+        showToast('Please connect your wallet first', 'warning');
+        return;
+    }
+    
+    // Open smart analysis interface
+    showToast('Smart analysis feature coming soon', 'info');
+}
+
+function viewPortfolio() {
+    if (!window.walletManager?.isConnected) {
+        showToast('Please connect your wallet first', 'warning');
+        return;
+    }
+    
+    // Navigate to portfolio page
+    window.location.href = '/dashboard/analytics/#portfolio';
+}
+
+function viewTransactions() {
+    if (!window.walletManager?.isConnected) {
+        showToast('Please connect your wallet first', 'warning');
+        return;
+    }
+    
+    // Navigate to transactions page
+    window.location.href = '/dashboard/analytics/#transactions';
+}
+
+function walletSettings() {
+    // Navigate to wallet settings
+    window.location.href = '/dashboard/settings/#wallet';
+}
+
+function retryWalletConnection() {
+    if (window.walletManager) {
+        window.walletManager.connectWallet();
+    }
+}
+
+function updateBalanceDisplay(balanceEth) {
+    const ethBalanceEl = document.getElementById('wallet-eth-balance');
+    const usdBalanceEl = document.getElementById('wallet-usd-balance');
+    
+    if (ethBalanceEl) {
+        ethBalanceEl.textContent = balanceEth.toFixed(4);
+    }
+    
+    if (usdBalanceEl) {
+        // Rough ETH price for display (in production, fetch from API)
+        const ethPriceUSD = 2000; // This should be fetched from a price API
+        const balanceUSD = balanceEth * ethPriceUSD;
+        usdBalanceEl.textContent = balanceUSD.toFixed(2);
+    }
+    
+    // Update trading allocation (for now, assume 50% allocation)
+    const allocationEl = document.getElementById('trading-allocation');
+    if (allocationEl) {
+        const allocation = balanceEth * 0.5;
+        allocationEl.textContent = allocation.toFixed(4);
+    }
+}
+
+function updateWalletDashboardState(state) {
+    const states = ['wallet-not-connected', 'wallet-connected', 'wallet-loading', 'wallet-error'];
+    
+    // Hide all states
+    states.forEach(stateId => {
+        const element = document.getElementById(stateId);
+        if (element) element.style.display = 'none';
+    });
+    
+    // Show target state
+    const targetElement = document.getElementById(state);
+    if (targetElement) {
+        targetElement.style.display = 'block';
+        targetElement.classList.add('wallet-section-transition');
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Create or update toast notification
+    const toastContainer = document.querySelector('.toast-container') || createToastContainer();
+    
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type === 'success' ? 'success' : type === 'error' ? 'danger' : type === 'warning' ? 'warning' : 'info'} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    
+    toastContainer.appendChild(toast);
+    
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    // Remove toast element after it's hidden
+    toast.addEventListener('hidden.bs.toast', () => {
+        toast.remove();
+    });
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    container.style.zIndex = '1055';
+    document.body.appendChild(container);
+    return container;
+}
+
 // Initialize Server-Sent Events connection
 function initializeSSE() {
     if (sseConnection) {
@@ -955,6 +1342,91 @@ function exportThoughtLog() {
     window.URL.revokeObjectURL(url);
 }
 
+// Listen for wallet events to update dashboard state
+document.addEventListener('wallet:connected', (event) => {
+    console.log('🎉 Wallet connected - updating dashboard');
+    
+    // Update wallet display
+    const addressEl = document.getElementById('wallet-display-address');
+    const chainEl = document.getElementById('wallet-display-chain');
+    const headerStatus = document.getElementById('wallet-header-status');
+    
+    if (addressEl && event.detail.address) {
+        addressEl.textContent = `${event.detail.address.slice(0, 6)}...${event.detail.address.slice(-4)}`;
+        addressEl.title = event.detail.address;
+    }
+    
+    if (chainEl && event.detail.chainId) {
+        const chainInfo = window.walletManager.supportedChains[event.detail.chainId];
+        if (chainInfo) {
+            chainEl.textContent = chainInfo.name;
+            chainEl.className = 'badge bg-success';
+        } else {
+            chainEl.textContent = 'Unknown Network';
+            chainEl.className = 'badge bg-warning';
+        }
+    }
+    
+    if (headerStatus) {
+        headerStatus.innerHTML = `
+            <span class="badge bg-success">
+                <i class="bi bi-check-circle me-1"></i>
+                Wallet Connected
+            </span>
+        `;
+    }
+    
+    // Show connected state
+    updateWalletDashboardState('wallet-connected');
+    
+    // Load balance
+    if (window.walletManager) {
+        window.walletManager.getWalletBalance()
+            .then(balance => updateBalanceDisplay(balance))
+            .catch(error => console.error('Failed to load balance:', error));
+    }
+});
+
+document.addEventListener('wallet:disconnected', (event) => {
+    console.log('👋 Wallet disconnected - updating dashboard');
+    
+    const headerStatus = document.getElementById('wallet-header-status');
+    if (headerStatus) {
+        headerStatus.innerHTML = `
+            <span class="badge bg-warning">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                Wallet Not Connected
+            </span>
+        `;
+    }
+    
+    // Show not connected state
+    updateWalletDashboardState('wallet-not-connected');
+});
+
+document.addEventListener('wallet:chainChanged', (event) => {
+    console.log('⛓️ Chain changed - updating dashboard');
+    
+    const chainEl = document.getElementById('wallet-display-chain');
+    if (chainEl && event.detail.chainId) {
+        const chainInfo = window.walletManager.supportedChains[event.detail.chainId];
+        if (chainInfo) {
+            chainEl.textContent = chainInfo.name;
+            chainEl.className = 'badge bg-success';
+        } else {
+            chainEl.textContent = 'Unknown Network';
+            chainEl.className = 'badge bg-warning';
+        }
+    }
+    
+    // Refresh balance for new chain
+    if (window.walletManager && window.walletManager.isConnected) {
+        window.walletManager.getWalletBalance()
+            .then(balance => updateBalanceDisplay(balance))
+            .catch(error => console.error('Failed to load balance for new chain:', error));
+    }
+});
+
 // Initialize dashboard when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
     initPerformanceChart();
@@ -964,7 +1436,14 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('fast-lane-toggle-btn').onclick = toggleFastLane;
     document.getElementById('smart-lane-toggle-btn').onclick = toggleSmartLane;
     
-    console.log('Dashboard initialized with Smart Lane integration');
+    // Initialize wallet dashboard state on page load
+    if (window.walletManager && window.walletManager.isConnected) {
+        updateWalletDashboardState('wallet-connected');
+    } else {
+        updateWalletDashboardState('wallet-not-connected');
+    }
+    
+    console.log('Dashboard initialized with Smart Lane and Wallet integration');
 });
 
 // Handle page visibility changes to manage SSE connection

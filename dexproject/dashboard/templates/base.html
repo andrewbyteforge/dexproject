@@ -1,9 +1,14 @@
+{% load static %}
+
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}DEX Trading Bot{% endblock %}</title>
+    
+    <!-- CSRF Token -->
+    <meta name="csrf-token" content="{{ csrf_token }}">
     
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -119,6 +124,147 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
+        
+        /* Wallet Connection Styles */
+        .wallet-connection {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .wallet-button {
+            background: linear-gradient(135deg, var(--fast-lane-color), #00b894);
+            border: none;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .wallet-button:hover {
+            background: linear-gradient(135deg, #00b894, var(--fast-lane-color));
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 212, 170, 0.3);
+        }
+        
+        .wallet-button.disconnect {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+        }
+        
+        .wallet-button.disconnect:hover {
+            background: linear-gradient(135deg, #c82333, #a71e2a);
+            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+        }
+        
+        .wallet-info {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .wallet-address {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: var(--fast-lane-color);
+            font-weight: 500;
+        }
+        
+        .wallet-chain {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+        }
+        
+        .wallet-status-message {
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            z-index: 1050;
+            max-width: 300px;
+            padding: 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+            display: none;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .wallet-status-message.loading {
+            background: rgba(13, 110, 253, 0.1);
+            border: 1px solid rgba(13, 110, 253, 0.3);
+            color: #0d6efd;
+        }
+        
+        .wallet-status-message.success {
+            background: rgba(25, 135, 84, 0.1);
+            border: 1px solid rgba(25, 135, 84, 0.3);
+            color: #198754;
+        }
+        
+        .wallet-status-message.error {
+            background: rgba(220, 53, 69, 0.1);
+            border: 1px solid rgba(220, 53, 69, 0.3);
+            color: #dc3545;
+        }
+        
+        .wallet-status-message.warning {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            color: #ffc107;
+        }
+        
+        .wallet-dropdown {
+            min-width: 280px;
+        }
+        
+        .wallet-dropdown .dropdown-header {
+            background: rgba(0, 212, 170, 0.1);
+            color: var(--fast-lane-color);
+            font-weight: 600;
+            border-bottom: 1px solid rgba(0, 212, 170, 0.2);
+        }
+        
+        .chain-switch-btn {
+            font-size: 0.8rem;
+            padding: 0.25rem 0.5rem;
+            margin-left: 0.5rem;
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .wallet-connection {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            
+            .wallet-info {
+                font-size: 0.8rem;
+            }
+            
+            .wallet-status-message {
+                right: 10px;
+                left: 10px;
+                max-width: none;
+            }
+        }
     </style>
     
     {% block extra_head %}{% endblock %}
@@ -151,20 +297,95 @@
                     </li>
                 </ul>
                 
-                <!-- Real-time status indicator -->
-                <div class="navbar-text me-3">
-                    <span class="status-indicator status-operational real-time-indicator" id="connection-status"></span>
-                    <span id="connection-text">Connected</span>
+                <!-- Wallet Connection Section -->
+                <div class="wallet-connection">
+                    <!-- Real-time status indicator -->
+                    <div class="navbar-text me-3">
+                        <span class="status-indicator status-operational real-time-indicator" id="connection-status"></span>
+                        <span id="connection-text">Connected</span>
+                        <span class="status-indicator" id="wallet-nav-indicator"></span>
+                        <span id="wallet-status">Not Connected</span>
+                    </div>
+                    
+                    <!-- Wallet Connect Button (shown when not connected) -->
+                    <button 
+                        id="wallet-connect-btn" 
+                        class="wallet-button" 
+                        data-action="connect-wallet"
+                        title="Connect your Web3 wallet"
+                    >
+                        <i class="bi bi-wallet2"></i>
+                        Connect Wallet
+                    </button>
+                    
+                    <!-- Wallet Info (shown when connected) -->
+                    <div id="wallet-info" class="wallet-info" style="display: none;">
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-wallet2 me-2"></i>
+                            <div class="d-flex flex-column">
+                                <span id="wallet-address" class="wallet-address">0x0000...0000</span>
+                                <span id="wallet-chain" class="wallet-chain badge bg-secondary">Unknown</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Wallet Dropdown (shown when connected) -->
+                    <div class="dropdown" id="wallet-dropdown" style="display: none;">
+                        <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-gear"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end wallet-dropdown">
+                            <li><h6 class="dropdown-header">Wallet Management</h6></li>
+                            <li>
+                                <a class="dropdown-item" href="#" data-action="switch-chain" data-chain-id="84532">
+                                    <i class="bi bi-arrow-repeat me-2"></i>
+                                    Switch to Base Sepolia
+                                    <span class="badge bg-primary chain-switch-btn">Testnet</span>
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="#" data-action="switch-chain" data-chain-id="8453">
+                                    <i class="bi bi-arrow-repeat me-2"></i>
+                                    Switch to Base Mainnet
+                                    <span class="badge bg-success chain-switch-btn">Mainnet</span>
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <a class="dropdown-item" href="{% url 'dashboard:settings' %}">
+                                    <i class="bi bi-gear me-2"></i>Wallet Settings
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <a class="dropdown-item text-danger" href="#" data-action="disconnect-wallet">
+                                    <i class="bi bi-box-arrow-right me-2"></i>Disconnect Wallet
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <!-- Disconnect Button (alternative to dropdown) -->
+                    <button 
+                        id="wallet-disconnect-btn" 
+                        class="wallet-button disconnect" 
+                        data-action="disconnect-wallet"
+                        style="display: none;"
+                        title="Disconnect wallet"
+                    >
+                        <i class="bi bi-box-arrow-right"></i>
+                        Disconnect
+                    </button>
                 </div>
                 
                 <!-- User menu -->
-                <div class="dropdown">
+                <div class="dropdown ms-3">
                     <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown">
                         <i class="bi bi-person-circle me-1"></i>
                         {% if user.is_authenticated %}{{ user.username }}{% else %}Demo User{% endif %}
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="#"><i class="bi bi-gear me-1"></i>Settings</a></li>
+                        <li><a class="dropdown-item" href="{% url 'dashboard:settings' %}"><i class="bi bi-gear me-1"></i>Settings</a></li>
                         <li><hr class="dropdown-divider"></li>
                         <li><a class="dropdown-item" href="/admin/"><i class="bi bi-shield-check me-1"></i>Admin</a></li>
                     </ul>
@@ -172,6 +393,9 @@
             </div>
         </div>
     </nav>
+    
+    <!-- Wallet Status Message -->
+    <div id="wallet-status-message" class="wallet-status-message"></div>
     
     <!-- Main content area -->
     <div class="container-fluid px-0">
@@ -192,19 +416,19 @@
                     
                     <hr class="my-3">
                     
-                    <h6 class="text-muted mb-3">PERFORMANCE</h6>
+                    <h6 class="text-muted mb-3">STATUS</h6>
                     <div class="small">
-                        <div class="d-flex justify-content-between">
-                            <span>Execution Time</span>
-                            <span id="sidebar-execution-time" class="fast-lane-accent">78ms</span>
+                        <div class="mb-2">
+                            <span class="status-indicator status-operational"></span>
+                            Engine: Online
                         </div>
-                        <div class="d-flex justify-content-between">
-                            <span>Success Rate</span>
-                            <span id="sidebar-success-rate" class="text-success">94%</span>
+                        <div class="mb-2">
+                            <span class="status-indicator status-operational"></span>
+                            Data: Live
                         </div>
-                        <div class="d-flex justify-content-between">
-                            <span>Status</span>
-                            <span id="sidebar-status" class="text-success">Demo</span>
+                        <div class="mb-2">
+                            <span class="status-indicator" id="sidebar-wallet-status"></span>
+                            <span id="sidebar-wallet-text">Wallet: Not Connected</span>
                         </div>
                     </div>
                 </div>
@@ -212,26 +436,8 @@
             
             <!-- Main content -->
             <div class="col-md-10 main-content">
-                <div class="container-fluid p-4">
-                    
-                    <!-- Messages -->
-                    {% if messages %}
-                        <div class="row mb-4">
-                            <div class="col-12">
-                                {% for message in messages %}
-                                    <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show" role="alert">
-                                        {{ message }}
-                                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                                    </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-                    {% endif %}
-                    
-                    <!-- Page content -->
-                    {% block content %}{% endblock %}
-                    
-                </div>
+                {% block content %}
+                {% endblock %}
             </div>
         </div>
     </div>
@@ -239,185 +445,64 @@
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     
-    <!-- SSE Bridge Script -->
+    <!-- Wallet Connection JavaScript -->
+    <script src="{% static 'js/wallet-connection.js' %}"></script>
+    
+    <!-- Custom JavaScript -->
     <script>
-        class SSEBridge {
-            constructor() {
-                this.eventSource = null;
-                this.reconnectAttempts = 0;
-                this.maxReconnectAttempts = 5;
-                this.reconnectDelay = 2000;
-                this.isConnected = false;
-                
-                this.connect();
-            }
-            
-            connect() {
-                try {
-                    this.eventSource = new EventSource('/dashboard/metrics/stream/');
-                    
-                    this.eventSource.onopen = () => {
-                        console.log('SSE connection opened');
-                        this.isConnected = true;
-                        this.reconnectAttempts = 0;
-                        this.updateConnectionStatus('connected');
-                    };
-                    
-                    this.eventSource.onmessage = (event) => {
-                        try {
-                            const data = JSON.parse(event.data);
-                            this.handleMessage(data);
-                        } catch (e) {
-                            console.error('Failed to parse SSE message:', e);
-                        }
-                    };
-                    
-                    this.eventSource.onerror = () => {
-                        console.warn('SSE connection error');
-                        this.isConnected = false;
-                        this.updateConnectionStatus('error');
-                        this.handleReconnect();
-                    };
-                    
-                } catch (e) {
-                    console.error('Failed to establish SSE connection:', e);
-                    this.handleReconnect();
-                }
-            }
-            
-            handleMessage(data) {
-                switch (data.type) {
-                    case 'connection':
-                        console.log('SSE connection confirmed');
-                        break;
-                        
-                    case 'metrics_update':
-                        this.updateMetrics(data.metrics);
-                        this.updateStatus(data.status);
-                        break;
-                        
-                    case 'error':
-                        console.warn('SSE error message:', data.message);
-                        this.updateConnectionStatus('degraded');
-                        break;
-                        
-                    default:
-                        console.log('Unknown SSE message type:', data.type);
-                }
-            }
-            
-            updateMetrics(metrics) {
-                if (!metrics) return;
-                
-                // Update execution time
-                const execTimeEl = document.getElementById('sidebar-execution-time');
-                if (execTimeEl && metrics.execution_time_ms) {
-                    execTimeEl.textContent = `${metrics.execution_time_ms}ms`;
-                }
-                
-                // Update success rate
-                const successRateEl = document.getElementById('sidebar-success-rate');
-                if (successRateEl && metrics.success_rate) {
-                    successRateEl.textContent = `${metrics.success_rate}%`;
-                }
-                
-                // Update main dashboard metrics (if elements exist)
-                this.updateElementById('execution-time-metric', `${metrics.execution_time_ms}ms`);
-                this.updateElementById('success-rate-metric', `${metrics.success_rate}%`);
-                this.updateElementById('trades-per-minute-metric', `${metrics.trades_per_minute}/min`);
-                this.updateElementById('risk-cache-hits-metric', `${metrics.risk_cache_hits}%`);
-            }
-            
-            updateStatus(status) {
-                if (!status) return;
-                
-                const statusEl = document.getElementById('sidebar-status');
-                if (statusEl) {
-                    statusEl.textContent = status.status;
-                    statusEl.className = status.status === 'OPERATIONAL' ? 'text-success' : 'text-warning';
-                }
-            }
-            
-            updateConnectionStatus(status) {
-                const indicator = document.getElementById('connection-status');
-                const text = document.getElementById('connection-text');
-                
-                if (indicator && text) {
-                    indicator.className = `status-indicator status-${status === 'connected' ? 'operational' : status === 'degraded' ? 'degraded' : 'error'} real-time-indicator`;
-                    text.textContent = status === 'connected' ? 'Connected' : status === 'degraded' ? 'Degraded' : 'Disconnected';
-                }
-            }
-            
-            updateElementById(id, value) {
-                const element = document.getElementById(id);
-                if (element) {
-                    element.textContent = value;
-                }
-            }
-            
-            handleReconnect() {
-                if (this.reconnectAttempts < this.maxReconnectAttempts) {
-                    this.reconnectAttempts++;
-                    console.log(`Attempting to reconnect SSE (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-                    
-                    setTimeout(() => {
-                        this.connect();
-                    }, this.reconnectDelay * this.reconnectAttempts);
-                } else {
-                    console.error('Max SSE reconnection attempts reached');
-                    this.updateConnectionStatus('error');
-                }
-            }
-            
-            disconnect() {
-                if (this.eventSource) {
-                    this.eventSource.close();
-                    this.isConnected = false;
-                }
-            }
-        }
-        
-        // Quick action functions
+        // Global functions for dashboard interaction
         function toggleFastLane() {
-            setTradingMode('FAST_LANE');
+            console.log('🚀 Fast Lane toggled');
+            // Implementation will be added based on existing dashboard functionality
         }
         
         function toggleSmartLane() {
-            alert('Smart Lane is coming in Phase 5! For now, please use Fast Lane.');
+            console.log('🧠 Smart Lane toggled');
+            // Implementation will be added based on existing dashboard functionality
         }
         
-        function setTradingMode(mode) {
-            fetch('/dashboard/api/set-mode/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
-                },
-                body: JSON.stringify({ mode: mode })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    console.log(`Switched to ${mode}`);
-                } else {
-                    console.error('Failed to switch mode:', data.error);
-                }
-            })
-            .catch(error => {
-                console.error('Error switching mode:', error);
-            });
-        }
-        
-        // Initialize SSE connection when page loads
-        document.addEventListener('DOMContentLoaded', function() {
-            window.ssebridge = new SSEBridge();
+        // Update sidebar wallet status
+        document.addEventListener('wallet:connected', (event) => {
+            const sidebarStatus = document.getElementById('sidebar-wallet-status');
+            const sidebarText = document.getElementById('sidebar-wallet-text');
+            
+            if (sidebarStatus) {
+                sidebarStatus.className = 'status-indicator status-operational';
+            }
+            
+            if (sidebarText) {
+                sidebarText.textContent = 'Wallet: Connected';
+            }
         });
         
-        // Clean up SSE connection when page unloads
-        window.addEventListener('beforeunload', function() {
-            if (window.ssebridge) {
-                window.ssebridge.disconnect();
+        document.addEventListener('wallet:disconnected', (event) => {
+            const sidebarStatus = document.getElementById('sidebar-wallet-status');
+            const sidebarText = document.getElementById('sidebar-wallet-text');
+            
+            if (sidebarStatus) {
+                sidebarStatus.className = 'status-indicator status-error';
             }
+            
+            if (sidebarText) {
+                sidebarText.textContent = 'Wallet: Not Connected';
+            }
+        });
+        
+        // Handle wallet dropdown visibility
+        document.addEventListener('wallet:connected', () => {
+            const walletInfo = document.getElementById('wallet-info');
+            const walletDropdown = document.getElementById('wallet-dropdown');
+            
+            if (walletInfo) walletInfo.style.display = 'flex';
+            if (walletDropdown) walletDropdown.style.display = 'block';
+        });
+        
+        document.addEventListener('wallet:disconnected', () => {
+            const walletInfo = document.getElementById('wallet-info');
+            const walletDropdown = document.getElementById('wallet-dropdown');
+            
+            if (walletInfo) walletInfo.style.display = 'none';
+            if (walletDropdown) walletDropdown.style.display = 'none';
         });
     </script>
     
