@@ -1,10 +1,11 @@
 """
-Enhanced Django settings for dexproject with Web3 integration
+Enhanced Django settings for dexproject with Web3 integration and SIWE support
 
-This settings file includes Web3 configuration, testnet support, and 
-enhanced trading engine settings for both development and production.
+This settings file includes Web3 configuration, testnet support, SIWE wallet
+authentication, and enhanced trading engine settings for both development 
+and production.
 
-UPDATED: Now includes Fast Lane engine integration settings.
+UPDATED: Phase 5.1B - Complete SIWE wallet authentication integration
 
 File: dexproject/dexproject/settings.py
 """
@@ -70,6 +71,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'wallet.auth.SIWESessionMiddleware',  # SIWE session validation middleware
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -94,6 +96,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'dexproject.wsgi.application'
 ASGI_APPLICATION = 'dexproject.asgi.application'
+
+# =============================================================================
+# AUTHENTICATION CONFIGURATION
+# =============================================================================
+
+# Authentication backends - Add SIWE support while maintaining Django auth
+AUTHENTICATION_BACKENDS = [
+    'wallet.auth.SIWEAuthenticationBackend',  # SIWE authentication
+    'django.contrib.auth.backends.ModelBackend',  # Default Django auth
+]
 
 # =============================================================================
 # DATABASE CONFIGURATION
@@ -232,7 +244,7 @@ SSE_MAX_ITERATIONS = int(os.getenv('SSE_MAX_ITERATIONS', '150'))  # Allow longer
 # BLOCKCHAIN RPC CONFIGURATION 
 # =============================================================================
 
-# API Keys
+# API Keys for Web3 providers
 ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY', '')
 INFURA_PROJECT_ID = os.getenv('INFURA_PROJECT_ID', '')
 ANKR_API_KEY = os.getenv('ANKR_API_KEY', '')
@@ -274,10 +286,10 @@ else:
     BASE_UNISWAP_V3_FACTORY = '0x33128a8fC17869897dcE68Ed026d694621f6FDfD'
 
 # =============================================================================
-# WALLET CONFIGURATION
+# WALLET AND SIWE CONFIGURATION
 # =============================================================================
 
-# Wallet Management
+# Legacy wallet management (Phase 5.1A and earlier)
 WALLET_PRIVATE_KEY = os.getenv('WALLET_PRIVATE_KEY', '')  # Private key for trading wallet
 WALLET_DAILY_LIMIT_USD = Decimal(os.getenv('WALLET_DAILY_LIMIT', '500.0' if TESTNET_MODE else '5000.0'))
 WALLET_TX_LIMIT_USD = Decimal(os.getenv('WALLET_TX_LIMIT', '50.0' if TESTNET_MODE else '500.0'))
@@ -285,6 +297,52 @@ WALLET_TX_LIMIT_USD = Decimal(os.getenv('WALLET_TX_LIMIT', '50.0' if TESTNET_MOD
 # Hardware wallet support (future)
 HARDWARE_WALLET_SUPPORT = os.getenv('HARDWARE_WALLET_SUPPORT', 'False').lower() == 'true'
 REQUIRE_HARDWARE_WALLET = os.getenv('REQUIRE_HARDWARE_WALLET', 'False').lower() == 'true'
+
+# Phase 5.1B: SIWE (Sign-In with Ethereum) Configuration
+SIWE_DOMAIN = os.getenv('SIWE_DOMAIN', 'localhost:8000')
+SIWE_STATEMENT = "Sign in to DEX Auto-Trading Bot"
+SIWE_SESSION_EXPIRES_HOURS = int(os.getenv('SIWE_SESSION_EXPIRES_HOURS', '24'))
+
+# Supported blockchain networks for wallet integration
+SUPPORTED_CHAINS_CONFIG = {
+    84532: {  # Base Sepolia (Development)
+        'name': 'Base Sepolia',
+        'rpc_url': 'https://sepolia.base.org',
+        'is_testnet': True,
+        'native_currency': 'ETH',
+        'explorer_url': 'https://sepolia.basescan.org'
+    },
+    1: {  # Ethereum Mainnet
+        'name': 'Ethereum Mainnet', 
+        'rpc_url': f'https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}' if ALCHEMY_API_KEY else 'https://ethereum.publicnode.com',
+        'is_testnet': False,
+        'native_currency': 'ETH',
+        'explorer_url': 'https://etherscan.io'
+    },
+    8453: {  # Base Mainnet
+        'name': 'Base Mainnet',
+        'rpc_url': f'https://base-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}' if ALCHEMY_API_KEY else 'https://mainnet.base.org',
+        'is_testnet': False,
+        'native_currency': 'ETH', 
+        'explorer_url': 'https://basescan.org'
+    }
+}
+
+# Default chain for development
+DEFAULT_CHAIN_ID = 84532  # Base Sepolia
+
+# Wallet Security Settings
+WALLET_MAX_DAILY_LIMIT_USD = Decimal(os.getenv('WALLET_MAX_DAILY_LIMIT_USD', '10000'))
+WALLET_MAX_TRANSACTION_LIMIT_USD = Decimal(os.getenv('WALLET_MAX_TRANSACTION_LIMIT_USD', '1000'))
+WALLET_REQUIRE_CONFIRMATION = os.getenv('WALLET_REQUIRE_CONFIRMATION', 'True').lower() == 'true'
+
+# Balance refresh settings
+WALLET_BALANCE_CACHE_MINUTES = int(os.getenv('WALLET_BALANCE_CACHE_MINUTES', '5'))
+WALLET_BALANCE_STALE_MINUTES = int(os.getenv('WALLET_BALANCE_STALE_MINUTES', '10'))
+
+# Web3 provider settings
+WEB3_PROVIDER_TIMEOUT = int(os.getenv('WEB3_PROVIDER_TIMEOUT', '30'))
+WEB3_MAX_RETRIES = int(os.getenv('WEB3_MAX_RETRIES', '3'))
 
 # =============================================================================
 # HONEYPOT AND SIMULATION CONFIGURATION
@@ -369,6 +427,16 @@ LOGGING = {
             'level': LOG_LEVEL,
             'propagate': False,
         },
+        'wallet.auth': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',  # Important auth events
+            'propagate': False,
+        },
+        'wallet.services': {
+            'handlers': ['console', 'file'],
+            'level': LOG_LEVEL,
+            'propagate': False,
+        },
         'analytics': {
             'handlers': ['console', 'file'],
             'level': LOG_LEVEL,
@@ -400,6 +468,7 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.TokenAuthentication',
+        # Note: SIWE authentication is handled by custom backend, not DRF
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -416,22 +485,89 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/hour',
-        'user': '1000/hour'
-    }
+        'user': '1000/hour',
+        'wallet_auth': '200/hour',  # Special rate for wallet auth endpoints
+    },
+    # SIWE-specific settings
+    'DEFAULT_METADATA_CLASS': 'rest_framework.metadata.SimpleMetadata',
+    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
 }
 
 # =============================================================================
 # CORS CONFIGURATION
 # =============================================================================
 
+# CORS settings for wallet integration
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React development server
     "http://127.0.0.1:3000",
     "http://localhost:8000",  # Django development server
     "http://127.0.0.1:8000",
+    "http://localhost:3001",  # Alternative frontend port
+    "http://127.0.0.1:3001",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Allow CORS for wallet connection headers
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-wallet-address',  # Custom header for wallet identification
+    'x-chain-id',        # Custom header for chain identification
+]
+
+# =============================================================================
+# SESSION CONFIGURATION FOR SIWE
+# =============================================================================
+
+# Session settings optimized for wallet authentication
+SESSION_COOKIE_AGE = 60 * 60 * 24  # 24 hours (matches SIWE session)
+SESSION_COOKIE_SECURE = not DEBUG  # True in production
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_SAVE_EVERY_REQUEST = False  # Don't extend session on every request
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+# Use database sessions for better security with wallet auth
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+
+# =============================================================================
+# SECURITY SETTINGS FOR WALLET INTEGRATION
+# =============================================================================
+
+# CSRF settings for API endpoints
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+# Exempt wallet auth endpoints from CSRF (they use signature verification)
+CSRF_EXEMPT_URLS = [
+    '/api/wallet/auth/siwe/generate/',
+    '/api/wallet/auth/siwe/authenticate/',
+]
+
+# Additional security headers
+if not DEBUG:
+    # Production security settings
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    
+    # Force HTTPS in production
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 # =============================================================================
 # INTERNATIONALIZATION
@@ -465,24 +601,6 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # =============================================================================
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# =============================================================================
-# SECURITY SETTINGS
-# =============================================================================
-
-if not DEBUG:
-    # Production security settings
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = 'DENY'
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    
-    # Force HTTPS in production
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
 
 # =============================================================================
 # DEVELOPMENT-SPECIFIC SETTINGS
@@ -552,3 +670,7 @@ if DEBUG:
     print(f"   Smart Lane: {'Enabled' if SMART_LANE_ENABLED else 'Phase 5 Pending'}")
     print(f"   Smart Lane Mock Mode: {'Yes' if SMART_LANE_MOCK_MODE else 'No'}")
     print(f"   SSE Max Iterations: {SSE_MAX_ITERATIONS}")
+    print(f"   SIWE Authentication: Enabled")
+    print(f"   SIWE Domain: {SIWE_DOMAIN}")
+    print(f"   SIWE Session Hours: {SIWE_SESSION_EXPIRES_HOURS}")
+    print(f"   Wallet Auth Enabled: Phase 5.1B Ready")
