@@ -1,12 +1,10 @@
 """
-Dashboard URL Configuration
+Updated Dashboard URL Configuration with Wallet Integration
 
-Defines URL patterns for the dashboard application including trading sessions,
-configuration management, and real-time updates.
+Enhanced URL patterns to include wallet management, fund allocation,
+and trading control endpoints.
 
-FIXED: Updated URL names to match template expectations and added missing endpoints.
-
-Path: dashboard/urls.py
+File: dexproject/dashboard/urls.py
 """
 
 from django.urls import path
@@ -30,7 +28,7 @@ urlpatterns = [
    
     # =========================================================================
     # REAL-TIME DATA STREAMS (SERVER-SENT EVENTS)
-    # FIXED: Added missing metrics stream endpoint
+    # Enhanced with wallet data integration
     # =========================================================================
     
     # Server-sent events endpoint for streaming real-time trading metrics
@@ -41,52 +39,88 @@ urlpatterns = [
     # RESTful endpoints for bot configuration CRUD operations
     # =========================================================================
     
-    # Configuration management API endpoints
-    path('api/save-configuration/', views.save_configuration, name='save_configuration'),
-    path('api/load-configuration/', views.load_configuration, name='load_configuration'),
-    path('api/delete-configuration/', views.delete_configuration, name='delete_configuration'),
-    path('api/get-configurations/', views.get_configurations, name='get_configurations'),
-   
+    # Configuration CRUD operations
+    path('api/configurations/', views.get_configurations, name='api_get_configurations'),
+    path('api/configurations/save/', views.save_configuration, name='api_save_configuration'),
+    path('api/configurations/<int:config_id>/', views.get_configuration, name='api_get_configuration'),
+    path('api/configurations/<int:config_id>/delete/', views.delete_configuration, name='api_delete_configuration'),
+    path('api/configurations/<int:config_id>/load/', views.load_configuration, name='api_load_configuration'),
+    
+    # Configuration management pages
+    path('configs/', views.configuration_list, name='configuration_list'),
+    path('configs/<int:config_id>/', views.configuration_summary, name='configuration_summary'),
+    path('configs/<int:config_id>/delete/', views.delete_configuration, name='delete_configuration'),
+
     # =========================================================================
-    # SESSION MANAGEMENT API ENDPOINTS
-    # Trading session lifecycle management endpoints
+    # WALLET MANAGEMENT AND FUND ALLOCATION API ENDPOINTS
+    # NEW: Wallet integration and fund allocation management
     # =========================================================================
     
-    # Session management API endpoints
-    path('api/start-session/', views.start_session, name='start_session'),
-    path('api/stop-session/', views.stop_session, name='stop_session'),
-    path('api/session-status/', views.get_session_status, name='session_status'),
-   
+    # Wallet status and information
+    path('api/wallet/status/', views.api_wallet_status, name='api_wallet_status'),
+    
+    # Fund allocation management
+    path('api/allocation/save/', views.api_save_allocation_settings, name='api_save_allocation_settings'),
+    path('api/allocation/get/', views.api_get_allocation_settings, name='api_get_allocation_settings'),
+    path('api/allocation/reset/', views.api_reset_allocation_settings, name='api_reset_allocation_settings'),
+    
+    # Trading control
+    path('api/trading/start/', views.api_start_trading, name='api_start_trading'),
+    path('api/trading/stop/', views.api_stop_trading, name='api_stop_trading'),
+    path('api/trading/emergency-stop/', views.api_emergency_stop, name='api_emergency_stop'),
+    path('api/trading/status/', views.api_trading_status, name='api_trading_status'),
+    
     # =========================================================================
-    # PERFORMANCE METRICS API ENDPOINTS
-    # Real-time trading performance and analytics endpoints
+    # ENGINE AND PERFORMANCE API ENDPOINTS
+    # Enhanced with wallet-aware metrics
     # =========================================================================
     
-    # Performance metrics API endpoint
-    path('api/performance-metrics/', views.get_performance_metrics, name='performance_metrics'),
-   
+    # Engine status and control
+    path('api/engine/status/', views.api_engine_status, name='api_engine_status'),
+    path('api/engine/performance/', views.api_performance_metrics, name='api_performance_metrics'),
+    path('api/engine/mode/<str:mode>/', views.api_set_trading_mode, name='api_set_trading_mode'),
+    
     # =========================================================================
-    # TRADING MODE MANAGEMENT
-    # Fast Lane vs Smart Lane mode switching endpoint
-    # FIXED: Updated URL name to match template expectations
+    # TRADING SESSION MANAGEMENT
+    # Enhanced with wallet integration
     # =========================================================================
     
-    # FIXED: Changed name from 'api_set_mode' to 'api_set_trading_mode' to match template
-    # Template was looking for {% url 'dashboard:api_set_trading_mode' %}
-    path('api/set-mode/', views.api_set_trading_mode, name='api_set_trading_mode'),
-   
+    # Session monitoring
+    path('sessions/', views.session_list, name='session_list'),
+    path('sessions/<int:session_id>/', views.session_detail, name='session_detail'),
+    path('sessions/active/', views.active_sessions, name='active_sessions'),
+    
     # =========================================================================
-    # SMART LANE SPECIFIC URLS
-    # Smart Lane dashboard, configuration, and analysis endpoints
+    # ANALYTICS AND REPORTING
+    # Enhanced with wallet P&L tracking
     # =========================================================================
     
-    # Smart Lane URLs
-    path('smart-lane/', views.smart_lane_dashboard, name='smart_lane_dashboard'),
-    path('smart-lane/demo/', views.smart_lane_demo, name='smart_lane_demo'),
-    path('smart-lane/config/', views.smart_lane_config, name='smart_lane_config'),
-    path('smart-lane/analyze/', views.smart_lane_analyze, name='smart_lane_analyze'),
-    path('api/smart-lane/analyze/', views.api_smart_lane_analyze, name='api_smart_lane_analyze'),
-    path('api/smart-lane/thought-log/<str:analysis_id>/', views.api_get_thought_log, name='api_get_thought_log'),
-    # Add this temporary URL pattern to test
-path('api/test/', lambda request: JsonResponse({'test': 'works'}), name='test_api'),
+    # Analytics endpoints
+    path('api/analytics/performance/', views.api_performance_analytics, name='api_performance_analytics'),
+    path('api/analytics/pnl/', views.api_pnl_analytics, name='api_pnl_analytics'),
+    path('api/analytics/risk/', views.api_risk_analytics, name='api_risk_analytics'),
+    
+    # =========================================================================
+    # HEALTH AND MONITORING
+    # System health with wallet service status
+    # =========================================================================
+    
+    # Health check endpoint
+    path('health/', views.health_check, name='health_check'),
+    
+    # =========================================================================
+    # DEVELOPMENT AND DEBUG ENDPOINTS
+    # Testing and debugging tools
+    # =========================================================================
+    
+    # Debug endpoints
+    path('debug/', views.debug_dashboard, name='debug_dashboard'),
+    path('debug/templates/', views.debug_templates, name='debug_templates'),
+    path('debug/engine/', views.engine_debug, name='engine_debug'),
+    path('test/', views.simple_test, name='simple_test'),
+    path('minimal/', views.minimal_dashboard, name='minimal_dashboard'),
 ]
+
+# Error handlers for better user experience
+handler404 = 'dashboard.views.custom_404'
+handler500 = 'dashboard.views.custom_500'

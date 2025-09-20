@@ -1378,3 +1378,395 @@ class SystemStatus(TimestampMixin):
         except Exception as e:
             logger.error(f"Error saving SystemStatus: {e}", exc_info=True)
             raise
+
+
+"""
+Fund Allocation Model Addition
+
+Add this to your existing dashboard/models.py file to enable persistent
+storage of user fund allocation settings.
+
+File: dexproject/dashboard/models.py (addition)
+"""
+
+import uuid
+from decimal import Decimal
+from typing import Dict, Any
+
+from django.db import models
+from django.contrib.auth.models import User
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils import timezone
+from shared.models.mixins import TimestampMixin
+
+
+class FundAllocation(TimestampMixin):
+    """
+    User fund allocation settings for trading bot.
+    
+    Stores user preferences for how much of their wallet balance
+    should be allocated for trading, including safety settings
+    and risk management parameters.
+    """
+    
+    class AllocationMethod(models.TextChoices):
+        PERCENTAGE = 'PERCENTAGE', 'Percentage of Balance'
+        FIXED = 'FIXED', 'Fixed Amount'
+    
+    class RiskLevel(models.TextChoices):
+        CONSERVATIVE = 'CONSERVATIVE', 'Conservative'
+        MODERATE = 'MODERATE', 'Moderate'
+        AGGRESSIVE = 'AGGRESSIVE', 'Aggressive'
+    
+    # Identification
+    allocation_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        help_text="Unique allocation identifier"
+    )
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='fund_allocation',
+        help_text="User who owns this allocation setting"
+    )
+    
+    # Primary Allocation Settings
+    allocation_method = models.CharField(
+        max_length=15,
+        choices=AllocationMethod.choices,
+        default=AllocationMethod.PERCENTAGE,
+        help_text="Method for determining trading allocation"
+    )
+    
+    allocation_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('10.00'),
+        validators=[MinValueValidator(Decimal('1.00')), MaxValueValidator(Decimal('50.00'))],
+        help_text="Percentage of available balance to allocate (1-50%)"
+    )
+    
+    allocation_fixed_amount = models.DecimalField(
+        max_digits=18,
+        decimal_places=8,
+        default=Decimal('0.10000000'),
+        validators=[MinValueValidator(Decimal('0.00100000'))],
+        help_text="Fixed amount in ETH to allocate for trading"
+    )
+    
+    # Safety and Risk Management
+    daily_spending_limit = models.DecimalField(
+        max_digits=18,
+        decimal_places=8,
+        default=Decimal('1.00000000'),
+        validators=[MinValueValidator(Decimal('0.00100000'))],
+        help_text="Maximum ETH that can be spent per day"
+    )
+    
+    minimum_balance_reserve = models.DecimalField(
+        max_digits=18,
+        decimal_places=8,
+        default=Decimal('0.05000000'),
+        validators=[MinValueValidator(Decimal('0.00100000'))],
+        help_text="Minimum ETH balance to always keep in wallet"
+    )
+    
+    # Trading Preferences
+    auto_rebalance_enabled = models.BooleanField(
+        default=True,
+        help_text="Automatically rebalance allocation after successful trades"
+    )
+    
+    stop_loss_enabled = models.BooleanField(
+        default=True,
+        help_text="Enable automatic stop-loss protection"
+    )
+    
+    stop_loss_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('5.00'),
+        validators=[MinValueValidator(Decimal('1.00')), MaxValueValidator(Decimal('25.00'))],
+        help_text="Stop loss percentage (1-25%)"
+    )
+    
+    # Risk Assessment
+    risk_level = models.CharField(
+        max_length=15,
+        choices=RiskLevel.choices,
+        default=RiskLevel.CONSERVATIVE,
+        help_text="Calculated risk level based on allocation settings"
+    )
+    
+    # Usage Tracking
+    total_allocated_eth = models.DecimalField(
+        max_digits=18,
+        decimal_places=8,
+        default=Decimal('0.00000000'),
+        help_text="Total ETH currently allocated for trading"
+    )
+    
+    daily_spent_today = models.DecimalField(
+        max_digits=18,
+        decimal_places=8,
+        default=Decimal('0.00000000'),
+        help_text="ETH spent today (resets daily)"
+    )
+    
+    last_daily_reset = models.DateField(
+        default=timezone.now,
+        help_text="Last date when daily spending was reset"
+    )
+    
+    # Status and Activity
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether allocation settings are currently active"
+    )
+    
+    last_modified_by_user = models.DateTimeField(
+        auto_now=True,
+        help_text="When user last modified these settings"
+    )
+    
+    # Metadata
+    settings_version = models.PositiveIntegerField(
+        default=1,
+        help_text="Version number for settings schema"
+    )
+    
+    notes = models.TextField(
+        blank=True,
+        help_text="User notes about allocation strategy"
+    )
+    
+    class Meta:
+        db_table = 'dashboard_fund_allocation'
+        verbose_name = 'Fund Allocation'
+        verbose_name_plural = 'Fund Allocations'
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['is_active']),
+            models.Index(fields=['last_daily_reset']),
+        ]
+    
+    def __str__(self) -> str:
+        """String representation of fund allocation."""
+        if self.allocation_method == self.AllocationMethod.PERCENTAGE:
+            return f"{self.user.username}: {self.allocation_percentage}% allocation"
+        else:
+            return f"{self.user.username}: {self.allocation_fixed_amount} ETH allocation"
+    
+    def save(self, *args, **kwargs):
+        """Override save to automatically calculate risk level and reset daily spending."""
+        # Update risk level based on allocation settings
+        self.risk_level = self.calculate_risk_level()
+        
+        # Reset daily spending if it's a new day
+        today = timezone.now().date()
+        if self.last_daily_reset < today:
+            self.daily_spent_today = Decimal('0.00000000')
+            self.last_daily_reset = today
+        
+        super().save(*args, **kwargs)
+    
+    def calculate_risk_level(self) -> str:
+        """
+        Calculate risk level based on allocation percentage.
+        
+        Returns:
+            Risk level string
+        """
+        if self.allocation_method == self.AllocationMethod.PERCENTAGE:
+            percentage = float(self.allocation_percentage)
+        else:
+            # For fixed amounts, assume a reasonable balance to calculate percentage
+            # This is an approximation and should be updated with actual balance
+            assumed_balance = 1.0  # 1 ETH
+            percentage = (float(self.allocation_fixed_amount) / assumed_balance) * 100
+        
+        if percentage <= 5:
+            return self.RiskLevel.CONSERVATIVE
+        elif percentage <= 20:
+            return self.RiskLevel.MODERATE
+        else:
+            return self.RiskLevel.AGGRESSIVE
+    
+    def get_daily_remaining_limit(self) -> Decimal:
+        """
+        Calculate remaining daily spending limit.
+        
+        Returns:
+            Remaining ETH that can be spent today
+        """
+        # Reset if it's a new day
+        today = timezone.now().date()
+        if self.last_daily_reset < today:
+            self.daily_spent_today = Decimal('0.00000000')
+            self.last_daily_reset = today
+            self.save(update_fields=['daily_spent_today', 'last_daily_reset'])
+        
+        return max(Decimal('0.00000000'), self.daily_spending_limit - self.daily_spent_today)
+    
+    def can_spend_amount(self, amount: Decimal) -> bool:
+        """
+        Check if an amount can be spent within daily limits.
+        
+        Args:
+            amount: Amount in ETH to check
+            
+        Returns:
+            True if amount can be spent, False otherwise
+        """
+        remaining = self.get_daily_remaining_limit()
+        return amount <= remaining
+    
+    def record_spending(self, amount: Decimal) -> bool:
+        """
+        Record spending against daily limit.
+        
+        Args:
+            amount: Amount in ETH that was spent
+            
+        Returns:
+            True if spending was recorded, False if it would exceed limit
+        """
+        if not self.can_spend_amount(amount):
+            return False
+        
+        self.daily_spent_today += amount
+        self.save(update_fields=['daily_spent_today'])
+        return True
+    
+    def calculate_available_for_trading(self, wallet_balance: Decimal) -> Dict[str, Any]:
+        """
+        Calculate how much is available for trading based on current settings.
+        
+        Args:
+            wallet_balance: Current wallet balance in ETH
+            
+        Returns:
+            Dictionary with allocation calculation details
+        """
+        # Calculate available balance after reserves
+        available_balance = max(Decimal('0.00000000'), wallet_balance - self.minimum_balance_reserve)
+        
+        # Calculate trading allocation
+        if self.allocation_method == self.AllocationMethod.PERCENTAGE:
+            trading_amount = (available_balance * self.allocation_percentage) / Decimal('100')
+        else:
+            trading_amount = min(self.allocation_fixed_amount, available_balance)
+        
+        # Apply daily limit
+        daily_remaining = self.get_daily_remaining_limit()
+        actual_available = min(trading_amount, daily_remaining)
+        
+        return {
+            'total_balance': wallet_balance,
+            'reserved_balance': self.minimum_balance_reserve,
+            'available_balance': available_balance,
+            'calculated_allocation': trading_amount,
+            'daily_limit': self.daily_spending_limit,
+            'daily_remaining': daily_remaining,
+            'daily_spent': self.daily_spent_today,
+            'actual_available': actual_available,
+            'risk_level': self.risk_level,
+            'allocation_method': self.allocation_method,
+            'allocation_percentage': self.allocation_percentage if self.allocation_method == self.AllocationMethod.PERCENTAGE else None,
+            'allocation_fixed': self.allocation_fixed_amount if self.allocation_method == self.AllocationMethod.FIXED else None
+        }
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert allocation settings to dictionary format.
+        
+        Returns:
+            Dictionary representation of allocation settings
+        """
+        return {
+            'allocation_id': str(self.allocation_id),
+            'user_id': self.user.id,
+            'method': self.allocation_method,
+            'percentage': float(self.allocation_percentage),
+            'fixed_amount': float(self.allocation_fixed_amount),
+            'daily_limit': float(self.daily_spending_limit),
+            'minimum_balance': float(self.minimum_balance_reserve),
+            'auto_rebalance': self.auto_rebalance_enabled,
+            'stop_loss_enabled': self.stop_loss_enabled,
+            'stop_loss_percentage': float(self.stop_loss_percentage),
+            'risk_level': self.risk_level,
+            'total_allocated': float(self.total_allocated_eth),
+            'daily_spent': float(self.daily_spent_today),
+            'daily_remaining': float(self.get_daily_remaining_limit()),
+            'is_active': self.is_active,
+            'last_modified': self.last_modified_by_user.isoformat(),
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
+
+
+# Add this to the existing models.py admin configuration section
+class FundAllocationAdmin(TimestampMixin):
+    """Admin interface for fund allocation settings."""
+    
+    list_display = [
+        'user', 'allocation_method', 'allocation_percentage', 'allocation_fixed_amount',
+        'risk_level', 'daily_spending_limit', 'is_active', 'last_modified_by_user'
+    ]
+    list_filter = [
+        'allocation_method', 'risk_level', 'is_active', 'auto_rebalance_enabled',
+        'stop_loss_enabled', 'last_daily_reset', 'created_at'
+    ]
+    search_fields = [
+        'user__username', 'user__email', 'notes'
+    ]
+    readonly_fields = [
+        'allocation_id', 'risk_level', 'daily_spent_today', 'last_daily_reset',
+        'total_allocated_eth', 'created_at', 'updated_at'
+    ]
+    ordering = ['-last_modified_by_user']
+    
+    fieldsets = (
+        ('User Information', {
+            'fields': ('allocation_id', 'user', 'is_active')
+        }),
+        ('Allocation Settings', {
+            'fields': (
+                'allocation_method', 'allocation_percentage', 'allocation_fixed_amount'
+            )
+        }),
+        ('Safety Settings', {
+            'fields': (
+                'daily_spending_limit', 'minimum_balance_reserve',
+                'stop_loss_enabled', 'stop_loss_percentage'
+            )
+        }),
+        ('Trading Preferences', {
+            'fields': ('auto_rebalance_enabled', 'notes')
+        }),
+        ('Status and Tracking', {
+            'fields': (
+                'risk_level', 'total_allocated_eth', 'daily_spent_today',
+                'last_daily_reset', 'settings_version'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at', 'last_modified_by_user'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        """Optimize admin queryset with select_related."""
+        return super().get_queryset(request).select_related('user')
+
+
+# Remember to register this in admin.py:
+# from django.contrib import admin
+# from .models import FundAllocation
+# 
+# @admin.register(FundAllocation)
+# class FundAllocationAdmin(admin.ModelAdmin):
+#     # Use the configuration above
