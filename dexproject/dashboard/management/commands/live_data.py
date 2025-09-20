@@ -528,11 +528,15 @@ class Command(BaseCommand):
         
         # Check required services
         try:
-            from dashboard.live_mempool_service import live_mempool_service
-            self.stdout.write('✅ Live mempool service available')
+            from dashboard.http_live_service import http_live_service as live_service
+            self.stdout.write('✅ HTTP live service available')
         except ImportError:
-            self.stdout.write('❌ Live mempool service not available')
-            return False
+            try:
+                from dashboard.live_mempool_service import live_mempool_service as live_service
+                self.stdout.write('⚠️ Using fallback WebSocket service')
+            except ImportError:
+                self.stdout.write('❌ Live mempool service not available')
+                return False
         
         self.stdout.write('✅ Prerequisites satisfied')
         return True
