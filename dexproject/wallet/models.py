@@ -1,13 +1,20 @@
 """
-Django models for the wallet app.
+Django models for the wallet app with SIWE (Sign-In with Ethereum) support.
 
-This module defines wallet, transaction, and balance management models
-for the DEX auto-trading bot's wallet operations.
+This module defines wallet, transaction, balance management, and SIWE authentication
+models for the DEX auto-trading bot's wallet operations.
+
+Updated for Phase 5.1B:
+- Added SIWE session tracking
+- Client-side key management only
+- Wallet-based authentication support
+- Base Sepolia and Ethereum Mainnet support
 """
 
 from decimal import Decimal
 from typing import Dict, Any, List, Optional
 import uuid
+from datetime import datetime, timedelta
 
 from django.db import models
 from shared.models.mixins import TimestampMixin, UUIDMixin
@@ -15,28 +22,206 @@ from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class SIWESession(TimestampMixin):
+    """
+    Tracks SIWE (Sign-In with Ethereum) authentication sessions.
+    
+    Stores SIWE message data, verification status, and session lifecycle
+    for wallet-based authentication without storing private keys.
+    """
+    
+    class SessionStatus(models.TextChoices):
+        PENDING = 'PENDING', 'Pending Verification'
+        VERIFIED = 'VERIFIED', 'Verified and Active'
+        EXPIRED = 'EXPIRED', 'Expired'
+        REVOKED = 'REVOKED', 'Revoked'
+        FAILED = 'FAILED', 'Verification Failed'
+    
+    # Identification
+    session_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        help_text="Unique SIWE session identifier"
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='siwe_sessions',
+        null=True,
+        blank=True,
+        help_text="Associated Django user (auto-created on first login)"
+    )
+    
+    # SIWE Message Components (EIP-4361)
+    wallet_address = models.CharField(
+        max_length=42,
+        help_text="Wallet address (0x...)"
+    )
+    domain = models.CharField(
+        max_length=255,
+        help_text="Domain that issued the SIWE message"
+    )
+    statement = models.TextField(
+        blank=True,
+        help_text="Human-readable ASCII assertion"
+    )
+    uri = models.URLField(
+        help_text="URI referring to the resource of the request"
+    )
+    version = models.CharField(
+        max_length=10,
+        default='1',
+        help_text="SIWE message version"
+    )
+    chain_id = models.PositiveIntegerField(
+        help_text="Chain ID for the network"
+    )
+    nonce = models.CharField(
+        max_length=96,
+        help_text="Random nonce for session uniqueness"
+    )
+    issued_at = models.DateTimeField(
+        help_text="When the message was issued"
+    )
+    expiration_time = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the session expires"
+    )
+    not_before = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the session becomes valid"
+    )
+    request_id = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional request identifier"
+    )
+    
+    # Authentication Details
+    message = models.TextField(
+        help_text="Complete SIWE message that was signed"
+    )
+    signature = models.CharField(
+        max_length=132,
+        help_text="Signature of the SIWE message (0x...)"
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=SessionStatus.choices,
+        default=SessionStatus.PENDING
+    )
+    
+    # Session Management
+    django_session_key = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Associated Django session key"
+    )
+    ip_address = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="IP address of the session"
+    )
+    user_agent = models.TextField(
+        blank=True,
+        help_text="User agent string"
+    )
+    
+    # Verification Metadata
+    verified_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the signature was verified"
+    )
+    verification_error = models.TextField(
+        blank=True,
+        help_text="Error message if verification failed"
+    )
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['session_id']),
+            models.Index(fields=['wallet_address', 'status']),
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['django_session_key']),
+            models.Index(fields=['status', 'expiration_time']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self) -> str:
+        return f"SIWE Session {self.wallet_address[:10]}... ({self.status})"
+
+    def clean(self) -> None:
+        """Validate SIWE session data."""
+        # Validate wallet address format
+        if not self.wallet_address.startswith('0x') or len(self.wallet_address) != 42:
+            raise ValidationError("Invalid wallet address format")
+        
+        # Validate expiration time
+        if self.expiration_time and self.expiration_time <= timezone.now():
+            raise ValidationError("Expiration time must be in the future")
+        
+        # Validate not_before time
+        if self.not_before and self.expiration_time and self.not_before >= self.expiration_time:
+            raise ValidationError("Not before time must be before expiration time")
+
+    def is_valid(self) -> bool:
+        """Check if the SIWE session is currently valid."""
+        if self.status != self.SessionStatus.VERIFIED:
+            return False
+        
+        now = timezone.now()
+        
+        # Check expiration
+        if self.expiration_time and now >= self.expiration_time:
+            return False
+        
+        # Check not before
+        if self.not_before and now < self.not_before:
+            return False
+        
+        return True
+
+    def mark_expired(self) -> None:
+        """Mark the session as expired."""
+        self.status = self.SessionStatus.EXPIRED
+        self.save(update_fields=['status', 'updated_at'])
+
+    def revoke(self) -> None:
+        """Revoke the session."""
+        self.status = self.SessionStatus.REVOKED
+        self.save(update_fields=['status', 'updated_at'])
 
 
 class Wallet(TimestampMixin):
     """
-    Represents a wallet used for trading operations.
+    Represents a connected wallet used for trading operations.
     
-    Stores wallet information, configuration, and security settings
-    for both custodial and non-custodial wallet management.
+    Stores wallet information and configuration for client-side
+    wallet management. Private keys are NEVER stored server-side.
     """
     
     class WalletType(models.TextChoices):
-        HOT_WALLET = 'HOT_WALLET', 'Hot Wallet'
-        CONNECTED_WALLET = 'CONNECTED_WALLET', 'Connected Wallet'
-        HARDWARE_WALLET = 'HARDWARE_WALLET', 'Hardware Wallet'
-        MULTISIG_WALLET = 'MULTISIG_WALLET', 'Multisig Wallet'
+        METAMASK = 'METAMASK', 'MetaMask'
+        WALLET_CONNECT = 'WALLET_CONNECT', 'WalletConnect'
+        COINBASE_WALLET = 'COINBASE_WALLET', 'Coinbase Wallet'
+        RAINBOW = 'RAINBOW', 'Rainbow'
+        TRUST_WALLET = 'TRUST_WALLET', 'Trust Wallet'
+        OTHER = 'OTHER', 'Other'
     
     class WalletStatus(models.TextChoices):
-        ACTIVE = 'ACTIVE', 'Active'
-        INACTIVE = 'INACTIVE', 'Inactive'
+        CONNECTED = 'CONNECTED', 'Connected'
+        DISCONNECTED = 'DISCONNECTED', 'Disconnected'
         LOCKED = 'LOCKED', 'Locked'
         COMPROMISED = 'COMPROMISED', 'Compromised'
-        ARCHIVED = 'ARCHIVED', 'Archived'
     
     # Identification
     wallet_id = models.UUIDField(
@@ -47,14 +232,17 @@ class Wallet(TimestampMixin):
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='wallets',
-        null=True,
-        blank=True,
-        help_text="Wallet owner (null for system wallets)"
+        related_name='wallets'
     )
+    
+    # Wallet Details
     name = models.CharField(
         max_length=100,
-        help_text="Human-readable wallet name"
+        help_text="Human-readable wallet name (auto-generated or user-set)"
+    )
+    address = models.CharField(
+        max_length=42,
+        help_text="Wallet address (0x...)"
     )
     wallet_type = models.CharField(
         max_length=20,
@@ -63,25 +251,23 @@ class Wallet(TimestampMixin):
     status = models.CharField(
         max_length=15,
         choices=WalletStatus.choices,
-        default=WalletStatus.ACTIVE
+        default=WalletStatus.CONNECTED
     )
     
-    # Wallet Details
-    address = models.CharField(
-        max_length=42,
-        unique=True,
-        help_text="Wallet address (0x...)"
+    # Network Support
+    supported_chains = models.JSONField(
+        default=list,
+        help_text="List of supported chain IDs"
     )
-    chain = models.ForeignKey(
-        'trading.Chain',
-        on_delete=models.CASCADE,
-        related_name='wallets'
+    primary_chain_id = models.PositiveIntegerField(
+        default=84532,  # Base Sepolia for development
+        help_text="Primary chain ID for this wallet"
     )
     
     # Security Configuration
-    requires_confirmation = models.BooleanField(
+    is_trading_enabled = models.BooleanField(
         default=True,
-        help_text="Whether transactions require manual confirmation"
+        help_text="Whether this wallet can be used for trading"
     )
     daily_limit_usd = models.DecimalField(
         max_digits=15,
@@ -97,57 +283,45 @@ class Wallet(TimestampMixin):
         blank=True,
         help_text="Per-transaction limit in USD"
     )
-    is_trading_enabled = models.BooleanField(
+    requires_confirmation = models.BooleanField(
         default=True,
-        help_text="Whether this wallet can be used for trading"
+        help_text="Whether transactions require manual confirmation"
     )
     
-    # Hardware Wallet Specific
-    derivation_path = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Derivation path for hardware wallets"
-    )
-    hardware_device_id = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Hardware device identifier"
-    )
-    
-    # Multisig Specific
-    required_signatures = models.PositiveIntegerField(
+    # Connection Metadata
+    last_connected_at = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="Required signatures for multisig wallets"
+        help_text="Last time this wallet was connected"
     )
-    total_signers = models.PositiveIntegerField(
-        null=True,
+    connection_method = models.CharField(
+        max_length=50,
         blank=True,
-        help_text="Total number of signers for multisig wallets"
+        help_text="Method used to connect (WalletConnect, injected, etc.)"
+    )
+    wallet_client_version = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Version of the wallet client"
     )
     
     # Configuration
     config = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Additional wallet configuration"
+        help_text="Additional wallet configuration and preferences"
     )
-    
-    last_used_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Last time this wallet was used"
-    )
-
 
     class Meta:
-        ordering = ['-last_used_at', '-created_at']
+        ordering = ['-last_connected_at', '-created_at']
+        unique_together = [['user', 'address']]
         indexes = [
             models.Index(fields=['wallet_id']),
             models.Index(fields=['user', 'status']),
             models.Index(fields=['address']),
-            models.Index(fields=['chain', 'status']),
+            models.Index(fields=['primary_chain_id', 'status']),
             models.Index(fields=['is_trading_enabled']),
+            models.Index(fields=['last_connected_at']),
         ]
 
     def __str__(self) -> str:
@@ -155,19 +329,42 @@ class Wallet(TimestampMixin):
 
     def clean(self) -> None:
         """Validate wallet configuration."""
-        if self.wallet_type == self.WalletType.MULTISIG_WALLET:
-            if not self.required_signatures or not self.total_signers:
-                raise ValidationError("Multisig wallets must specify required signatures and total signers")
-            if self.required_signatures > self.total_signers:
-                raise ValidationError("Required signatures cannot exceed total signers")
+        # Validate wallet address format
+        if not self.address.startswith('0x') or len(self.address) != 42:
+            raise ValidationError("Invalid wallet address format")
+        
+        # Validate supported chains
+        if not isinstance(self.supported_chains, list):
+            raise ValidationError("Supported chains must be a list")
+        
+        # Validate primary chain is in supported chains
+        if self.supported_chains and self.primary_chain_id not in self.supported_chains:
+            raise ValidationError("Primary chain must be in supported chains")
+
+    def update_connection_status(self) -> None:
+        """Update last connected timestamp."""
+        self.last_connected_at = timezone.now()
+        self.status = self.WalletStatus.CONNECTED
+        self.save(update_fields=['last_connected_at', 'status', 'updated_at'])
+
+    def disconnect(self) -> None:
+        """Mark wallet as disconnected."""
+        self.status = self.WalletStatus.DISCONNECTED
+        self.save(update_fields=['status', 'updated_at'])
+
+    def get_display_name(self) -> str:
+        """Get a user-friendly display name for the wallet."""
+        if self.name and self.name != f"Wallet {self.address[:10]}...":
+            return self.name
+        return f"{self.get_wallet_type_display()} ({self.address[:6]}...{self.address[-4:]})"
 
 
 class WalletBalance(TimestampMixin):
     """
-    Tracks token balances for wallets.
+    Tracks token balances for connected wallets.
     
-    Stores current and historical balance information for each
-    token held in a wallet.
+    Updated via periodic balance checks and real-time updates.
+    Balances are fetched from blockchain, never stored permanently.
     """
     
     # Identification
@@ -181,551 +378,250 @@ class WalletBalance(TimestampMixin):
         on_delete=models.CASCADE,
         related_name='balances'
     )
-    token = models.ForeignKey(
-        'trading.Token',
-        on_delete=models.CASCADE,
-        related_name='wallet_balances'
-    )
     
-    # Balance Information
-    balance = models.DecimalField(
-        max_digits=50,
-        decimal_places=18,
-        default=Decimal('0'),
-        help_text="Current token balance"
+    # Token Information
+    chain_id = models.PositiveIntegerField(
+        help_text="Chain ID where the token exists"
     )
-    balance_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=8,
-        null=True,
-        blank=True,
-        help_text="Balance value in USD"
+    token_address = models.CharField(
+        max_length=42,
+        help_text="Token contract address (0x... or 'ETH' for native)"
     )
-    available_balance = models.DecimalField(
-        max_digits=50,
-        decimal_places=18,
-        default=Decimal('0'),
-        help_text="Available balance (excluding locked/pending amounts)"
+    token_symbol = models.CharField(
+        max_length=20,
+        help_text="Token symbol (ETH, USDC, etc.)"
     )
-    locked_balance = models.DecimalField(
-        max_digits=50,
-        decimal_places=18,
-        default=Decimal('0'),
-        help_text="Locked balance (in pending orders)"
-    )
-    
-    # Price Information
-    last_price_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=12,
-        null=True,
-        blank=True,
-        help_text="Last known token price in USD"
-    )
-    price_source = models.CharField(
+    token_name = models.CharField(
         max_length=100,
         blank=True,
-        help_text="Source of price information"
+        help_text="Full token name"
+    )
+    token_decimals = models.PositiveIntegerField(
+        default=18,
+        help_text="Number of decimal places for the token"
     )
     
-    # Tracking
-    is_active = models.BooleanField(
-        default=True,
-        help_text="Whether this balance is actively tracked"
+    # Balance Data
+    balance_wei = models.CharField(
+        max_length=78,  # Max uint256 as string
+        help_text="Raw balance in smallest token unit (wei)"
     )
-    last_updated = models.DateTimeField(
-        auto_now=True,
-        help_text="Last time balance was updated"
+    balance_formatted = models.DecimalField(
+        max_digits=36,
+        decimal_places=18,
+        help_text="Human-readable balance with decimals"
     )
-    last_sync_block = models.PositiveIntegerField(
+    usd_value = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
         null=True,
         blank=True,
-        help_text="Last block number where balance was synced"
+        help_text="Estimated USD value of the balance"
+    )
+    
+    # Metadata
+    last_updated = models.DateTimeField(
+        help_text="When this balance was last fetched from blockchain"
+    )
+    is_stale = models.BooleanField(
+        default=False,
+        help_text="Whether this balance data is considered stale"
+    )
+    update_error = models.TextField(
+        blank=True,
+        help_text="Error message if balance update failed"
     )
 
     class Meta:
-        unique_together = ['wallet', 'token']
-        ordering = ['-balance_usd', 'token__symbol']
+        ordering = ['-usd_value', 'token_symbol']
+        unique_together = [['wallet', 'chain_id', 'token_address']]
         indexes = [
             models.Index(fields=['balance_id']),
-            models.Index(fields=['wallet', 'is_active']),
-            models.Index(fields=['token']),
-            models.Index(fields=['balance_usd']),
+            models.Index(fields=['wallet', 'chain_id']),
+            models.Index(fields=['token_address', 'chain_id']),
             models.Index(fields=['last_updated']),
+            models.Index(fields=['is_stale']),
         ]
 
     def __str__(self) -> str:
-        return f"{self.wallet.name} - {self.token.symbol}: {self.balance}"
+        return f"{self.balance_formatted} {self.token_symbol} on Chain {self.chain_id}"
 
-    @property
-    def total_balance(self) -> Decimal:
-        """Calculate total balance (available + locked)."""
-        return self.available_balance + self.locked_balance
+    def clean(self) -> None:
+        """Validate balance data."""
+        # Validate token address format (except for native tokens)
+        if self.token_address != 'ETH' and not self.token_address.startswith('0x'):
+            raise ValidationError("Invalid token address format")
+        
+        # Validate balance is positive
+        if self.balance_formatted < 0:
+            raise ValidationError("Balance cannot be negative")
+
+    def mark_stale(self) -> None:
+        """Mark this balance as stale."""
+        self.is_stale = True
+        self.save(update_fields=['is_stale', 'updated_at'])
+
+    def update_balance(self, balance_wei: str, usd_value: Optional[Decimal] = None) -> None:
+        """Update balance data."""
+        self.balance_wei = balance_wei
+        self.balance_formatted = Decimal(balance_wei) / (10 ** self.token_decimals)
+        self.usd_value = usd_value
+        self.last_updated = timezone.now()
+        self.is_stale = False
+        self.update_error = ''
+        self.save()
 
 
-class Transaction(TimestampMixin):
+class WalletTransaction(TimestampMixin):
     """
-    Represents a blockchain transaction initiated by the trading bot.
+    Tracks transactions initiated through connected wallets.
     
-    Stores transaction details, status, and execution information
-    for all wallet operations.
+    Records transaction metadata for monitoring and analysis.
+    Does not store sensitive transaction data.
     """
     
     class TransactionType(models.TextChoices):
-        TRADE_BUY = 'TRADE_BUY', 'Trade Buy'
-        TRADE_SELL = 'TRADE_SELL', 'Trade Sell'
-        TRANSFER_IN = 'TRANSFER_IN', 'Transfer In'
-        TRANSFER_OUT = 'TRANSFER_OUT', 'Transfer Out'
+        SWAP = 'SWAP', 'Token Swap'
+        TRANSFER = 'TRANSFER', 'Token Transfer'
         APPROVAL = 'APPROVAL', 'Token Approval'
-        WITHDRAW = 'WITHDRAW', 'Withdraw'
-        DEPOSIT = 'DEPOSIT', 'Deposit'
-        GAS_REFILL = 'GAS_REFILL', 'Gas Refill'
-        EMERGENCY_EXIT = 'EMERGENCY_EXIT', 'Emergency Exit'
+        WRAP = 'WRAP', 'Wrap/Unwrap'
+        LIQUIDITY_ADD = 'LIQUIDITY_ADD', 'Add Liquidity'
+        LIQUIDITY_REMOVE = 'LIQUIDITY_REMOVE', 'Remove Liquidity'
+        OTHER = 'OTHER', 'Other'
     
     class TransactionStatus(models.TextChoices):
         PENDING = 'PENDING', 'Pending'
-        SUBMITTED = 'SUBMITTED', 'Submitted'
         CONFIRMED = 'CONFIRMED', 'Confirmed'
         FAILED = 'FAILED', 'Failed'
         CANCELLED = 'CANCELLED', 'Cancelled'
-        REPLACED = 'REPLACED', 'Replaced'
     
     # Identification
     transaction_id = models.UUIDField(
         default=uuid.uuid4,
         unique=True,
-        help_text="Unique transaction identifier"
+        help_text="Unique transaction record identifier"
     )
     wallet = models.ForeignKey(
         Wallet,
         on_delete=models.CASCADE,
         related_name='transactions'
     )
-    trade = models.ForeignKey(
-        'trading.Trade',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='transactions',
-        help_text="Associated trade (if applicable)"
-    )
     
     # Transaction Details
+    chain_id = models.PositiveIntegerField(
+        help_text="Chain ID where transaction occurred"
+    )
+    transaction_hash = models.CharField(
+        max_length=66,
+        unique=True,
+        help_text="Blockchain transaction hash (0x...)"
+    )
     transaction_type = models.CharField(
-        max_length=15,
+        max_length=20,
         choices=TransactionType.choices
     )
     status = models.CharField(
-        max_length=10,
+        max_length=15,
         choices=TransactionStatus.choices,
         default=TransactionStatus.PENDING
     )
     
-    # Blockchain Details
-    transaction_hash = models.CharField(
-        max_length=66,
-        blank=True,
-        unique=True,
-        null=True,
-        help_text="Blockchain transaction hash"
-    )
-    block_number = models.PositiveIntegerField(
+    # Gas and Cost Data
+    gas_used = models.BigIntegerField(
         null=True,
         blank=True,
-        help_text="Block number where transaction was included"
-    )
-    block_hash = models.CharField(
-        max_length=66,
-        blank=True,
-        help_text="Block hash where transaction was included"
-    )
-    transaction_index = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Transaction index within the block"
-    )
-    
-    # Gas and Fees
-    gas_limit = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Gas limit set for the transaction"
-    )
-    gas_used = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Actual gas used"
+        help_text="Gas units used by the transaction"
     )
     gas_price_gwei = models.DecimalField(
-        max_digits=15,
+        max_digits=20,
         decimal_places=9,
         null=True,
         blank=True,
         help_text="Gas price in Gwei"
     )
-    max_fee_per_gas_gwei = models.DecimalField(
-        max_digits=15,
-        decimal_places=9,
-        null=True,
-        blank=True,
-        help_text="Max fee per gas (EIP-1559)"
-    )
-    max_priority_fee_per_gas_gwei = models.DecimalField(
-        max_digits=15,
-        decimal_places=9,
-        null=True,
-        blank=True,
-        help_text="Max priority fee per gas (EIP-1559)"
-    )
-    
-    # Transaction Data
-    to_address = models.CharField(
-        max_length=42,
-        help_text="Recipient address"
-    )
-    value_wei = models.DecimalField(
-        max_digits=30,
-        decimal_places=0,
-        default=Decimal('0'),
-        help_text="ETH value in wei"
-    )
-    input_data = models.TextField(
-        blank=True,
-        help_text="Transaction input data (hex encoded)"
-    )
-    nonce = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Transaction nonce"
-    )
-    
-    # Token Transfer Details (if applicable)
-    token = models.ForeignKey(
-        'trading.Token',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='transactions'
-    )
-    token_amount = models.DecimalField(
-        max_digits=50,
+    transaction_fee_eth = models.DecimalField(
+        max_digits=20,
         decimal_places=18,
         null=True,
         blank=True,
-        help_text="Token amount being transferred"
+        help_text="Total transaction fee in ETH"
     )
-    
-    # Execution Details
-    submitted_at = models.DateTimeField(
+    transaction_fee_usd = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
         null=True,
         blank=True,
-        help_text="When transaction was submitted to the network"
-    )
-    confirmed_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When transaction was confirmed"
-    )
-    failed_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When transaction failed"
+        help_text="Total transaction fee in USD"
     )
     
-    # Error Information
-    error_message = models.TextField(
-        blank=True,
-        help_text="Error message if transaction failed"
-    )
-    revert_reason = models.TextField(
-        blank=True,
-        help_text="Smart contract revert reason"
-    )
-    
-    # Replacement Transaction
-    replaced_by = models.ForeignKey(
-        'self',
-        on_delete=models.SET_NULL,
+    # Block Information
+    block_number = models.BigIntegerField(
         null=True,
         blank=True,
-        related_name='replaces',
-        help_text="Transaction that replaced this one"
+        help_text="Block number where transaction was mined"
     )
-    replacement_reason = models.CharField(
-        max_length=100,
+    block_timestamp = models.DateTimeField(
+        null=True,
         blank=True,
-        help_text="Reason for transaction replacement"
+        help_text="Block timestamp"
     )
     
-    # Metadata
-    metadata = models.JSONField(
+    # Transaction Metadata
+    transaction_data = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Additional transaction metadata"
+        help_text="Additional transaction metadata (tokens involved, amounts, etc.)"
     )
+    error_reason = models.TextField(
+        blank=True,
+        help_text="Error reason if transaction failed"
+    )
+
     class Meta:
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['transaction_id']),
             models.Index(fields=['wallet', 'status']),
             models.Index(fields=['transaction_hash']),
-            models.Index(fields=['block_number']),
+            models.Index(fields=['chain_id', 'status']),
             models.Index(fields=['transaction_type']),
-            models.Index(fields=['status']),
-            models.Index(fields=['submitted_at']),
-            models.Index(fields=['confirmed_at']),
-            models.Index(fields=['trade']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['block_timestamp']),
         ]
 
     def __str__(self) -> str:
-        return f"{self.transaction_type} - {self.transaction_hash or self.transaction_id}"
-
-    @property
-    def total_fee_eth(self) -> Optional[Decimal]:
-        """Calculate total transaction fee in ETH."""
-        if self.gas_used and self.gas_price_gwei:
-            # Convert from gwei to ETH
-            return (self.gas_used * self.gas_price_gwei) / Decimal('1000000000')
-        return None
-
-    @property
-    def is_pending(self) -> bool:
-        """Check if transaction is still pending."""
-        return self.status in [self.TransactionStatus.PENDING, self.TransactionStatus.SUBMITTED]
-
-    @property
-    def execution_time_seconds(self) -> Optional[int]:
-        """Calculate execution time from submission to confirmation."""
-        if self.submitted_at and self.confirmed_at:
-            return int((self.confirmed_at - self.submitted_at).total_seconds())
-        return None
-
-
-class TransactionReceipt(TimestampMixin):
-    """
-    Stores detailed transaction receipt information from the blockchain.
-    
-    Contains complete receipt data including logs, events, and
-    execution details for post-transaction analysis.
-    """
-    
-    # Identification
-    receipt_id = models.UUIDField(
-        default=uuid.uuid4,
-        unique=True,
-        help_text="Unique receipt identifier"
-    )
-    transaction = models.OneToOneField(
-        Transaction,
-        on_delete=models.CASCADE,
-        related_name='receipt'
-    )
-    
-    # Receipt Data
-    status = models.PositiveIntegerField(
-        help_text="Transaction status (0 = failed, 1 = success)"
-    )
-    cumulative_gas_used = models.PositiveIntegerField(
-        help_text="Cumulative gas used in the block up to this transaction"
-    )
-    effective_gas_price = models.DecimalField(
-        max_digits=15,
-        decimal_places=9,
-        null=True,
-        blank=True,
-        help_text="Effective gas price paid"
-    )
-    
-    # Logs and Events
-    logs = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Transaction logs/events"
-    )
-    logs_bloom = models.TextField(
-        blank=True,
-        help_text="Bloom filter for logs"
-    )
-    
-    # Contract Interaction
-    contract_address = models.CharField(
-        max_length=42,
-        blank=True,
-        help_text="Contract address if contract was created"
-    )
-    
-    # Raw Receipt Data
-    raw_receipt = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Complete raw receipt data from the blockchain"
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['receipt_id']),
-            models.Index(fields=['transaction']),
-            models.Index(fields=['status']),
-        ]
-
-    def __str__(self) -> str:
-        return f"Receipt for {self.transaction.transaction_hash}"
-
-
-class WalletAuthorization(TimestampMixin):
-    """
-    Manages authorizations and permissions for wallet operations.
-    
-    Controls which operations are allowed for each wallet and
-    tracks approval workflows for sensitive operations.
-    """
-    
-    class AuthorizationType(models.TextChoices):
-        TRADING = 'TRADING', 'Trading Operations'
-        TRANSFERS = 'TRANSFERS', 'Token Transfers'
-        APPROVALS = 'APPROVALS', 'Token Approvals'
-        EMERGENCY = 'EMERGENCY', 'Emergency Operations'
-        ADMIN = 'ADMIN', 'Administrative Operations'
-    
-    class AuthorizationStatus(models.TextChoices):
-        PENDING = 'PENDING', 'Pending'
-        APPROVED = 'APPROVED', 'Approved'
-        DENIED = 'DENIED', 'Denied'
-        REVOKED = 'REVOKED', 'Revoked'
-        EXPIRED = 'EXPIRED', 'Expired'
-    
-    # Identification
-    authorization_id = models.UUIDField(
-        default=uuid.uuid4,
-        unique=True,
-        help_text="Unique authorization identifier"
-    )
-    wallet = models.ForeignKey(
-        Wallet,
-        on_delete=models.CASCADE,
-        related_name='authorizations'
-    )
-    user = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='wallet_authorizations'
-    )
-    
-    # Authorization Details
-    authorization_type = models.CharField(
-        max_length=15,
-        choices=AuthorizationType.choices
-    )
-    status = models.CharField(
-        max_length=10,
-        choices=AuthorizationStatus.choices,
-        default=AuthorizationStatus.PENDING
-    )
-    
-    # Permissions
-    permissions = models.JSONField(
-        default=dict,
-        help_text="Detailed permissions configuration"
-    )
-    spending_limit_usd = models.DecimalField(
-        max_digits=15,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Spending limit for this authorization"
-    )
-    
-    # Validity
-    valid_from = models.DateTimeField(
-        default=timezone.now,
-        help_text="When this authorization becomes valid"
-    )
-    valid_until = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When this authorization expires"
-    )
-    
-    # Approval Workflow
-    requested_by = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='requested_authorizations'
-    )
-    approved_by = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='approved_authorizations'
-    )
-    approval_notes = models.TextField(
-        blank=True,
-        help_text="Notes from the approval process"
-    )
-    
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    approved_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="When this authorization was approved"
-    )
-    last_used_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Last time this authorization was used"
-    )
-
-    class Meta:
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['authorization_id']),
-            models.Index(fields=['wallet', 'status']),
-            models.Index(fields=['user', 'authorization_type']),
-            models.Index(fields=['status']),
-            models.Index(fields=['valid_from', 'valid_until']),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.authorization_type} for {self.wallet.name} - {self.status}"
-
-    @property
-    def is_valid(self) -> bool:
-        """Check if authorization is currently valid."""
-        now = timezone.now()
-        if self.status != self.AuthorizationStatus.APPROVED:
-            return False
-        if self.valid_from > now:
-            return False
-        if self.valid_until and self.valid_until < now:
-            return False
-        return True
+        return f"{self.transaction_type} - {self.transaction_hash[:10]}... ({self.status})"
 
     def clean(self) -> None:
-        """Validate authorization configuration."""
-        if self.valid_until and self.valid_from >= self.valid_until:
-            raise ValidationError("Valid until must be after valid from")
+        """Validate transaction data."""
+        # Validate transaction hash format
+        if not self.transaction_hash.startswith('0x') or len(self.transaction_hash) != 66:
+            raise ValidationError("Invalid transaction hash format")
+
+    def update_status(self, status: str, error_reason: str = '') -> None:
+        """Update transaction status."""
+        self.status = status
+        self.error_reason = error_reason
+        self.save(update_fields=['status', 'error_reason', 'updated_at'])
 
 
 class WalletActivity(TimestampMixin):
     """
     Logs wallet activity for audit and monitoring purposes.
     
-    Tracks all operations performed on wallets including
-    configuration changes, transactions, and access patterns.
+    Tracks all operations performed with wallets including
+    connections, transactions, and configuration changes.
     """
     
     class ActivityType(models.TextChoices):
-        LOGIN = 'LOGIN', 'Login'
-        TRANSACTION = 'TRANSACTION', 'Transaction'
-        CONFIG_CHANGE = 'CONFIG_CHANGE', 'Configuration Change'
-        AUTHORIZATION = 'AUTHORIZATION', 'Authorization'
-        BALANCE_UPDATE = 'BALANCE_UPDATE', 'Balance Update'
+        CONNECTION = 'CONNECTION', 'Wallet Connection'
+        DISCONNECTION = 'DISCONNECTION', 'Wallet Disconnection'
+        SIWE_LOGIN = 'SIWE_LOGIN', 'SIWE Authentication'
+        TRANSACTION = 'TRANSACTION', 'Transaction Initiated'
+        BALANCE_UPDATE = 'BALANCE_UPDATE', 'Balance Updated'
+        CONFIG_CHANGE = 'CONFIG_CHANGE', 'Configuration Changed'
         SECURITY_EVENT = 'SECURITY_EVENT', 'Security Event'
-        API_ACCESS = 'API_ACCESS', 'API Access'
+        ERROR = 'ERROR', 'Error Occurred'
     
     # Identification
     activity_id = models.UUIDField(
@@ -736,7 +632,9 @@ class WalletActivity(TimestampMixin):
     wallet = models.ForeignKey(
         Wallet,
         on_delete=models.CASCADE,
-        related_name='activities'
+        related_name='activities',
+        null=True,
+        blank=True
     )
     user = models.ForeignKey(
         User,
@@ -773,15 +671,15 @@ class WalletActivity(TimestampMixin):
     )
     
     # Related Objects
-    transaction = models.ForeignKey(
-        Transaction,
+    siwe_session = models.ForeignKey(
+        SIWESession,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='activities'
     )
-    authorization = models.ForeignKey(
-        WalletAuthorization,
+    transaction = models.ForeignKey(
+        WalletTransaction,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -804,8 +702,6 @@ class WalletActivity(TimestampMixin):
         blank=True,
         help_text="Error message if activity failed"
     )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -820,4 +716,5 @@ class WalletActivity(TimestampMixin):
         ]
 
     def __str__(self) -> str:
-        return f"{self.activity_type} - {self.wallet.name} at {self.created_at}"
+        wallet_name = self.wallet.name if self.wallet else "Unknown"
+        return f"{self.activity_type} - {wallet_name} at {self.created_at}"
