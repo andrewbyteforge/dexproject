@@ -43,17 +43,13 @@ from wallet.models import SIWESession, Wallet
 
 # Import trading services
 from .services.dex_router_service import DEXRouterService, SwapParams, SwapType, DEXVersion
-from .services.portfolio_service import PortfolioService
+from .services.portfolio_service import PortfolioTrackingService
 from .tasks import execute_buy_order, execute_sell_order
 
 # Import engine components
 from engine.web3_client import Web3Client
 from engine.wallet_manager import WalletManager
 from engine.config import config
-
-# Import shared utilities
-from shared.decorators import require_wallet_auth
-from shared.utils import validate_address, validate_amount
 
 logger = logging.getLogger("trading.api")
 
