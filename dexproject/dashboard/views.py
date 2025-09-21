@@ -922,7 +922,7 @@ def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
         content_type='text/event-stream'
     )
     response['Cache-Control'] = 'no-cache'
-    response['Connection'] = 'keep-alive'
+    
     return response
 
 

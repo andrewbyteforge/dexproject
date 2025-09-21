@@ -737,7 +737,7 @@ def metrics_stream(request):
         content_type='text/event-stream'
     )
     response['Cache-Control'] = 'no-cache'
-    response['Connection'] = 'keep-alive'
+    
     return response
 
 # Configuration management APIs

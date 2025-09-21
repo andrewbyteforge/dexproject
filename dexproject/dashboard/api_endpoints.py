@@ -278,7 +278,7 @@ def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
     
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
     response['Cache-Control'] = 'no-cache'
-    response['Connection'] = 'keep-alive'
+    
     response['Access-Control-Allow-Origin'] = '*'  # For development - restrict in production
     response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
     return response

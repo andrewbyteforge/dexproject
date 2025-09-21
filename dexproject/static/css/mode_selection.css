@@ -1,0 +1,347 @@
+/**
+ * Mode Selection CSS Styles
+ * 
+ * Extracted from mode_selection.html template
+ * Professional styling for trading mode selection interface
+ * 
+ * File: dashboard/static/dashboard/css/mode_selection.css
+ */
+
+/* ============================================================================
+   MODE SELECTION CARD STYLES
+   ============================================================================ */
+
+.mode-card {
+    transition: all 0.3s ease;
+    border: 2px solid transparent;
+    cursor: pointer;
+    height: 100%;
+}
+
+.mode-card:hover {
+    border-color: var(--bs-primary);
+    transform: translateY(-5px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================================================
+   FAST LANE SPECIFIC STYLES
+   ============================================================================ */
+
+.fast-lane-card:hover {
+    border-color: #00d4aa;
+    box-shadow: 0 10px 25px rgba(0, 212, 170, 0.3);
+}
+
+.fast-lane-accent {
+    color: #00d4aa !important;
+}
+
+/* ============================================================================
+   SMART LANE SPECIFIC STYLES
+   ============================================================================ */
+
+.smart-lane-card:hover {
+    border-color: #6f42c1;
+    box-shadow: 0 10px 25px rgba(111, 66, 193, 0.3);
+}
+
+.smart-lane-accent {
+    color: #6f42c1 !important;
+}
+
+/* ============================================================================
+   PERFORMANCE METRICS DISPLAY
+   ============================================================================ */
+
+.performance-metric {
+    text-align: center;
+    padding: 1rem;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    margin-bottom: 1rem;
+    transition: all 0.3s ease;
+}
+
+.performance-metric:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateY(-2px);
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: bold;
+    line-height: 1;
+    transition: all 0.6s ease;
+}
+
+.metric-label {
+    font-size: 0.875rem;
+    opacity: 0.7;
+    margin-top: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ============================================================================
+   COMPARISON AND HIGHLIGHT STYLES
+   ============================================================================ */
+
+.comparison-highlight {
+    background: linear-gradient(45deg, #00d4aa, #6f42c1);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: bold;
+}
+
+/* ============================================================================
+   BADGE AND STATUS STYLES
+   ============================================================================ */
+
+.phase-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ============================================================================
+   DISABLED STATE OVERLAY
+   ============================================================================ */
+
+.disabled-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.5rem;
+    z-index: 10;
+    backdrop-filter: blur(2px);
+}
+
+.disabled-overlay .display-4 {
+    opacity: 0.6;
+    animation: pulse 2s infinite;
+}
+
+/* ============================================================================
+   FEATURE LIST STYLING
+   ============================================================================ */
+
+.list-unstyled li {
+    padding: 0.25rem 0;
+    transition: all 0.2s ease;
+}
+
+.list-unstyled li:hover {
+    padding-left: 0.5rem;
+}
+
+.list-unstyled li i {
+    width: 20px;
+    text-align: center;
+}
+
+/* ============================================================================
+   BUTTON ANIMATIONS AND STATES
+   ============================================================================ */
+
+.btn-lg {
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-lg:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+.btn-lg:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn-lg:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* ============================================================================
+   CARD HOVER EFFECTS
+   ============================================================================ */
+
+.card-glass {
+    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.card-glass:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* ============================================================================
+   MODAL STYLING ENHANCEMENTS
+   ============================================================================ */
+
+.modal-content.bg-dark {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================================
+   ANIMATIONS
+   ============================================================================ */
+
+@keyframes pulse {
+    0% {
+        opacity: 0.6;
+    }
+
+    50% {
+        opacity: 0.8;
+    }
+
+    100% {
+        opacity: 0.6;
+    }
+}
+
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeInScale {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* ============================================================================
+   LOADING STATES
+   ============================================================================ */
+
+.btn-loading {
+    position: relative;
+    color: transparent !important;
+}
+
+.btn-loading:after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    top: 50%;
+    left: 50%;
+    margin-left: -10px;
+    margin-top: -10px;
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ============================================================================
+   RESPONSIVE DESIGN
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .mode-card:hover {
+        transform: none;
+    }
+
+    .metric-value {
+        font-size: 1.5rem;
+    }
+
+    .performance-metric {
+        padding: 0.75rem;
+    }
+
+    .btn-lg {
+        font-size: 1rem;
+        padding: 0.75rem 1.5rem;
+    }
+}
+
+@media (max-width: 576px) {
+    .metric-value {
+        font-size: 1.25rem;
+    }
+
+    .performance-metric {
+        padding: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .disabled-overlay .h5 {
+        font-size: 1rem;
+    }
+
+    .disabled-overlay .display-4 {
+        font-size: 2rem;
+    }
+}
+
+/* ============================================================================
+   ACCESSIBILITY ENHANCEMENTS
+   ============================================================================ */
+
+.mode-card:focus {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: 2px;
+}
+
+.mode-card[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .mode-card,
+    .performance-metric,
+    .metric-value,
+    .btn-lg {
+        transition: none;
+    }
+
+    .disabled-overlay .display-4 {
+        animation: none;
+    }
+}
