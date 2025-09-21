@@ -1,8 +1,11 @@
 """
-Wallet API Views - Fixed Login Backend Issue
+Wallet API Views - Fixed Database Field Issues
 
-Fixed the Django login call to specify the correct authentication backend
-when multiple backends are configured.
+Fixed all database field mismatches causing startup errors:
+- Changed 'metadata' to 'data' field references
+- Fixed WalletBalance field names to match actual model
+- Fixed incomplete function implementations
+- Added proper error handling throughout
 
 File: dexproject/wallet/views.py
 """
@@ -178,6 +181,8 @@ def authenticate_wallet(request) -> Response:
     """
     Authenticate wallet using SIWE signature.
     
+    FIXED: Updated to use 'data' field instead of 'metadata'
+    
     Request body:
     {
         "wallet_address": "0x...",
@@ -293,17 +298,19 @@ def authenticate_wallet(request) -> Response:
         # Log successful authentication
         logger.info(f"Wallet authentication successful for {wallet_address} - User: {user.username}")
         
-        # Create wallet activity log
+        # Create wallet activity log - FIXED: Use 'data' field
         try:
             WalletActivity.objects.create(
                 wallet=wallet,
-                activity_type=WalletActivity.ActivityType.LOGIN,
+                user=user,
+                activity_type=WalletActivity.ActivityType.SIWE_LOGIN,
                 description=f"Wallet connected via {wallet_type}",
                 ip_address=ip_address,
                 user_agent=user_agent,
-                metadata={
+                data={  # FIXED: Use 'data' instead of 'metadata'
                     'chain_id': chain_id,
-                    'session_id': str(siwe_session.session_id)
+                    'session_id': str(siwe_session.session_id),
+                    'wallet_type': wallet_type
                 }
             )
         except Exception as e:
@@ -320,6 +327,11 @@ def authenticate_wallet(request) -> Response:
             'wallet_name': wallet.get_display_name()
         })
         
+    except json.JSONDecodeError:
+        return Response(
+            {'error': 'Invalid JSON format'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
     except Exception as e:
         logger.error(f"Unexpected error in authenticate_wallet: {e}")
         return Response(
@@ -333,6 +345,8 @@ def authenticate_wallet(request) -> Response:
 def logout_wallet(request) -> Response:
     """
     Logout and disconnect wallet.
+    
+    FIXED: Updated to use 'data' field instead of 'metadata'
     
     Cleans up SIWE sessions and logs out the user.
     
@@ -354,17 +368,18 @@ def logout_wallet(request) -> Response:
             except SIWESession.DoesNotExist:
                 logger.warning(f"SIWE session {siwe_session_id} not found during logout")
         
-        # Create logout activity log
+        # Create logout activity log - FIXED: Use 'data' field
         if wallet_address:
             try:
                 wallet = Wallet.objects.get(address=wallet_address)
                 WalletActivity.objects.create(
                     wallet=wallet,
-                    activity_type=WalletActivity.ActivityType.LOGOUT,
+                    user=request.user,
+                    activity_type=WalletActivity.ActivityType.DISCONNECTION,
                     description="Wallet disconnected",
                     ip_address=get_client_ip(request),
                     user_agent=get_user_agent(request),
-                    metadata={'session_id': siwe_session_id}
+                    data={'session_id': siwe_session_id}  # FIXED: Use 'data' instead of 'metadata'
                 )
             except Wallet.DoesNotExist:
                 logger.warning(f"Wallet {wallet_address} not found during logout")
@@ -421,27 +436,27 @@ def get_wallet_info(request) -> Response:
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Get wallet balances - FIXED: Use correct field names
+        # Get wallet balances - FIXED: Use correct field names from model
         balances = list(WalletBalance.objects.filter(
             wallet=wallet,
-            balance_wei__gt=0  # FIXED: Changed from 'balance' to 'balance_wei'
+            balance_wei__gt=0  # FIXED: Use actual field name from model
         ).values(
             'token_symbol',
             'balance_wei',        # FIXED: Use actual field name
-            'balance_formatted',  # FIXED: Use actual field name
+            'balance_formatted',  # FIXED: Use actual field name  
             'usd_value',
             'chain_id',
             'last_updated'
         ))
         
-        # Get recent activity
+        # Get recent activity - FIXED: Use 'data' field instead of 'metadata'
         recent_activity = list(WalletActivity.objects.filter(
             wallet=wallet
         ).order_by('-created_at')[:10].values(
             'activity_type',
             'description',
             'created_at',
-            'metadata'
+            'data'  # FIXED: Use 'data' instead of 'metadata'
         ))
         
         wallet_info = {
@@ -468,22 +483,13 @@ def get_wallet_info(request) -> Response:
         )
 
 
-
-
-
-
-
-
-
-
-
-
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def update_wallet_settings(request) -> Response:
     """
     Update wallet settings and preferences.
+    
+    FIXED: Completed function implementation and fixed field references
     
     Request body:
     {
@@ -525,17 +531,25 @@ def update_wallet_settings(request) -> Response:
         
         wallet.save()
         
-        # Log the settings update
-        WalletActivity.objects.create(
-            wallet=wallet,
-            activity_type=WalletActivity.ActivityType.LOGIN,
-            description=f"Wallet connected via {wallet_type}",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            data={  # <- CORRECT field name
-                'chain_id': chain_id,
-                'session_id': str(siwe_session.session_id)
-            })
+        # Log the settings update - FIXED: Use 'data' field and correct activity type
+        try:
+            WalletActivity.objects.create(
+                wallet=wallet,
+                user=request.user,
+                activity_type=WalletActivity.ActivityType.CONFIG_CHANGE,
+                description="Wallet settings updated",
+                ip_address=get_client_ip(request),
+                user_agent=get_user_agent(request),
+                data={  # FIXED: Use 'data' instead of 'metadata'
+                    'settings_updated': {
+                        'display_name': data.get('display_name'),
+                        'is_trading_enabled': data.get('is_trading_enabled'),
+                        'notifications_enabled': data.get('notifications_enabled')
+                    }
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create settings update activity log: {e}")
         
         logger.info(f"Updated settings for wallet {wallet_address}")
         
@@ -622,21 +636,21 @@ def get_wallet_balances(request) -> Response:
             except Exception as e:
                 logger.warning(f"Failed to refresh balances: {e}")
         
-        # Get balances - FIXED: Use correct field names
+        # Get balances - FIXED: Use correct field names from model
         balances = list(balance_query.order_by('chain_id', 'token_symbol').values(
             'balance_id',
             'token_address',
             'token_symbol',
             'token_name',
-            'balance_wei',        # FIXED: Use actual field name
-            'balance_formatted',  # FIXED: Use actual field name
+            'balance_wei',        # FIXED: Use actual field name from model
+            'balance_formatted',  # FIXED: Use actual field name from model
             'usd_value',
             'chain_id',
             'last_updated',
-            'is_stale'           # FIXED: Use actual field name instead of 'is_native_token'
+            'is_stale'           # FIXED: Use actual field name from model
         ))
         
-        # Calculate totals - FIXED: Use balance_formatted for calculations
+        # Calculate totals - FIXED: Use correct field for calculations
         total_usd_value = sum(float(b['usd_value'] or 0) for b in balances)
         non_zero_balances = [b for b in balances if float(b['balance_formatted'] or 0) > 0]
         
@@ -656,6 +670,7 @@ def get_wallet_balances(request) -> Response:
             {'error': 'Failed to get wallet balances'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
 
 # =============================================================================
 # TRANSACTION MONITORING ENDPOINTS  
@@ -718,8 +733,8 @@ def get_wallet_transactions(request) -> Response:
         if type_filter:
             tx_query = tx_query.filter(transaction_type=type_filter)
         
-        # Order by timestamp (newest first)
-        tx_query = tx_query.order_by('-timestamp')
+        # Order by timestamp (newest first) - FIXED: Use correct field name
+        tx_query = tx_query.order_by('-block_timestamp')
         
         # Paginate
         total_count = tx_query.count()
@@ -727,7 +742,7 @@ def get_wallet_transactions(request) -> Response:
         end_idx = start_idx + page_size
         transactions = list(tx_query[start_idx:end_idx].values(
             'transaction_id',
-            'tx_hash',
+            'transaction_hash',  # FIXED: Use correct field name
             'chain_id',
             'transaction_type',
             'status',
@@ -736,9 +751,8 @@ def get_wallet_transactions(request) -> Response:
             'value',
             'gas_used',
             'gas_price',
-            'timestamp',
-            'block_number',
-            'metadata'
+            'block_timestamp',   # FIXED: Use correct field name
+            'block_number'
         ))
         
         return Response({
@@ -776,6 +790,8 @@ def get_wallet_transactions(request) -> Response:
 def get_wallet_activity(request) -> Response:
     """
     Get wallet activity log for security monitoring.
+    
+    FIXED: Updated to use 'data' field instead of 'metadata'
     
     Query parameters:
         page: integer - Page number (default: 1)
@@ -825,7 +841,7 @@ def get_wallet_activity(request) -> Response:
             'ip_address',
             'user_agent',
             'created_at',
-            'metadata'
+            'data'  # FIXED: Use 'data' instead of 'metadata'
         ))
         
         return Response({
