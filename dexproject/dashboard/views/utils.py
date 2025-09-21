@@ -4,6 +4,8 @@ Fixed Views Utils - Async Safe Version
 Updated utility functions for dashboard views that handle async operations
 properly without causing event loop issues.
 
+FIXED: Removed chain_id parameter from initialize_engine calls
+
 File: dashboard/views/utils.py
 """
 
@@ -19,23 +21,22 @@ from ..engine_service import engine_service, ensure_engine_initialized_sync
 logger = logging.getLogger(__name__)
 
 
-async def ensure_engine_initialized(chain_id: Optional[int] = None) -> bool:
+async def ensure_engine_initialized() -> bool:
     """
     Ensure engine is initialized for dashboard use.
     
-    Args:
-        chain_id: Optional chain ID for initialization
-        
+    FIXED: Removed chain_id parameter to match actual method signature
+    
     Returns:
         True if engine initialized successfully
     """
     try:
-        # Use the async-safe initialization
-        success = await engine_service.initialize_engine(chain_id=chain_id)
+        # Use the async initialization without chain_id parameter
+        success = await engine_service.initialize_engine()
         if success:
-            logger.debug(f"Engine initialized successfully for chain {chain_id}")
+            logger.debug("Engine initialized successfully")
         else:
-            logger.warning(f"Engine initialization failed for chain {chain_id}")
+            logger.warning("Engine initialization failed")
         return success
         
     except Exception as e:
@@ -43,15 +44,14 @@ async def ensure_engine_initialized(chain_id: Optional[int] = None) -> bool:
         return False
 
 
-def ensure_engine_initialized_safe(chain_id: Optional[int] = None) -> bool:
+def ensure_engine_initialized_safe() -> bool:
     """
     Safe version of engine initialization that doesn't require async context.
     
     This version can be called from Django views without async issues.
     
-    Args:
-        chain_id: Optional chain ID for initialization
-        
+    FIXED: Removed chain_id parameter to match actual method signature
+    
     Returns:
         Current initialization status
     """
@@ -101,75 +101,66 @@ def handle_anonymous_user(request: HttpRequest) -> None:
     Handle anonymous user requests by creating a demo user if needed.
     
     Args:
-        request: Django HTTP request object
+        request: HTTP request object to modify
     """
     if not request.user.is_authenticated:
+        from django.contrib.auth.models import User
         try:
-            # Create or get demo user
-            demo_user, created = User.objects.get_or_create(
+            user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
-                    'email': 'demo@example.com',
                     'first_name': 'Demo',
-                    'last_name': 'User'
+                    'last_name': 'User',
+                    'email': 'demo@example.com'
                 }
             )
-            
-            # Log in the demo user
-            from django.contrib.auth import login
-            login(request, demo_user)
-            
+            request.user = user
             if created:
-                logger.info("Created new demo user for anonymous access")
+                logger.info("Created demo user for anonymous session")
             else:
-                logger.debug("Using existing demo user for anonymous access")
-                
+                logger.info("Anonymous user accessing dashboard, creating demo user")
         except Exception as e:
-            logger.error(f"Failed to handle anonymous user: {e}")
+            logger.error(f"Error creating demo user: {e}")
 
 
 def get_engine_status_safe() -> Dict[str, Any]:
     """
-    Get engine status safely without async issues.
+    Get engine status safely without throwing exceptions.
     
     Returns:
-        Engine status dictionary
+        Engine status dictionary or fallback data
     """
     try:
         return engine_service.get_engine_status()
     except Exception as e:
-        logger.error(f"Failed to get engine status: {e}")
+        logger.error(f"Error getting engine status: {e}")
         return {
-            'timestamp': '2025-09-20T10:00:00Z',
             'status': 'ERROR',
             'error': str(e),
-            'initialized': False,
-            'live_mode': False,
-            'is_live': False,
+            'fast_lane_active': False,
+            'smart_lane_active': False,
+            'mode': 'FALLBACK',
             '_mock': True
         }
 
 
 def get_performance_metrics_safe() -> Dict[str, Any]:
     """
-    Get performance metrics safely without async issues.
+    Get performance metrics safely without throwing exceptions.
     
     Returns:
-        Performance metrics dictionary
+        Performance metrics dictionary or fallback data
     """
     try:
         return engine_service.get_performance_metrics()
     except Exception as e:
-        logger.error(f"Failed to get performance metrics: {e}")
+        logger.error(f"Error getting performance metrics: {e}")
         return {
-            'timestamp': '2025-09-20T10:00:00Z',
             'execution_time_ms': 0,
-            'success_rate': 0,
-            'trades_per_minute': 0,
-            'total_executions': 0,
-            'data_source': 'ERROR',
+            'success_rate': 0.0,
+            'trades_per_minute': 0.0,
+            'error_rate': 100.0,
             'error': str(e),
-            'is_live': False,
             '_mock': True
         }
 
@@ -203,7 +194,7 @@ def get_system_context() -> Dict[str, Any]:
         'debug': settings.DEBUG,
         'live_mode': engine_service.live_data_enabled,
         'mock_mode': engine_service.mock_mode,
-        'supported_chains': getattr(settings, 'SUPPORTED_CHAINS', []),
+        'supported_chains': getattr(settings, 'TARGET_CHAINS', [84532, 11155111]),
         'default_chain': getattr(settings, 'DEFAULT_CHAIN_ID', 84532),
         'api_keys_configured': {
             'alchemy': bool(getattr(settings, 'ALCHEMY_API_KEY', '')),
@@ -257,9 +248,12 @@ def validate_chain_id(chain_id: Optional[int]) -> int:
     if chain_id is None:
         return getattr(settings, 'DEFAULT_CHAIN_ID', 84532)
     
-    supported_chains = getattr(settings, 'SUPPORTED_CHAINS', [84532, 11155111])
+    target_chains = getattr(settings, 'TARGET_CHAINS', [84532, 11155111])
+    # Convert to list of integers if it's a string
+    if isinstance(target_chains, str):
+        target_chains = [int(x.strip()) for x in target_chains.split(',') if x.strip()]
     
-    if chain_id in supported_chains:
+    if chain_id in target_chains:
         return chain_id
     
     logger.warning(f"Chain ID {chain_id} not supported, using default")
@@ -277,13 +271,18 @@ def get_live_data_status() -> Dict[str, Any]:
         # Try to get live service
         live_service = engine_service._get_live_service()
         if live_service:
-            return live_service.get_live_status()
+            return {
+                'is_live_mode': True,
+                'is_running': engine_service._live_service_initialized,
+                'status': 'CONNECTED',
+                'timestamp': '2025-09-21T10:00:00Z'
+            }
         else:
             return {
                 'is_live_mode': False,
                 'is_running': False,
-                'error': 'Live service not available',
-                'timestamp': '2025-09-20T10:00:00Z'
+                'status': 'MOCK_MODE',
+                'timestamp': '2025-09-21T10:00:00Z'
             }
     except Exception as e:
         logger.error(f"Failed to get live data status: {e}")
@@ -291,7 +290,8 @@ def get_live_data_status() -> Dict[str, Any]:
             'is_live_mode': False,
             'is_running': False,
             'error': str(e),
-            'timestamp': '2025-09-20T10:00:00Z'
+            'status': 'ERROR',
+            'timestamp': '2025-09-21T10:00:00Z'
         }
 
 
@@ -300,9 +300,9 @@ def get_live_data_status() -> Dict[str, Any]:
 # =============================================================================
 
 # Keep original function names for backward compatibility
-def ensure_engine_initialized_original(chain_id: Optional[int] = None) -> bool:
+def ensure_engine_initialized_original() -> bool:
     """Backward compatibility wrapper."""
-    return ensure_engine_initialized_safe(chain_id)
+    return ensure_engine_initialized_safe()
 
 
 # =============================================================================

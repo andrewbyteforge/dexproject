@@ -400,6 +400,8 @@ def get_wallet_info(request) -> Response:
     """
     Get current wallet information and summary.
     
+    FIXED: Updated database field references to match actual model fields
+    
     Returns:
         Response: Wallet information including balances and status
     """
@@ -419,13 +421,14 @@ def get_wallet_info(request) -> Response:
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Get wallet balances
+        # Get wallet balances - FIXED: Use correct field names
         balances = list(WalletBalance.objects.filter(
             wallet=wallet,
-            balance__gt=0
+            balance_wei__gt=0  # FIXED: Changed from 'balance' to 'balance_wei'
         ).values(
             'token_symbol',
-            'balance',
+            'balance_wei',        # FIXED: Use actual field name
+            'balance_formatted',  # FIXED: Use actual field name
             'usd_value',
             'chain_id',
             'last_updated'
@@ -463,6 +466,17 @@ def get_wallet_info(request) -> Response:
             {'error': 'Failed to get wallet information'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+
+
+
+
+
+
+
+
+
 
 
 @api_view(['POST'])
@@ -514,12 +528,14 @@ def update_wallet_settings(request) -> Response:
         # Log the settings update
         WalletActivity.objects.create(
             wallet=wallet,
-            activity_type=WalletActivity.ActivityType.SETTINGS_UPDATED,
-            description="Wallet settings updated",
-            ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
-            metadata=data
-        )
+            activity_type=WalletActivity.ActivityType.LOGIN,
+            description=f"Wallet connected via {wallet_type}",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            data={  # <- CORRECT field name
+                'chain_id': chain_id,
+                'session_id': str(siwe_session.session_id)
+            })
         
         logger.info(f"Updated settings for wallet {wallet_address}")
         
@@ -553,6 +569,8 @@ def update_wallet_settings(request) -> Response:
 def get_wallet_balances(request) -> Response:
     """
     Get wallet balances across all supported chains.
+    
+    FIXED: Updated database field references to match actual model fields
     
     Query parameters:
         refresh: boolean - Force refresh from blockchain
@@ -604,22 +622,23 @@ def get_wallet_balances(request) -> Response:
             except Exception as e:
                 logger.warning(f"Failed to refresh balances: {e}")
         
-        # Get balances
+        # Get balances - FIXED: Use correct field names
         balances = list(balance_query.order_by('chain_id', 'token_symbol').values(
             'balance_id',
             'token_address',
             'token_symbol',
             'token_name',
-            'balance',
+            'balance_wei',        # FIXED: Use actual field name
+            'balance_formatted',  # FIXED: Use actual field name
             'usd_value',
             'chain_id',
             'last_updated',
-            'is_native_token'
+            'is_stale'           # FIXED: Use actual field name instead of 'is_native_token'
         ))
         
-        # Calculate totals
+        # Calculate totals - FIXED: Use balance_formatted for calculations
         total_usd_value = sum(float(b['usd_value'] or 0) for b in balances)
-        non_zero_balances = [b for b in balances if float(b['balance']) > 0]
+        non_zero_balances = [b for b in balances if float(b['balance_formatted'] or 0) > 0]
         
         return Response({
             'wallet_address': wallet.address,
@@ -637,7 +656,6 @@ def get_wallet_balances(request) -> Response:
             {'error': 'Failed to get wallet balances'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-
 
 # =============================================================================
 # TRANSACTION MONITORING ENDPOINTS  

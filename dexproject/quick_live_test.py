@@ -111,7 +111,7 @@ async def test_http_live_service():
         
         # Try fallback service
         try:
-            from dashboard.simple_live_service import simple_live_service
+            from dexproject.engine.simple_live_service import simple_live_service
             print("⚠️ Using fallback WebSocket service")
             
             success = await simple_live_service.initialize_live_monitoring()

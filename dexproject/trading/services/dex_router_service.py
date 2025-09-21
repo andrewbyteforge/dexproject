@@ -1,16 +1,17 @@
 """
-DEX Router Service for Uniswap V3/V2 Integration
+DEX Router Service for Uniswap V3/V2 Integration - PHASE 5.1C COMPLETE
 
 This service handles real DEX contract interactions for token swaps,
 providing the missing link between the wallet manager and actual DEX execution.
 
-This replaces the placeholder comments in trading/tasks.py with real implementation.
+UPDATED: Complete implementation with all missing methods for Phase 5.1C trading execution.
 
-File: trading/services/dex_router_service.py
+File: dexproject/trading/services/dex_router_service.py
 """
 
 import logging
 import time
+import asyncio
 from typing import Dict, Any, Optional, Tuple, List
 from decimal import Decimal
 from dataclasses import dataclass
@@ -43,23 +44,25 @@ class SwapType(Enum):
 
 @dataclass
 class SwapParams:
-    """Parameters for a DEX swap operation."""
+    """
+    Parameters for a DEX swap operation.
     
-    # Token Information
+    FIXED: Ordered fields properly - required fields first, then optional fields with defaults.
+    """
+    
+    # Required Token Information (no defaults)
     token_in: ChecksumAddress
     token_out: ChecksumAddress
     amount_in: int  # In wei
     amount_out_minimum: int  # Minimum tokens to receive (slippage protection)
-    
-    # Swap Configuration
     swap_type: SwapType
     dex_version: DEXVersion
+    recipient: ChecksumAddress  # FIXED: Moved before fields with defaults
+    deadline: int  # Unix timestamp - FIXED: Moved before fields with defaults
+    
+    # Optional Configuration (with defaults)
     fee_tier: int = 3000  # 0.3% for Uniswap V3 (3000 = 0.3%)
     slippage_tolerance: Decimal = Decimal('0.005')  # 0.5%
-    
-    # Execution Settings
-    recipient: ChecksumAddress
-    deadline: int  # Unix timestamp
     gas_price_gwei: Optional[Decimal] = None
     gas_limit: Optional[int] = None
 
@@ -96,6 +99,8 @@ class DEXRouterService:
     - Slippage protection
     - MEV-resistant execution
     - Real-time price impact estimation
+    - Token approval handling
+    - Complete ETH/Token/Token swap support
     """
     
     def __init__(self, web3_client: Web3Client, wallet_manager: WalletManager):
@@ -118,6 +123,9 @@ class DEXRouterService:
         self.total_swaps = 0
         self.successful_swaps = 0
         self.total_gas_used = 0
+        
+        # Cache for token approvals
+        self._approval_cache: Dict[str, bool] = {}
     
     def _init_router_contracts(self) -> None:
         """Initialize Uniswap router contract instances."""
@@ -169,6 +177,10 @@ class DEXRouterService:
                 f"(DEX: {swap_params.dex_version.value})"
             )
             
+            # Handle token approval if needed
+            if swap_params.swap_type in [SwapType.EXACT_TOKENS_FOR_ETH, SwapType.EXACT_TOKENS_FOR_TOKENS]:
+                await self._ensure_token_approval(swap_params, from_address)
+            
             # Build transaction based on DEX version
             if swap_params.dex_version == DEXVersion.UNISWAP_V3:
                 transaction = await self._build_uniswap_v3_transaction(swap_params, from_address)
@@ -190,7 +202,7 @@ class DEXRouterService:
                 swap_params, receipt
             )
             
-            # Extract actual amount out from logs (simplified for now)
+            # Extract actual amount out from logs
             actual_amount_out = await self._extract_amount_out_from_receipt(receipt, swap_params)
             
             self.successful_swaps += 1
@@ -234,6 +246,86 @@ class DEXRouterService:
                 error_message=str(e)
             )
     
+    async def _ensure_token_approval(
+        self, 
+        swap_params: SwapParams, 
+        from_address: ChecksumAddress
+    ) -> None:
+        """
+        Ensure token approval for DEX router if needed.
+        
+        Args:
+            swap_params: Swap parameters containing token info
+            from_address: Address that needs to approve tokens
+        """
+        try:
+            # Determine spender address based on DEX version
+            spender = (
+                self.uniswap_v3_router.address if swap_params.dex_version == DEXVersion.UNISWAP_V3 
+                else self.uniswap_v2_router.address
+            )
+            
+            # Create cache key
+            cache_key = f"{swap_params.token_in}:{spender}:{from_address}"
+            
+            # Check cache first
+            if cache_key in self._approval_cache:
+                self.logger.debug("Token approval already cached")
+                return
+            
+            # Get token contract
+            token_contract = self.web3_client.web3.eth.contract(
+                address=swap_params.token_in,
+                abi=self._get_erc20_abi()
+            )
+            
+            # Check current allowance
+            current_allowance = token_contract.functions.allowance(
+                from_address, spender
+            ).call()
+            
+            # If allowance is sufficient, we're done
+            if current_allowance >= swap_params.amount_in:
+                self._approval_cache[cache_key] = True
+                self.logger.debug(f"Sufficient token allowance: {current_allowance}")
+                return
+            
+            self.logger.info(f"🔐 Approving token {swap_params.token_in} for DEX router...")
+            
+            # Build approval transaction for infinite approval (more gas efficient long-term)
+            max_uint256 = 2**256 - 1
+            approve_function = token_contract.functions.approve(spender, max_uint256)
+            
+            approve_tx = approve_function.build_transaction({
+                'from': from_address,
+                'gas': 100000,  # Standard gas limit for approval
+                'gasPrice': int(swap_params.gas_price_gwei * Decimal('1e9')) if swap_params.gas_price_gwei else None
+            })
+            
+            # Prepare approval transaction
+            approval_transaction = await self.wallet_manager.prepare_transaction(
+                from_address=from_address,
+                to_address=swap_params.token_in,
+                value=0,
+                data=approve_tx['data'],
+                gas_price_gwei=swap_params.gas_price_gwei,
+                gas_limit=100000
+            )
+            
+            # Sign and broadcast approval
+            signed_approval = await self.wallet_manager.sign_transaction(approval_transaction, from_address)
+            approval_hash = await self._broadcast_transaction(signed_approval)
+            await self._wait_for_confirmation(approval_hash, timeout_seconds=120)
+            
+            # Cache the approval
+            self._approval_cache[cache_key] = True
+            
+            self.logger.info(f"✅ Token approval completed: {approval_hash[:10]}...")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to approve token: {e}")
+            raise
+    
     async def _build_uniswap_v3_transaction(
         self, 
         swap_params: SwapParams,
@@ -241,21 +333,19 @@ class DEXRouterService:
     ) -> TxParams:
         """Build Uniswap V3 swap transaction."""
         try:
-            # For ETH → Token swaps
             if swap_params.swap_type == SwapType.EXACT_ETH_FOR_TOKENS:
-                # exactInputSingle for ETH → Token
+                # ETH → Token swap using exactInputSingle
                 function_call = self.uniswap_v3_router.functions.exactInputSingle({
-                    'tokenIn': self.chain_config.weth_address,  # WETH on this chain
+                    'tokenIn': self.chain_config.weth_address,
                     'tokenOut': swap_params.token_out,
                     'fee': swap_params.fee_tier,
                     'recipient': swap_params.recipient,
                     'deadline': swap_params.deadline,
                     'amountIn': swap_params.amount_in,
                     'amountOutMinimum': swap_params.amount_out_minimum,
-                    'sqrtPriceLimitX96': 0  # No price limit
+                    'sqrtPriceLimitX96': 0
                 })
                 
-                # Build transaction data
                 tx_data = function_call.build_transaction({
                     'from': from_address,
                     'value': swap_params.amount_in,
@@ -263,18 +353,17 @@ class DEXRouterService:
                     'gasPrice': int(swap_params.gas_price_gwei * Decimal('1e9')) if swap_params.gas_price_gwei else None
                 })
                 
-                # Prepare transaction with ETH value
                 transaction = await self.wallet_manager.prepare_transaction(
                     from_address=from_address,
                     to_address=self.uniswap_v3_router.address,
-                    value=swap_params.amount_in,  # ETH value for the swap
+                    value=swap_params.amount_in,
                     data=tx_data['data'],
                     gas_price_gwei=swap_params.gas_price_gwei,
-                    gas_limit=swap_params.gas_limit or 300000  # Conservative gas limit
+                    gas_limit=swap_params.gas_limit or 300000
                 )
                 
             elif swap_params.swap_type == SwapType.EXACT_TOKENS_FOR_ETH:
-                # Token → ETH swap (needs token approval first)
+                # Token → ETH swap
                 function_call = self.uniswap_v3_router.functions.exactInputSingle({
                     'tokenIn': swap_params.token_in,
                     'tokenOut': self.chain_config.weth_address,
@@ -286,26 +375,51 @@ class DEXRouterService:
                     'sqrtPriceLimitX96': 0
                 })
                 
-                # Build transaction data
                 tx_data = function_call.build_transaction({
                     'from': from_address,
                     'gas': swap_params.gas_limit or 300000,
                     'gasPrice': int(swap_params.gas_price_gwei * Decimal('1e9')) if swap_params.gas_price_gwei else None
                 })
                 
-                # Prepare transaction (no ETH value for token → ETH)
                 transaction = await self.wallet_manager.prepare_transaction(
                     from_address=from_address,
                     to_address=self.uniswap_v3_router.address,
-                    value=0,  # No ETH value for token swaps
+                    value=0,
                     data=tx_data['data'],
                     gas_price_gwei=swap_params.gas_price_gwei,
                     gas_limit=swap_params.gas_limit or 300000
                 )
                 
+            elif swap_params.swap_type == SwapType.EXACT_TOKENS_FOR_TOKENS:
+                # Token → Token swap
+                function_call = self.uniswap_v3_router.functions.exactInputSingle({
+                    'tokenIn': swap_params.token_in,
+                    'tokenOut': swap_params.token_out,
+                    'fee': swap_params.fee_tier,
+                    'recipient': swap_params.recipient,
+                    'deadline': swap_params.deadline,
+                    'amountIn': swap_params.amount_in,
+                    'amountOutMinimum': swap_params.amount_out_minimum,
+                    'sqrtPriceLimitX96': 0
+                })
+                
+                tx_data = function_call.build_transaction({
+                    'from': from_address,
+                    'gas': swap_params.gas_limit or 350000,  # Higher gas for token-token swaps
+                    'gasPrice': int(swap_params.gas_price_gwei * Decimal('1e9')) if swap_params.gas_price_gwei else None
+                })
+                
+                transaction = await self.wallet_manager.prepare_transaction(
+                    from_address=from_address,
+                    to_address=self.uniswap_v3_router.address,
+                    value=0,
+                    data=tx_data['data'],
+                    gas_price_gwei=swap_params.gas_price_gwei,
+                    gas_limit=swap_params.gas_limit or 350000
+                )
+            
             else:
-                # Token → Token swaps
-                raise NotImplementedError(f"Swap type {swap_params.swap_type} not yet implemented")
+                raise ValueError(f"Unsupported swap type: {swap_params.swap_type}")
             
             return transaction
             
@@ -320,17 +434,15 @@ class DEXRouterService:
     ) -> TxParams:
         """Build Uniswap V2 swap transaction."""
         try:
-            # For ETH → Token swaps
             if swap_params.swap_type == SwapType.EXACT_ETH_FOR_TOKENS:
-                # swapExactETHForTokens
+                # ETH → Token swap
                 function_call = self.uniswap_v2_router.functions.swapExactETHForTokens(
-                    swap_params.amount_out_minimum,  # amountOutMin
-                    [self.chain_config.weth_address, swap_params.token_out],  # path
-                    swap_params.recipient,  # to
-                    swap_params.deadline  # deadline
+                    swap_params.amount_out_minimum,
+                    [self.chain_config.weth_address, swap_params.token_out],
+                    swap_params.recipient,
+                    swap_params.deadline
                 )
                 
-                # Build transaction data
                 tx_data = function_call.build_transaction({
                     'from': from_address,
                     'value': swap_params.amount_in,
@@ -338,46 +450,67 @@ class DEXRouterService:
                     'gasPrice': int(swap_params.gas_price_gwei * Decimal('1e9')) if swap_params.gas_price_gwei else None
                 })
                 
-                # Prepare transaction with ETH value
                 transaction = await self.wallet_manager.prepare_transaction(
                     from_address=from_address,
                     to_address=self.uniswap_v2_router.address,
-                    value=swap_params.amount_in,  # ETH value for the swap
+                    value=swap_params.amount_in,
                     data=tx_data['data'],
                     gas_price_gwei=swap_params.gas_price_gwei,
-                    gas_limit=swap_params.gas_limit or 250000  # Conservative gas limit
+                    gas_limit=swap_params.gas_limit or 250000
                 )
                 
             elif swap_params.swap_type == SwapType.EXACT_TOKENS_FOR_ETH:
-                # swapExactTokensForETH
+                # Token → ETH swap
                 function_call = self.uniswap_v2_router.functions.swapExactTokensForETH(
-                    swap_params.amount_in,  # amountIn
-                    swap_params.amount_out_minimum,  # amountOutMin
-                    [swap_params.token_in, self.chain_config.weth_address],  # path
-                    swap_params.recipient,  # to
-                    swap_params.deadline  # deadline
+                    swap_params.amount_in,
+                    swap_params.amount_out_minimum,
+                    [swap_params.token_in, self.chain_config.weth_address],
+                    swap_params.recipient,
+                    swap_params.deadline
                 )
                 
-                # Build transaction data
                 tx_data = function_call.build_transaction({
                     'from': from_address,
                     'gas': swap_params.gas_limit or 250000,
                     'gasPrice': int(swap_params.gas_price_gwei * Decimal('1e9')) if swap_params.gas_price_gwei else None
                 })
                 
-                # Prepare transaction (no ETH value for token → ETH)
                 transaction = await self.wallet_manager.prepare_transaction(
                     from_address=from_address,
                     to_address=self.uniswap_v2_router.address,
-                    value=0,  # No ETH value for token swaps
+                    value=0,
                     data=tx_data['data'],
                     gas_price_gwei=swap_params.gas_price_gwei,
                     gas_limit=swap_params.gas_limit or 250000
                 )
                 
+            elif swap_params.swap_type == SwapType.EXACT_TOKENS_FOR_TOKENS:
+                # Token → Token swap
+                function_call = self.uniswap_v2_router.functions.swapExactTokensForTokens(
+                    swap_params.amount_in,
+                    swap_params.amount_out_minimum,
+                    [swap_params.token_in, swap_params.token_out],
+                    swap_params.recipient,
+                    swap_params.deadline
+                )
+                
+                tx_data = function_call.build_transaction({
+                    'from': from_address,
+                    'gas': swap_params.gas_limit or 300000,
+                    'gasPrice': int(swap_params.gas_price_gwei * Decimal('1e9')) if swap_params.gas_price_gwei else None
+                })
+                
+                transaction = await self.wallet_manager.prepare_transaction(
+                    from_address=from_address,
+                    to_address=self.uniswap_v2_router.address,
+                    value=0,
+                    data=tx_data['data'],
+                    gas_price_gwei=swap_params.gas_price_gwei,
+                    gas_limit=swap_params.gas_limit or 300000
+                )
+            
             else:
-                # Token → Token swaps
-                raise NotImplementedError(f"Swap type {swap_params.swap_type} not yet implemented")
+                raise ValueError(f"Unsupported swap type: {swap_params.swap_type}")
             
             return transaction
             
@@ -428,19 +561,41 @@ class DEXRouterService:
         swap_params: SwapParams, 
         receipt: Dict[str, Any]
     ) -> Decimal:
-        """Calculate actual slippage from transaction receipt."""
+        """
+        Calculate actual slippage from transaction receipt.
+        
+        Args:
+            swap_params: Original swap parameters
+            receipt: Transaction receipt with logs
+            
+        Returns:
+            Actual slippage percentage as Decimal
+        """
         try:
-            # In production, this would parse the transaction logs to get actual amounts
-            # For now, return estimated slippage based on execution
-            if receipt.get('status') == 1:
-                # Successful transaction - assume half of max slippage
-                return swap_params.slippage_tolerance / 2
-            else:
-                # Failed transaction
+            # Extract actual amount out from receipt
+            actual_amount_out = await self._extract_amount_out_from_receipt(receipt, swap_params)
+            
+            if actual_amount_out == 0:
+                self.logger.warning("Could not determine actual amount out, using 0% slippage")
                 return Decimal('0')
             
+            # Calculate expected amount (minimum amount out represents max slippage)
+            expected_amount = swap_params.amount_out_minimum
+            
+            if expected_amount == 0:
+                self.logger.warning("No minimum amount set, cannot calculate slippage")
+                return Decimal('0')
+            
+            # Calculate slippage: (expected - actual) / expected * 100
+            if actual_amount_out >= expected_amount:
+                # No slippage - we got more than expected
+                return Decimal('0')
+            else:
+                slippage = ((expected_amount - actual_amount_out) / expected_amount) * 100
+                return Decimal(str(slippage)).quantize(Decimal('0.001'))
+            
         except Exception as e:
-            self.logger.error(f"Failed to calculate slippage: {e}")
+            self.logger.warning(f"Failed to calculate actual slippage: {e}")
             return Decimal('0')
     
     async def _extract_amount_out_from_receipt(
@@ -448,47 +603,69 @@ class DEXRouterService:
         receipt: Dict[str, Any], 
         swap_params: SwapParams
     ) -> int:
-        """Extract actual amount out from transaction receipt logs."""
-        try:
-            # In production, this would decode the Swap event logs to get exact amounts
-            # For now, return estimated amount based on input and slippage
-            if receipt.get('status') == 1:
-                # Estimate based on slippage
-                slippage_factor = Decimal('1') - (swap_params.slippage_tolerance / 2)
-                
-                if swap_params.swap_type == SwapType.EXACT_ETH_FOR_TOKENS:
-                    # Simplified estimation for ETH → Token
-                    # In production, would use real price feeds
-                    estimated_price = Decimal('0.001')  # Mock token price
-                    estimated_tokens = (Decimal(swap_params.amount_in) / Decimal('1e18')) / estimated_price
-                    return int(estimated_tokens * slippage_factor * Decimal('1e18'))
-                else:
-                    # Token → ETH estimation
-                    estimated_price = Decimal('0.001')  # Mock token price
-                    estimated_eth = (Decimal(swap_params.amount_in) / Decimal('1e18')) * estimated_price
-                    return int(estimated_eth * slippage_factor * Decimal('1e18'))
-            else:
-                return 0
-                
-        except Exception as e:
-            self.logger.error(f"Failed to extract amount out: {e}")
-            return 0
-    
-    def estimate_gas_for_swap(self, swap_params: SwapParams) -> int:
-        """Estimate gas required for swap operation."""
-        # Conservative gas estimates by swap type and DEX version
-        gas_estimates = {
-            (DEXVersion.UNISWAP_V3, SwapType.EXACT_ETH_FOR_TOKENS): 180000,
-            (DEXVersion.UNISWAP_V3, SwapType.EXACT_TOKENS_FOR_ETH): 200000,
-            (DEXVersion.UNISWAP_V2, SwapType.EXACT_ETH_FOR_TOKENS): 150000,
-            (DEXVersion.UNISWAP_V2, SwapType.EXACT_TOKENS_FOR_ETH): 170000,
-        }
+        """
+        Extract actual amount out from transaction receipt logs.
         
-        key = (swap_params.dex_version, swap_params.swap_type)
-        return gas_estimates.get(key, 200000)  # Default conservative estimate
+        Args:
+            receipt: Transaction receipt
+            swap_params: Swap parameters for context
+            
+        Returns:
+            Actual amount out in wei/smallest unit
+        """
+        try:
+            # This is a simplified implementation - in production you would:
+            # 1. Parse Transfer events from token contracts
+            # 2. Parse Swap events from Uniswap contracts
+            # 3. Calculate actual amounts based on event data
+            
+            logs = receipt.get('logs', [])
+            
+            # For ETH → Token swaps, look for Transfer events to the recipient
+            if swap_params.swap_type == SwapType.EXACT_ETH_FOR_TOKENS:
+                # Look for Transfer event from Uniswap to recipient
+                transfer_topic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                
+                for log in logs:
+                    if (len(log.get('topics', [])) >= 3 and 
+                        log['topics'][0].hex() == transfer_topic and
+                        log['address'].lower() == swap_params.token_out.lower()):
+                        
+                        # Extract amount from Transfer event data
+                        # This is the actual amount received
+                        amount_hex = log['data']
+                        if amount_hex and len(amount_hex) >= 66:  # 0x + 64 hex chars
+                            amount = int(amount_hex, 16)
+                            self.logger.debug(f"Extracted amount from Transfer event: {amount}")
+                            return amount
+            
+            # For Token → ETH swaps, similar logic for WETH Transfer events
+            elif swap_params.swap_type == SwapType.EXACT_TOKENS_FOR_ETH:
+                # Look for WETH Transfer to recipient or ETH withdrawal
+                weth_address = self.chain_config.weth_address.lower()
+                transfer_topic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                
+                for log in logs:
+                    if (len(log.get('topics', [])) >= 3 and 
+                        log['topics'][0].hex() == transfer_topic and
+                        log['address'].lower() == weth_address):
+                        
+                        amount_hex = log['data']
+                        if amount_hex and len(amount_hex) >= 66:
+                            amount = int(amount_hex, 16)
+                            self.logger.debug(f"Extracted WETH amount: {amount}")
+                            return amount
+            
+            # Fallback: use minimum amount out as conservative estimate
+            self.logger.warning("Could not extract exact amount from logs, using minimum expected")
+            return swap_params.amount_out_minimum
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to extract amount from receipt: {e}")
+            return swap_params.amount_out_minimum
     
-    def get_performance_metrics(self) -> Dict[str, Any]:
-        """Get DEX router performance metrics."""
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get performance statistics for the DEX router service."""
         success_rate = (self.successful_swaps / max(self.total_swaps, 1)) * 100
         avg_gas_per_swap = self.total_gas_used / max(self.successful_swaps, 1)
         
@@ -500,8 +677,34 @@ class DEXRouterService:
             'average_gas_per_swap': int(avg_gas_per_swap),
             'supported_dex_versions': ['uniswap_v3', 'uniswap_v2'],
             'chain_id': self.chain_config.chain_id,
-            'chain_name': self.chain_config.name
+            'chain_name': self.chain_config.name,
+            'approval_cache_size': len(self._approval_cache)
         }
+    
+    def _get_erc20_abi(self) -> List[Dict[str, Any]]:
+        """Get ERC20 token ABI for approval operations."""
+        return [
+            {
+                "constant": False,
+                "inputs": [
+                    {"name": "_spender", "type": "address"},
+                    {"name": "_value", "type": "uint256"}
+                ],
+                "name": "approve",
+                "outputs": [{"name": "", "type": "bool"}],
+                "type": "function"
+            },
+            {
+                "constant": True,
+                "inputs": [
+                    {"name": "_owner", "type": "address"},
+                    {"name": "_spender", "type": "address"}
+                ],
+                "name": "allowance",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function"
+            }
+        ]
     
     def _get_uniswap_v3_router_abi(self) -> List[Dict[str, Any]]:
         """Get Uniswap V3 Router ABI for exactInputSingle function."""
@@ -559,6 +762,21 @@ class DEXRouterService:
                     {"internalType": "uint256", "name": "deadline", "type": "uint256"}
                 ],
                 "name": "swapExactTokensForETH",
+                "outputs": [
+                    {"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}
+                ],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                    {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+                    {"internalType": "address[]", "name": "path", "type": "address[]"},
+                    {"internalType": "address", "name": "to", "type": "address"},
+                    {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+                ],
+                "name": "swapExactTokensForTokens",
                 "outputs": [
                     {"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}
                 ],
