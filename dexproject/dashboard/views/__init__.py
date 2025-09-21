@@ -337,10 +337,10 @@ except ImportError:
             }
         })
 
-# SMART LANE IMPORTS - FIXED: Corrected import structure
+# SMART LANE IMPORTS - FIXED: Corrected import structure for actual file locations
 try:
-    # First import Smart Lane views - use relative import for smart_lane_features
-    from ..smart_lane_features import (
+    # First import Smart Lane views - correct import path
+    from dashboard.smart_lane_features import (
         smart_lane_dashboard,
         smart_lane_demo,
         smart_lane_config,
@@ -348,9 +348,9 @@ try:
     )
     print("Smart Lane views imported successfully")
    
-    # Import API functions from api_endpoints - FIXED: Use relative import to avoid circular import
+    # Import API functions from api_endpoints - FIXED: Use correct absolute import path
     try:
-        from ..api_endpoints import (
+        from dashboard.api_endpoints import (
             api_smart_lane_analyze,
             api_get_thought_log,
         )
