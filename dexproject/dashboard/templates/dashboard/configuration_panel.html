@@ -4,223 +4,7 @@
 {% block title %}{{ page_title }}{% endblock %}
 
 {% block extra_css %}
-<style>
-    .config-panel {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border-radius: 15px;
-        padding: 2rem;
-        margin-bottom: 2rem;
-        border: 1px solid rgba(0, 212, 170, 0.2);
-    }
-    
-    .fast-lane-accent { 
-        color: #00d4aa !important; 
-    }
-    
-    .smart-lane-accent { 
-        color: #1f6feb !important; 
-    }
-    
-    .mode-header {
-        text-align: center;
-        margin-bottom: 2rem;
-        padding: 1.5rem;
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 12px;
-        border: 2px solid;
-    }
-    
-    .mode-header.fast-lane { 
-        border-color: #00d4aa; 
-    }
-    
-    .mode-header.smart-lane { 
-        border-color: #1f6feb; 
-    }
-    
-    .config-form {
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 12px;
-        padding: 2rem;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    .form-section {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 8px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        border-left: 4px solid;
-    }
-    
-    .form-section.fast-lane { 
-        border-left-color: #00d4aa; 
-    }
-    
-    .form-section.smart-lane { 
-        border-left-color: #1f6feb; 
-    }
-    
-    .form-section.general { 
-        border-left-color: #6c757d; 
-    }
-    
-    .form-control {
-        background: rgba(0, 0, 0, 0.3) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        color: white !important;
-        border-radius: 8px;
-    }
-    
-    .form-control:focus {
-        background: rgba(0, 0, 0, 0.4) !important;
-        border-color: #00d4aa !important;
-        box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25) !important;
-        color: white !important;
-    }
-    
-    .form-select {
-        background: rgba(0, 0, 0, 0.3) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        color: white !important;
-    }
-    
-    .form-check-input {
-        background-color: rgba(0, 0, 0, 0.3);
-        border-color: rgba(255, 255, 255, 0.3);
-    }
-    
-    .form-check-input:checked {
-        background-color: #00d4aa;
-        border-color: #00d4aa;
-    }
-    
-    .btn-save-config {
-        background: linear-gradient(135deg, #00d4aa, #00b894);
-        border: none;
-        color: white;
-        padding: 0.75rem 2rem;
-        border-radius: 25px;
-        font-weight: 600;
-        transition: all 0.3s ease;
-    }
-    
-    .btn-save-config:hover {
-        background: linear-gradient(135deg, #00b894, #00d4aa);
-        transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(0, 212, 170, 0.3);
-        color: white;
-    }
-    
-    .existing-configs {
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 2rem;
-    }
-    
-    .config-card-mini {
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 0.5rem;
-        transition: all 0.3s ease;
-    }
-    
-    .config-card-mini:hover {
-        background: rgba(255, 255, 255, 0.1);
-        border-color: #00d4aa;
-    }
-    
-    .risk-level-indicators {
-        display: flex;
-        justify-content: space-between;
-        margin: 1rem 0;
-    }
-    
-    .risk-indicator {
-        flex: 1;
-        text-align: center;
-        padding: 0.5rem;
-        border-radius: 20px;
-        margin: 0 0.25rem;
-        font-size: 0.875rem;
-        font-weight: 600;
-    }
-    
-    .risk-low { background: rgba(40, 167, 69, 0.2); color: #28a745; }
-    .risk-medium { background: rgba(255, 193, 7, 0.2); color: #ffc107; }
-    .risk-high { background: rgba(220, 53, 69, 0.2); color: #dc3545; }
-    
-    .help-text {
-        font-size: 0.875rem;
-        color: #adb5bd;
-        margin-top: 0.25rem;
-    }
-    
-    .section-title {
-        color: #ffffff;
-        font-weight: 600;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
-    }
-    
-    .section-title i {
-        margin-right: 0.5rem;
-    }
-    
-    .input-group-text {
-        background: rgba(0, 0, 0, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        color: #adb5bd;
-    }
-    
-    .wallet-status {
-        background: rgba(0, 212, 170, 0.1);
-        border: 1px solid rgba(0, 212, 170, 0.3);
-        border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 1.5rem;
-    }
-    
-    .tooltip-custom {
-        cursor: help;
-        text-decoration: underline dotted;
-    }
-    
-    .form-switch .form-check-input {
-        background-color: rgba(0, 0, 0, 0.3);
-        border-color: rgba(255, 255, 255, 0.3);
-    }
-    
-    .form-switch .form-check-input:checked {
-        background-color: #00d4aa;
-        border-color: #00d4aa;
-    }
-    
-    .alert-success {
-        background: rgba(40, 167, 69, 0.2);
-        border: 1px solid rgba(40, 167, 69, 0.3);
-        color: #d4edda;
-    }
-    
-    .alert-info {
-        background: rgba(13, 202, 240, 0.2);
-        border: 1px solid rgba(13, 202, 240, 0.3);
-        color: #d1ecf1;
-    }
-    
-    .card.bg-dark {
-        background: rgba(0, 0, 0, 0.3) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    }
-    
-    .card-header.bg-success {
-        background: linear-gradient(135deg, #28a745, #20c997) !important;
-    }
-</style>
+<link rel="stylesheet" href="{% static 'css/configuration_panel.css' %}">
 {% endblock %}
 
 {% block content %}
@@ -403,6 +187,7 @@
                             <span class="input-group-text">ms</span>
                         </div>
                         <div class="help-text">Maximum time allowed for trade execution</div>
+                        <div id="execution-time-display" class="small text-muted mt-1"></div>
                     </div>
                     <div class="col-md-4 mb-3">
                         <label for="gas_price_gwei" class="form-label">Gas Price</label>
@@ -412,6 +197,7 @@
                             <span class="input-group-text">Gwei</span>
                         </div>
                         <div class="help-text">Gas price for transaction priority</div>
+                        <div id="gas-price-display" class="small text-muted mt-1"></div>
                     </div>
                     <div class="col-md-4 mb-3">
                         <label for="min_liquidity_usd" class="form-label">Min Liquidity</label>
@@ -445,6 +231,8 @@
                         </div>
                     </div>
                 </div>
+
+                <div id="mev-warning" style="display: none;"></div>
 
                 <div class="mb-3">
                     <label for="target_pairs" class="form-label">Target Trading Pairs</label>
@@ -774,6 +562,8 @@
                         <div class="help-text">Distance to maintain trailing stop from peak price</div>
                     </div>
                 </div>
+                
+                <div id="risk-reward-ratio" class="small text-muted mt-2"></div>
             </div>
 
             <!-- Performance and Cache Settings -->
@@ -831,6 +621,8 @@
                         <small class="text-muted">Run multiple analyzers simultaneously for faster results</small>
                     </div>
                 </div>
+                
+                <div id="complexity-indicator" class="small text-muted mt-2"></div>
             </div>
 
             <!-- Smart Lane Status Display -->
@@ -940,196 +732,20 @@
         </form>
     </div>
 </div>
+{% endblock %}
 
-<!-- JavaScript for Enhanced Functionality -->
+{% block extra_js %}
+<!-- Configuration Panel Configuration (Django template variables) -->
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize Bootstrap tooltips if available
-    if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) {
-        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-            return new bootstrap.Tooltip(tooltipTriggerEl);
-        });
-    }
-    
-    // Risk level indicator highlighting
-    const riskSelect = document.getElementById('risk_level');
-    const riskIndicators = document.querySelectorAll('.risk-indicator');
-    
-    if (riskSelect && riskIndicators.length > 0) {
-        function updateRiskIndicators() {
-            const selectedRisk = riskSelect.value.toLowerCase();
-            riskIndicators.forEach(indicator => {
-                indicator.style.opacity = '0.5';
-                indicator.style.transform = 'scale(0.95)';
-            });
-            
-            const activeIndicator = document.querySelector(`.risk-${selectedRisk}`);
-            if (activeIndicator) {
-                activeIndicator.style.opacity = '1';
-                activeIndicator.style.transform = 'scale(1.05)';
-            }
-        }
-        
-        riskSelect.addEventListener('change', updateRiskIndicators);
-        updateRiskIndicators(); // Initialize
-    }
-    
-    // Trailing stop toggle functionality
-    const trailingStopCheckbox = document.getElementById('enable_trailing_stop');
-    const trailingStopDistance = document.getElementById('trailing-stop-distance');
-    
-    if (trailingStopCheckbox && trailingStopDistance) {
-        trailingStopCheckbox.addEventListener('change', function() {
-            if (this.checked) {
-                trailingStopDistance.style.display = 'block';
-            } else {
-                trailingStopDistance.style.display = 'none';
-            }
-        });
-    }
-    
-    // Form validation
-    const form = document.getElementById('configForm');
-    if (form) {
-        form.addEventListener('submit', function(e) {
-            const configName = document.getElementById('config_name').value.trim();
-            if (!configName) {
-                e.preventDefault();
-                alert('Please enter a configuration name.');
-                document.getElementById('config_name').focus();
-                return false;
-            }
-            
-            // Smart Lane specific validation
-            {% if not is_fast_lane %}
-            // Validate technical indicators (at least 2 selected)
-            const technicalIndicators = document.querySelectorAll('input[name="technical_indicators"]:checked');
-            if (technicalIndicators.length < 2) {
-                e.preventDefault();
-                alert('Please select at least 2 technical indicators for comprehensive analysis.');
-                return false;
-            }
-            
-            // Validate timeframes (at least 2 selected)
-            const timeframes = document.querySelectorAll('input[name="technical_timeframes"]:checked');
-            if (timeframes.length < 2) {
-                e.preventDefault();
-                alert('Please select at least 2 timeframes for technical analysis.');
-                return false;
-            }
-            
-            // Validate stop loss vs take profit
-            const stopLoss = parseFloat(document.getElementById('stop_loss_percentage').value);
-            const takeProfit = parseFloat(document.getElementById('take_profit_percentage').value);
-            
-            if (takeProfit <= stopLoss) {
-                e.preventDefault();
-                alert('Take profit percentage should be higher than stop loss percentage.');
-                return false;
-            }
-            {% endif %}
-        });
-    }
-    
-    // Real-time configuration preview
-    function updateConfigurationPreview() {
-        const analysisDepth = document.getElementById('analysis_depth')?.value;
-        const estimatedTime = calculateEstimatedAnalysisTime(analysisDepth);
-        const timeDisplay = document.getElementById('estimated-analysis-time');
-        if (timeDisplay) {
-            timeDisplay.textContent = `Estimated analysis time: ${estimatedTime}`;
-        }
-    }
-    
-    function calculateEstimatedAnalysisTime(depth) {
-        switch(depth) {
-            case 'BASIC': return '1-2 seconds';
-            case 'COMPREHENSIVE': return '3-5 seconds';
-            case 'DEEP_DIVE': return '8-12 seconds';
-            default: return '3-5 seconds';
-        }
-    }
-    
-    // Add event listeners for real-time preview
-    ['analysis_depth', 'ai_thought_log', 'risk_tolerance'].forEach(id => {
-        const element = document.getElementById(id);
-        if (element) {
-            element.addEventListener('change', updateConfigurationPreview);
-        }
-    });
-    
-    // Initialize preview
-    updateConfigurationPreview();
-    
-    console.log('Configuration panel initialized successfully');
-});
-
-// Smart Lane configuration testing
-async function testSmartLaneConfiguration() {
-    const testButton = document.getElementById('test-config-btn');
-    if (testButton) {
-        testButton.disabled = true;
-        testButton.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing...';
-    }
-    
-    try {
-        const response = await fetch('/dashboard/api/smart-lane/test-config/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
-            },
-            body: JSON.stringify({
-                config: Object.fromEntries(new FormData(document.getElementById('configForm')))
-            })
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-            alert(`Configuration test successful!\nEstimated analysis time: ${result.analysis_time_ms}ms\nAll analyzers: ${result.analyzers_status}`);
-        } else {
-            alert(`Configuration test failed: ${result.error}`);
-        }
-    } catch (error) {
-        alert(`Test failed: ${error.message}`);
-    } finally {
-        if (testButton) {
-            testButton.disabled = false;
-            testButton.innerHTML = '<i class="bi bi-play me-1"></i>Test Configuration';
-        }
-    }
-}
-
-// Export Smart Lane configuration
-function exportSmartLaneConfig() {
-    const formData = new FormData(document.getElementById('configForm'));
-    const config = {};
-    
-    for (let [key, value] of formData.entries()) {
-        if (config[key]) {
-            // Handle multiple values (like checkboxes)
-            if (Array.isArray(config[key])) {
-                config[key].push(value);
-            } else {
-                config[key] = [config[key], value];
-            }
-        } else {
-            config[key] = value;
-        }
-    }
-    
-    const configJson = JSON.stringify(config, null, 2);
-    const blob = new Blob([configJson], { type: 'application/json' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `{% if is_fast_lane %}fast_lane{% else %}smart_lane{% endif %}_config_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-}
+window.configPanelConfig = {
+    mode: '{{ mode }}',
+    isFastLane: {{ is_fast_lane|yesno:"true,false" }},
+    isSmartLane: {% if not is_fast_lane %}true{% else %}false{% endif %},
+    walletConnected: {% if wallet_info %}true{% else %}false{% endif %},
+    configCount: {{ configurations.count|default:0 }}
+};
 </script>
+
+<!-- Main Configuration Panel JavaScript -->
+<script src="{% static 'js/configuration_panel.js' %}"></script>
 {% endblock %}
