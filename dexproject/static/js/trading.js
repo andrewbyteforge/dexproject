@@ -1,8 +1,8 @@
 /**
  * Trading Frontend Integration - Phase 5.1C Complete Implementation
  * 
- * Provides complete frontend integration for trading functionality,
- * connecting dashboard UI to trading API endpoints with real-time updates.
+ * This file is REQUIRED for the home.html template to work properly.
+ * Create this file at: dexproject/dashboard/static/js/trading.js
  * 
  * Features:
  * - Trade execution (buy/sell orders)
@@ -11,8 +11,6 @@
  * - Trading session management
  * - Live status updates and notifications
  * - Integration with existing dashboard components
- * 
- * File: dashboard/static/js/trading.js
  */
 
 class TradingManager {
@@ -100,16 +98,6 @@ class TradingManager {
                 e.preventDefault();
                 this.closePosition(new FormData(e.target));
             }
-        });
-
-        // Smart Lane analysis result handlers
-        document.addEventListener('analysis:complete', (e) => {
-            this.handleAnalysisResult(e.detail);
-        });
-
-        // Fast Lane configuration handlers
-        document.addEventListener('fast-lane:configured', (e) => {
-            this.handleFastLaneConfiguration(e.detail);
         });
     }
 
@@ -260,50 +248,6 @@ class TradingManager {
             console.error('Sell order error:', error);
             this.showNotification(
                 `Sell order failed: ${error.message}`,
-                'error'
-            );
-        }
-    }
-
-    /**
-     * Close a trading position
-     */
-    async closePosition(formData) {
-        const closeData = {
-            position_id: formData.get('position_id'),
-            percentage: parseFloat(formData.get('percentage') || '100'),
-            slippage_tolerance: parseFloat(formData.get('slippage_tolerance') || '0.005'),
-            gas_price_gwei: formData.get('gas_price_gwei') ? parseFloat(formData.get('gas_price_gwei')) : null
-        };
-
-        try {
-            this.showNotification('Closing position...', 'info');
-
-            const response = await this.makeRequest('POST', '/positions/close/', closeData);
-
-            if (response.success) {
-                this.showNotification(
-                    `Position closure submitted successfully! ${closeData.percentage}% of position will be closed.`,
-                    'success'
-                );
-
-                // Update position status in UI
-                this.updatePositionStatus(closeData.position_id, 'CLOSING');
-
-                // Close modal
-                this.closeModal('close-position-modal');
-
-                // Start monitoring position closure
-                this.monitorTradeStatus(response.task_id);
-
-            } else {
-                throw new Error(response.error || 'Position closure failed');
-            }
-
-        } catch (error) {
-            console.error('Position closure error:', error);
-            this.showNotification(
-                `Position closure failed: ${error.message}`,
                 'error'
             );
         }
@@ -576,44 +520,19 @@ class TradingManager {
         if (totalPnlEl) {
             const pnl = parseFloat(portfolio.total_pnl_usd || 0);
             totalPnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-            totalPnlEl.className = `fw-bold ${pnl >= 0 ? 'text-success' : 'text-danger'}`;
+            totalPnlEl.className = `metric-value ${pnl >= 0 ? 'text-success' : 'text-danger'}`;
         }
 
         // Update positions count
         const positionsCountEl = document.getElementById('positions-count');
         if (positionsCountEl) {
-            positionsCountEl.textContent = portfolio.positions.open_count || 0;
+            positionsCountEl.textContent = portfolio.positions?.open_count || 0;
         }
 
         // Update trades count
         const tradesCountEl = document.getElementById('trades-count');
         if (tradesCountEl) {
-            tradesCountEl.textContent = portfolio.trades.total_count || 0;
-        }
-    }
-
-    /**
-     * Update session status display
-     */
-    updateSessionStatus(session) {
-        const statusEl = document.getElementById('session-status');
-        if (!statusEl) return;
-
-        if (session) {
-            statusEl.innerHTML = `
-                <div class="d-flex align-items-center">
-                    <span class="status-indicator status-operational me-2"></span>
-                    <span>Session Active</span>
-                    <small class="text-muted ms-2">${session.strategy_name || 'Default'}</small>
-                </div>
-            `;
-        } else {
-            statusEl.innerHTML = `
-                <div class="d-flex align-items-center">
-                    <span class="status-indicator status-error me-2"></span>
-                    <span>No Active Session</span>
-                </div>
-            `;
+            tradesCountEl.textContent = portfolio.trades?.total_count || 0;
         }
     }
 
@@ -631,165 +550,6 @@ class TradingManager {
 
         if (startButton) startButton.style.display = enabled ? 'none' : 'inline-block';
         if (stopButton) stopButton.style.display = enabled ? 'inline-block' : 'none';
-    }
-
-    // =============================================================================
-    // MODAL AND UI HELPER METHODS
-    // =============================================================================
-
-    /**
-     * Show buy order modal
-     */
-    showBuyOrderModal(tokenAddress, defaultAmount = '0.1') {
-        const modal = this.createModal('buy-order-modal', 'Execute Buy Order', `
-            <form id="buy-order-form">
-                <div class="mb-3">
-                    <label for="token_address" class="form-label">Token Address</label>
-                    <input type="text" class="form-control" name="token_address" value="${tokenAddress}" readonly>
-                </div>
-                <div class="mb-3">
-                    <label for="amount_eth" class="form-label">Amount (ETH)</label>
-                    <input type="number" class="form-control" name="amount_eth" value="${defaultAmount}" 
-                           min="0.001" max="1000" step="0.001" required>
-                </div>
-                <div class="mb-3">
-                    <label for="slippage_tolerance" class="form-label">Slippage Tolerance (%)</label>
-                    <input type="number" class="form-control" name="slippage_tolerance" value="0.5" 
-                           min="0.1" max="50" step="0.1" required>
-                </div>
-                <div class="mb-3">
-                    <label for="gas_price_gwei" class="form-label">Gas Price (Gwei) - Optional</label>
-                    <input type="number" class="form-control" name="gas_price_gwei" 
-                           min="1" max="1000" step="0.1" placeholder="Auto">
-                </div>
-                <input type="hidden" name="chain_id" value="8453">
-                <div class="d-flex justify-content-end gap-2">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-success">Execute Buy Order</button>
-                </div>
-            </form>
-        `);
-
-        modal.show();
-    }
-
-    /**
-     * Show sell order modal
-     */
-    showSellOrderModal(tokenAddress, defaultAmount = '100') {
-        const modal = this.createModal('sell-order-modal', 'Execute Sell Order', `
-            <form id="sell-order-form">
-                <div class="mb-3">
-                    <label for="token_address" class="form-label">Token Address</label>
-                    <input type="text" class="form-control" name="token_address" value="${tokenAddress}" readonly>
-                </div>
-                <div class="mb-3">
-                    <label for="token_amount" class="form-label">Token Amount</label>
-                    <input type="number" class="form-control" name="token_amount" value="${defaultAmount}" 
-                           min="0.000001" step="any" required>
-                </div>
-                <div class="mb-3">
-                    <label for="slippage_tolerance" class="form-label">Slippage Tolerance (%)</label>
-                    <input type="number" class="form-control" name="slippage_tolerance" value="0.5" 
-                           min="0.1" max="50" step="0.1" required>
-                </div>
-                <div class="mb-3">
-                    <label for="gas_price_gwei" class="form-label">Gas Price (Gwei) - Optional</label>
-                    <input type="number" class="form-control" name="gas_price_gwei" 
-                           min="1" max="1000" step="0.1" placeholder="Auto">
-                </div>
-                <input type="hidden" name="chain_id" value="8453">
-                <div class="d-flex justify-content-end gap-2">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-danger">Execute Sell Order</button>
-                </div>
-            </form>
-        `);
-
-        modal.show();
-    }
-
-    /**
-     * Show close position modal
-     */
-    showClosePositionModal(positionId) {
-        const position = this.positions.get(positionId);
-        if (!position) {
-            this.showNotification('Position not found', 'error');
-            return;
-        }
-
-        const modal = this.createModal('close-position-modal', 'Close Position', `
-            <form id="close-position-form">
-                <div class="mb-3">
-                    <h6>${position.token_symbol} Position</h6>
-                    <small class="text-muted">Current Amount: ${position.current_amount} tokens</small>
-                </div>
-                <div class="mb-3">
-                    <label for="percentage" class="form-label">Percentage to Close (%)</label>
-                    <input type="number" class="form-control" name="percentage" value="100" 
-                           min="0.01" max="100" step="0.01" required>
-                </div>
-                <div class="mb-3">
-                    <label for="slippage_tolerance" class="form-label">Slippage Tolerance (%)</label>
-                    <input type="number" class="form-control" name="slippage_tolerance" value="0.5" 
-                           min="0.1" max="50" step="0.1" required>
-                </div>
-                <div class="mb-3">
-                    <label for="gas_price_gwei" class="form-label">Gas Price (Gwei) - Optional</label>
-                    <input type="number" class="form-control" name="gas_price_gwei" 
-                           min="1" max="1000" step="0.1" placeholder="Auto">
-                </div>
-                <input type="hidden" name="position_id" value="${positionId}">
-                <div class="d-flex justify-content-end gap-2">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-warning">Close Position</button>
-                </div>
-            </form>
-        `);
-
-        modal.show();
-    }
-
-    /**
-     * Create and show a modal
-     */
-    createModal(id, title, content) {
-        // Remove existing modal with same ID
-        const existing = document.getElementById(id);
-        if (existing) {
-            existing.remove();
-        }
-
-        const modalHtml = `
-            <div class="modal fade" id="${id}" tabindex="-1">
-                <div class="modal-dialog">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">${title}</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            ${content}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-
-        return new bootstrap.Modal(document.getElementById(id));
-    }
-
-    /**
-     * Close modal by ID
-     */
-    closeModal(modalId) {
-        const modal = bootstrap.Modal.getInstance(document.getElementById(modalId));
-        if (modal) {
-            modal.hide();
-        }
     }
 
     // =============================================================================
@@ -940,61 +700,6 @@ class TradingManager {
     }
 
     /**
-     * Handle trade status updates
-     */
-    handleTradeUpdate(trade) {
-        this.trades.set(trade.trade_id, trade);
-
-        // Update UI if trade element exists
-        const tradeElement = document.querySelector(`[data-trade-id="${trade.trade_id}"]`);
-        if (tradeElement) {
-            const statusBadge = tradeElement.querySelector('.badge');
-            if (statusBadge) {
-                statusBadge.className = `badge ${this.getStatusBadgeClass(trade.status)}`;
-                statusBadge.textContent = trade.status;
-            }
-        }
-
-        // Show notification for completed/failed trades
-        if (trade.status === 'COMPLETED') {
-            this.showNotification(
-                `Trade completed successfully! ${trade.trade_type} ${trade.token_symbol}`,
-                'success'
-            );
-        } else if (trade.status === 'FAILED') {
-            this.showNotification(
-                `Trade failed: ${trade.error_message || 'Unknown error'}`,
-                'error'
-            );
-        }
-    }
-
-    /**
-     * Handle position updates
-     */
-    handlePositionUpdate(position) {
-        this.positions.set(position.position_id, position);
-
-        // Update UI if position element exists
-        const positionElement = document.querySelector(`[data-position-id="${position.position_id}"]`);
-        if (positionElement) {
-            // Update current value and P&L
-            const valueEl = positionElement.querySelector('.current-value');
-            const pnlEl = positionElement.querySelector('.unrealized-pnl');
-
-            if (valueEl) {
-                valueEl.textContent = `$${parseFloat(position.current_value_usd).toFixed(2)}`;
-            }
-
-            if (pnlEl) {
-                const pnl = parseFloat(position.unrealized_pnl_usd);
-                pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
-                pnlEl.className = `fw-bold ${pnl >= 0 ? 'text-success' : 'text-danger'}`;
-            }
-        }
-    }
-
-    /**
      * Monitor trade status via polling
      */
     async monitorTradeStatus(tradeId, taskId) {
@@ -1030,85 +735,6 @@ class TradingManager {
     }
 
     /**
-     * Handle Smart Lane analysis results
-     */
-    handleAnalysisResult(analysisResult) {
-        // Add execute trade buttons to analysis results
-        if (analysisResult.recommendation && analysisResult.recommendation !== 'HOLD') {
-            this.addTradeButtonsToAnalysis(analysisResult);
-        }
-    }
-
-    /**
-     * Add trade execution buttons to analysis results
-     */
-    addTradeButtonsToAnalysis(analysisResult) {
-        const analysisContainer = document.getElementById('smart-lane-analysis-result');
-        if (!analysisContainer) return;
-
-        const recommendation = analysisResult.recommendation;
-        const tokenAddress = analysisResult.token_address;
-
-        let buttonsHtml = '';
-
-        if (recommendation === 'BUY' || recommendation === 'STRONG_BUY') {
-            buttonsHtml += `
-                <button class="btn btn-success me-2" 
-                        data-action="buy" 
-                        data-token-address="${tokenAddress}"
-                        data-amount="${analysisResult.suggested_amount || '0.1'}">
-                    <i class="bi bi-cart-plus me-1"></i>Execute Buy Order
-                </button>
-            `;
-        }
-
-        if (recommendation === 'SELL' || recommendation === 'STRONG_SELL') {
-            buttonsHtml += `
-                <button class="btn btn-danger me-2" 
-                        data-action="sell" 
-                        data-token-address="${tokenAddress}"
-                        data-amount="${analysisResult.suggested_amount || '100'}">
-                    <i class="bi bi-cart-dash me-1"></i>Execute Sell Order
-                </button>
-            `;
-        }
-
-        if (buttonsHtml) {
-            const actionsDiv = analysisContainer.querySelector('.analysis-actions') ||
-                this.createAnalysisActionsDiv(analysisContainer);
-
-            actionsDiv.innerHTML = buttonsHtml;
-        }
-    }
-
-    /**
-     * Create analysis actions div if it doesn't exist
-     */
-    createAnalysisActionsDiv(container) {
-        const actionsDiv = document.createElement('div');
-        actionsDiv.className = 'analysis-actions mt-3 p-3 border-top';
-        container.appendChild(actionsDiv);
-        return actionsDiv;
-    }
-
-    /**
-     * Handle Fast Lane configuration
-     */
-    handleFastLaneConfiguration(config) {
-        // Enable Fast Lane trading capabilities
-        this.fastLaneConfig = config;
-
-        // Update UI to show Fast Lane is ready
-        const statusEl = document.getElementById('fast-lane-status');
-        if (statusEl) {
-            statusEl.innerHTML = `
-                <span class="status-indicator status-operational me-2"></span>
-                <span>Fast Lane Ready</span>
-            `;
-        }
-    }
-
-    /**
      * Add pending trade to UI immediately
      */
     addPendingTrade(trade) {
@@ -1126,17 +752,44 @@ class TradingManager {
         }
     }
 
-    /**
-     * Update position status in UI
-     */
-    updatePositionStatus(positionId, status) {
-        const positionElement = document.querySelector(`[data-position-id="${positionId}"]`);
-        if (positionElement) {
-            const statusBadge = positionElement.querySelector('.badge');
-            if (statusBadge) {
-                statusBadge.className = `badge ${this.getStatusBadgeClass(status)}`;
-                statusBadge.textContent = status;
-            }
+    // Modal and form helper methods (simplified versions)
+    showBuyOrderModal(tokenAddress, amount) {
+        // Simple implementation - you can enhance with Bootstrap modals
+        const tokenAddr = prompt('Token Address:', tokenAddress || '');
+        const ethAmount = prompt('ETH Amount:', amount || '0.1');
+
+        if (tokenAddr && ethAmount) {
+            const formData = new FormData();
+            formData.append('token_address', tokenAddr);
+            formData.append('amount_eth', ethAmount);
+            formData.append('slippage_tolerance', '0.005');
+            formData.append('chain_id', '8453');
+
+            this.executeBuyOrder(formData);
+        }
+    }
+
+    showSellOrderModal(tokenAddress, amount) {
+        // Simple implementation - you can enhance with Bootstrap modals
+        const tokenAddr = prompt('Token Address:', tokenAddress || '');
+        const tokenAmount = prompt('Token Amount:', amount || '100');
+
+        if (tokenAddr && tokenAmount) {
+            const formData = new FormData();
+            formData.append('token_address', tokenAddr);
+            formData.append('token_amount', tokenAmount);
+            formData.append('slippage_tolerance', '0.005');
+            formData.append('chain_id', '8453');
+
+            this.executeSellOrder(formData);
+        }
+    }
+
+    closeModal(modalId) {
+        // Helper method for closing modals
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.style.display = 'none';
         }
     }
 
@@ -1147,10 +800,6 @@ class TradingManager {
         if (this.eventSource) {
             this.eventSource.close();
         }
-
-        // Remove event listeners
-        document.removeEventListener('click', this.boundClickHandler);
-        document.removeEventListener('submit', this.boundSubmitHandler);
     }
 }
 
