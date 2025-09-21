@@ -12,7 +12,7 @@ File: dexproject/dexproject/settings.py
 
 import os
 from pathlib import Path
-
+import logging
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
@@ -25,7 +25,7 @@ from decimal import Decimal
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
+logger = logging.getLogger(__name__)
 # =============================================================================
 # HELPER FUNCTIONS FOR ENVIRONMENT VARIABLES
 # =============================================================================
@@ -317,6 +317,68 @@ CHAIN_CONFIGS = {
         'block_explorer': 'https://etherscan.io',
     },
 }
+
+
+# =============================================================================
+# WALLET BALANCE TRACKING CONFIGURATION - NEW FOR PHASE 5.1C
+# =============================================================================
+
+# Default tracked tokens when database has no tracked tokens configured
+# This provides a fallback list for each supported chain
+DEFAULT_TRACKED_TOKENS = {
+    # Base Sepolia (84532) - Primary testing chain
+    84532: [
+        {
+            'address': '0x4200000000000000000000000000000000000006',
+            'symbol': 'WETH',
+            'name': 'Wrapped Ether',
+            'decimals': 18
+        },
+        {
+            'address': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+            'symbol': 'USDbC',
+            'name': 'USD Base Coin (Sepolia)',
+            'decimals': 6
+        }
+    ],
+    
+    # Ethereum Sepolia (11155111) - Secondary testing chain  
+    11155111: [
+        {
+            'address': '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
+            'symbol': 'WETH',
+            'name': 'Wrapped Ether',
+            'decimals': 18
+        },
+        {
+            'address': '0x6f14C02Fc1F78322cFd7d707aB90f18baD3B54f5',
+            'symbol': 'USDC',
+            'name': 'USD Coin (Sepolia)',
+            'decimals': 6
+        },
+        {
+            'address': '0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6',
+            'symbol': 'DAI',
+            'name': 'Dai Stablecoin (Sepolia)',
+            'decimals': 18
+        }
+    ],
+    
+    # Arbitrum Sepolia (421614) - Additional testing chain
+    421614: [
+        {
+            'address': '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73',
+            'symbol': 'WETH',
+            'name': 'Wrapped Ether',
+            'decimals': 18
+        }
+    ]
+}
+
+# Balance tracking configuration
+WALLET_BALANCE_CACHE_TTL = 15  # Cache balance data for 15 seconds
+WALLET_BALANCE_MAX_TOKENS = 20  # Maximum tokens to track per wallet
+WALLET_BALANCE_TIMEOUT = 30  # Timeout for balance queries in seconds
 
 # =============================================================================
 # LOGGING CONFIGURATION (Enhanced for SIWE)

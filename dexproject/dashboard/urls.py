@@ -1,8 +1,8 @@
 """
-Dashboard URL Configuration - COMPLETE WORKING VERSION
+Dashboard URL Configuration - UPDATED WITH WALLET BALANCE API
 
-URL patterns that only reference confirmed existing view functions.
-This will allow migrations and Django to run without import errors.
+URL patterns that include the new wallet balance tracking endpoint
+while maintaining all existing confirmed view functions.
 
 File: dexproject/dashboard/urls.py
 """
@@ -12,6 +12,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from datetime import datetime
 from . import views
+from . import views_wallet  # Import new wallet views module
 
 
 app_name = 'dashboard'
@@ -35,6 +36,14 @@ urlpatterns = [
     
     # Server-sent events endpoint for streaming real-time trading metrics
     path('metrics/stream/', views.metrics_stream, name='metrics_stream'),
+   
+    # =========================================================================
+    # WALLET API ENDPOINTS - NEW PHASE 5.1C IMPLEMENTATION
+    # Real-time balance tracking and wallet management for trading capability
+    # =========================================================================
+    
+    # **NEW:** Wallet balance tracking API for Base Sepolia with multi-chain support
+    path('api/wallet/balances/', views_wallet.api_wallet_balances, name='api_wallet_balances'),
    
     # =========================================================================
     # CONFIGURATION MANAGEMENT API ENDPOINTS
@@ -120,33 +129,10 @@ urlpatterns = [
     # path('debug/templates/', views.debug_templates, name='debug_templates'),
     # path('minimal/', views.minimal_dashboard, name='minimal_dashboard'),
 
-
-
-
     # =========================================================================
     # HEALTH CHECK AND SYSTEM ENDPOINTS - CONFIRMED EXISTING
     # =========================================================================
     
     # System health endpoint that exists in views.py
     # path('health/', views.dashboard_health_check, name='health_check'),
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ]
