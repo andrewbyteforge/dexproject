@@ -1,0 +1,1051 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Smart Lane Analysis - DEX Trading Bot{% endblock %}
+
+{% block extra_css %}
+<style>
+.analysis-container {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+}
+
+.recommendation-card {
+    transition: all 0.3s ease;
+    border-left: 4px solid;
+}
+
+.recommendation-card.buy {
+    border-left-color: var(--success-color);
+    background: rgba(25, 135, 84, 0.1);
+}
+
+.recommendation-card.sell {
+    border-left-color: var(--danger-color);
+    background: rgba(220, 53, 69, 0.1);
+}
+
+.recommendation-card.hold {
+    border-left-color: var(--warning-color);
+    background: rgba(255, 193, 7, 0.1);
+}
+
+.confidence-bar {
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.confidence-fill {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.risk-meter {
+    position: relative;
+    height: 20px;
+    background: linear-gradient(90deg, 
+        var(--success-color) 0%, 
+        var(--warning-color) 50%, 
+        var(--danger-color) 100%);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.risk-indicator {
+    position: absolute;
+    top: -5px;
+    width: 4px;
+    height: 30px;
+    background: white;
+    border-radius: 2px;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+    transition: left 0.5s ease;
+}
+
+.analyzer-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+}
+
+.analyzer-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+.thought-log {
+    background: rgba(0, 123, 255, 0.05);
+    border: 1px solid rgba(0, 123, 255, 0.2);
+    border-radius: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.trade-execution-panel {
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(0, 212, 170, 0.3);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+    transition: all 0.3s ease;
+}
+
+.trade-execution-panel:hover {
+    border-color: rgba(0, 212, 170, 0.5);
+    box-shadow: 0 4px 12px rgba(0, 212, 170, 0.2);
+}
+
+.execute-btn {
+    padding: 0.75rem 2rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.execute-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+}
+
+.execute-btn:active {
+    transform: translateY(0);
+}
+
+.execute-btn.btn-success {
+    background: linear-gradient(135deg, var(--success-color), #20c997);
+}
+
+.execute-btn.btn-danger {
+    background: linear-gradient(135deg, var(--danger-color), #e74c3c);
+}
+
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    z-index: 10;
+}
+
+.pulse-glow {
+    animation: pulseGlow 2s infinite;
+}
+
+@keyframes pulseGlow {
+    0% { box-shadow: 0 0 5px rgba(0, 212, 170, 0.5); }
+    50% { box-shadow: 0 0 20px rgba(0, 212, 170, 0.8); }
+    100% { box-shadow: 0 0 5px rgba(0, 212, 170, 0.5); }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" data-trading-enabled="true">
+    <!-- Page Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="{% url 'dashboard:home' %}">Dashboard</a></li>
+                            <li class="breadcrumb-item"><a href="{% url 'dashboard:mode_selection' %}">Mode Selection</a></li>
+                            <li class="breadcrumb-item active">Smart Lane Analysis</li>
+                        </ol>
+                    </nav>
+                    <h1 class="h2 mb-1">
+                        <i class="bi bi-cpu smart-lane-accent me-2"></i>
+                        <span class="smart-lane-accent">Smart Lane Analysis</span>
+                    </h1>
+                    <p class="text-muted mb-0">Comprehensive AI-powered token analysis with trading execution</p>
+                </div>
+                <div>
+                    <button class="btn btn-outline-secondary me-2" onclick="resetAnalysis()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Reset
+                    </button>
+                    <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-light">
+                        <i class="bi bi-arrow-left me-1"></i>Back
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Analysis Input Panel -->
+        <div class="col-xl-4">
+            <div class="card analysis-container sticky-top" style="top: 1rem;">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-search me-2"></i>Token Analysis
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form id="analysis-form">
+                        <div class="mb-3">
+                            <label for="token_address" class="form-label">
+                                Token Address
+                                <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="token_address" 
+                                   name="token_address"
+                                   placeholder="0x..."
+                                   pattern="^0x[a-fA-F0-9]{40}$"
+                                   required>
+                            <div class="form-text">Enter the contract address of the token to analyze</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="analysis_depth" class="form-label">Analysis Depth</label>
+                            <select class="form-select" id="analysis_depth" name="analysis_depth">
+                                <option value="BASIC">Basic (~1-2s) - Essential checks</option>
+                                <option value="COMPREHENSIVE" selected>Comprehensive (~3-5s) - Full analysis</option>
+                                <option value="DEEP_DIVE">Deep Dive (~8-12s) - Maximum detail</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Analysis Categories</label>
+                            <div class="row">
+                                <div class="col-6 mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="honeypot_check" checked>
+                                        <label class="form-check-label" for="honeypot_check">
+                                            Honeypot Detection
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="liquidity_check" checked>
+                                        <label class="form-check-label" for="liquidity_check">
+                                            Liquidity Analysis
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="social_check" checked>
+                                        <label class="form-check-label" for="social_check">
+                                            Social Sentiment
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="technical_check" checked>
+                                        <label class="form-check-label" for="technical_check">
+                                            Technical Analysis
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="contract_check" checked>
+                                        <label class="form-check-label" for="contract_check">
+                                            Contract Security
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-6 mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="market_check" checked>
+                                        <label class="form-check-label" for="market_check">
+                                            Market Structure
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="position_size" class="form-label">Potential Position Size (ETH)</label>
+                            <input type="number" 
+                                   class="form-control" 
+                                   id="position_size" 
+                                   name="position_size"
+                                   value="0.1"
+                                   min="0.001"
+                                   max="100"
+                                   step="0.001">
+                            <div class="form-text">Used for position sizing recommendations</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-smart-lane w-100 mb-3" id="analyze-btn">
+                            <i class="bi bi-cpu me-2"></i>Start Analysis
+                        </button>
+                        
+                        <div class="text-center">
+                            <small class="text-muted">
+                                <i class="bi bi-shield-check me-1"></i>
+                                Analysis includes safety checks and risk assessment
+                            </small>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Analysis Results Panel -->
+        <div class="col-xl-8">
+            <div id="analysis-results" style="display: none;">
+                <!-- Recommendation Summary -->
+                <div class="card analysis-container mb-4" id="recommendation-summary">
+                    <div class="card-body">
+                        <div class="row align-items-center">
+                            <div class="col-md-8">
+                                <div class="d-flex align-items-center mb-3">
+                                    <div class="me-3">
+                                        <i class="bi bi-award display-4" id="recommendation-icon"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="mb-1" id="recommendation-text">Analyzing...</h3>
+                                        <p class="text-muted mb-0" id="recommendation-summary-text">
+                                            Comprehensive analysis in progress...
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span>Confidence Level</span>
+                                        <span id="confidence-percentage">0%</span>
+                                    </div>
+                                    <div class="confidence-bar">
+                                        <div class="confidence-fill bg-info" id="confidence-fill" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span>Risk Score</span>
+                                        <span id="risk-score">0/100</span>
+                                    </div>
+                                    <div class="risk-meter">
+                                        <div class="risk-indicator" id="risk-indicator" style="left: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 text-center">
+                                <div id="token-info">
+                                    <div class="mb-2">
+                                        <strong id="token-symbol">---</strong>
+                                    </div>
+                                    <div class="text-muted small" id="token-name">Token Name</div>
+                                    <div class="mt-3">
+                                        <div class="text-success" id="token-price">$0.00</div>
+                                        <small class="text-muted">Current Price</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trading Execution Panel -->
+                <div class="trade-execution-panel" id="trading-panel" style="display: none;">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h5 class="mb-2">
+                                <i class="bi bi-lightning-charge me-2"></i>Execute Trade Based on Analysis
+                            </h5>
+                            <p class="text-muted mb-3">
+                                Smart Lane recommends <span id="recommended-action">---</span> with 
+                                <span id="recommended-confidence">0%</span> confidence.
+                            </p>
+                            
+                            <div class="row g-2 mb-3">
+                                <div class="col-4">
+                                    <small class="text-muted">Suggested Amount:</small>
+                                    <div class="fw-bold" id="suggested-amount">0.1 ETH</div>
+                                </div>
+                                <div class="col-4">
+                                    <small class="text-muted">Risk Level:</small>
+                                    <div class="fw-bold" id="risk-level">Medium</div>
+                                </div>
+                                <div class="col-4">
+                                    <small class="text-muted">Expected Slippage:</small>
+                                    <div class="fw-bold" id="expected-slippage">0.5%</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="analysis-actions">
+                                <button class="execute-btn btn btn-success me-2" 
+                                        id="execute-buy-btn"
+                                        data-action="buy" 
+                                        style="display: none;">
+                                    <i class="bi bi-cart-plus me-1"></i>Execute Buy
+                                </button>
+                                <button class="execute-btn btn btn-danger me-2" 
+                                        id="execute-sell-btn"
+                                        data-action="sell" 
+                                        style="display: none;">
+                                    <i class="bi bi-cart-dash me-1"></i>Execute Sell
+                                </button>
+                                <button class="btn btn-outline-warning" 
+                                        id="manual-trade-btn"
+                                        onclick="showManualTradeModal()">
+                                    <i class="bi bi-gear me-1"></i>Manual Trade
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Analysis Details -->
+                <div class="row mt-4">
+                    <!-- Analyzer Results -->
+                    <div class="col-md-6 mb-4">
+                        <div class="card analysis-container h-100">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-list-check me-2"></i>Analyzer Results
+                                </h6>
+                            </div>
+                            <div class="card-body p-0">
+                                <div id="analyzer-results">
+                                    <div class="text-center py-4 text-muted">
+                                        <i class="bi bi-hourglass-split display-4 d-block mb-3"></i>
+                                        <p>Waiting for analysis...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AI Thought Log -->
+                    <div class="col-md-6 mb-4">
+                        <div class="card analysis-container h-100">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-chat-dots me-2"></i>AI Thought Log
+                                </h6>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="thought-log p-3" id="thought-log">
+                                    <div class="text-center py-4 text-muted">
+                                        <i class="bi bi-brain display-4 d-block mb-3"></i>
+                                        <p>AI reasoning will appear here...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detailed Analysis Data -->
+                <div class="card analysis-container">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-graph-up me-2"></i>Detailed Analysis Data
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="detailed-analysis">
+                            <div class="text-center py-4 text-muted">
+                                <i class="bi bi-table display-4 d-block mb-3"></i>
+                                <p>Detailed data will appear after analysis</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Initial State -->
+            <div id="initial-state" class="text-center py-5">
+                <div class="analysis-container p-5">
+                    <i class="bi bi-cpu display-1 smart-lane-accent mb-4 d-block"></i>
+                    <h3 class="smart-lane-accent mb-3">Smart Lane Analysis</h3>
+                    <p class="text-muted mb-4">
+                        Enter a token address to begin comprehensive AI-powered analysis.
+                        Get detailed insights on security, liquidity, sentiment, and trading opportunities.
+                    </p>
+                    <div class="row justify-content-center">
+                        <div class="col-md-8">
+                            <div class="row text-start">
+                                <div class="col-md-6 mb-3">
+                                    <i class="bi bi-shield-check text-success me-2"></i>Honeypot Detection
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <i class="bi bi-droplet text-info me-2"></i>Liquidity Analysis
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <i class="bi bi-people text-warning me-2"></i>Social Sentiment
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <i class="bi bi-graph-up text-primary me-2"></i>Technical Analysis
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <i class="bi bi-code-square text-success me-2"></i>Contract Security
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <i class="bi bi-diagram-3 text-info me-2"></i>Market Structure
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay" class="loading-overlay" style="display: none;">
+    <div class="text-center">
+        <div class="spinner-border text-info mb-3" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Analyzing...</span>
+        </div>
+        <h5 class="text-white">Running Smart Lane Analysis</h5>
+        <p class="text-muted mb-0" id="loading-status">Initializing analyzers...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/trading.js' %}"></script>
+
+<script>
+// Smart Lane Analysis JavaScript
+document.addEventListener('DOMContentLoaded', function() {
+    // Mark page for trading functionality
+    document.body.dataset.page = 'smart-lane';
+    
+    // Initialize analysis functionality
+    initializeSmartLaneAnalysis();
+});
+
+function initializeSmartLaneAnalysis() {
+    const form = document.getElementById('analysis-form');
+    
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        startAnalysis();
+    });
+    
+    // Auto-fill token address from URL if provided
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenAddress = urlParams.get('token');
+    if (tokenAddress) {
+        document.getElementById('token_address').value = tokenAddress;
+    }
+}
+
+async function startAnalysis() {
+    const form = document.getElementById('analysis-form');
+    const formData = new FormData(form);
+    
+    // Validate form
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    
+    const analysisData = {
+        token_address: formData.get('token_address'),
+        analysis_depth: formData.get('analysis_depth'),
+        position_size: parseFloat(formData.get('position_size')),
+        analyzers: {
+            honeypot_detection: document.getElementById('honeypot_check').checked,
+            liquidity_analysis: document.getElementById('liquidity_check').checked,
+            social_sentiment: document.getElementById('social_check').checked,
+            technical_analysis: document.getElementById('technical_check').checked,
+            contract_security: document.getElementById('contract_check').checked,
+            market_structure: document.getElementById('market_check').checked
+        }
+    };
+    
+    try {
+        // Show loading state
+        showLoadingState();
+        
+        // Start analysis
+        const response = await fetch('/api/smart-lane/analyze/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify(analysisData)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Show results
+            displayAnalysisResults(result.analysis);
+            
+            // Monitor analysis progress if needed
+            if (result.analysis.status === 'IN_PROGRESS') {
+                monitorAnalysisProgress(result.analysis.analysis_id);
+            }
+        } else {
+            throw new Error(result.error || 'Analysis failed');
+        }
+        
+    } catch (error) {
+        console.error('Analysis error:', error);
+        hideLoadingState();
+        showNotification(`Analysis failed: ${error.message}`, 'error');
+    }
+}
+
+function showLoadingState() {
+    document.getElementById('initial-state').style.display = 'none';
+    document.getElementById('analysis-results').style.display = 'block';
+    document.getElementById('loading-overlay').style.display = 'flex';
+    
+    // Disable form
+    const analyzeBtn = document.getElementById('analyze-btn');
+    analyzeBtn.disabled = true;
+    analyzeBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Analyzing...';
+    
+    // Simulate loading progress
+    simulateLoadingProgress();
+}
+
+function hideLoadingState() {
+    document.getElementById('loading-overlay').style.display = 'none';
+    
+    // Re-enable form
+    const analyzeBtn = document.getElementById('analyze-btn');
+    analyzeBtn.disabled = false;
+    analyzeBtn.innerHTML = '<i class="bi bi-cpu me-2"></i>Start Analysis';
+}
+
+function simulateLoadingProgress() {
+    const stages = [
+        'Initializing analyzers...',
+        'Checking contract security...',
+        'Analyzing liquidity pools...',
+        'Scanning for honeypot patterns...',
+        'Evaluating social sentiment...',
+        'Running technical analysis...',
+        'Assessing market structure...',
+        'Generating AI insights...',
+        'Finalizing recommendations...'
+    ];
+    
+    let currentStage = 0;
+    const statusEl = document.getElementById('loading-status');
+    
+    const updateProgress = () => {
+        if (currentStage < stages.length) {
+            statusEl.textContent = stages[currentStage];
+            currentStage++;
+            setTimeout(updateProgress, 1500);
+        }
+    };
+    
+    updateProgress();
+}
+
+function displayAnalysisResults(analysis) {
+    hideLoadingState();
+    
+    // Update recommendation summary
+    updateRecommendationSummary(analysis);
+    
+    // Update token info
+    updateTokenInfo(analysis.token_data);
+    
+    // Show trading panel if recommendation is actionable
+    if (analysis.recommendation && analysis.recommendation !== 'HOLD') {
+        updateTradingPanel(analysis);
+    }
+    
+    // Update analyzer results
+    updateAnalyzerResults(analysis.analyzer_results);
+    
+    // Update thought log
+    updateThoughtLog(analysis.thought_log);
+    
+    // Update detailed analysis
+    updateDetailedAnalysis(analysis.detailed_data);
+    
+    // Trigger custom event for trading manager
+    document.dispatchEvent(new CustomEvent('analysis:complete', {
+        detail: analysis
+    }));
+}
+
+function updateRecommendationSummary(analysis) {
+    const recommendationCard = document.getElementById('recommendation-summary');
+    const icon = document.getElementById('recommendation-icon');
+    const text = document.getElementById('recommendation-text');
+    const summary = document.getElementById('recommendation-summary-text');
+    const confidenceFill = document.getElementById('confidence-fill');
+    const confidenceText = document.getElementById('confidence-percentage');
+    const riskIndicator = document.getElementById('risk-indicator');
+    const riskScore = document.getElementById('risk-score');
+    
+    // Update recommendation
+    const recommendation = analysis.recommendation || 'ANALYZING';
+    const confidence = analysis.confidence || 0;
+    const risk = analysis.risk_score || 50;
+    
+    // Set card style based on recommendation
+    recommendationCard.className = `card analysis-container mb-4 recommendation-card ${recommendation.toLowerCase()}`;
+    
+    // Update icon and text
+    const recommendationConfig = {
+        'STRONG_BUY': {
+            icon: 'bi-arrow-up-circle-fill',
+            text: 'Strong Buy Recommendation',
+            summary: 'High confidence buy signal with favorable risk/reward ratio',
+            color: 'text-success'
+        },
+        'BUY': {
+            icon: 'bi-arrow-up-circle',
+            text: 'Buy Recommendation',
+            summary: 'Positive analysis suggests buying opportunity',
+            color: 'text-success'
+        },
+        'HOLD': {
+            icon: 'bi-dash-circle',
+            text: 'Hold Recommendation',
+            summary: 'Neutral analysis - no clear trading signal',
+            color: 'text-warning'
+        },
+        'SELL': {
+            icon: 'bi-arrow-down-circle',
+            text: 'Sell Recommendation',
+            summary: 'Analysis suggests selling or avoiding this token',
+            color: 'text-danger'
+        },
+        'STRONG_SELL': {
+            icon: 'bi-arrow-down-circle-fill',
+            text: 'Strong Sell Recommendation',
+            summary: 'High confidence sell signal - significant risks detected',
+            color: 'text-danger'
+        }
+    };
+    
+    const config = recommendationConfig[recommendation] || recommendationConfig['HOLD'];
+    
+    icon.className = `bi ${config.icon} display-4 ${config.color}`;
+    text.textContent = config.text;
+    text.className = `mb-1 ${config.color}`;
+    summary.textContent = config.summary;
+    
+    // Update confidence bar
+    confidenceFill.style.width = `${confidence}%`;
+    confidenceText.textContent = `${confidence}%`;
+    
+    // Update risk indicator
+    riskIndicator.style.left = `${risk}%`;
+    riskScore.textContent = `${risk}/100`;
+}
+
+function updateTokenInfo(tokenData) {
+    if (!tokenData) return;
+    
+    document.getElementById('token-symbol').textContent = tokenData.symbol || '---';
+    document.getElementById('token-name').textContent = tokenData.name || 'Unknown Token';
+    document.getElementById('token-price').textContent = tokenData.price ? `$${parseFloat(tokenData.price).toFixed(6)}` : '$0.00';
+}
+
+function updateTradingPanel(analysis) {
+    const panel = document.getElementById('trading-panel');
+    const recommendedAction = document.getElementById('recommended-action');
+    const recommendedConfidence = document.getElementById('recommended-confidence');
+    const suggestedAmount = document.getElementById('suggested-amount');
+    const riskLevel = document.getElementById('risk-level');
+    const expectedSlippage = document.getElementById('expected-slippage');
+    const buyBtn = document.getElementById('execute-buy-btn');
+    const sellBtn = document.getElementById('execute-sell-btn');
+    
+    // Update text content
+    recommendedAction.textContent = analysis.recommendation.toLowerCase().replace('_', ' ');
+    recommendedConfidence.textContent = `${analysis.confidence}%`;
+    suggestedAmount.textContent = `${analysis.suggested_amount || '0.1'} ETH`;
+    riskLevel.textContent = analysis.risk_level || 'Medium';
+    expectedSlippage.textContent = `${analysis.expected_slippage || '0.5'}%`;
+    
+    // Configure buttons based on recommendation
+    buyBtn.style.display = 'none';
+    sellBtn.style.display = 'none';
+    
+    if (analysis.recommendation === 'BUY' || analysis.recommendation === 'STRONG_BUY') {
+        buyBtn.style.display = 'inline-block';
+        buyBtn.dataset.tokenAddress = analysis.token_address;
+        buyBtn.dataset.amount = analysis.suggested_amount || '0.1';
+    } else if (analysis.recommendation === 'SELL' || analysis.recommendation === 'STRONG_SELL') {
+        sellBtn.style.display = 'inline-block';
+        sellBtn.dataset.tokenAddress = analysis.token_address;
+        sellBtn.dataset.amount = analysis.suggested_sell_amount || '100';
+    }
+    
+    // Show panel with glow effect
+    panel.style.display = 'block';
+    panel.classList.add('pulse-glow');
+    
+    // Remove glow after animation
+    setTimeout(() => {
+        panel.classList.remove('pulse-glow');
+    }, 4000);
+}
+
+function updateAnalyzerResults(analyzerResults) {
+    const container = document.getElementById('analyzer-results');
+    
+    if (!analyzerResults || Object.keys(analyzerResults).length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-exclamation-triangle display-4 d-block mb-3"></i>
+                <p>No analyzer results available</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const analyzersHtml = Object.entries(analyzerResults).map(([name, result]) => {
+        const statusIcon = result.status === 'COMPLETED' ? 'bi-check-circle text-success' : 
+                          result.status === 'FAILED' ? 'bi-x-circle text-danger' : 
+                          'bi-hourglass-split text-warning';
+        
+        return `
+            <div class="analyzer-card p-3 mb-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">
+                            <i class="bi ${statusIcon} me-2"></i>
+                            ${name.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                        </h6>
+                        <small class="text-muted">${result.summary || 'Analysis completed'}</small>
+                    </div>
+                    <div class="text-end">
+                        <div class="badge ${result.risk_level === 'HIGH' ? 'bg-danger' : 
+                                           result.risk_level === 'MEDIUM' ? 'bg-warning' : 'bg-success'}">
+                            ${result.risk_level || 'UNKNOWN'}
+                        </div>
+                        ${result.score ? `<div class="small text-muted mt-1">Score: ${result.score}/100</div>` : ''}
+                    </div>
+                </div>
+                ${result.details ? `
+                    <div class="mt-2 small text-muted">
+                        ${Array.isArray(result.details) ? result.details.join(', ') : result.details}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = analyzersHtml;
+}
+
+function updateThoughtLog(thoughtLog) {
+    const container = document.getElementById('thought-log');
+    
+    if (!thoughtLog || thoughtLog.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-brain display-4 d-block mb-3"></i>
+                <p>No AI reasoning available</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const thoughtsHtml = thoughtLog.map((thought, index) => `
+        <div class="mb-3 pb-3 ${index < thoughtLog.length - 1 ? 'border-bottom border-secondary' : ''}">
+            <div class="d-flex align-items-start">
+                <i class="bi bi-lightbulb text-warning me-2 mt-1"></i>
+                <div class="flex-grow-1">
+                    <small class="text-muted">Step ${index + 1}</small>
+                    <p class="mb-1">${thought.reasoning || thought}</p>
+                    ${thought.confidence ? `
+                        <small class="text-info">Confidence: ${thought.confidence}%</small>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    container.innerHTML = thoughtsHtml;
+}
+
+function updateDetailedAnalysis(detailedData) {
+    const container = document.getElementById('detailed-analysis');
+    
+    if (!detailedData || Object.keys(detailedData).length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-table display-4 d-block mb-3"></i>
+                <p>No detailed data available</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // Create tabbed interface for detailed data
+    const tabs = Object.keys(detailedData);
+    const tabsHtml = tabs.map((tab, index) => `
+        <li class="nav-item" role="presentation">
+            <button class="nav-link ${index === 0 ? 'active' : ''}" 
+                    id="${tab}-tab" 
+                    data-bs-toggle="tab" 
+                    data-bs-target="#${tab}-pane" 
+                    type="button">
+                ${tab.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </button>
+        </li>
+    `).join('');
+    
+    const panes = tabs.map((tab, index) => {
+        const data = detailedData[tab];
+        let content = '';
+        
+        if (Array.isArray(data)) {
+            content = `
+                <div class="table-responsive">
+                    <table class="table table-dark table-sm">
+                        <tbody>
+                            ${data.map(item => `
+                                <tr>
+                                    <td>${typeof item === 'object' ? JSON.stringify(item, null, 2) : item}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        } else if (typeof data === 'object') {
+            content = `
+                <div class="table-responsive">
+                    <table class="table table-dark table-sm">
+                        <tbody>
+                            ${Object.entries(data).map(([key, value]) => `
+                                <tr>
+                                    <td class="fw-bold">${key.replace('_', ' ')}</td>
+                                    <td>${typeof value === 'object' ? JSON.stringify(value) : value}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        } else {
+            content = `<pre class="text-light">${data}</pre>`;
+        }
+        
+        return `
+            <div class="tab-pane fade ${index === 0 ? 'show active' : ''}" 
+                 id="${tab}-pane" 
+                 role="tabpanel">
+                ${content}
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = `
+        <ul class="nav nav-tabs mb-3" role="tablist">
+            ${tabsHtml}
+        </ul>
+        <div class="tab-content">
+            ${panes}
+        </div>
+    `;
+}
+
+function showManualTradeModal() {
+    const tokenAddress = document.getElementById('token_address').value;
+    
+    if (!tokenAddress) {
+        showNotification('Please enter a token address first', 'warning');
+        return;
+    }
+    
+    // Use the trading manager's quick trade modal
+    if (window.tradingManager) {
+        // Pre-fill token address
+        showQuickTradeModal();
+        
+        // Wait for modal to load then set token address
+        setTimeout(() => {
+            const tokenInput = document.querySelector('#quick-trade-modal [name="token_address"]');
+            if (tokenInput) {
+                tokenInput.value = tokenAddress;
+            }
+        }, 100);
+    }
+}
+
+function resetAnalysis() {
+    // Hide results
+    document.getElementById('analysis-results').style.display = 'none';
+    document.getElementById('initial-state').style.display = 'block';
+    
+    // Reset form
+    document.getElementById('analysis-form').reset();
+    document.getElementById('position_size').value = '0.1';
+    
+    // Clear URL parameters
+    const url = new URL(window.location);
+    url.searchParams.delete('token');
+    window.history.replaceState({}, document.title, url.pathname);
+}
+
+function monitorAnalysisProgress(analysisId) {
+    const checkProgress = async () => {
+        try {
+            const response = await fetch(`/api/smart-lane/analysis/${analysisId}/status/`);
+            const result = await response.json();
+            
+            if (result.status === 'COMPLETED') {
+                displayAnalysisResults(result.analysis);
+            } else if (result.status === 'FAILED') {
+                hideLoadingState();
+                showNotification('Analysis failed: ' + (result.error || 'Unknown error'), 'error');
+            } else {
+                // Continue monitoring
+                setTimeout(checkProgress, 2000);
+            }
+        } catch (error) {
+            console.error('Error checking analysis progress:', error);
+            hideLoadingState();
+            showNotification('Error monitoring analysis progress', 'error');
+        }
+    };
+    
+    setTimeout(checkProgress, 2000);
+}
+
+function getCsrfToken() {
+    const token = document.querySelector('meta[name="csrf-token"]');
+    return token ? token.getAttribute('content') : '';
+}
+
+function showNotification(message, type = 'info') {
+    if (window.tradingManager) {
+        window.tradingManager.showNotification(message, type);
+    } else {
+        alert(message);
+    }
+}
+
+// Export functions for global access
+window.smartLaneAnalysis = {
+    startAnalysis,
+    resetAnalysis,
+    showManualTradeModal
+};
+</script>
+{% endblock %}

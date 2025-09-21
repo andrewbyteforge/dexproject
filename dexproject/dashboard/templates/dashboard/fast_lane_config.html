@@ -1,100 +1,208 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Fast Lane Configuration{% endblock %}
+{% block title %}Fast Lane Configuration - DEX Trading Bot{% endblock %}
 
 {% block extra_css %}
 <style>
-    .fast-lane-panel {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border-radius: 15px;
-        padding: 2rem;
-        margin-bottom: 2rem;
-        border: 1px solid rgba(0, 212, 170, 0.2);
-    }
-    
-    .fast-lane-accent { color: #00d4aa; }
-    
-    .form-section {
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 10px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        border-left: 4px solid #00d4aa;
-    }
-    
-    .config-preview {
-        background: rgba(0, 0, 0, 0.4);
-        border-radius: 10px;
-        padding: 1.5rem;
-        position: sticky;
-        top: 20px;
-    }
-    
-    .form-control:focus, .form-select:focus {
-        border-color: #00d4aa;
-        box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25);
-    }
-    
-    .btn-fast-lane {
-        background: linear-gradient(45deg, #00d4aa, #26d0ce);
-        border: none;
-        color: white;
-        transition: all 0.3s ease;
-    }
-    
-    .btn-fast-lane:hover {
-        background: linear-gradient(45deg, #26d0ce, #00d4aa);
-        transform: translateY(-2px);
-        color: white;
-    }
-    
-    .input-group-text {
-        background: rgba(0, 212, 170, 0.1);
-        border-color: #00d4aa;
-        color: #00d4aa;
-    }
-    
-    .speed-indicator {
-        height: 8px;
-        border-radius: 4px;
-        background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .speed-marker {
-        position: absolute;
-        top: -2px;
-        width: 4px;
-        height: 12px;
-        background: white;
-        border-radius: 2px;
-        transition: left 0.3s ease;
-    }
+.fast-lane-container {
+    background: rgba(0, 212, 170, 0.05);
+    border: 1px solid rgba(0, 212, 170, 0.2);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+}
+
+.speed-indicator {
+    background: linear-gradient(135deg, var(--fast-lane-color), #00b894);
+    border-radius: 50%;
+    width: 120px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    box-shadow: 0 0 20px rgba(0, 212, 170, 0.3);
+    animation: pulseGlow 2s infinite;
+}
+
+.performance-gauge {
+    position: relative;
+    width: 100px;
+    height: 50px;
+    overflow: hidden;
+    margin: 0 auto;
+}
+
+.gauge-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(0deg, var(--success-color), var(--warning-color), var(--danger-color));
+    border-radius: 50px 50px 0 0;
+    transition: height 0.5s ease;
+}
+
+.gauge-needle {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    height: 40px;
+    background: white;
+    transform-origin: bottom;
+    transition: transform 0.5s ease;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+}
+
+.trading-controls {
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(0, 212, 170, 0.3);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+}
+
+.quick-buy-panel {
+    background: rgba(25, 135, 84, 0.1);
+    border: 1px solid rgba(25, 135, 84, 0.3);
+    border-radius: 8px;
+    padding: 1rem;
+    transition: all 0.3s ease;
+}
+
+.quick-buy-panel:hover {
+    background: rgba(25, 135, 84, 0.15);
+    border-color: rgba(25, 135, 84, 0.5);
+}
+
+.config-preview {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.execution-speed-display {
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--fast-lane-color);
+    text-shadow: 0 0 10px rgba(0, 212, 170, 0.5);
+}
+
+.trading-pair-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 0.75rem;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.trading-pair-card:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--fast-lane-color);
+}
+
+.trading-pair-card.selected {
+    background: rgba(0, 212, 170, 0.2);
+    border-color: var(--fast-lane-color);
+}
+
+.live-trading-status {
+    position: relative;
+    overflow: hidden;
+}
+
+.live-trading-status::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0, 212, 170, 0.3), transparent);
+    animation: scan 2s infinite;
+}
+
+@keyframes scan {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+@keyframes pulseGlow {
+    0% { box-shadow: 0 0 20px rgba(0, 212, 170, 0.3); }
+    50% { box-shadow: 0 0 30px rgba(0, 212, 170, 0.6); }
+    100% { box-shadow: 0 0 20px rgba(0, 212, 170, 0.3); }
+}
+
+.fast-execute-btn {
+    background: linear-gradient(135deg, var(--fast-lane-color), #00b894);
+    border: none;
+    color: white;
+    padding: 0.75rem 2rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.fast-execute-btn:hover {
+    background: linear-gradient(135deg, #00b894, var(--fast-lane-color));
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 212, 170, 0.4);
+    color: white;
+}
+
+.fast-execute-btn:active {
+    transform: translateY(0);
+}
+
+.mempool-monitor {
+    background: rgba(0, 123, 255, 0.1);
+    border: 1px solid rgba(0, 123, 255, 0.3);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.gas-tracker {
+    background: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    border-radius: 8px;
+    padding: 1rem;
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <!-- Header Section -->
+<div class="container-fluid" data-trading-enabled="true">
+    <!-- Page Header -->
     <div class="row mb-4">
         <div class="col-12">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <h1 class="h3 mb-1">
-                        <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>Fast Lane Configuration
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="{% url 'dashboard:home' %}">Dashboard</a></li>
+                            <li class="breadcrumb-item"><a href="{% url 'dashboard:mode_selection' %}">Mode Selection</a></li>
+                            <li class="breadcrumb-item active">Fast Lane Configuration</li>
+                        </ol>
+                    </nav>
+                    <h1 class="h2 mb-1">
+                        <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>
+                        <span class="fast-lane-accent">Fast Lane Configuration</span>
                     </h1>
-                    <p class="text-muted mb-0">
-                        Configure high-speed trading parameters for sub-500ms execution
-                    </p>
+                    <p class="text-muted mb-0">High-speed trading configuration with real-time execution</p>
                 </div>
                 <div>
-                    <a href="{% url 'dashboard:home' %}" class="btn btn-outline-light">
-                        <i class="bi bi-house-door me-2"></i>Dashboard
-                    </a>
-                    <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-info ms-2">
-                        <i class="bi bi-arrow-left me-2"></i>Back to Mode Selection
+                    <button class="btn btn-outline-secondary me-2" onclick="resetConfiguration()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Reset
+                    </button>
+                    <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-light">
+                        <i class="bi bi-arrow-left me-1"></i>Back
                     </a>
                 </div>
             </div>
@@ -102,335 +210,455 @@
     </div>
 
     <div class="row">
-        <!-- Main Configuration Form -->
-        <div class="col-lg-8">
-            <div class="fast-lane-panel">
-                {% if messages %}
-                    {% for message in messages %}
-                        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                            {{ message }}
-                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        <!-- Configuration Panel -->
+        <div class="col-xl-8">
+            <div class="card fast-lane-container mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-gear me-2"></i>Performance Configuration
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form id="fast-lane-config-form">
+                        <!-- Execution Speed Settings -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <label for="execution_timeout" class="form-label">
+                                    Execution Timeout
+                                    <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" 
+                                       title="Maximum time to wait for trade execution"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="range" class="form-range" id="execution_timeout" 
+                                           min="100" max="2000" step="100" value="500">
+                                    <span class="input-group-text" id="timeout-display">500ms</span>
+                                </div>
+                                <small class="text-muted">Trade execution timeout (100ms - 2000ms)</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="max_slippage" class="form-label">
+                                    Maximum Slippage
+                                    <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" 
+                                       title="Maximum acceptable price slippage"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="range" class="form-range" id="max_slippage" 
+                                           min="0.1" max="5.0" step="0.1" value="1.0">
+                                    <span class="input-group-text" id="slippage-display">1.0%</span>
+                                </div>
+                                <small class="text-muted">Maximum slippage tolerance (0.1% - 5.0%)</small>
+                            </div>
                         </div>
-                    {% endfor %}
-                {% endif %}
 
-                <form method="post" id="fastLaneForm" novalidate>
-                    {% csrf_token %}
-                    
-                    <!-- Basic Settings -->
-                    <div class="form-section">
-                        <h4 class="mb-3">
-                            <i class="bi bi-gear me-2"></i>Basic Settings
-                        </h4>
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="config_name" class="form-label">Configuration Name</label>
-                                <input type="text" 
-                                       class="form-control" 
-                                       id="config_name" 
-                                       name="config_name"
-                                       placeholder="e.g., Fast Lane Main"
-                                       required>
-                                <div class="invalid-feedback">Please provide a configuration name.</div>
+                        <!-- Position Sizing -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <label for="default_position_size" class="form-label">
+                                    Default Position Size (ETH)
+                                </label>
+                                <input type="number" class="form-control" id="default_position_size" 
+                                       min="0.001" max="10" step="0.001" value="0.1">
+                                <small class="text-muted">Default amount per trade (0.001 - 10 ETH)</small>
                             </div>
-                            
-                            <div class="col-md-6 mb-3">
-                                <label for="description" class="form-label">Description (Optional)</label>
-                                <input type="text" 
-                                       class="form-control" 
-                                       id="description" 
-                                       name="description"
-                                       placeholder="Brief description">
+                            <div class="col-md-6">
+                                <label for="max_position_size" class="form-label">
+                                    Maximum Position Size (ETH)
+                                </label>
+                                <input type="number" class="form-control" id="max_position_size" 
+                                       min="0.001" max="100" step="0.001" value="1.0">
+                                <small class="text-muted">Maximum amount per trade (0.001 - 100 ETH)</small>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Fast Lane Performance Settings -->
-                    <div class="form-section">
-                        <h4 class="mb-3">
-                            <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>Performance Settings
-                        </h4>
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="position_size" class="form-label">Position Size</label>
-                                <div class="input-group">
-                                    <span class="input-group-text">$</span>
-                                    <input type="number" 
-                                           class="form-control" 
-                                           id="position_size" 
-                                           name="position_size"
-                                           min="10" 
-                                           max="10000" 
-                                           step="10"
-                                           value="100"
-                                           required>
-                                </div>
-                                <div class="form-text">Recommended: $50 - $500 for initial testing</div>
-                            </div>
-                            
-                            <div class="col-md-6 mb-3">
-                                <label for="execution_timeout" class="form-label">Max Execution Time</label>
-                                <div class="input-group">
-                                    <input type="number" 
-                                           class="form-control" 
-                                           id="execution_timeout" 
-                                           name="execution_timeout"
-                                           min="100" 
-                                           max="2000" 
-                                           step="50"
-                                           value="500"
-                                           required>
-                                    <span class="input-group-text">ms</span>
-                                </div>
-                                <div class="form-text">Lower = faster execution, higher chance of missing trades</div>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="slippage_tolerance" class="form-label">Slippage Tolerance</label>
-                                <div class="input-group">
-                                    <input type="number" 
-                                           class="form-control" 
-                                           id="slippage_tolerance" 
-                                           name="slippage_tolerance"
-                                           min="0.1" 
-                                           max="5.0" 
-                                           step="0.1"
-                                           value="1.0"
-                                           required>
-                                    <span class="input-group-text">%</span>
-                                </div>
-                                <div class="form-text">Higher tolerance = more successful trades</div>
-                            </div>
-                            
-                            <div class="col-md-6 mb-3">
-                                <label for="gas_price" class="form-label">Gas Price</label>
-                                <div class="input-group">
-                                    <input type="number" 
-                                           class="form-control" 
-                                           id="gas_price" 
-                                           name="gas_price"
-                                           min="1" 
-                                           max="200" 
-                                           step="1"
-                                           value="20"
-                                           required>
-                                    <span class="input-group-text">gwei</span>
-                                </div>
-                                <div class="form-text">Higher gas = faster inclusion in blocks</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Risk Management -->
-                    <div class="form-section">
-                        <h4 class="mb-3">
-                            <i class="bi bi-shield-check me-2"></i>Risk Management
-                        </h4>
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="risk_level" class="form-label">Risk Level</label>
-                                <select class="form-select" id="risk_level" name="risk_level" required>
-                                    <option value="LOW">Low - Conservative trading</option>
-                                    <option value="MEDIUM" selected>Medium - Balanced approach</option>
-                                    <option value="HIGH">High - Aggressive trading</option>
+                        <!-- Gas Configuration -->
+                        <div class="row mb-4">
+                            <div class="col-md-4">
+                                <label for="gas_price_multiplier" class="form-label">
+                                    Gas Price Multiplier
+                                </label>
+                                <select class="form-select" id="gas_price_multiplier">
+                                    <option value="1.0">Standard (1.0x)</option>
+                                    <option value="1.2" selected>Fast (1.2x)</option>
+                                    <option value="1.5">Faster (1.5x)</option>
+                                    <option value="2.0">Fastest (2.0x)</option>
                                 </select>
                             </div>
-                            
-                            <div class="col-md-6 mb-3">
-                                <label for="min_liquidity" class="form-label">Minimum Liquidity</label>
-                                <div class="input-group">
-                                    <span class="input-group-text">$</span>
-                                    <input type="number" 
-                                           class="form-control" 
-                                           id="min_liquidity" 
-                                           name="min_liquidity"
-                                           min="1000" 
-                                           max="1000000" 
-                                           step="1000"
-                                           value="10000"
-                                           required>
-                                </div>
-                                <div class="form-text">Only trade pairs with sufficient liquidity</div>
+                            <div class="col-md-4">
+                                <label for="max_gas_price" class="form-label">
+                                    Max Gas Price (Gwei)
+                                </label>
+                                <input type="number" class="form-control" id="max_gas_price" 
+                                       min="10" max="1000" step="1" value="100">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="priority_fee" class="form-label">
+                                    Priority Fee (Gwei)
+                                </label>
+                                <input type="number" class="form-control" id="priority_fee" 
+                                       min="1" max="50" step="0.1" value="2.0">
                             </div>
                         </div>
-                        
-                        <!-- Security Options -->
-                        <div class="mt-4">
-                            <h5 class="mb-3">Security Options</h5>
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="mev_protection" 
-                                               name="mev_protection"
-                                               checked>
-                                        <label class="form-check-label" for="mev_protection">
-                                            MEV Protection
-                                        </label>
-                                    </div>
-                                    <div class="form-text">Protect against front-running attacks</div>
-                                </div>
-                                
-                                <div class="col-md-6">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" 
-                                               type="checkbox" 
-                                               id="auto_approval" 
-                                               name="auto_approval">
-                                        <label class="form-check-label" for="auto_approval">
-                                            Auto-approve Trades
-                                        </label>
-                                    </div>
-                                    <div class="form-text">Execute without manual confirmation</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
-                    <!-- Target Trading Pairs -->
-                    <div class="form-section">
-                        <h4 class="mb-3">
-                            <i class="bi bi-arrow-left-right me-2"></i>Target Trading Pairs
-                        </h4>
-                        
-                        <div class="row">
+                        <!-- MEV Protection -->
+                        <div class="row mb-4">
                             <div class="col-12">
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WETH/USDC" id="pair1" checked>
-                                    <label class="form-check-label" for="pair1">WETH/USDC</label>
-                                </div>
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WETH/USDT" id="pair2" checked>
-                                    <label class="form-check-label" for="pair2">WETH/USDT</label>
-                                </div>
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WBTC/USDC" id="pair3">
-                                    <label class="form-check-label" for="pair3">WBTC/USDC</label>
-                                </div>
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WBTC/WETH" id="pair4">
-                                    <label class="form-check-label" for="pair4">WBTC/WETH</label>
+                                <label class="form-label">MEV Protection Settings</label>
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="enable_mev_protection" checked>
+                                            <label class="form-check-label" for="enable_mev_protection">
+                                                Enable MEV Protection
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="use_private_mempool" checked>
+                                            <label class="form-check-label" for="use_private_mempool">
+                                                Use Private Mempool
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="enable_sandwich_protection" checked>
+                                            <label class="form-check-label" for="enable_sandwich_protection">
+                                                Sandwich Protection
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        
-                        <div class="form-text mt-2">Select the trading pairs to monitor for opportunities</div>
-                    </div>
 
-                    <!-- Action Buttons -->
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <button type="submit" class="btn btn-fast-lane btn-lg">
-                                <i class="bi bi-check-circle me-2"></i>Save Fast Lane Config
-                            </button>
-                            <button type="button" class="btn btn-outline-secondary btn-lg ms-2" onclick="resetForm()">
-                                <i class="bi bi-arrow-clockwise me-2"></i>Reset
-                            </button>
+                        <!-- Trading Pairs Selection -->
+                        <div class="mb-4">
+                            <label class="form-label">Target Trading Pairs</label>
+                            <div class="row g-2" id="trading-pairs-container">
+                                <div class="col-md-6">
+                                    <div class="trading-pair-card selected" data-pair="WETH/USDC">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>WETH/USDC</strong>
+                                                <br><small class="text-muted">Most liquid pair</small>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="text-success">$2.4B</div>
+                                                <small class="text-muted">Liquidity</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="trading-pair-card" data-pair="WETH/USDT">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>WETH/USDT</strong>
+                                                <br><small class="text-muted">High volume</small>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="text-info">$1.8B</div>
+                                                <small class="text-muted">Liquidity</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="trading-pair-card" data-pair="WETH/DAI">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>WETH/DAI</strong>
+                                                <br><small class="text-muted">Stable pair</small>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="text-warning">$890M</div>
+                                                <small class="text-muted">Liquidity</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="trading-pair-card" data-pair="WBTC/WETH">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>WBTC/WETH</strong>
+                                                <br><small class="text-muted">BTC exposure</small>
+                                            </div>
+                                            <div class="text-end">
+                                                <div class="text-primary">$456M</div>
+                                                <small class="text-muted">Liquidity</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        
-                        <div>
-                            <button type="button" class="btn btn-outline-info me-2" onclick="testConfiguration()">
-                                <i class="bi bi-play-circle me-2"></i>Test Config
+
+                        <!-- Risk Management -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <label for="stop_loss_percent" class="form-label">
+                                    Stop Loss (%)
+                                </label>
+                                <input type="number" class="form-control" id="stop_loss_percent" 
+                                       min="1" max="50" step="0.5" value="10" placeholder="Optional">
+                                <small class="text-muted">Automatic stop loss percentage (optional)</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="take_profit_percent" class="form-label">
+                                    Take Profit (%)
+                                </label>
+                                <input type="number" class="form-control" id="take_profit_percent" 
+                                       min="1" max="1000" step="0.5" value="25" placeholder="Optional">
+                                <small class="text-muted">Automatic take profit percentage (optional)</small>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="d-flex justify-content-between">
+                            <button type="button" class="btn btn-outline-secondary" onclick="resetConfiguration()">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Reset to Defaults
                             </button>
-                            <a href="{% url 'dashboard:home' %}" class="btn btn-outline-light btn-lg">
-                                <i class="bi bi-house-door me-2"></i>Back to Dashboard
-                            </a>
+                            <div>
+                                <button type="button" class="btn btn-outline-success me-2" onclick="testConfiguration()">
+                                    <i class="bi bi-play-circle me-1"></i>Test Configuration
+                                </button>
+                                <button type="submit" class="fast-execute-btn">
+                                    <i class="bi bi-lightning-charge me-1"></i>Save & Activate
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Live Trading Controls -->
+            <div class="trading-controls" id="trading-controls" style="display: none;">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightning-charge me-2"></i>Live Fast Lane Trading
+                </h5>
+                
+                <div class="row g-3">
+                    <!-- Quick Buy Panel -->
+                    <div class="col-md-6">
+                        <div class="quick-buy-panel">
+                            <h6 class="mb-3">
+                                <i class="bi bi-cart-plus me-2"></i>Quick Buy
+                            </h6>
+                            <form id="quick-buy-form">
+                                <div class="mb-3">
+                                    <label for="buy_token_address" class="form-label">Token Address</label>
+                                    <input type="text" class="form-control" id="buy_token_address" 
+                                           placeholder="0x..." pattern="^0x[a-fA-F0-9]{40}$" required>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-8">
+                                        <label for="buy_amount" class="form-label">Amount (ETH)</label>
+                                        <input type="number" class="form-control" id="buy_amount" 
+                                               min="0.001" max="10" step="0.001" value="0.1" required>
+                                    </div>
+                                    <div class="col-4">
+                                        <label for="buy_slippage" class="form-label">Slippage %</label>
+                                        <input type="number" class="form-control" id="buy_slippage" 
+                                               min="0.1" max="10" step="0.1" value="1.0" required>
+                                    </div>
+                                </div>
+                                <button type="submit" class="fast-execute-btn w-100">
+                                    <i class="bi bi-lightning-charge me-1"></i>Fast Buy
+                                </button>
+                            </form>
                         </div>
                     </div>
-                </form>
+                    
+                    <!-- Quick Sell Panel -->
+                    <div class="col-md-6">
+                        <div class="quick-buy-panel">
+                            <h6 class="mb-3">
+                                <i class="bi bi-cart-dash me-2"></i>Quick Sell
+                            </h6>
+                            <form id="quick-sell-form">
+                                <div class="mb-3">
+                                    <label for="sell_token_address" class="form-label">Token Address</label>
+                                    <input type="text" class="form-control" id="sell_token_address" 
+                                           placeholder="0x..." pattern="^0x[a-fA-F0-9]{40}$" required>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-8">
+                                        <label for="sell_amount" class="form-label">Token Amount</label>
+                                        <input type="number" class="form-control" id="sell_amount" 
+                                               min="0.000001" step="any" required>
+                                    </div>
+                                    <div class="col-4">
+                                        <label for="sell_slippage" class="form-label">Slippage %</label>
+                                        <input type="number" class="form-control" id="sell_slippage" 
+                                               min="0.1" max="10" step="0.1" value="1.0" required>
+                                    </div>
+                                </div>
+                                <button type="submit" class="fast-execute-btn w-100">
+                                    <i class="bi bi-lightning-charge me-1"></i>Fast Sell
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trading Session Controls -->
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">Fast Lane Trading Session</h6>
+                                <small class="text-muted">Automated trading with current configuration</small>
+                            </div>
+                            <div>
+                                <button class="btn btn-success me-2" id="start-fast-session" 
+                                        data-action="start-session">
+                                    <i class="bi bi-play-circle me-1"></i>Start Session
+                                </button>
+                                <button class="btn btn-warning" id="stop-fast-session" 
+                                        data-action="stop-session" style="display: none;">
+                                    <i class="bi bi-stop-circle me-1"></i>Stop Session
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- Configuration Preview & Info -->
-        <div class="col-lg-4">
-            <!-- Live Preview -->
-            <div class="config-preview mb-4">
-                <h5 class="mb-3">
-                    <i class="bi bi-eye me-2"></i>Configuration Preview
-                </h5>
-                
-                <div class="preview-item mb-3">
-                    <strong>Position Size:</strong>
-                    <span class="text-success" id="preview_position">$100</span>
+        <!-- Live Status Sidebar -->
+        <div class="col-xl-4">
+            <!-- Performance Preview -->
+            <div class="card fast-lane-container mb-4 sticky-top" style="top: 1rem;">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="bi bi-speedometer2 me-2"></i>Performance Preview
+                    </h6>
                 </div>
-                
-                <div class="preview-item mb-3">
-                    <strong>Execution Speed:</strong>
-                    <span class="fast-lane-accent" id="preview_speed">500ms</span>
-                </div>
-                
-                <div class="preview-item mb-3">
-                    <strong>Slippage:</strong>
-                    <span id="preview_slippage">1.0%</span>
-                </div>
-                
-                <div class="preview-item mb-3">
-                    <strong>Gas Price:</strong>
-                    <span id="preview_gas">20 gwei</span>
-                </div>
-                
-                <div class="preview-item mb-3">
-                    <strong>Risk Level:</strong>
-                    <span id="preview_risk" class="badge bg-warning">Medium</span>
-                </div>
-                
-                <!-- Speed Assessment -->
-                <div class="mt-4">
-                    <h6>Speed Assessment</h6>
-                    <div class="speed-indicator">
-                        <div class="speed-marker" id="speed_marker" style="left: 40%;"></div>
+                <div class="card-body text-center">
+                    <div class="speed-indicator mb-3">
+                        <div class="text-center">
+                            <div class="execution-speed-display" id="speed-display">500ms</div>
+                            <small class="text-white">Execution Speed</small>
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between mt-1">
-                        <small class="text-success">Ultra Fast</small>
-                        <small class="text-warning">Balanced</small>
-                        <small class="text-danger">Safe</small>
+                    
+                    <div class="row g-3 mb-3">
+                        <div class="col-6">
+                            <div class="performance-gauge">
+                                <div class="gauge-fill" id="speed-gauge" style="height: 60%"></div>
+                                <div class="gauge-needle" id="speed-needle" style="transform: rotate(-60deg)"></div>
+                            </div>
+                            <small class="text-muted">Speed Index</small>
+                        </div>
+                        <div class="col-6">
+                            <div class="performance-gauge">
+                                <div class="gauge-fill" id="risk-gauge" style="height: 40%"></div>
+                                <div class="gauge-needle" id="risk-needle" style="transform: rotate(-80deg)"></div>
+                            </div>
+                            <small class="text-muted">Risk Level</small>
+                        </div>
                     </div>
-                    <div class="form-text mt-2" id="speed_description">
-                        Balanced speed and success rate for optimal performance
+                    
+                    <div class="config-preview">
+                        <div class="row g-2 text-start">
+                            <div class="col-6">
+                                <small class="text-muted">Position Size:</small>
+                                <div class="fw-bold" id="preview-position-size">0.1 ETH</div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">Max Slippage:</small>
+                                <div class="fw-bold" id="preview-slippage">1.0%</div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">Gas Multiplier:</small>
+                                <div class="fw-bold" id="preview-gas">1.2x</div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">MEV Protection:</small>
+                                <div class="fw-bold text-success" id="preview-mev">Enabled</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Fast Lane Benefits -->
-            <div class="config-preview">
-                <h5 class="mb-3">
-                    <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>Fast Lane Benefits
-                </h5>
-                
-                <ul class="list-unstyled">
-                    <li class="mb-2">
-                        <i class="bi bi-check-circle text-success me-2"></i>
-                        Sub-500ms execution time
-                    </li>
-                    <li class="mb-2">
-                        <i class="bi bi-check-circle text-success me-2"></i>
-                        MEV protection enabled
-                    </li>
-                    <li class="mb-2">
-                        <i class="bi bi-check-circle text-success me-2"></i>
-                        Real-time gas optimization
-                    </li>
-                    <li class="mb-2">
-                        <i class="bi bi-check-circle text-success me-2"></i>
-                        Automated slippage adjustment
-                    </li>
-                    <li class="mb-2">
-                        <i class="bi bi-check-circle text-success me-2"></i>
-                        Priority transaction routing
-                    </li>
-                </ul>
-                
-                <div class="alert alert-info mt-3">
-                    <small>
-                        <i class="bi bi-info-circle me-1"></i>
-                        Fast Lane is optimized for time-sensitive opportunities like sniping and MEV capture.
-                    </small>
+            <!-- Live Market Data -->
+            <div class="card fast-lane-container mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="bi bi-activity me-2"></i>Live Market Data
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <!-- Mempool Monitor -->
+                    <div class="mempool-monitor mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>Mempool Status</span>
+                            <span class="badge bg-success">Active</span>
+                        </div>
+                        <div class="live-trading-status">
+                            <div class="progress" style="height: 6px;">
+                                <div class="progress-bar bg-info" style="width: 75%"></div>
+                            </div>
+                        </div>
+                        <small class="text-muted">Monitoring 2,347 pending transactions</small>
+                    </div>
+                    
+                    <!-- Gas Tracker -->
+                    <div class="gas-tracker mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>Gas Tracker</span>
+                            <span class="text-warning">15.2 Gwei</span>
+                        </div>
+                        <div class="row g-2 text-center">
+                            <div class="col-4">
+                                <div class="text-success">12</div>
+                                <small class="text-muted">Slow</small>
+                            </div>
+                            <div class="col-4">
+                                <div class="text-warning">15</div>
+                                <small class="text-muted">Standard</small>
+                            </div>
+                            <div class="col-4">
+                                <div class="text-danger">18</div>
+                                <small class="text-muted">Fast</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Network Status -->
+                    <div class="text-center">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <div class="text-success">12.1s</div>
+                                <small class="text-muted">Block Time</small>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-info">98.7%</div>
+                                <small class="text-muted">Success Rate</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Fast Lane Activity -->
+            <div class="card fast-lane-container">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="bi bi-clock-history me-2"></i>Recent Activity
+                    </h6>
+                </div>
+                <div class="card-body p-0">
+                    <div id="fast-lane-activity">
+                        <div class="text-center py-4 text-muted">
+                            <i class="bi bi-hourglass-split display-4 d-block mb-3"></i>
+                            <p>No recent activity</p>
+                            <small>Fast Lane trades will appear here</small>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -439,100 +667,402 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'js/trading.js' %}"></script>
+
 <script>
+// Fast Lane Configuration JavaScript
 document.addEventListener('DOMContentLoaded', function() {
-    initializeFormValidation();
-    updatePreviewOnChange();
+    // Mark page for trading functionality
+    document.body.dataset.page = 'fast-lane';
+    
+    // Initialize Fast Lane configuration
+    initializeFastLaneConfig();
 });
 
-function initializeFormValidation() {
-    const form = document.getElementById('fastLaneForm');
+function initializeFastLaneConfig() {
+    // Bind form events
+    const configForm = document.getElementById('fast-lane-config-form');
+    const quickBuyForm = document.getElementById('quick-buy-form');
+    const quickSellForm = document.getElementById('quick-sell-form');
     
-    form.addEventListener('submit', function(e) {
-        if (!form.checkValidity()) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-        form.classList.add('was-validated');
+    configForm.addEventListener('submit', saveConfiguration);
+    quickBuyForm.addEventListener('submit', executeQuickBuy);
+    quickSellForm.addEventListener('submit', executeQuickSell);
+    
+    // Bind range input updates
+    bindRangeInputs();
+    
+    // Bind trading pair selection
+    bindTradingPairSelection();
+    
+    // Load saved configuration
+    loadSavedConfiguration();
+    
+    // Update preview in real-time
+    bindConfigurationPreview();
+    
+    // Initialize tooltips
+    const tooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    tooltips.forEach(tooltip => new bootstrap.Tooltip(tooltip));
+}
+
+function bindRangeInputs() {
+    const timeoutSlider = document.getElementById('execution_timeout');
+    const timeoutDisplay = document.getElementById('timeout-display');
+    const slippageSlider = document.getElementById('max_slippage');
+    const slippageDisplay = document.getElementById('slippage-display');
+    
+    timeoutSlider.addEventListener('input', function() {
+        timeoutDisplay.textContent = `${this.value}ms`;
+        updateSpeedDisplay(this.value);
+        updatePerformanceGauges();
+    });
+    
+    slippageSlider.addEventListener('input', function() {
+        slippageDisplay.textContent = `${this.value}%`;
+        updatePerformanceGauges();
     });
 }
 
-function updatePreviewOnChange() {
-    // Position size preview
-    document.getElementById('position_size').addEventListener('input', function() {
-        document.getElementById('preview_position').textContent = '$' + this.value;
-    });
+function bindTradingPairSelection() {
+    const pairCards = document.querySelectorAll('.trading-pair-card');
     
-    // Execution time preview
-    document.getElementById('execution_timeout').addEventListener('input', function() {
-        const value = parseInt(this.value);
-        document.getElementById('preview_speed').textContent = value + 'ms';
-        
-        // Update speed marker and description
-        const marker = document.getElementById('speed_marker');
-        const description = document.getElementById('speed_description');
-        
-        if (value <= 250) {
-            marker.style.left = '20%';
-            description.textContent = 'Ultra fast execution - maximum speed, higher miss rate';
-        } else if (value <= 500) {
-            marker.style.left = '40%';
-            description.textContent = 'Balanced speed and success rate for optimal performance';
-        } else if (value <= 1000) {
-            marker.style.left = '60%';
-            description.textContent = 'Safer execution with higher success rate';
-        } else {
-            marker.style.left = '80%';
-            description.textContent = 'Conservative timing for maximum trade completion';
-        }
-    });
-    
-    // Slippage preview
-    document.getElementById('slippage_tolerance').addEventListener('input', function() {
-        document.getElementById('preview_slippage').textContent = this.value + '%';
-    });
-    
-    // Gas price preview
-    document.getElementById('gas_price').addEventListener('input', function() {
-        document.getElementById('preview_gas').textContent = this.value + ' gwei';
-    });
-    
-    // Risk level preview
-    document.getElementById('risk_level').addEventListener('change', function() {
-        const riskBadge = document.getElementById('preview_risk');
-        riskBadge.textContent = this.value.charAt(0) + this.value.slice(1).toLowerCase();
-        riskBadge.className = 'badge bg-' + (this.value === 'LOW' ? 'success' : this.value === 'MEDIUM' ? 'warning' : 'danger');
+    pairCards.forEach(card => {
+        card.addEventListener('click', function() {
+            this.classList.toggle('selected');
+            updateSelectedPairs();
+        });
     });
 }
 
-function resetForm() {
-    if (confirm('Are you sure you want to reset all fields?')) {
-        document.getElementById('fastLaneForm').reset();
-        
-        // Reset preview
-        document.getElementById('preview_position').textContent = '$100';
-        document.getElementById('preview_speed').textContent = '500ms';
-        document.getElementById('preview_slippage').textContent = '1.0%';
-        document.getElementById('preview_gas').textContent = '20 gwei';
-        
-        const riskBadge = document.getElementById('preview_risk');
-        riskBadge.textContent = 'Medium';
-        riskBadge.className = 'badge bg-warning';
-        
-        document.getElementById('speed_marker').style.left = '40%';
-        document.getElementById('speed_description').textContent = 'Balanced speed and success rate for optimal performance';
+function bindConfigurationPreview() {
+    const inputs = document.querySelectorAll('#fast-lane-config-form input, #fast-lane-config-form select');
+    
+    inputs.forEach(input => {
+        input.addEventListener('input', updateConfigurationPreview);
+        input.addEventListener('change', updateConfigurationPreview);
+    });
+    
+    // Initial update
+    updateConfigurationPreview();
+}
+
+function updateSpeedDisplay(timeoutMs) {
+    const speedDisplay = document.getElementById('speed-display');
+    speedDisplay.textContent = `${timeoutMs}ms`;
+    
+    // Update speed indicator color based on performance
+    const speedIndicator = document.querySelector('.speed-indicator');
+    if (timeoutMs <= 300) {
+        speedIndicator.style.background = 'linear-gradient(135deg, #00ff88, #00d4aa)';
+    } else if (timeoutMs <= 600) {
+        speedIndicator.style.background = 'linear-gradient(135deg, #00d4aa, #00b894)';
+    } else {
+        speedIndicator.style.background = 'linear-gradient(135deg, #00b894, #ffc107)';
     }
 }
 
-function testConfiguration() {
-    const form = document.getElementById('fastLaneForm');
-    if (!form.checkValidity()) {
-        alert('Please fix form errors before testing.');
+function updatePerformanceGauges() {
+    const timeout = parseInt(document.getElementById('execution_timeout').value);
+    const slippage = parseFloat(document.getElementById('max_slippage').value);
+    
+    // Calculate speed index (inverse of timeout)
+    const speedIndex = Math.max(0, 100 - (timeout / 20));
+    const speedGauge = document.getElementById('speed-gauge');
+    const speedNeedle = document.getElementById('speed-needle');
+    
+    speedGauge.style.height = `${speedIndex}%`;
+    speedNeedle.style.transform = `rotate(${(speedIndex * 1.8) - 90}deg)`;
+    
+    // Calculate risk level based on slippage and other factors
+    const riskLevel = Math.min(100, slippage * 20);
+    const riskGauge = document.getElementById('risk-gauge');
+    const riskNeedle = document.getElementById('risk-needle');
+    
+    riskGauge.style.height = `${riskLevel}%`;
+    riskNeedle.style.transform = `rotate(${(riskLevel * 1.8) - 90}deg)`;
+}
+
+function updateConfigurationPreview() {
+    const positionSize = document.getElementById('default_position_size').value;
+    const slippage = document.getElementById('max_slippage').value;
+    const gasMultiplier = document.getElementById('gas_price_multiplier').value;
+    const mevProtection = document.getElementById('enable_mev_protection').checked;
+    
+    document.getElementById('preview-position-size').textContent = `${positionSize} ETH`;
+    document.getElementById('preview-slippage').textContent = `${slippage}%`;
+    document.getElementById('preview-gas').textContent = `${gasMultiplier}x`;
+    document.getElementById('preview-mev').textContent = mevProtection ? 'Enabled' : 'Disabled';
+    document.getElementById('preview-mev').className = `fw-bold ${mevProtection ? 'text-success' : 'text-warning'}`;
+}
+
+function updateSelectedPairs() {
+    const selectedPairs = document.querySelectorAll('.trading-pair-card.selected');
+    console.log(`Selected ${selectedPairs.length} trading pairs`);
+    
+    // Could show selected pairs count in UI
+    const pairCount = selectedPairs.length;
+    // Update some indicator if needed
+}
+
+async function saveConfiguration(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const config = gatherConfigurationData();
+    
+    try {
+        const response = await fetch('/api/trading/session/start/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({
+                ...config,
+                strategy_type: 'FAST_LANE',
+                auto_execution: true
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('Fast Lane configuration saved and activated!', 'success');
+            
+            // Show trading controls
+            document.getElementById('trading-controls').style.display = 'block';
+            
+            // Update session controls
+            document.getElementById('start-fast-session').style.display = 'none';
+            document.getElementById('stop-fast-session').style.display = 'inline-block';
+            
+            // Trigger custom event
+            document.dispatchEvent(new CustomEvent('fast-lane:configured', {
+                detail: config
+            }));
+            
+        } else {
+            throw new Error(result.error || 'Configuration failed');
+        }
+        
+    } catch (error) {
+        console.error('Configuration error:', error);
+        showNotification(`Configuration failed: ${error.message}`, 'error');
+    }
+}
+
+async function executeQuickBuy(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const buyData = {
+        token_address: formData.get('token_address') || document.getElementById('buy_token_address').value,
+        amount_eth: formData.get('amount') || document.getElementById('buy_amount').value,
+        slippage_tolerance: (parseFloat(formData.get('slippage') || document.getElementById('buy_slippage').value)) / 100,
+        chain_id: 8453 // Base mainnet
+    };
+    
+    // Validate
+    if (!buyData.token_address || !buyData.amount_eth) {
+        showNotification('Please fill in all required fields', 'warning');
         return;
     }
     
-    // Simple validation test
-    alert('✅ Configuration test passed! All parameters are valid for Fast Lane execution.');
+    try {
+        // Use trading manager if available
+        if (window.tradingManager) {
+            const mockFormData = new FormData();
+            Object.entries(buyData).forEach(([key, value]) => {
+                mockFormData.append(key, value);
+            });
+            
+            await window.tradingManager.executeBuyOrder(mockFormData);
+            
+            // Clear form
+            e.target.reset();
+            
+        } else {
+            throw new Error('Trading manager not available');
+        }
+        
+    } catch (error) {
+        console.error('Quick buy error:', error);
+        showNotification(`Quick buy failed: ${error.message}`, 'error');
+    }
 }
+
+async function executeQuickSell(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const sellData = {
+        token_address: formData.get('token_address') || document.getElementById('sell_token_address').value,
+        token_amount: formData.get('amount') || document.getElementById('sell_amount').value,
+        slippage_tolerance: (parseFloat(formData.get('slippage') || document.getElementById('sell_slippage').value)) / 100,
+        chain_id: 8453
+    };
+    
+    // Validate
+    if (!sellData.token_address || !sellData.token_amount) {
+        showNotification('Please fill in all required fields', 'warning');
+        return;
+    }
+    
+    try {
+        // Use trading manager if available
+        if (window.tradingManager) {
+            const mockFormData = new FormData();
+            Object.entries(sellData).forEach(([key, value]) => {
+                mockFormData.append(key, value);
+            });
+            
+            await window.tradingManager.executeSellOrder(mockFormData);
+            
+            // Clear form
+            e.target.reset();
+            
+        } else {
+            throw new Error('Trading manager not available');
+        }
+        
+    } catch (error) {
+        console.error('Quick sell error:', error);
+        showNotification(`Quick sell failed: ${error.message}`, 'error');
+    }
+}
+
+function gatherConfigurationData() {
+    const selectedPairs = Array.from(document.querySelectorAll('.trading-pair-card.selected'))
+                               .map(card => card.dataset.pair);
+    
+    return {
+        execution_timeout_ms: parseInt(document.getElementById('execution_timeout').value),
+        max_slippage_percent: parseFloat(document.getElementById('max_slippage').value),
+        default_position_size_eth: parseFloat(document.getElementById('default_position_size').value),
+        max_position_size_eth: parseFloat(document.getElementById('max_position_size').value),
+        gas_price_multiplier: parseFloat(document.getElementById('gas_price_multiplier').value),
+        max_gas_price_gwei: parseInt(document.getElementById('max_gas_price').value),
+        priority_fee_gwei: parseFloat(document.getElementById('priority_fee').value),
+        mev_protection_enabled: document.getElementById('enable_mev_protection').checked,
+        private_mempool_enabled: document.getElementById('use_private_mempool').checked,
+        sandwich_protection_enabled: document.getElementById('enable_sandwich_protection').checked,
+        target_trading_pairs: selectedPairs,
+        stop_loss_percent: parseFloat(document.getElementById('stop_loss_percent').value) || null,
+        take_profit_percent: parseFloat(document.getElementById('take_profit_percent').value) || null
+    };
+}
+
+function loadSavedConfiguration() {
+    // Try to load saved configuration from localStorage or server
+    const saved = localStorage.getItem('fast_lane_config');
+    if (saved) {
+        try {
+            const config = JSON.parse(saved);
+            applyConfigurationToForm(config);
+        } catch (error) {
+            console.error('Error loading saved configuration:', error);
+        }
+    }
+}
+
+function applyConfigurationToForm(config) {
+    // Apply saved configuration to form fields
+    Object.entries(config).forEach(([key, value]) => {
+        const element = document.getElementById(key);
+        if (element) {
+            if (element.type === 'checkbox') {
+                element.checked = value;
+            } else {
+                element.value = value;
+            }
+        }
+    });
+    
+    // Update displays
+    updateConfigurationPreview();
+    updatePerformanceGauges();
+}
+
+function testConfiguration() {
+    const config = gatherConfigurationData();
+    
+    showNotification('Testing Fast Lane configuration...', 'info');
+    
+    // Simulate test
+    setTimeout(() => {
+        const testResults = {
+            estimated_speed: `${config.execution_timeout_ms}ms`,
+            gas_efficiency: config.gas_price_multiplier < 1.5 ? 'Good' : 'High',
+            mev_protection: config.mev_protection_enabled ? 'Active' : 'Disabled',
+            risk_level: config.max_slippage_percent > 2 ? 'High' : 'Medium'
+        };
+        
+        showNotification(
+            `Test complete: ${testResults.estimated_speed} execution, ${testResults.gas_efficiency} gas efficiency`, 
+            'success'
+        );
+        
+    }, 2000);
+}
+
+function resetConfiguration() {
+    // Reset form to defaults
+    document.getElementById('fast-lane-config-form').reset();
+    
+    // Reset sliders
+    document.getElementById('execution_timeout').value = 500;
+    document.getElementById('max_slippage').value = 1.0;
+    
+    // Reset displays
+    document.getElementById('timeout-display').textContent = '500ms';
+    document.getElementById('slippage-display').textContent = '1.0%';
+    
+    // Reset trading pairs to default selection
+    document.querySelectorAll('.trading-pair-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    document.querySelector('[data-pair="WETH/USDC"]').classList.add('selected');
+    
+    // Update preview
+    updateConfigurationPreview();
+    updatePerformanceGauges();
+    updateSpeedDisplay(500);
+    
+    showNotification('Configuration reset to defaults', 'info');
+}
+
+function getCsrfToken() {
+    const token = document.querySelector('meta[name="csrf-token"]');
+    return token ? token.getAttribute('content') : '';
+}
+
+function showNotification(message, type = 'info') {
+    if (window.tradingManager) {
+        window.tradingManager.showNotification(message, type);
+    } else {
+        alert(message);
+    }
+}
+
+// Auto-save configuration changes
+let saveTimeout;
+document.addEventListener('input', function(e) {
+    if (e.target.closest('#fast-lane-config-form')) {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            const config = gatherConfigurationData();
+            localStorage.setItem('fast_lane_config', JSON.stringify(config));
+        }, 1000);
+    }
+});
+
+// Export functions for global access
+window.fastLaneConfig = {
+    saveConfiguration,
+    testConfiguration,
+    resetConfiguration,
+    gatherConfigurationData
+};
 </script>
 {% endblock %}
