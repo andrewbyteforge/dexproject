@@ -3,6 +3,7 @@ Dashboard Views Module
 
 Exports all dashboard view functions for URL routing.
 FIXED: Added missing api_set_trading_mode function for URL routing.
+FIXED: Corrected Smart Lane import structure to avoid circular imports.
 
 Path: dashboard/views/__init__.py
 """
@@ -336,9 +337,10 @@ except ImportError:
             }
         })
 
-# SMART LANE IMPORTS - NEW ADDITION
+# SMART LANE IMPORTS - FIXED: Corrected import structure
 try:
-    from dashboard.smart_lane_features import (
+    # First import Smart Lane views - use relative import for smart_lane_features
+    from ..smart_lane_features import (
         smart_lane_dashboard,
         smart_lane_demo,
         smart_lane_config,
@@ -346,32 +348,34 @@ try:
     )
     print("Smart Lane views imported successfully")
    
-    # Import API functions from api_endpoints
+    # Import API functions from api_endpoints - FIXED: Use relative import to avoid circular import
     try:
-        from dashboard.api_endpoints import (
+        from ..api_endpoints import (
             api_smart_lane_analyze,
             api_get_thought_log,
         )
         print("Smart Lane API endpoints imported successfully")
     except ImportError as api_error:
         print(f"Warning: Could not import Smart Lane API endpoints: {api_error}")
-        # Create placeholder API functions
+        # Create placeholder API functions with detailed error info
         def api_smart_lane_analyze(request):
             return JsonResponse({
                 'success': False,
-                'error': 'Smart Lane API not available'
+                'error': 'Smart Lane API not available - import failed',
+                'details': str(api_error)
             })
         
         def api_get_thought_log(request, analysis_id):
             return JsonResponse({
                 'success': False,
-                'error': 'Thought log API not available'
+                'error': 'Thought log API not available - import failed',
+                'details': str(api_error)
             })
 
 except ImportError as e:
     print(f"Warning: Could not import Smart Lane views: {e}")
     
-    # Create placeholder functions if smart_lane.py doesn't exist
+    # Create placeholder functions if smart_lane_features.py doesn't exist
     # FIXED: Removed @login_required decorators from all Smart Lane functions
     def smart_lane_dashboard(request):
         """Placeholder Smart Lane dashboard."""
@@ -463,14 +467,16 @@ except ImportError as e:
         """Placeholder Smart Lane API."""
         return JsonResponse({
             'success': False,
-            'error': 'Smart Lane API not available'
+            'error': 'Smart Lane API not available - views not imported',
+            'details': str(e)
         })
     
     def api_get_thought_log(request, analysis_id):
         """Placeholder thought log API."""
         return JsonResponse({
             'success': False,
-            'error': 'Thought log API not available'
+            'error': 'Thought log API not available - views not imported',
+            'details': str(e)
         })
 
 
@@ -722,3 +728,5 @@ __all__ = [
     'api_smart_lane_analyze',
     'api_get_thought_log',
 ]
+
+logger.info("Dashboard views module loaded successfully with fixed Smart Lane imports")
