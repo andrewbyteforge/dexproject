@@ -1,22 +1,25 @@
 """
-Fast Lane Views - Dedicated Fast Lane Configuration
+Fast Lane Views - Dedicated Fast Lane Configuration and Status
 
-Separate views specifically for Fast Lane configuration to avoid conflicts
+Separate views specifically for Fast Lane configuration and status to avoid conflicts
 with Smart Lane functionality.
 
-File: dashboard/views/fast_lane.py (new file)
+File: dashboard/views/fast_lane.py
 """
 
 import logging
 from typing import Dict, Any, Optional
 
 from django.shortcuts import render, redirect
-from django.http import HttpResponse, HttpRequest
+from django.http import HttpResponse, HttpRequest, JsonResponse
 from django.contrib import messages
 from django.contrib.auth.models import User
 from django.db import IntegrityError
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth.decorators import login_required
 
 from ..models import BotConfiguration
+from ..engine_service import engine_service
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +67,92 @@ def fast_lane_config(request: HttpRequest) -> HttpResponse:
         logger.error(f"Error in fast_lane_config: {e}", exc_info=True)
         messages.error(request, "Error loading Fast Lane configuration.")
         return redirect('dashboard:home')
+
+
+@require_http_methods(["GET"])
+@login_required
+def get_fast_lane_status(request: HttpRequest) -> JsonResponse:
+    """
+    Fast Lane status API endpoint.
+    
+    Returns JSON response with current Fast Lane engine status, performance metrics,
+    and system health information specifically for Fast Lane operations.
+    
+    Args:
+        request: Django HTTP request object
+        
+    Returns:
+        JsonResponse with Fast Lane status data
+    """
+    try:
+        logger.debug(f"Fast Lane status API called by user: {request.user.username}")
+        
+        # Get Fast Lane status from engine service
+        fast_lane_status = engine_service.get_engine_status()
+        fast_lane_metrics = engine_service.get_performance_metrics()
+        
+        # Determine Fast Lane specific status
+        is_operational = (
+            fast_lane_status.get('status') == 'OPERATIONAL' and
+            fast_lane_status.get('fast_lane_active', False)
+        )
+        
+        # Compile Fast Lane focused status
+        status_data = {
+            'timestamp': fast_lane_status.get('timestamp', ''),
+            'fast_lane': {
+                'status': fast_lane_status.get('status', 'UNKNOWN'),
+                'active': fast_lane_status.get('fast_lane_active', False),
+                'initialized': fast_lane_status.get('engine_initialized', False),
+                'operational': is_operational,
+                'execution_time_ms': fast_lane_metrics.get('execution_time_ms', 0),
+                'success_rate': fast_lane_metrics.get('success_rate', 0),
+                'trades_per_minute': fast_lane_metrics.get('trades_per_minute', 0),
+                'mempool_connected': fast_lane_status.get('mempool_connected', False),
+                'circuit_breaker_state': fast_lane_status.get('circuit_breaker_state', 'UNKNOWN'),
+                'uptime_seconds': fast_lane_status.get('uptime_seconds', 0),
+                'data_source': 'LIVE' if not fast_lane_metrics.get('_mock', False) else 'MOCK',
+                'mev_protection_active': fast_lane_status.get('mev_protection_active', False),
+                'gas_optimization_enabled': fast_lane_status.get('gas_optimization_enabled', True),
+                'risk_management_active': fast_lane_status.get('risk_management_active', True)
+            },
+            'capabilities': {
+                'max_execution_time_ms': 500,  # Fast Lane target
+                'supported_chains': ['base-sepolia', 'ethereum-sepolia'],
+                'mev_protection': True,
+                'mempool_monitoring': fast_lane_status.get('mempool_connected', False),
+                'gas_optimization': True,
+                'circuit_breaker': True
+            },
+            'performance': {
+                'target_execution_time': 200,  # Target <200ms
+                'current_execution_time': fast_lane_metrics.get('execution_time_ms', 0),
+                'performance_ratio': _calculate_performance_ratio(fast_lane_metrics.get('execution_time_ms', 0)),
+                'speed_advantage': _calculate_speed_advantage(fast_lane_metrics.get('execution_time_ms', 0)),
+                'reliability_score': fast_lane_metrics.get('success_rate', 0)
+            }
+        }
+        
+        return JsonResponse({
+            'success': True,
+            'data': status_data,
+            'message': 'Fast Lane status retrieved successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_fast_lane_status: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': 'Failed to get Fast Lane status',
+            'data': {
+                'fast_lane': {
+                    'status': 'ERROR',
+                    'active': False,
+                    'operational': False,
+                    'data_source': 'UNAVAILABLE'
+                }
+            }
+        }, status=500)
 
 
 def _handle_fast_lane_display(request: HttpRequest) -> HttpResponse:
@@ -123,16 +212,10 @@ def _handle_fast_lane_save(request: HttpRequest) -> HttpResponse:
     try:
         logger.info(f"Saving Fast Lane configuration for user: {request.user.username}")
         
-        # Extract and validate form data
-        config_name = request.POST.get('config_name', '').strip()
-        if not config_name:
-            messages.error(request, "Configuration name is required")
-            return _handle_fast_lane_display(request)
-        
-        # Extract Fast Lane specific configuration
+        # Extract configuration from form data
         config_data = _extract_fast_lane_config(request.POST)
         
-        # Validate configuration data
+        # Validate configuration
         validation_errors = _validate_fast_lane_config(config_data)
         if validation_errors:
             for error in validation_errors:
@@ -142,27 +225,19 @@ def _handle_fast_lane_save(request: HttpRequest) -> HttpResponse:
         # Save configuration to database
         config = BotConfiguration.objects.create(
             user=request.user,
-            name=config_name,
-            description=request.POST.get('description', ''),
+            name=request.POST.get('config_name', 'Fast Lane Config'),
             trading_mode='FAST_LANE',
-            parameters=config_data,
-            is_active=True
+            config_data=config_data,
+            is_active=request.POST.get('set_active') == 'on'
         )
         
-        # Deactivate other Fast Lane configurations for this user
-        BotConfiguration.objects.filter(
-            user=request.user,
-            trading_mode='FAST_LANE'
-        ).exclude(id=config.id).update(is_active=False)
+        logger.info(f"Fast Lane configuration saved successfully: {config.id}")
+        messages.success(request, f"Fast Lane configuration '{config.name}' saved successfully!")
         
-        logger.info(f"Fast Lane configuration '{config_name}' saved successfully with ID: {config.id}")
-        messages.success(request, f"Fast Lane configuration '{config_name}' saved successfully!")
-        
-        # Redirect to dashboard or config list
+        # Redirect to configuration list or dashboard
         return redirect('dashboard:home')
         
-    except IntegrityError as e:
-        logger.error(f"Database integrity error saving Fast Lane config: {e}")
+    except IntegrityError:
         messages.error(request, "Configuration name already exists. Please choose a different name.")
         return _handle_fast_lane_display(request)
     
@@ -205,96 +280,56 @@ def _validate_fast_lane_config(config_data: Dict[str, Any]) -> list:
     """Validate Fast Lane configuration data."""
     errors = []
     
-    # Validate position size
+    # Position size validation
     position_size = config_data.get('position_size_usd', 0)
-    if position_size < 10:
-        errors.append("Position size must be at least $10")
-    elif position_size > 50000:
-        errors.append("Position size cannot exceed $50,000")
+    if position_size <= 0:
+        errors.append("Position size must be greater than 0")
+    if position_size > 10000:
+        errors.append("Position size cannot exceed $10,000 for safety")
     
-    # Validate execution timeout
+    # Execution timeout validation
     timeout = config_data.get('execution_timeout_ms', 0)
-    if timeout < 100:
-        errors.append("Execution timeout must be at least 100ms")
-    elif timeout > 5000:
-        errors.append("Execution timeout cannot exceed 5000ms")
+    if timeout < 50:
+        errors.append("Execution timeout must be at least 50ms")
+    if timeout > 5000:
+        errors.append("Execution timeout cannot exceed 5000ms for Fast Lane")
     
-    # Validate slippage
+    # Slippage validation
     slippage = config_data.get('slippage_tolerance_percent', 0)
     if slippage < 0.1:
         errors.append("Slippage tolerance must be at least 0.1%")
-    elif slippage > 10.0:
+    if slippage > 10:
         errors.append("Slippage tolerance cannot exceed 10%")
     
-    # Validate gas price
+    # Gas price validation
     gas_price = config_data.get('gas_price_gwei', 0)
     if gas_price < 1:
         errors.append("Gas price must be at least 1 gwei")
-    elif gas_price > 500:
-        errors.append("Gas price cannot exceed 500 gwei")
+    if gas_price > 200:
+        errors.append("Gas price cannot exceed 200 gwei")
     
-    # Validate minimum liquidity
-    min_liquidity = config_data.get('min_liquidity_usd', 0)
-    if min_liquidity < 1000:
-        errors.append("Minimum liquidity must be at least $1,000")
-    
-    # Validate target pairs
-    target_pairs = config_data.get('target_pairs', [])
-    if not target_pairs:
+    # Trading pairs validation
+    pairs = config_data.get('target_pairs', [])
+    if not pairs:
         errors.append("At least one trading pair must be selected")
-    
-    # Validate risk level
-    risk_level = config_data.get('risk_level', '')
-    if risk_level not in ['LOW', 'MEDIUM', 'HIGH']:
-        errors.append("Invalid risk level selected")
     
     return errors
 
 
-# Additional helper functions for Fast Lane
-
-def get_fast_lane_status() -> Dict[str, Any]:
-    """Get Fast Lane engine status."""
-    return {
-        'available': True,
-        'engine_online': True,
-        'average_execution_time_ms': 387,
-        'success_rate_percent': 94.2,
-        'active_configurations': 3,
-        'total_trades_today': 127
-    }
-
-
-def get_fast_lane_recommendations(user_experience: str = 'BEGINNER') -> Dict[str, Any]:
-    """Get recommended Fast Lane settings based on user experience."""
-    recommendations = {
-        'BEGINNER': {
-            'position_size_usd': 50,
-            'execution_timeout_ms': 1000,
-            'slippage_tolerance_percent': 2.0,
-            'gas_price_gwei': 25,
-            'risk_level': 'LOW',
-            'mev_protection_enabled': True,
-            'auto_approval_enabled': False
-        },
-        'INTERMEDIATE': {
-            'position_size_usd': 200,
-            'execution_timeout_ms': 500,
-            'slippage_tolerance_percent': 1.5,
-            'gas_price_gwei': 20,
-            'risk_level': 'MEDIUM',
-            'mev_protection_enabled': True,
-            'auto_approval_enabled': False
-        },
-        'ADVANCED': {
-            'position_size_usd': 1000,
-            'execution_timeout_ms': 250,
-            'slippage_tolerance_percent': 1.0,
-            'gas_price_gwei': 30,
-            'risk_level': 'HIGH',
-            'mev_protection_enabled': True,
-            'auto_approval_enabled': True
-        }
-    }
+def _calculate_performance_ratio(execution_time_ms: float) -> float:
+    """Calculate performance ratio compared to target."""
+    target_time = 200  # Fast Lane target: <200ms
+    if execution_time_ms <= 0:
+        return 0.0
     
-    return recommendations.get(user_experience, recommendations['BEGINNER'])
+    return min(100.0, (target_time / execution_time_ms) * 100)
+
+
+def _calculate_speed_advantage(execution_time_ms: float) -> str:
+    """Calculate speed advantage over competitors."""
+    competitor_baseline = 300  # Unibot baseline
+    if execution_time_ms <= 0:
+        return "N/A"
+    
+    advantage = ((competitor_baseline - execution_time_ms) / competitor_baseline) * 100
+    return f"{max(0, advantage):.0f}%"
