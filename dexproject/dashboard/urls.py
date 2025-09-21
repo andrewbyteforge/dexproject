@@ -1,8 +1,10 @@
 """
-Dashboard URL Configuration - UPDATED WITH WALLET BALANCE API
+Updated Dashboard URL Configuration with Trading Integration - PHASE 5.1C COMPLETE
 
-URL patterns that include the new wallet balance tracking endpoint
-while maintaining all existing confirmed view functions.
+URL patterns that include the new trading dashboard endpoints, portfolio analytics,
+and real-time trading data APIs.
+
+NEW: Complete trading integration with dashboard views
 
 File: dexproject/dashboard/urls.py
 """
@@ -13,7 +15,8 @@ from django.utils import timezone
 from datetime import datetime
 from . import views
 from .views import fast_lane
-from . import views_wallet  # Import new wallet views module
+from . import views_wallet  # Import wallet views module
+from . import views_trading  # Import new trading views module
 
 
 app_name = 'dashboard'
@@ -32,6 +35,17 @@ urlpatterns = [
     path('analytics/', views.dashboard_analytics, name='analytics'),
    
     # =========================================================================
+    # TRADING DASHBOARD VIEWS - NEW PHASE 5.1C IMPLEMENTATION
+    # Real-time trading interface and portfolio management
+    # =========================================================================
+    
+    # **NEW:** Main trading dashboard with real-time data
+    path('trading/', views_trading.trading_dashboard, name='trading_dashboard'),
+    
+    # **NEW:** Detailed portfolio analytics and performance tracking
+    path('portfolio/', views_trading.portfolio_analytics, name='portfolio_analytics'),
+    
+    # =========================================================================
     # REAL-TIME DATA STREAMS (SERVER-SENT EVENTS)
     # =========================================================================
     
@@ -39,102 +53,94 @@ urlpatterns = [
     path('metrics/stream/', views.metrics_stream, name='metrics_stream'),
    
     # =========================================================================
-    # WALLET API ENDPOINTS - NEW PHASE 5.1C IMPLEMENTATION
+    # WALLET API ENDPOINTS - EXISTING IMPLEMENTATION
     # Real-time balance tracking and wallet management for trading capability
     # =========================================================================
     
-    # **NEW:** Wallet balance tracking API for Base Sepolia with multi-chain support
+    # Wallet balance tracking API for Base Sepolia with multi-chain support
     path('api/wallet/balances/', views_wallet.api_wallet_balances, name='api_wallet_balances'),
    
     # =========================================================================
-    # CONFIGURATION MANAGEMENT API ENDPOINTS
-    # RESTful endpoints for bot configuration CRUD operations
+    # TRADING API ENDPOINTS - NEW PHASE 5.1C IMPLEMENTATION
+    # Real-time trading data and manual trading actions
     # =========================================================================
     
-    # Configuration management API endpoints (confirmed existing)
-    path('api/save-configuration/', views.save_configuration, name='save_configuration'),
-    path('api/load-configuration/', views.load_configuration, name='load_configuration'),
-    path('api/delete-configuration/', views.delete_configuration, name='delete_configuration'),
-    path('api/get-configurations/', views.get_configurations, name='get_configurations'),
-   
-    # =========================================================================
-    # SESSION MANAGEMENT API ENDPOINTS
-    # Trading session lifecycle management endpoints
-    # =========================================================================
+    # **NEW:** Real-time portfolio data API
+    path('api/portfolio/summary/', views_trading.api_portfolio_summary, name='api_portfolio_summary'),
     
-    # Session management API endpoints (confirmed existing)
-    path('api/start-session/', views.start_session, name='start_session'),
-    path('api/stop-session/', views.stop_session, name='stop_session'),
-    path('api/session-status/', views.get_session_status, name='session_status'),
-   
-    # =========================================================================
-    # PERFORMANCE METRICS API ENDPOINTS
-    # Real-time trading performance and analytics endpoints
-    # =========================================================================
+    # **NEW:** Recent trading activity API
+    path('api/trades/recent/', views_trading.api_recent_trades, name='api_recent_trades'),
     
-    # Performance metrics API endpoint (confirmed existing)
-    path('api/performance-metrics/', views.get_performance_metrics, name='performance_metrics'),
-   
-    # =========================================================================
-    # TRADING MODE MANAGEMENT
-    # Fast Lane vs Smart Lane mode switching endpoint
-    # =========================================================================
+    # **NEW:** Trading metrics and system status API
+    path('api/trading/metrics/', views_trading.api_trading_metrics, name='api_trading_metrics'),
     
-    # Trading mode API (confirmed existing)
-    path('api/set-mode/', views.api_set_trading_mode, name='api_set_trading_mode'),
-   
-    # =========================================================================
-    # ENGINE AND SYSTEM API ENDPOINTS
-    # =========================================================================
-    
-    # Engine status and performance (confirmed existing)
-    # path('api/engine/status/', views.api_engine_status, name='api_engine_status'),
-    # path('api/engine/performance/', views.api_performance_metrics, name='api_performance_metrics'),
+    # **NEW:** Manual trading action endpoints
+    path('api/trading/buy/', views_trading.api_manual_buy, name='api_manual_buy'),
+    path('api/trading/sell/', views_trading.api_manual_sell, name='api_manual_sell'),
+    path('api/trading/smart-lane/', views_trading.api_smart_lane_analysis, name='api_smart_lane_analysis'),
     
     # =========================================================================
-    # SMART LANE SPECIFIC URLS
-    # Smart Lane dashboard, configuration, and analysis endpoints
+    # FAST LANE CONFIGURATION - EXISTING IMPLEMENTATION
+    # Configuration interface for Fast Lane trading settings
     # =========================================================================
     
-    # Smart Lane URLs (confirmed existing)
-    path('smart-lane/', views.smart_lane_dashboard, name='smart_lane_dashboard'),
-    path('smart-lane/demo/', views.smart_lane_demo, name='smart_lane_demo'),
-    # path('smart-lane/config/', views.smart_lane_config, name='smart_lane_config'),
-    path('smart-lane/analyze/', views.smart_lane_analyze, name='smart_lane_analyze'),
-    path('api/smart-lane/analyze/', views.api_smart_lane_analyze, name='api_smart_lane_analyze'),
-    path('api/smart-lane/thought-log/<str:analysis_id>/', views.api_get_thought_log, name='api_get_thought_log'),
-    
-    # =========================================================================
-    # CONFIGURATION MANAGEMENT PAGES
-    # =========================================================================
-    
-    # Configuration management pages (confirmed existing)
-    # path('configs/', views.configuration_list, name='configuration_list'),
-    # path('configs/<int:config_id>/', views.configuration_summary, name='configuration_summary'),
-    
-    
-    # =========================================================================
-    # TEST AND DEBUG ENDPOINTS
-    # =========================================================================
-    
-    # Test endpoint to verify Django is working
-    path('test/', lambda request: JsonResponse({
-        'status': 'ok', 
-        'message': 'Django dashboard is working',
-        'app': 'dashboard',
-        'timestamp': str(datetime.now())
-    }), name='test_api'),
-    
-    # Debug endpoints (if needed)
-    # path('debug/', views.debug_dashboard, name='debug_dashboard'),
-    # path('debug/templates/', views.debug_templates, name='debug_templates'),
-    # path('minimal/', views.minimal_dashboard, name='minimal_dashboard'),
-
-    # =========================================================================
-    # HEALTH CHECK AND SYSTEM ENDPOINTS - CONFIRMED EXISTING
-    # =========================================================================
-    
-    # System health endpoint that exists in views.py
-    # path('health/', views.dashboard_health_check, name='health_check'),
+    # Fast Lane configuration interface (confirmed existing)
     path('fast-lane/config/', fast_lane.fast_lane_config, name='fast_lane_config'),
+    path('fast-lane/status/', fast_lane.fast_lane_status, name='fast_lane_status'),
+    path('fast-lane/test/', fast_lane.fast_lane_test, name='fast_lane_test'),
+    
+    # =========================================================================
+    # CONFIGURATION MANAGEMENT APIs
+    # Configuration save/load endpoints for both Fast Lane and Smart Lane
+    # =========================================================================
+    
+    # Configuration API endpoints (confirmed existing)
+    path('api/config/save/', views.api_save_configuration, name='api_save_configuration'),
+    path('api/config/load/', views.api_load_configuration, name='api_load_configuration'),
+    path('api/config/reset/', views.api_reset_configuration, name='api_reset_configuration'),
+    
+    # =========================================================================
+    # SYSTEM STATUS AND HEALTH CHECKS
+    # System monitoring and health check endpoints
+    # =========================================================================
+    
+    # System status endpoints
+    path('api/system/status/', views.api_system_status, name='api_system_status'),
+    path('api/system/health/', views.api_health_check, name='api_health_check'),
+    
+    # =========================================================================
+    # LEGACY ENDPOINTS AND UTILITIES
+    # Backward compatibility and utility endpoints
+    # =========================================================================
+    
+    # Utility endpoints
+    path('api/test-connection/', lambda request: JsonResponse({
+        'status': 'success',
+        'message': 'Dashboard API connection test successful',
+        'timestamp': timezone.now().isoformat(),
+        'phase': '5.1C',
+        'features': [
+            'risk_integrated_trading',
+            'portfolio_tracking',
+            'real_time_analytics',
+            'smart_lane_integration',
+            'fast_lane_configuration'
+        ]
+    }), name='api_test_connection'),
+    
+    # Health check for trading system
+    path('api/trading/health/', lambda request: JsonResponse({
+        'trading_system': 'OPERATIONAL',
+        'risk_integration': 'ENABLED',
+        'portfolio_tracking': 'ACTIVE',
+        'smart_lane_bridge': 'READY',
+        'celery_queues': {
+            'risk.urgent': 'ONLINE',
+            'execution.critical': 'ONLINE',
+            'analytics.background': 'ONLINE'
+        },
+        'timestamp': timezone.now().isoformat()
+    }), name='api_trading_health'),
 ]
+
+

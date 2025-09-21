@@ -1,19 +1,10 @@
 """
-Celery configuration for the DEX auto-trading bot.
+Enhanced Celery Configuration with Risk-Integrated Trading Tasks
 
-Updated to support the new modular risk assessment system.
-This module sets up task queues for:
-- risk.urgent: Fast risk checks before trade execution
-- risk.normal: Standard risk assessments and monitoring
-- risk.background: Bulk assessments and maintenance
-- execution.critical: Trade submission, sell exits, stop-losses  
-- analytics.background: PnL, reporting, long-running intelligence
+Updated to include the new risk-integrated trading workflows and proper task routing
+for the complete Phase 5.1C integration.
 
-Usage:
-    celery -A dexproject worker --loglevel=info
-    celery -A dexproject worker -Q risk.urgent --loglevel=info
-    celery -A dexproject worker -Q execution.critical --loglevel=info
-    celery -A dexproject worker -Q analytics.background --loglevel=info
+File: dexproject/celery_app.py
 """
 
 import os
@@ -32,10 +23,14 @@ app = Celery('dexproject')
 # the configuration object to child processes.
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
-# Enhanced Celery configuration for the trading bot
+# Enhanced Celery configuration for the trading bot with risk integration
 app.conf.update(
     # Task routing configuration
     task_routes={
+        # =============================================================================
+        # RISK ASSESSMENT TASKS - HIGH PRIORITY
+        # =============================================================================
+        
         # Main risk assessment tasks - high priority, fast execution
         'risk.tasks.assess_token_risk': {'queue': 'risk.urgent'},
         'risk.tasks.quick_honeypot_check': {'queue': 'risk.normal'},
@@ -59,14 +54,32 @@ app.conf.update(
         'risk.tasks.update_risk_statistics': {'queue': 'risk.background'},
         'risk.tasks.generate_risk_report': {'queue': 'risk.background'},
         
-        # Trading execution tasks - critical priority, immediate execution
+        # =============================================================================
+        # RISK-INTEGRATED TRADING EXECUTION TASKS - CRITICAL PRIORITY
+        # =============================================================================
+        
+        # NEW: Risk-integrated trading tasks (Phase 5.1C)
+        'trading.tasks.execute_buy_order_with_risk': {'queue': 'execution.critical'},
+        'trading.tasks.execute_sell_order_with_risk': {'queue': 'execution.critical'},
+        'trading.tasks.smart_lane_trading_workflow': {'queue': 'risk.urgent'},  # Risk queue for analysis phase
+        'trading.tasks.fast_lane_trading_workflow': {'queue': 'execution.critical'},
+        
+        # Legacy trading execution tasks (now aliases)
         'trading.tasks.execute_buy_order': {'queue': 'execution.critical'},
         'trading.tasks.execute_sell_order': {'queue': 'execution.critical'},
         'trading.tasks.emergency_exit': {'queue': 'execution.critical'},
+        
+        # Portfolio and position management
+        'trading.tasks.update_portfolio_positions': {'queue': 'execution.critical'},
+        'trading.tasks.calculate_portfolio_analytics': {'queue': 'analytics.background'},
         'trading.tasks.update_stop_loss': {'queue': 'execution.critical'},
         'trading.tasks.monitor_position': {'queue': 'execution.critical'},
         'trading.tasks.check_slippage': {'queue': 'execution.critical'},
         'trading.tasks.validate_transaction': {'queue': 'execution.critical'},
+        
+        # =============================================================================
+        # ANALYTICS AND REPORTING TASKS - BACKGROUND PROCESSING
+        # =============================================================================
         
         # Analytics and reporting tasks - background processing
         'analytics.tasks.calculate_pnl': {'queue': 'analytics.background'},
@@ -77,172 +90,138 @@ app.conf.update(
         'analytics.tasks.risk_model_training': {'queue': 'analytics.background'},
         'analytics.tasks.backtest_strategies': {'queue': 'analytics.background'},
         
+        # =============================================================================
+        # DASHBOARD AND SYSTEM TASKS - BACKGROUND PROCESSING
+        # =============================================================================
+        
         # Dashboard tasks - background processing
         'dashboard.tasks.update_system_status': {'queue': 'analytics.background'},
         'dashboard.tasks.send_notification': {'queue': 'analytics.background'},
         'dashboard.tasks.update_portfolio_display': {'queue': 'analytics.background'},
         'dashboard.tasks.generate_dashboard_data': {'queue': 'analytics.background'},
+        'dashboard.tasks.refresh_real_time_metrics': {'queue': 'analytics.background'},
+        
+        # =============================================================================
+        # WALLET AND INFRASTRUCTURE TASKS - MEDIUM PRIORITY
+        # =============================================================================
         
         # Wallet tasks - medium priority
         'wallet.tasks.sync_balance': {'queue': 'risk.normal'},
         'wallet.tasks.validate_transaction': {'queue': 'risk.normal'},
         'wallet.tasks.estimate_gas': {'queue': 'risk.normal'},
         'wallet.tasks.check_allowance': {'queue': 'risk.normal'},
+        'wallet.tasks.update_wallet_balances': {'queue': 'risk.normal'},
+        
+        # =============================================================================
+        # HEALTH CHECK AND MONITORING TASKS - DISTRIBUTED
+        # =============================================================================
         
         # Health check tasks - distributed across queues
         'dexproject.health_check_risk_queue': {'queue': 'risk.urgent'},
         'dexproject.health_check_execution_queue': {'queue': 'execution.critical'},
         'dexproject.health_check_analytics_queue': {'queue': 'analytics.background'},
+        
+        # System monitoring
+        'system.tasks.monitor_queue_health': {'queue': 'risk.normal'},
+        'system.tasks.log_system_metrics': {'queue': 'analytics.background'},
+        'system.tasks.cleanup_old_logs': {'queue': 'analytics.background'},
     },
     
-    # Queue configuration
-    task_default_queue = 'default',
-    task_default_exchange = 'default',
-    task_default_exchange_type = 'direct',
-    task_default_routing_key = 'default',
+    # Queue configuration for optimal performance
+    task_default_queue='risk.normal',
+    worker_prefetch_multiplier=1,  # Prevent workers from grabbing too many tasks
+    task_acks_late=True,  # Acknowledge tasks only after completion
+    worker_disable_rate_limits=True,  # Disable rate limits for trading speed
     
-    # Worker configuration
-    worker_prefetch_multiplier = 1,  # One task at a time for critical queues
-    worker_max_tasks_per_child = 1000,  # Restart worker after 1000 tasks
-    worker_disable_rate_limits = False,
-    worker_log_color = False,  # Consistent with production
+    # Task time limits
+    task_time_limit=300,  # 5 minutes global timeout
+    task_soft_time_limit=240,  # 4 minutes soft timeout
     
-    # Task execution configuration
-    task_acks_late = True,  # Acknowledge tasks only after completion
-    task_reject_on_worker_lost = True,  # Re-queue tasks if worker dies
-    task_track_started = True,  # Track when tasks start
-    task_time_limit = 300,  # Global 5-minute timeout
-    task_soft_time_limit = 270,  # Global 4.5-minute soft timeout
-    
-    # Retry configuration with improved settings for our modular structure
-    task_annotations = {
-        # Main assessment tasks - fast retries, moderate timeout
+    # Risk assessment specific timeouts
+    task_annotations={
         'risk.tasks.assess_token_risk': {
-            'rate_limit': '200/m',  # Increased for modular efficiency
-            'time_limit': 30,
-            'soft_time_limit': 25,
-            'retry_kwargs': {'max_retries': 2, 'countdown': 1},
+            'time_limit': 60,  # 1 minute for comprehensive risk assessment
+            'soft_time_limit': 45,
         },
-        'risk.tasks.quick_honeypot_check': {
-            'rate_limit': '500/m',  # Higher rate for quick checks
-            'time_limit': 10,
-            'soft_time_limit': 8,
-            'retry_kwargs': {'max_retries': 2, 'countdown': 0.5},
+        'trading.tasks.execute_buy_order_with_risk': {
+            'time_limit': 120,  # 2 minutes for risk + execution
+            'soft_time_limit': 90,
         },
-        
-        # Individual risk check tasks - fast execution
-        'risk.tasks.honeypot_check': {
-            'rate_limit': '300/m',
-            'time_limit': 15,
-            'soft_time_limit': 12,
-            'retry_kwargs': {'max_retries': 3, 'countdown': 1},
+        'trading.tasks.execute_sell_order_with_risk': {
+            'time_limit': 90,  # 1.5 minutes for lighter risk + execution
+            'soft_time_limit': 60,
         },
-        'risk.tasks.liquidity_check': {
-            'rate_limit': '300/m',
-            'time_limit': 15,
-            'soft_time_limit': 12,
-            'retry_kwargs': {'max_retries': 3, 'countdown': 1},
+        'trading.tasks.smart_lane_trading_workflow': {
+            'time_limit': 180,  # 3 minutes for full Smart Lane workflow
+            'soft_time_limit': 150,
         },
-        'risk.tasks.ownership_check': {
-            'rate_limit': '200/m',  # Slower due to contract analysis
-            'time_limit': 20,
-            'soft_time_limit': 17,
-            'retry_kwargs': {'max_retries': 3, 'countdown': 2},
-        },
-        'risk.tasks.tax_analysis': {
-            'rate_limit': '200/m',
-            'time_limit': 25,
-            'soft_time_limit': 22,
-            'retry_kwargs': {'max_retries': 3, 'countdown': 2},
-        },
-        'risk.tasks.contract_security_check': {
-            'rate_limit': '100/m',  # Most intensive check
-            'time_limit': 30,
-            'soft_time_limit': 27,
-            'retry_kwargs': {'max_retries': 2, 'countdown': 3},
-        },
-        
-        # Bulk assessment tasks - longer timeout, fewer retries
-        'risk.tasks.bulk_assessment': {
-            'rate_limit': '10/m',
-            'time_limit': 600,  # 10 minutes for bulk processing
-            'soft_time_limit': 570,
-            'retry_kwargs': {'max_retries': 1, 'countdown': 60},
-        },
-        
-        # System tasks - moderate settings
-        'risk.tasks.system_health_check': {
-            'rate_limit': '60/m',
-            'time_limit': 30,
-            'soft_time_limit': 25,
-            'retry_kwargs': {'max_retries': 1, 'countdown': 5},
-        },
-        
-        # Execution tasks - immediate retries, very short timeout
-        'trading.tasks.*': {
-            'rate_limit': '100/m',  # Increased trading capacity
-            'time_limit': 60,
-            'soft_time_limit': 50,
-            'retry_kwargs': {'max_retries': 2, 'countdown': 0.5},
-        },
-        
-        # Analytics tasks - longer timeout, fewer retries
-        'analytics.tasks.*': {
-            'rate_limit': '20/m',  # Increased analytics capacity
-            'time_limit': 600,  # 10 minutes
-            'soft_time_limit': 570,
-            'retry_kwargs': {'max_retries': 2, 'countdown': 60},
-        },
-        
-        # Wallet tasks - medium priority
-        'wallet.tasks.*': {
-            'rate_limit': '200/m',
-            'time_limit': 30,
-            'soft_time_limit': 25,
-            'retry_kwargs': {'max_retries': 3, 'countdown': 2},
-        },
-        
-        # Dashboard tasks - low priority
-        'dashboard.tasks.*': {
-            'rate_limit': '30/m',
-            'time_limit': 120,
-            'soft_time_limit': 100,
-            'retry_kwargs': {'max_retries': 1, 'countdown': 30},
+        'trading.tasks.fast_lane_trading_workflow': {
+            'time_limit': 30,  # 30 seconds for Fast Lane (when implemented)
+            'soft_time_limit': 20,
         },
     },
     
     # Result backend configuration
-    result_expires = 3600,  # Results expire after 1 hour
-    result_persistent = True,  # Store results persistently
-    result_compression = 'gzip',  # Compress large results
+    result_expires=3600,  # Results expire after 1 hour
+    result_backend_transport_options={
+        'socket_keepalive': True,
+        'socket_keepalive_options': {
+            'TCP_KEEPINTVL': 1,
+            'TCP_KEEPCNT': 3,
+            'TCP_KEEPIDLE': 1,
+        },
+    },
     
-    # Serialization
-    task_serializer = 'json',
-    result_serializer = 'json',
-    accept_content = ['json'],
+    # Broker configuration
+    broker_transport_options={
+        'socket_keepalive': True,
+        'socket_keepalive_options': {
+            'TCP_KEEPINTVL': 1,
+            'TCP_KEEPCNT': 3,
+            'TCP_KEEPIDLE': 1,
+        },
+    },
     
-    # Timezone configuration
-    timezone = 'UTC',
-    enable_utc = True,
+    # Task serialization
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
     
-    # Monitoring and debugging
-    task_send_sent_event = True,
-    worker_send_task_events = True,
-    task_always_eager = False,  # Ensure tasks run asynchronously
+    # Concurrency settings for different queue types
+    worker_concurrency=4,  # Base concurrency
     
-    # Security
-    worker_hijack_root_logger = False,
+    # Queue priority settings
+    task_queue_ha_policy='all',
     
-    # Performance optimizations for our modular structure
-    task_ignore_result = False,  # We want results for monitoring
-    result_cache_max = 10000,  # Cache more results for dashboard
-    worker_max_memory_per_child = 200000,  # 200MB per worker before restart
+    # Error handling
+    task_reject_on_worker_lost=True,
+    task_ignore_result=False,
+    
+    # Task result compression
+    result_compression='gzip',
+    
+    # Monitoring and logging
+    worker_send_task_events=True,
+    task_send_sent_event=True,
+    
+    # Custom configuration for trading bot
+    task_create_missing_queues=True,
+    task_default_retry_delay=5,
+    task_max_retries=3,
 )
 
-# Custom logging configuration
+# Queue configuration
+app.conf.task_create_missing_queues = True
+
+# Autodiscover tasks in Django apps
+app.autodiscover_tasks()
+
+# Custom logging setup for trading operations
 @setup_logging.connect
 def config_loggers(*args, **kwargs):
-    """Configure structured logging for Celery workers."""
+    """Configure custom loggers for trading operations."""
     from logging.config import dictConfig
     
     dictConfig({
@@ -250,305 +229,217 @@ def config_loggers(*args, **kwargs):
         'disable_existing_loggers': False,
         'formatters': {
             'detailed': {
-                'format': '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S',
+                'format': '[{asctime}] {levelname} {name} {process:d} {thread:d} {message}',
+                'style': '{',
             },
-            'json': {
-                'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s", "module": "%(module)s", "function": "%(funcName)s", "line": %(lineno)d}',
-                'datefmt': '%Y-%m-%dT%H:%M:%S',
+            'trading': {
+                'format': '[{asctime}] 🔥 TRADING {levelname} {name} - {message}',
+                'style': '{',
+            },
+            'risk': {
+                'format': '[{asctime}] 🛡️ RISK {levelname} {name} - {message}',
+                'style': '{',
             },
         },
         'handlers': {
             'console': {
                 'class': 'logging.StreamHandler',
-                'level': 'INFO',
                 'formatter': 'detailed',
-                'stream': 'ext://sys.stdout',
+                'level': 'INFO',
             },
-            'file': {
+            'trading_file': {
                 'class': 'logging.handlers.RotatingFileHandler',
-                'level': 'DEBUG',
-                'formatter': 'json',
-                'filename': 'logs/celery.log',
+                'filename': 'logs/trading.log',
                 'maxBytes': 10485760,  # 10MB
-                'backupCount': 10,
-                'encoding': 'utf8',
+                'backupCount': 5,
+                'formatter': 'trading',
+                'level': 'DEBUG',
+            },
+            'risk_file': {
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': 'logs/risk.log',
+                'maxBytes': 10485760,  # 10MB
+                'backupCount': 5,
+                'formatter': 'risk',
+                'level': 'DEBUG',
             },
         },
         'loggers': {
+            'trading': {
+                'handlers': ['console', 'trading_file'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
+            'risk': {
+                'handlers': ['console', 'risk_file'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
+            'portfolio': {
+                'handlers': ['console', 'trading_file'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
             'celery': {
+                'handlers': ['console'],
                 'level': 'INFO',
-                'handlers': ['console', 'file'],
                 'propagate': False,
             },
-            'celery.task': {
-                'level': 'INFO',
-                'handlers': ['console', 'file'],
-                'propagate': False,
-            },
-            'dexproject': {
-                'level': 'DEBUG',
-                'handlers': ['console', 'file'],
-                'propagate': False,
-            },
-            # Add specific loggers for our modular risk system
-            'risk.tasks': {
-                'level': 'DEBUG',
-                'handlers': ['console', 'file'],
-                'propagate': False,
-            },
-            'risk.tasks.profiles': {
-                'level': 'INFO',
-                'handlers': ['console', 'file'],
-                'propagate': False,
-            },
-            'risk.tasks.execution': {
-                'level': 'INFO',
-                'handlers': ['console', 'file'],
-                'propagate': False,
-            },
-            'risk.tasks.scoring': {
-                'level': 'INFO',
-                'handlers': ['console', 'file'],
-                'propagate': False,
-            },
-        },
-        'root': {
-            'level': 'INFO',
-            'handlers': ['console'],
         },
     })
 
-# Load task modules from all registered Django apps.
-app.autodiscover_tasks()
 
-# Define queue-specific worker classes for optimal performance
-@app.task(bind=True)
-def debug_task(self):
-    """Debug task to test Celery configuration."""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    logger.info(f'Celery debug task executed')
-    logger.info(f'Request: {self.request!r}')
-    logger.info(f'Current queues: {list(app.conf.task_routes.keys())}')
-    
-    return {
-        'worker_id': self.request.id,
-        'hostname': self.request.hostname,
-        'queues': list(app.conf.task_routes.keys()),
-        'status': 'ok',
-        'modular_risk_system': 'enabled'
-    }
+# =============================================================================
+# CELERY BEAT CONFIGURATION (PERIODIC TASKS)
+# =============================================================================
 
-# Enhanced health check tasks for the new modular system
-@app.task(bind=True, queue='risk.urgent')
-def health_check_risk_queue(self):
-    """Health check for risk queue with modular system verification."""
-    import logging
-    import time
-    
-    logger = logging.getLogger(__name__)
-    start_time = time.time()
-    
-    logger.info(f'Risk queue health check started: {self.request.id}')
-    
-    # Test modular risk system imports
-    try:
-        from risk.tasks.profiles import get_risk_profile_config
-        from risk.tasks.scoring import calculate_overall_risk_score
-        from risk.tasks.execution import execute_parallel_risk_checks
-        
-        # Quick test of profile system
-        conservative_config = get_risk_profile_config('Conservative')
-        modules_available = True
-        
-    except ImportError as e:
-        logger.error(f'Modular risk system import failed: {e}')
-        modules_available = False
-    
-    # Simulate quick risk check
-    time.sleep(0.1)
-    
-    duration = time.time() - start_time
-    logger.info(f'Risk queue health check completed in {duration:.3f}s')
-    
-    return {
-        'queue': 'risk.urgent',
-        'task_id': self.request.id,
-        'duration_seconds': duration,
-        'modular_system_available': modules_available,
-        'profile_configs_loaded': modules_available,
-        'status': 'healthy' if modules_available else 'degraded'
-    }
+from celery.schedules import crontab
 
-@app.task(bind=True, queue='execution.critical')  
-def health_check_execution_queue(self):
-    """Health check for execution queue."""
-    import logging
-    import time
+app.conf.beat_schedule = {
+    # System health checks
+    'system-health-check': {
+        'task': 'risk.tasks.system_health_check',
+        'schedule': crontab(minute='*/5'),  # Every 5 minutes
+        'options': {'queue': 'risk.normal'}
+    },
     
-    logger = logging.getLogger(__name__)
-    start_time = time.time()
+    # Portfolio updates
+    'update-portfolio-positions': {
+        'task': 'trading.tasks.update_portfolio_positions',
+        'schedule': crontab(minute='*/10'),  # Every 10 minutes
+        'options': {'queue': 'analytics.background'}
+    },
     
-    logger.info(f'Execution queue health check started: {self.request.id}')
+    # Clean up old risk assessments
+    'cleanup-old-assessments': {
+        'task': 'risk.tasks.cleanup_old_assessments',
+        'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
+        'options': {'queue': 'risk.background'}
+    },
     
-    # Simulate quick execution check
-    time.sleep(0.05)
+    # Update risk statistics
+    'update-risk-statistics': {
+        'task': 'risk.tasks.update_risk_statistics',
+        'schedule': crontab(minute='*/30'),  # Every 30 minutes
+        'options': {'queue': 'risk.background'}
+    },
     
-    duration = time.time() - start_time
-    logger.info(f'Execution queue health check completed in {duration:.3f}s')
+    # Wallet balance synchronization
+    'sync-wallet-balances': {
+        'task': 'wallet.tasks.update_wallet_balances',
+        'schedule': crontab(minute='*/15'),  # Every 15 minutes
+        'options': {'queue': 'risk.normal'}
+    },
     
-    return {
-        'queue': 'execution.critical',
-        'task_id': self.request.id,
-        'duration_seconds': duration,
-        'status': 'healthy'
-    }
+    # Dashboard metrics update
+    'refresh-dashboard-metrics': {
+        'task': 'dashboard.tasks.refresh_real_time_metrics',
+        'schedule': crontab(minute='*/2'),  # Every 2 minutes
+        'options': {'queue': 'analytics.background'}
+    },
+}
 
-@app.task(bind=True, queue='analytics.background')
-def health_check_analytics_queue(self):
-    """Health check for analytics queue."""
-    import logging
-    import time
-    
-    logger = logging.getLogger(__name__)
-    start_time = time.time()
-    
-    logger.info(f'Analytics queue health check started: {self.request.id}')
-    
-    # Simulate longer analytics task
-    time.sleep(0.5)
-    
-    duration = time.time() - start_time
-    logger.info(f'Analytics queue health check completed in {duration:.3f}s')
-    
-    return {
-        'queue': 'analytics.background', 
-        'task_id': self.request.id,
-        'duration_seconds': duration,
-        'status': 'healthy'
-    }
+app.conf.timezone = 'UTC'
 
-@app.task(bind=True, queue='risk.normal')
-def health_check_risk_normal_queue(self):
-    """Health check for normal risk queue."""
-    import logging
-    import time
-    
-    logger = logging.getLogger(__name__)
-    start_time = time.time()
-    
-    logger.info(f'Risk normal queue health check started: {self.request.id}')
-    
-    # Test modular components
-    try:
-        from risk.tasks import quick_honeypot_check, system_health_check
-        components_available = True
-    except ImportError:
-        components_available = False
-    
-    # Simulate normal risk task
-    time.sleep(0.2)
-    
-    duration = time.time() - start_time
-    logger.info(f'Risk normal queue health check completed in {duration:.3f}s')
-    
-    return {
-        'queue': 'risk.normal',
-        'task_id': self.request.id,
-        'duration_seconds': duration,
-        'components_available': components_available,
-        'status': 'healthy' if components_available else 'degraded'
-    }
 
-@app.task(bind=True, queue='risk.background')
-def health_check_risk_background_queue(self):
-    """Health check for background risk queue."""
-    import logging
-    import time
-    
-    logger = logging.getLogger(__name__)
-    start_time = time.time()
-    
-    logger.info(f'Risk background queue health check started: {self.request.id}')
-    
-    # Test bulk processing components
-    try:
-        from risk.tasks.batch import process_assessment_batch, generate_bulk_summary
-        from risk.tasks.database import create_assessment_record
-        bulk_components_available = True
-    except ImportError:
-        bulk_components_available = False
-    
-    # Simulate background task
-    time.sleep(1.0)
-    
-    duration = time.time() - start_time
-    logger.info(f'Risk background queue health check completed in {duration:.3f}s')
-    
-    return {
-        'queue': 'risk.background',
-        'task_id': self.request.id,
-        'duration_seconds': duration,
-        'bulk_components_available': bulk_components_available,
-        'status': 'healthy' if bulk_components_available else 'degraded'
-    }
+# =============================================================================
+# CUSTOM TASK BASE CLASSES
+# =============================================================================
 
-# Comprehensive system health check task
-@app.task(bind=True, queue='risk.normal')
-def comprehensive_system_health_check(self):
-    """Comprehensive health check for the entire modular risk system."""
-    import logging
-    import time
-    from celery import group
+from celery import Task
+from celery.exceptions import Retry
+import traceback
+
+
+class RiskIntegratedTask(Task):
+    """
+    Base task class for risk-integrated trading operations.
     
-    logger = logging.getLogger(__name__)
-    start_time = time.time()
+    Provides common functionality for risk validation, error handling,
+    and integration logging.
+    """
     
-    logger.info(f'Comprehensive system health check started: {self.request.id}')
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        """Log task failures with detailed context."""
+        logger = logging.getLogger('trading')
+        logger.error(
+            f"❌ Risk-integrated task failed: {self.name} (ID: {task_id})\n"
+            f"Args: {args}\n"
+            f"Kwargs: {kwargs}\n"
+            f"Exception: {exc}\n"
+            f"Traceback: {traceback.format_exc()}"
+        )
     
-    try:
-        # Run all queue health checks in parallel
-        health_checks = group([
-            health_check_risk_queue.s(),
-            health_check_execution_queue.s(),
-            health_check_analytics_queue.s(),
-            health_check_risk_normal_queue.s(),
-            health_check_risk_background_queue.s()
-        ])
+    def on_success(self, retval, task_id, args, kwargs):
+        """Log successful task completion."""
+        logger = logging.getLogger('trading')
         
-        # Execute with timeout
-        job = health_checks.apply_async()
-        results = job.get(timeout=30)
+        # Extract key metrics for logging
+        operation = retval.get('operation', 'UNKNOWN')
+        status = retval.get('status', 'unknown')
+        execution_time = retval.get('execution_time_seconds', 0)
         
-        # Analyze results
-        all_healthy = all(result.get('status') == 'healthy' for result in results)
-        queue_statuses = {result['queue']: result['status'] for result in results}
+        logger.info(
+            f"✅ Risk-integrated task completed: {self.name} (ID: {task_id})\n"
+            f"Operation: {operation}, Status: {status}, Time: {execution_time:.2f}s"
+        )
+    
+    def retry(self, args=None, kwargs=None, exc=None, throw=True, eta=None, countdown=None, max_retries=None, **options):
+        """Enhanced retry with trading-specific logic."""
+        logger = logging.getLogger('trading')
         
-        duration = time.time() - start_time
+        # Don't retry if it's a risk assessment block
+        if exc and 'blocked_by_risk' in str(exc):
+            logger.warning(f"⚠️ Not retrying task blocked by risk assessment: {self.name}")
+            return
         
-        logger.info(f'Comprehensive health check completed in {duration:.3f}s - All healthy: {all_healthy}')
+        # Don't retry emergency sells
+        if self.name == 'trading.tasks.execute_sell_order_with_risk' and kwargs and kwargs.get('is_emergency'):
+            logger.warning(f"⚠️ Not retrying emergency sell: {self.name}")
+            return
         
-        return {
-            'task_id': self.request.id,
-            'duration_seconds': duration,
-            'overall_status': 'healthy' if all_healthy else 'degraded',
-            'queue_statuses': queue_statuses,
-            'individual_results': results,
-            'modular_system_operational': True,
-            'timestamp': time.time()
-        }
-        
-    except Exception as e:
-        duration = time.time() - start_time
-        logger.error(f'Comprehensive health check failed: {e}')
-        
-        return {
-            'task_id': self.request.id,
-            'duration_seconds': duration,
-            'overall_status': 'unhealthy',
-            'error': str(e),
-            'modular_system_operational': False,
-            'timestamp': time.time()
-        }
+        # Standard retry for other cases
+        logger.warning(f"🔄 Retrying task: {self.name} (attempt {self.request.retries + 1})")
+        return super().retry(args, kwargs, exc, throw, eta, countdown, max_retries, **options)
+
+
+# Apply custom base class to risk-integrated tasks
+app.Task = RiskIntegratedTask
+
+
+# =============================================================================
+# STARTUP VALIDATION
+# =============================================================================
+
+@app.on_after_configure.connect
+def setup_periodic_tasks(sender, **kwargs):
+    """Setup additional periodic tasks and validation."""
+    logger = logging.getLogger('celery')
+    
+    # Validate queue configuration
+    required_queues = [
+        'risk.urgent',
+        'risk.normal', 
+        'risk.background',
+        'execution.critical',
+        'analytics.background'
+    ]
+    
+    logger.info(f"✅ Celery configured with risk-integrated trading tasks")
+    logger.info(f"📋 Required queues: {', '.join(required_queues)}")
+    logger.info(f"🔄 Beat schedule configured with {len(app.conf.beat_schedule)} periodic tasks")
+
+
+# =============================================================================
+# WORKER STARTUP HOOK
+# =============================================================================
+
+@app.on_after_finalize.connect
+def worker_ready(sender=None, **kwargs):
+    """Hook called when worker is ready."""
+    logger = logging.getLogger('celery')
+    logger.info("🚀 Celery worker ready for risk-integrated trading operations")
+
+
+if __name__ == '__main__':
+    app.start()
