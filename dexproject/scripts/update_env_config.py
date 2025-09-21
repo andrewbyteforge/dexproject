@@ -30,7 +30,7 @@ def update_env_configuration():
     # Backup existing .env if it exists
     if env_file.exists():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = project_root / f'.env.backup_{timestamp}'
+        backup_file = project_root / f'.env{timestamp}'
         shutil.copy2(env_file, backup_file)
         print(f"📄 Backed up existing .env to: {backup_file.name}")
     

@@ -240,6 +240,8 @@ EXECUTION_TIMEOUT = get_env_int('EXECUTION_TIMEOUT', '30')
 PAPER_MODE_SLIPPAGE = get_env_decimal('PAPER_MODE_SLIPPAGE', '0.5')
 PAPER_MODE_LATENCY_MS = get_env_int('PAPER_MODE_LATENCY_MS', '200')
 
+ENGINE_MOCK_MODE = get_env_bool('ENGINE_MOCK_MODE', 'True')
+
 # =============================================================================
 # FAST LANE & MEMPOOL CONFIGURATION
 # =============================================================================

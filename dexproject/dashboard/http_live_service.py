@@ -37,9 +37,14 @@ class HTTPLiveService:
     """
     
     def __init__(self):
-        """Initialize HTTP live service."""
+        """Initialize HTTP live service with FIXED configuration logic."""
         self.logger = logging.getLogger(__name__)
-        self.is_live_mode = not getattr(settings, 'ENGINE_MOCK_MODE', True)
+        
+        # FIXED: Use same configuration pattern as engine_service.py
+        mock_mode = getattr(settings, 'ENGINE_MOCK_MODE', True)
+        force_mock_data = getattr(settings, 'FORCE_MOCK_DATA', False)
+        self.is_live_mode = not mock_mode and not force_mock_data
+        
         self.is_initialized = False
         self.is_polling = False
         
@@ -60,6 +65,7 @@ class HTTPLiveService:
         self.endpoints = self._setup_endpoints()
         
         self.logger.info(f"HTTP live service initialized - Live mode: {self.is_live_mode}")
+        self.logger.info(f"Configuration: ENGINE_MOCK_MODE={mock_mode}, FORCE_MOCK_DATA={force_mock_data}")
         if self.endpoints:
             self.logger.info(f"Available endpoints: {list(self.endpoints.keys())}")
         else:
