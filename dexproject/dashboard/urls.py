@@ -12,6 +12,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from datetime import datetime
 from . import views
+from .views import fast_lane
 from . import views_wallet  # Import new wallet views module
 
 
@@ -98,7 +99,7 @@ urlpatterns = [
     # Smart Lane URLs (confirmed existing)
     path('smart-lane/', views.smart_lane_dashboard, name='smart_lane_dashboard'),
     path('smart-lane/demo/', views.smart_lane_demo, name='smart_lane_demo'),
-    path('smart-lane/config/', views.smart_lane_config, name='smart_lane_config'),
+    # path('smart-lane/config/', views.smart_lane_config, name='smart_lane_config'),
     path('smart-lane/analyze/', views.smart_lane_analyze, name='smart_lane_analyze'),
     path('api/smart-lane/analyze/', views.api_smart_lane_analyze, name='api_smart_lane_analyze'),
     path('api/smart-lane/thought-log/<str:analysis_id>/', views.api_get_thought_log, name='api_get_thought_log'),
@@ -135,4 +136,5 @@ urlpatterns = [
     
     # System health endpoint that exists in views.py
     # path('health/', views.dashboard_health_check, name='health_check'),
+    path('fast-lane/config/', fast_lane.fast_lane_config, name='fast_lane_config'),
 ]

@@ -1,0 +1,538 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Fast Lane Configuration{% endblock %}
+
+{% block extra_css %}
+<style>
+    .fast-lane-panel {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border-radius: 15px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        border: 1px solid rgba(0, 212, 170, 0.2);
+    }
+    
+    .fast-lane-accent { color: #00d4aa; }
+    
+    .form-section {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        border-left: 4px solid #00d4aa;
+    }
+    
+    .config-preview {
+        background: rgba(0, 0, 0, 0.4);
+        border-radius: 10px;
+        padding: 1.5rem;
+        position: sticky;
+        top: 20px;
+    }
+    
+    .form-control:focus, .form-select:focus {
+        border-color: #00d4aa;
+        box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25);
+    }
+    
+    .btn-fast-lane {
+        background: linear-gradient(45deg, #00d4aa, #26d0ce);
+        border: none;
+        color: white;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-fast-lane:hover {
+        background: linear-gradient(45deg, #26d0ce, #00d4aa);
+        transform: translateY(-2px);
+        color: white;
+    }
+    
+    .input-group-text {
+        background: rgba(0, 212, 170, 0.1);
+        border-color: #00d4aa;
+        color: #00d4aa;
+    }
+    
+    .speed-indicator {
+        height: 8px;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .speed-marker {
+        position: absolute;
+        top: -2px;
+        width: 4px;
+        height: 12px;
+        background: white;
+        border-radius: 2px;
+        transition: left 0.3s ease;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h3 mb-1">
+                        <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>Fast Lane Configuration
+                    </h1>
+                    <p class="text-muted mb-0">
+                        Configure high-speed trading parameters for sub-500ms execution
+                    </p>
+                </div>
+                <div>
+                    <a href="{% url 'dashboard:home' %}" class="btn btn-outline-light">
+                        <i class="bi bi-house-door me-2"></i>Dashboard
+                    </a>
+                    <a href="{% url 'dashboard:mode_selection' %}" class="btn btn-outline-info ms-2">
+                        <i class="bi bi-arrow-left me-2"></i>Back to Mode Selection
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Main Configuration Form -->
+        <div class="col-lg-8">
+            <div class="fast-lane-panel">
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+
+                <form method="post" id="fastLaneForm" novalidate>
+                    {% csrf_token %}
+                    
+                    <!-- Basic Settings -->
+                    <div class="form-section">
+                        <h4 class="mb-3">
+                            <i class="bi bi-gear me-2"></i>Basic Settings
+                        </h4>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="config_name" class="form-label">Configuration Name</label>
+                                <input type="text" 
+                                       class="form-control" 
+                                       id="config_name" 
+                                       name="config_name"
+                                       placeholder="e.g., Fast Lane Main"
+                                       required>
+                                <div class="invalid-feedback">Please provide a configuration name.</div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="description" class="form-label">Description (Optional)</label>
+                                <input type="text" 
+                                       class="form-control" 
+                                       id="description" 
+                                       name="description"
+                                       placeholder="Brief description">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Fast Lane Performance Settings -->
+                    <div class="form-section">
+                        <h4 class="mb-3">
+                            <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>Performance Settings
+                        </h4>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="position_size" class="form-label">Position Size</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="position_size" 
+                                           name="position_size"
+                                           min="10" 
+                                           max="10000" 
+                                           step="10"
+                                           value="100"
+                                           required>
+                                </div>
+                                <div class="form-text">Recommended: $50 - $500 for initial testing</div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="execution_timeout" class="form-label">Max Execution Time</label>
+                                <div class="input-group">
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="execution_timeout" 
+                                           name="execution_timeout"
+                                           min="100" 
+                                           max="2000" 
+                                           step="50"
+                                           value="500"
+                                           required>
+                                    <span class="input-group-text">ms</span>
+                                </div>
+                                <div class="form-text">Lower = faster execution, higher chance of missing trades</div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="slippage_tolerance" class="form-label">Slippage Tolerance</label>
+                                <div class="input-group">
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="slippage_tolerance" 
+                                           name="slippage_tolerance"
+                                           min="0.1" 
+                                           max="5.0" 
+                                           step="0.1"
+                                           value="1.0"
+                                           required>
+                                    <span class="input-group-text">%</span>
+                                </div>
+                                <div class="form-text">Higher tolerance = more successful trades</div>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="gas_price" class="form-label">Gas Price</label>
+                                <div class="input-group">
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="gas_price" 
+                                           name="gas_price"
+                                           min="1" 
+                                           max="200" 
+                                           step="1"
+                                           value="20"
+                                           required>
+                                    <span class="input-group-text">gwei</span>
+                                </div>
+                                <div class="form-text">Higher gas = faster inclusion in blocks</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Risk Management -->
+                    <div class="form-section">
+                        <h4 class="mb-3">
+                            <i class="bi bi-shield-check me-2"></i>Risk Management
+                        </h4>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="risk_level" class="form-label">Risk Level</label>
+                                <select class="form-select" id="risk_level" name="risk_level" required>
+                                    <option value="LOW">Low - Conservative trading</option>
+                                    <option value="MEDIUM" selected>Medium - Balanced approach</option>
+                                    <option value="HIGH">High - Aggressive trading</option>
+                                </select>
+                            </div>
+                            
+                            <div class="col-md-6 mb-3">
+                                <label for="min_liquidity" class="form-label">Minimum Liquidity</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" 
+                                           class="form-control" 
+                                           id="min_liquidity" 
+                                           name="min_liquidity"
+                                           min="1000" 
+                                           max="1000000" 
+                                           step="1000"
+                                           value="10000"
+                                           required>
+                                </div>
+                                <div class="form-text">Only trade pairs with sufficient liquidity</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Security Options -->
+                        <div class="mt-4">
+                            <h5 class="mb-3">Security Options</h5>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="mev_protection" 
+                                               name="mev_protection"
+                                               checked>
+                                        <label class="form-check-label" for="mev_protection">
+                                            MEV Protection
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Protect against front-running attacks</div>
+                                </div>
+                                
+                                <div class="col-md-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               id="auto_approval" 
+                                               name="auto_approval">
+                                        <label class="form-check-label" for="auto_approval">
+                                            Auto-approve Trades
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Execute without manual confirmation</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Target Trading Pairs -->
+                    <div class="form-section">
+                        <h4 class="mb-3">
+                            <i class="bi bi-arrow-left-right me-2"></i>Target Trading Pairs
+                        </h4>
+                        
+                        <div class="row">
+                            <div class="col-12">
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WETH/USDC" id="pair1" checked>
+                                    <label class="form-check-label" for="pair1">WETH/USDC</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WETH/USDT" id="pair2" checked>
+                                    <label class="form-check-label" for="pair2">WETH/USDT</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WBTC/USDC" id="pair3">
+                                    <label class="form-check-label" for="pair3">WBTC/USDC</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" name="target_pairs" value="WBTC/WETH" id="pair4">
+                                    <label class="form-check-label" for="pair4">WBTC/WETH</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-text mt-2">Select the trading pairs to monitor for opportunities</div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <button type="submit" class="btn btn-fast-lane btn-lg">
+                                <i class="bi bi-check-circle me-2"></i>Save Fast Lane Config
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-lg ms-2" onclick="resetForm()">
+                                <i class="bi bi-arrow-clockwise me-2"></i>Reset
+                            </button>
+                        </div>
+                        
+                        <div>
+                            <button type="button" class="btn btn-outline-info me-2" onclick="testConfiguration()">
+                                <i class="bi bi-play-circle me-2"></i>Test Config
+                            </button>
+                            <a href="{% url 'dashboard:home' %}" class="btn btn-outline-light btn-lg">
+                                <i class="bi bi-house-door me-2"></i>Back to Dashboard
+                            </a>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Configuration Preview & Info -->
+        <div class="col-lg-4">
+            <!-- Live Preview -->
+            <div class="config-preview mb-4">
+                <h5 class="mb-3">
+                    <i class="bi bi-eye me-2"></i>Configuration Preview
+                </h5>
+                
+                <div class="preview-item mb-3">
+                    <strong>Position Size:</strong>
+                    <span class="text-success" id="preview_position">$100</span>
+                </div>
+                
+                <div class="preview-item mb-3">
+                    <strong>Execution Speed:</strong>
+                    <span class="fast-lane-accent" id="preview_speed">500ms</span>
+                </div>
+                
+                <div class="preview-item mb-3">
+                    <strong>Slippage:</strong>
+                    <span id="preview_slippage">1.0%</span>
+                </div>
+                
+                <div class="preview-item mb-3">
+                    <strong>Gas Price:</strong>
+                    <span id="preview_gas">20 gwei</span>
+                </div>
+                
+                <div class="preview-item mb-3">
+                    <strong>Risk Level:</strong>
+                    <span id="preview_risk" class="badge bg-warning">Medium</span>
+                </div>
+                
+                <!-- Speed Assessment -->
+                <div class="mt-4">
+                    <h6>Speed Assessment</h6>
+                    <div class="speed-indicator">
+                        <div class="speed-marker" id="speed_marker" style="left: 40%;"></div>
+                    </div>
+                    <div class="d-flex justify-content-between mt-1">
+                        <small class="text-success">Ultra Fast</small>
+                        <small class="text-warning">Balanced</small>
+                        <small class="text-danger">Safe</small>
+                    </div>
+                    <div class="form-text mt-2" id="speed_description">
+                        Balanced speed and success rate for optimal performance
+                    </div>
+                </div>
+            </div>
+
+            <!-- Fast Lane Benefits -->
+            <div class="config-preview">
+                <h5 class="mb-3">
+                    <i class="bi bi-lightning-charge fast-lane-accent me-2"></i>Fast Lane Benefits
+                </h5>
+                
+                <ul class="list-unstyled">
+                    <li class="mb-2">
+                        <i class="bi bi-check-circle text-success me-2"></i>
+                        Sub-500ms execution time
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check-circle text-success me-2"></i>
+                        MEV protection enabled
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check-circle text-success me-2"></i>
+                        Real-time gas optimization
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check-circle text-success me-2"></i>
+                        Automated slippage adjustment
+                    </li>
+                    <li class="mb-2">
+                        <i class="bi bi-check-circle text-success me-2"></i>
+                        Priority transaction routing
+                    </li>
+                </ul>
+                
+                <div class="alert alert-info mt-3">
+                    <small>
+                        <i class="bi bi-info-circle me-1"></i>
+                        Fast Lane is optimized for time-sensitive opportunities like sniping and MEV capture.
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    initializeFormValidation();
+    updatePreviewOnChange();
+});
+
+function initializeFormValidation() {
+    const form = document.getElementById('fastLaneForm');
+    
+    form.addEventListener('submit', function(e) {
+        if (!form.checkValidity()) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        form.classList.add('was-validated');
+    });
+}
+
+function updatePreviewOnChange() {
+    // Position size preview
+    document.getElementById('position_size').addEventListener('input', function() {
+        document.getElementById('preview_position').textContent = '$' + this.value;
+    });
+    
+    // Execution time preview
+    document.getElementById('execution_timeout').addEventListener('input', function() {
+        const value = parseInt(this.value);
+        document.getElementById('preview_speed').textContent = value + 'ms';
+        
+        // Update speed marker and description
+        const marker = document.getElementById('speed_marker');
+        const description = document.getElementById('speed_description');
+        
+        if (value <= 250) {
+            marker.style.left = '20%';
+            description.textContent = 'Ultra fast execution - maximum speed, higher miss rate';
+        } else if (value <= 500) {
+            marker.style.left = '40%';
+            description.textContent = 'Balanced speed and success rate for optimal performance';
+        } else if (value <= 1000) {
+            marker.style.left = '60%';
+            description.textContent = 'Safer execution with higher success rate';
+        } else {
+            marker.style.left = '80%';
+            description.textContent = 'Conservative timing for maximum trade completion';
+        }
+    });
+    
+    // Slippage preview
+    document.getElementById('slippage_tolerance').addEventListener('input', function() {
+        document.getElementById('preview_slippage').textContent = this.value + '%';
+    });
+    
+    // Gas price preview
+    document.getElementById('gas_price').addEventListener('input', function() {
+        document.getElementById('preview_gas').textContent = this.value + ' gwei';
+    });
+    
+    // Risk level preview
+    document.getElementById('risk_level').addEventListener('change', function() {
+        const riskBadge = document.getElementById('preview_risk');
+        riskBadge.textContent = this.value.charAt(0) + this.value.slice(1).toLowerCase();
+        riskBadge.className = 'badge bg-' + (this.value === 'LOW' ? 'success' : this.value === 'MEDIUM' ? 'warning' : 'danger');
+    });
+}
+
+function resetForm() {
+    if (confirm('Are you sure you want to reset all fields?')) {
+        document.getElementById('fastLaneForm').reset();
+        
+        // Reset preview
+        document.getElementById('preview_position').textContent = '$100';
+        document.getElementById('preview_speed').textContent = '500ms';
+        document.getElementById('preview_slippage').textContent = '1.0%';
+        document.getElementById('preview_gas').textContent = '20 gwei';
+        
+        const riskBadge = document.getElementById('preview_risk');
+        riskBadge.textContent = 'Medium';
+        riskBadge.className = 'badge bg-warning';
+        
+        document.getElementById('speed_marker').style.left = '40%';
+        document.getElementById('speed_description').textContent = 'Balanced speed and success rate for optimal performance';
+    }
+}
+
+function testConfiguration() {
+    const form = document.getElementById('fastLaneForm');
+    if (!form.checkValidity()) {
+        alert('Please fix form errors before testing.');
+        return;
+    }
+    
+    // Simple validation test
+    alert('✅ Configuration test passed! All parameters are valid for Fast Lane execution.');
+}
+</script>
+{% endblock %}

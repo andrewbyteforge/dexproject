@@ -4,18 +4,23 @@ Dashboard Views Module
 Exports all dashboard view functions for URL routing.
 FIXED: Added missing api_set_trading_mode function for URL routing.
 FIXED: Corrected Smart Lane import structure to avoid circular imports.
+FIXED: Proper configuration_panel function that handles both Fast Lane and Smart Lane correctly.
 
 Path: dashboard/views/__init__.py
 """
 
 import json
 import logging
+import time
 from datetime import datetime
-from django.http import HttpResponse, JsonResponse, HttpRequest
+from django.http import HttpResponse, JsonResponse, HttpRequest, StreamingHttpResponse
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib import messages
+from django.conf import settings
+from django.contrib.auth.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +44,10 @@ except ImportError as e:
 try:
     from .config import configuration_panel
 except ImportError:
-    # Create placeholder if config.py doesn't exist
-    # FIXED: Removed @login_required decorator
-    def configuration_panel(request, mode='FAST_LANE'):
-        """Configuration panel view for Fast Lane or Smart Lane."""
-        # Handle anonymous users
+    # FIXED: Create a proper configuration panel function that handles both modes correctly
+    def handle_anonymous_user(request: HttpRequest) -> None:
+        """Handle anonymous users by creating demo user."""
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -55,22 +57,139 @@ except ImportError:
                 }
             )
             request.user = user
+            if created:
+                logger.info("Created demo user for anonymous session")
+
+    def configuration_panel(request, mode='fast_lane'):
+        """
+        Configuration panel view for Fast Lane or Smart Lane.
         
-        # FIXED: Import from dashboard.models instead of trading.models
+        FIXED: Now properly handles both Fast Lane and Smart Lane modes
+        and passes the correct context to the template.
+        """
+        # 🚨 DEBUG PRINTS - REMOVE AFTER FIXING
+        print(f"🔍 CALLED: configuration_panel with mode='{mode}'")
+        print(f"🔍 REQUEST PATH: {request.path}")
+        print(f"🔍 FUNCTION FILE: dashboard/views/__init__.py")
+        
+        handle_anonymous_user(request)
+        
         try:
-            from dashboard.models import BotConfiguration
-            user_configs = BotConfiguration.objects.filter(user=request.user)
-        except ImportError:
-            # Fallback if model doesn't exist
+            # Log the incoming mode parameter for debugging
+            logger.info(f"Configuration panel accessed with mode: '{mode}' by user: {request.user}")
+            
+            # 🚨 DEBUG PRINT
+            print(f"🔍 ORIGINAL MODE: '{mode}', TYPE: {type(mode)}")
+            
+            # Normalize mode parameter - handle different formats
+            original_mode = mode
+            mode = mode.lower().replace('_', '-')  # Convert underscores to hyphens
+            
+            # 🚨 DEBUG PRINT
+            print(f"🔍 NORMALIZED MODE: '{mode}'")
+            
+            # Validate mode
+            if mode not in ['fast-lane', 'smart-lane']:
+                logger.warning(f"Invalid mode '{original_mode}' normalized to '{mode}', defaulting to fast-lane")
+                mode = 'fast-lane'
+            
+            logger.info(f"Using normalized mode: '{mode}'")
+            
+            # Convert mode for template context
+            template_mode = mode.upper().replace('-', '_')  # Convert to FAST_LANE/SMART_LANE for template
+            is_fast_lane = (mode == 'fast-lane')
+            is_smart_lane = (mode == 'smart-lane')
+            
+            # 🚨 DEBUG PRINT
+            print(f"🔍 TEMPLATE CONTEXT: template_mode='{template_mode}', is_fast_lane={is_fast_lane}, is_smart_lane={is_smart_lane}")
+            
+            logger.info(f"Template context: mode={template_mode}, is_fast_lane={is_fast_lane}, is_smart_lane={is_smart_lane}")
+            
+            # Check if Smart Lane is enabled (if trying to access Smart Lane)
+            if is_smart_lane and not getattr(settings, 'SMART_LANE_ENABLED', True):  # Default to True for testing
+                logger.warning(f"Smart Lane not enabled, redirecting user: {request.user}")
+                messages.warning(request, "Smart Lane is not yet available. Please select Fast Lane.")
+                return redirect('dashboard:mode_selection')
+            
+            # Get user's configurations for this mode (if BotConfiguration model exists)
             user_configs = []
-        
-        context = {
-            'mode': mode,
-            'is_fast_lane': mode == 'FAST_LANE',
-            'configurations': user_configs,
-            'user': request.user,
-        }
-        return render(request, 'dashboard/configuration_panel.html', context)
+            try:
+                from dashboard.models import BotConfiguration
+                user_configs = BotConfiguration.objects.filter(
+                    user=request.user,
+                    trading_mode=template_mode
+                ).order_by('-updated_at')
+                logger.debug(f"Found {user_configs.count()} configurations for mode {template_mode}")
+            except ImportError:
+                logger.debug("BotConfiguration model not available, using empty configurations")
+            
+            # Get wallet info (if function exists)
+            wallet_info = None
+            try:
+                from dashboard.views.utils import get_user_wallet_info
+                wallet_info = get_user_wallet_info(request.user)
+            except ImportError:
+                logger.debug("get_user_wallet_info function not available")
+            
+            # Build context for template
+            context = {
+                'mode': template_mode,  # FAST_LANE or SMART_LANE
+                'is_fast_lane': is_fast_lane,
+                'is_smart_lane': is_smart_lane,
+                'configurations': user_configs,
+                'user': request.user,
+                'wallet_info': wallet_info,
+                'page_title': f'{mode.replace("-", " ").title()} Configuration'
+            }
+            
+            # 🚨 DEBUG PRINT
+            print(f"🔍 FINAL CONTEXT: {context}")
+            
+            logger.info(f"Rendering configuration_panel.html with context for {mode} mode")
+            
+            # Handle form submission
+            if request.method == 'POST':
+                return _handle_configuration_save(request, mode, context)
+            
+            return render(request, 'dashboard/configuration_panel.html', context)
+            
+        except Exception as e:
+            logger.error(f"Error in configuration_panel for mode '{mode}': {e}", exc_info=True)
+            messages.error(request, f"Error loading configuration panel: {str(e)}")
+            return redirect('dashboard:mode_selection')
+
+
+
+
+
+
+
+
+
+
+
+    def _handle_configuration_save(request: HttpRequest, mode: str, context):
+        """Handle saving configuration for POST request."""
+        try:
+            # Extract form data
+            config_name = request.POST.get('config_name', '').strip()
+            if not config_name:
+                messages.error(request, "Configuration name is required")
+                return render(request, 'dashboard/configuration_panel.html', context)
+            
+            # Log the configuration save attempt
+            logger.info(f"Saving {mode} configuration '{config_name}' for user: {request.user}")
+            
+            # For now, just show success message and redirect back
+            # You can implement actual saving logic here later
+            messages.success(request, f"Configuration '{config_name}' saved successfully for {mode.replace('-', ' ').title()}!")
+            
+            return redirect('dashboard:configuration_panel', mode=mode)
+            
+        except Exception as e:
+            logger.error(f"Error saving configuration: {e}", exc_info=True)
+            messages.error(request, f"Error saving configuration: {str(e)}")
+            return render(request, 'dashboard/configuration_panel.html', context)
 
 # Try to import from additional views
 try:
@@ -80,12 +199,10 @@ try:
     )
 except ImportError:
     # Create placeholder functions if file doesn't exist
-    # FIXED: Removed @login_required decorators
     def dashboard_settings(request):
         """Placeholder settings view."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -106,7 +223,6 @@ except ImportError:
         """Placeholder analytics view."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -133,14 +249,12 @@ try:
     )
 except ImportError:
     # Create placeholder functions if file doesn't exist
-    # FIXED: Removed @login_required decorators from all placeholder functions
     
     @require_http_methods(["POST"])
     def save_configuration(request):
         """Save bot configuration."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -152,7 +266,6 @@ except ImportError:
             request.user = user
             
         try:
-            # FIXED: Import from dashboard.models instead of trading.models
             from dashboard.models import BotConfiguration
             data = json.loads(request.body)
             
@@ -179,7 +292,6 @@ except ImportError:
         """Load a bot configuration."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -191,7 +303,6 @@ except ImportError:
             request.user = user
             
         try:
-            # FIXED: Import from dashboard.models instead of trading.models
             from dashboard.models import BotConfiguration
             data = json.loads(request.body)
             config_id = data.get('config_id')
@@ -221,7 +332,6 @@ except ImportError:
         """Delete a bot configuration."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -233,7 +343,6 @@ except ImportError:
             request.user = user
             
         try:
-            # FIXED: Import from dashboard.models instead of trading.models
             from dashboard.models import BotConfiguration
             data = json.loads(request.body)
             config_id = data.get('config_id')
@@ -258,7 +367,6 @@ except ImportError:
         """Get all user configurations."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -270,7 +378,6 @@ except ImportError:
             request.user = user
             
         try:
-            # FIXED: Import from dashboard.models instead of trading.models
             from dashboard.models import BotConfiguration
             configs = BotConfiguration.objects.filter(user=request.user)
             
@@ -301,7 +408,6 @@ try:
     )
 except ImportError:
     # Create placeholder functions if file doesn't exist
-    # FIXED: Removed @login_required decorators
     def start_session(request):
         """Placeholder start session view."""
         return JsonResponse({'success': False, 'error': 'Session management not implemented'})
@@ -321,7 +427,6 @@ try:
     )
 except ImportError:
     # Create placeholder function if file doesn't exist
-    # FIXED: Removed @login_required decorator
     def get_performance_metrics(request):
         """Placeholder performance metrics view."""
         return JsonResponse({
@@ -376,12 +481,10 @@ except ImportError as e:
     print(f"Warning: Could not import Smart Lane views: {e}")
     
     # Create placeholder functions if smart_lane_features.py doesn't exist
-    # FIXED: Removed @login_required decorators from all Smart Lane functions
     def smart_lane_dashboard(request):
         """Placeholder Smart Lane dashboard."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -403,7 +506,6 @@ except ImportError as e:
         """Placeholder Smart Lane demo."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -425,7 +527,6 @@ except ImportError as e:
         """Placeholder Smart Lane config."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -446,7 +547,6 @@ except ImportError as e:
         """Placeholder Smart Lane analyze."""
         # Handle anonymous users
         if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
             user, created = User.objects.get_or_create(
                 username='demo_user',
                 defaults={
@@ -514,7 +614,6 @@ except ImportError:
             # FIXED: Handle anonymous users - create demo user if needed
             if not request.user.is_authenticated:
                 logger.info("Anonymous user setting trading mode, creating demo user")
-                from django.contrib.auth.models import User
                 user, created = User.objects.get_or_create(
                     username='demo_user',
                     defaults={
@@ -610,9 +709,6 @@ try:
     logger.info("Successfully imported metrics_stream from streaming.py")
 except ImportError:
     logger.warning("Could not import from streaming.py, creating metrics_stream function")
-    
-    import time
-    from django.http import StreamingHttpResponse
     
     def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
         """

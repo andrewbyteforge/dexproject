@@ -214,76 +214,97 @@ def _extract_smart_lane_config(form_data) -> Dict[str, Any]:
 
 
 def _handle_configuration_display_with_smart_lane(request: HttpRequest, mode: str, form_data: Optional[Dict] = None) -> HttpResponse:
-    """Handle displaying configuration form for GET request with Smart Lane support."""
-    try:
-        # Get engine status and metrics
-        engine_status = engine_service.get_engine_status()
-        performance_metrics = engine_service.get_performance_metrics()
-        smart_lane_status = get_smart_lane_status()
+    """
+    Handle displaying configuration form for GET request with Smart Lane support.
+    
+    FIXED: Now properly routes to different templates based on mode:
+    - Fast Lane: Uses 'dashboard/configuration_panel.html'
+    - Smart Lane: Uses 'dashboard/smart_lane_config.html'
+    
+    Args:
+        request: HTTP request object
+        mode: Trading mode ('fast-lane' or 'smart-lane')
+        form_data: Optional form data for error display
         
-        # Mode-specific settings
-        mode_settings = {
-            'fast-lane': {
-                'display_name': 'Fast Lane',
-                'description': 'Speed-optimized execution for time-sensitive trades',
-                'target_execution_time': 78,
-                'recommended_position_size': 100,
-                'available': engine_status.get('fast_lane_active', False),
-                'status': 'OPERATIONAL' if engine_status.get('fast_lane_active', False) else 'UNAVAILABLE'
-            },
-            'smart-lane': {
-                'display_name': 'Smart Lane',
-                'description': 'Intelligence-optimized analysis for strategic positions',
-                'target_execution_time': 2500,
-                'recommended_position_size': 500,
-                'available': smart_lane_status.get('pipeline_initialized', False),
-                'status': 'OPERATIONAL' if smart_lane_status.get('pipeline_initialized', False) else 'READY' if smart_lane_status.get('status') != 'UNAVAILABLE' else 'UNAVAILABLE'
-            }
-        }
+    Returns:
+        HttpResponse with appropriate configuration template
+    """
+    try:
+        logger.info(f"Loading configuration display for mode: {mode}")
         
         # Get user's existing configurations for this mode
-        existing_configs = BotConfiguration.objects.filter(
+        trading_mode_db = mode.upper().replace('-', '_')  # Convert to DB format
+        user_configs = BotConfiguration.objects.filter(
             user=request.user,
-            trading_mode=mode.upper().replace('-', '_')
-        ).order_by('-last_used_at')[:5]
+            trading_mode=trading_mode_db
+        ).order_by('-updated_at')
         
-        context = {
-            'mode': mode,
-            'mode_settings': mode_settings[mode],
-            'page_title': f'{mode_settings[mode]["display_name"]} Configuration',
-            'engine_status': engine_status,
-            'performance_metrics': performance_metrics,
-            'existing_configs': existing_configs,
-            'form_data': form_data or {},
-            'data_source': 'LIVE' if not performance_metrics.get('_mock', False) else 'MOCK',
+        # Get wallet info for configuration validation
+        wallet_info = {
+            'is_connected': True,  # Default for demo
+            'address': '0x...',
+            'balance_eth': 0.5,
+            'balance_usd': 1200.0
         }
         
-        # Add Smart Lane specific context
-        if mode == 'smart-lane':
-            context.update({
-                'smart_lane_status': smart_lane_status,
-                'smart_lane_ready': smart_lane_status.get('pipeline_initialized', False),
-                'smart_lane_capabilities': smart_lane_status.get('capabilities', []),
-                'analysis_options': {
-                    'analysis_depth': ['BASIC', 'COMPREHENSIVE', 'DEEP_DIVE'],
-                    'enabled_categories': [
-                        'HONEYPOT_DETECTION',
-                        'LIQUIDITY_ANALYSIS', 
-                        'SOCIAL_SENTIMENT',
-                        'TECHNICAL_ANALYSIS',
-                        'CONTRACT_SECURITY'
-                    ],
-                    'risk_levels': ['LOW', 'MEDIUM', 'HIGH'],
-                    'exit_strategies': ['FIXED_TARGET', 'TRAILING_STOP', 'DYNAMIC_EXIT']
-                }
-            })
+        # Base context shared by both modes
+        base_context = {
+            'user': request.user,
+            'configurations': user_configs,
+            'wallet_info': wallet_info,
+            'form_data': form_data,  # For error redisplay
+        }
         
-        return render(request, 'dashboard/configuration_panel.html', context)
+        # Mode-specific template and context
+        if mode == 'fast-lane':
+            # Fast Lane Configuration
+            context = {
+                **base_context,
+                'mode': 'FAST_LANE',
+                'is_fast_lane': True,
+                'is_smart_lane': False,
+                'page_title': 'Fast Lane Configuration',
+                # Fast Lane specific options
+                'risk_levels': ['LOW', 'MEDIUM', 'HIGH'],
+                'target_pairs': ['WETH/USDC', 'WETH/USDT', 'WBTC/USDC', 'WBTC/WETH'],
+                'execution_timeouts': [100, 250, 500, 1000, 2000],  # milliseconds
+                'slippage_options': [0.5, 1.0, 1.5, 2.0, 3.0],  # percentages
+            }
+            template_name = 'dashboard/configuration_panel.html'
+            logger.info("Rendering Fast Lane configuration template")
+            
+        else:  # smart-lane
+            # Smart Lane Configuration
+            context = {
+                **base_context,
+                'mode': 'SMART_LANE',
+                'is_fast_lane': False,
+                'is_smart_lane': True,
+                'page_title': 'Smart Lane Configuration',
+                # Smart Lane specific options
+                'analysis_depths': ['BASIC', 'COMPREHENSIVE', 'DEEP_DIVE'],
+                'enabled_categories': [
+                    'HONEYPOT_DETECTION',
+                    'LIQUIDITY_ANALYSIS', 
+                    'SOCIAL_SENTIMENT',
+                    'TECHNICAL_ANALYSIS',
+                    'CONTRACT_SECURITY'
+                ],
+                'risk_levels': ['LOW', 'MEDIUM', 'HIGH'],
+                'exit_strategies': ['FIXED_TARGET', 'TRAILING_STOP', 'DYNAMIC_EXIT']
+            }
+            template_name = 'dashboard/smart_lane_config.html'
+            logger.info("Rendering Smart Lane configuration template")
+        
+        logger.debug(f"Context: mode={context['mode']}, template={template_name}")
+        return render(request, template_name, context)
         
     except Exception as e:
         logger.error(f"Error loading configuration panel: {e}", exc_info=True)
         messages.error(request, f"Error loading configuration panel: {str(e)}")
         return render(request, 'dashboard/error.html', {'error': str(e)})
+
+
 
 
 # =========================================================================
