@@ -1,10 +1,10 @@
 """
-Trading Services Package
+Trading Services Package - Phase 6A Complete
 
 This package contains trading-related services for DEX interactions,
-portfolio management, and trading execution.
+portfolio management, gas optimization, and trading execution.
 
-UPDATED: Added portfolio service exports to fix ImportError
+UPDATED: Added gas optimizer service exports for Phase 6A
 
 File: trading/services/__init__.py
 """
@@ -24,6 +24,15 @@ from .portfolio_service import (
     PortfolioUpdate
 )
 
+from .gas_optimizer import (
+    DjangoGasOptimizer,
+    TradingGasStrategy,
+    TradingGasPrice,
+    GasOptimizationResult,
+    get_gas_optimizer,
+    optimize_trade_gas
+)
+
 __all__ = [
     # DEX Router Service
     'DEXRouterService',
@@ -37,4 +46,12 @@ __all__ = [
     'PortfolioTrackingService',
     'create_portfolio_service',
     'PortfolioUpdate',
+    
+    # Gas Optimizer Service - Phase 6A
+    'DjangoGasOptimizer',
+    'TradingGasStrategy',
+    'TradingGasPrice',
+    'GasOptimizationResult',
+    'get_gas_optimizer',
+    'optimize_trade_gas',
 ]
