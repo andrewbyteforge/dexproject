@@ -27,7 +27,7 @@ from django.contrib.auth.models import User
 # Import trading models for portfolio data
 try:
     from trading.models import Trade, Position, TradingPair, Strategy, Token
-    from wallet.models import Balance
+    from wallet.models import WalletBalance
     from risk.models import RiskAssessment
     TRADING_MODELS_AVAILABLE = True
 except ImportError as e:
@@ -102,13 +102,13 @@ def _get_portfolio_data(user) -> Dict[str, Any]:
             ).select_related('pair__token0', 'pair__token1')
             
             # Get wallet balances
-            balances = Balance.objects.filter(user=user, balance__gt=0)
+            balances = WalletBalance.objects.filter(wallet__user=user)
         else:
             # Show demo data for anonymous users
             positions = Position.objects.filter(user__isnull=True).select_related(
                 'pair__token0', 'pair__token1'
             )[:5]
-            balances = Balance.objects.none()
+            balances = WalletBalance.objects.none()
         
         # Calculate portfolio metrics
         total_value_usd = Decimal('0')

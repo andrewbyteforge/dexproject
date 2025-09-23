@@ -164,13 +164,14 @@ except ImportError:
 # Check if trading models are available
 try:
     from trading.models import Trade, Position, TradingPair, Strategy, Token
-    from wallet.models import Balance
+    from wallet.models import WalletBalance  # FIXED: Changed from Balance to WalletBalance
     from risk.models import RiskAssessment
     TRADING_MODELS_AVAILABLE = True
     print("✅ Trading models imported successfully")
 except ImportError as e:
     print(f"⚠️ Warning: Trading models not available: {e}")
     TRADING_MODELS_AVAILABLE = False
+
 
 def _get_portfolio_data(user) -> dict:
     """Get portfolio data with graceful fallback if models aren't available."""
@@ -215,11 +216,12 @@ def _get_portfolio_data(user) -> dict:
                 status__in=['OPEN', 'PARTIALLY_CLOSED']
             ).select_related('pair__token0', 'pair__token1')
             
-            balances = Balance.objects.filter(user=user, balance__gt=0)
+            # FIXED: Use WalletBalance with correct relationship
+            balances = WalletBalance.objects.filter(wallet__user=user)
         else:
             # Show demo data for anonymous users
             positions = Position.objects.filter(user__isnull=True)[:5]
-            balances = Balance.objects.none()
+            balances = WalletBalance.objects.none()  # FIXED: WalletBalance instead of Balance
         
         # Calculate portfolio metrics
         total_value_usd = Decimal('0')
@@ -245,11 +247,11 @@ def _get_portfolio_data(user) -> dict:
         
         total_roi_percent = float((total_pnl / total_invested * 100)) if total_invested > 0 else 0
         
-        # Get ETH balance
+        # FIXED: Get ETH balance using correct field names
         eth_balance = Decimal('0')
         for balance in balances:
-            if balance.token.symbol == 'ETH':
-                eth_balance = balance.balance
+            if balance.token_symbol == 'ETH':  # FIXED: Use token_symbol instead of balance.token.symbol
+                eth_balance = balance.balance_formatted  # FIXED: Use balance_formatted instead of balance.balance
                 break
         
         return {
@@ -279,6 +281,19 @@ def _get_portfolio_data(user) -> dict:
             'error': str(e),
             'demo_mode': False
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def _get_trading_activity(user, limit: int = 10) -> dict:
     """Get recent trading activity for a user."""

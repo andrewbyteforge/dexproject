@@ -37,7 +37,7 @@ from trading.tasks import (
 )
 
 # Import wallet models
-from wallet.models import Wallet, Balance
+from wallet.models import Wallet, WalletBalance
 
 # Import risk models
 from risk.models import RiskAssessment
