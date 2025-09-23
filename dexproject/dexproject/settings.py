@@ -5,19 +5,30 @@ This settings file includes Web3 configuration, testnet support, SIWE wallet
 authentication, and enhanced trading engine settings for both development 
 and production.
 
-UPDATED: Phase 5.1C - Fixed ALLOWED_HOSTS error and environment variable loading
+UPDATED: Phase 7 - Enhanced for Local Production Trading Operations
+- Production-grade database configuration
+- Advanced logging for trading operations  
+- Redis caching optimization
+- Security enhancements
+- Performance monitoring
 
 File: dexproject/dexproject/settings.py
 """
 
 import os
+import sys
 from pathlib import Path
 import logging
 
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Load production environment file if it exists, otherwise regular .env
+    production_env_file = Path(__file__).resolve().parent.parent / '.env.production'
+    if production_env_file.exists():
+        load_dotenv(production_env_file)
+    else:
+        load_dotenv()
 except ImportError:
     # python-dotenv not installed - environment variables must be set manually
     pass
@@ -53,23 +64,35 @@ def get_env_list(key: str, default: str = '') -> list:
     return [item.strip() for item in value.split(',') if item.strip()]
 
 # =============================================================================
+# ENVIRONMENT DETECTION
+# =============================================================================
+
+# Detect if we're running in production mode
+PRODUCTION_MODE = get_env_bool('PRODUCTION_MODE', 'False')
+TRADING_ENVIRONMENT = os.getenv('TRADING_ENVIRONMENT', 'development')  # development, staging, production
+
+# =============================================================================
 # CORE DJANGO SETTINGS
 # =============================================================================
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-test-key-for-development-only')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = get_env_bool('DEBUG', 'True')
+# Production secret key validation
+if PRODUCTION_MODE and SECRET_KEY == 'django-insecure-test-key-for-development-only':
+    raise ValueError("Production mode requires a secure SECRET_KEY to be set!")
 
-# ALLOWED_HOSTS configuration - Fixed to handle empty environment variables properly
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = get_env_bool('DEBUG', 'True') and not PRODUCTION_MODE
+
+# ALLOWED_HOSTS configuration - Enhanced for production
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 additional_hosts = get_env_list('ALLOWED_HOSTS')
 if additional_hosts:
     ALLOWED_HOSTS.extend(additional_hosts)
 
-# If DEBUG is False and no additional hosts specified, allow all for development
-if not DEBUG and len(ALLOWED_HOSTS) <= 2:  # Only localhost and 127.0.0.1
+# Production security: Don't allow all hosts even in development when PRODUCTION_MODE=True
+if not DEBUG and len(ALLOWED_HOSTS) <= 2 and not PRODUCTION_MODE:  # Only localhost and 127.0.0.1
     ALLOWED_HOSTS.append('*')  # Allow all hosts in development when DEBUG=False
     logger.warning("DEBUG=False with minimal ALLOWED_HOSTS - adding '*' for development")
 
@@ -99,6 +122,7 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
+# Enhanced middleware for production
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -110,6 +134,10 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# Add performance monitoring middleware in production
+if PRODUCTION_MODE:
+    MIDDLEWARE.insert(-1, 'shared.middleware.PerformanceMonitoringMiddleware')
 
 ROOT_URLCONF = 'dexproject.urls'
 
@@ -143,27 +171,68 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # =============================================================================
-# DATABASE CONFIGURATION
+# DATABASE CONFIGURATION - ENHANCED FOR PRODUCTION
 # =============================================================================
 
 # Database URL from environment or default SQLite
 DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite:///{BASE_DIR}/db.sqlite3')
 
-if DATABASE_URL.startswith('sqlite'):
+if DATABASE_URL.startswith('postgresql'):
+    # PostgreSQL configuration for serious trading
+    try:
+        import dj_database_url
+        DATABASES = {
+            'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+        }
+        
+        # Production PostgreSQL optimizations
+        DATABASES['default'].update({
+            'ATOMIC_REQUESTS': True,
+            'CONN_MAX_AGE': 0 if PRODUCTION_MODE else 600,  # No persistent connections in production
+            'OPTIONS': {
+                'MAX_CONNS': 20,
+                'isolation_level': 'read committed',
+                'autocommit': True,
+            }
+        })
+        
+        logger.info("Using PostgreSQL database for production trading")
+        
+    except ImportError:
+        logger.error("dj-database-url required for PostgreSQL. Install with: pip install dj-database-url")
+        raise
+        
+elif DATABASE_URL.startswith('sqlite'):
+    # Optimized SQLite configuration for trading operations
+    db_path = BASE_DIR / 'db' / ('production.sqlite3' if PRODUCTION_MODE else 'development.sqlite3')
+    
+    # Ensure db directory exists
+    db_path.parent.mkdir(exist_ok=True)
+    
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+            'NAME': db_path,
+            'OPTIONS': {
+                'timeout': 20,
+                'check_same_thread': False,
+                'init_command': """
+                    PRAGMA journal_mode=WAL;
+                    PRAGMA synchronous=NORMAL;
+                    PRAGMA cache_size=1000;
+                    PRAGMA temp_store=MEMORY;
+                    PRAGMA mmap_size=268435456;
+                    PRAGMA foreign_keys=ON;
+                """,
+            },
+            'ATOMIC_REQUESTS': True,
         }
     }
-elif DATABASE_URL.startswith('postgresql'):
-    # Parse PostgreSQL URL
-    import dj_database_url
-    DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL)
-    }
+    
+    logger.info(f"Using optimized SQLite database: {db_path}")
+    
 else:
-    # Default SQLite
+    # Default SQLite fallback
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -184,11 +253,18 @@ TARGET_CHAINS = get_env_list('TARGET_CHAINS', '84532,11155111')
 TRADING_MODE = os.getenv('TRADING_MODE', 'PAPER')  # PAPER | SHADOW | LIVE
 ENGINE_LIVE_DATA = get_env_bool('ENGINE_LIVE_DATA', 'True')
 
-# API Keys
+# API Keys validation in production
 ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY', 'demo')
 BASE_ALCHEMY_API_KEY = os.getenv('BASE_ALCHEMY_API_KEY', 'demo')
 ANKR_API_KEY = os.getenv('ANKR_API_KEY', '')
 INFURA_PROJECT_ID = os.getenv('INFURA_PROJECT_ID', '')
+
+# Production API key validation
+if PRODUCTION_MODE:
+    if ALCHEMY_API_KEY == 'demo' or not ALCHEMY_API_KEY:
+        raise ValueError("Production mode requires valid ALCHEMY_API_KEY!")
+    if BASE_ALCHEMY_API_KEY == 'demo' or not BASE_ALCHEMY_API_KEY:
+        raise ValueError("Production mode requires valid BASE_ALCHEMY_API_KEY!")
 
 # RPC URLs - Base Sepolia (Default)
 BASE_SEPOLIA_RPC_URL = os.getenv(
@@ -222,41 +298,56 @@ SIWE_ALLOWED_CHAIN_IDS = get_env_list('SIWE_ALLOWED_CHAIN_IDS', '1,11155111,8453
 SIWE_SESSION_TIMEOUT_HOURS = get_env_int('SIWE_SESSION_TIMEOUT_HOURS', '24')
 
 # =============================================================================
-# TRADING ENGINE CONFIGURATION
+# TRADING ENGINE CONFIGURATION - ENHANCED FOR PRODUCTION
 # =============================================================================
 
-# Risk Management
-MAX_PORTFOLIO_SIZE_USD = get_env_decimal('MAX_PORTFOLIO_SIZE_USD', '100')
-MAX_POSITION_SIZE_USD = get_env_decimal('MAX_POSITION_SIZE_USD', '10')
+# Risk Management - Enhanced for production
+MAX_PORTFOLIO_SIZE_USD = get_env_decimal(
+    'MAX_PORTFOLIO_SIZE_USD', 
+    '1000' if PRODUCTION_MODE else '100'  # Higher limits in production
+)
+MAX_POSITION_SIZE_USD = get_env_decimal(
+    'MAX_POSITION_SIZE_USD', 
+    '100' if PRODUCTION_MODE else '10'
+)
 DAILY_LOSS_LIMIT_PERCENT = get_env_decimal('DAILY_LOSS_LIMIT_PERCENT', '5.0')
 CIRCUIT_BREAKER_LOSS_PERCENT = get_env_decimal('CIRCUIT_BREAKER_LOSS_PERCENT', '10.0')
 
-# Trade Execution
+# Trade Execution - Production optimized
 DEFAULT_SLIPPAGE_PERCENT = get_env_decimal('DEFAULT_SLIPPAGE_PERCENT', '1.0')
-MAX_GAS_PRICE_GWEI = get_env_decimal('MAX_GAS_PRICE_GWEI', '10')
+MAX_GAS_PRICE_GWEI = get_env_decimal(
+    'MAX_GAS_PRICE_GWEI', 
+    '50' if PRODUCTION_MODE else '10'  # Higher gas limits for production
+)
 EXECUTION_TIMEOUT = get_env_int('EXECUTION_TIMEOUT', '30')
 
 # Paper Trading
 PAPER_MODE_SLIPPAGE = get_env_decimal('PAPER_MODE_SLIPPAGE', '0.5')
 PAPER_MODE_LATENCY_MS = get_env_int('PAPER_MODE_LATENCY_MS', '200')
 
-ENGINE_MOCK_MODE = get_env_bool('ENGINE_MOCK_MODE', 'True')
+ENGINE_MOCK_MODE = get_env_bool('ENGINE_MOCK_MODE', 'True') and not PRODUCTION_MODE
 
 # =============================================================================
 # FAST LANE & MEMPOOL CONFIGURATION
 # =============================================================================
 
-# Fast Lane Performance Settings
+# Fast Lane Performance Settings - Enhanced for production
 FAST_LANE_TARGET_MS = get_env_int('FAST_LANE_TARGET_MS', '500')
 FAST_LANE_SLA_MS = get_env_int('FAST_LANE_SLA_MS', '300')
 
-# Risk Cache Settings
+# Risk Cache Settings - Production optimized
 RISK_CACHE_TTL = get_env_int('RISK_CACHE_TTL', '3600')
-RISK_CACHE_MAX_SIZE = get_env_int('RISK_CACHE_MAX_SIZE', '10000')
+RISK_CACHE_MAX_SIZE = get_env_int(
+    'RISK_CACHE_MAX_SIZE', 
+    '50000' if PRODUCTION_MODE else '10000'  # Larger cache in production
+)
 
 # Mempool Configuration
 ENABLE_MEMPOOL_SCANNING = get_env_bool('ENABLE_MEMPOOL_SCANNING', 'True')
-MEMPOOL_MAX_PENDING_TXS = get_env_int('MEMPOOL_MAX_PENDING_TXS', '1000')
+MEMPOOL_MAX_PENDING_TXS = get_env_int(
+    'MEMPOOL_MAX_PENDING_TXS', 
+    '5000' if PRODUCTION_MODE else '1000'
+)
 MEMPOOL_SCAN_INTERVAL_MS = get_env_int('MEMPOOL_SCAN_INTERVAL_MS', '100')
 
 # =============================================================================
@@ -266,6 +357,61 @@ MEMPOOL_SCAN_INTERVAL_MS = get_env_int('MEMPOOL_SCAN_INTERVAL_MS', '100')
 PROVIDER_HEALTH_CHECK_INTERVAL = get_env_int('PROVIDER_HEALTH_CHECK_INTERVAL', '30')
 PROVIDER_FAILOVER_THRESHOLD = get_env_int('PROVIDER_FAILOVER_THRESHOLD', '3')
 PROVIDER_RECOVERY_TIME = get_env_int('PROVIDER_RECOVERY_TIME', '300')
+
+# =============================================================================
+# CACHE CONFIGURATION - ENHANCED FOR PRODUCTION
+# =============================================================================
+
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+# Check if Redis is available and configure accordingly
+REDIS_AVAILABLE = True
+try:
+    import redis
+    r = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=1)
+    r.ping()
+    logger.info("Redis connection successful")
+except Exception as e:
+    REDIS_AVAILABLE = False
+    logger.warning(f"Redis not available ({e}) - falling back to in-memory cache")
+
+if REDIS_AVAILABLE:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'CONNECTION_POOL_KWARGS': {
+                    'max_connections': 50 if PRODUCTION_MODE else 20,
+                    'retry_on_timeout': True,
+                    'socket_keepalive': True,
+                    'socket_keepalive_options': {},
+                },
+                'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+                'IGNORE_EXCEPTIONS': True,
+            },
+            'KEY_PREFIX': f'dexbot_{TRADING_ENVIRONMENT}',
+            'VERSION': 1,
+            'TIMEOUT': 300,  # 5 minutes default
+        }
+    }
+    
+    # Use Redis for sessions in production
+    if PRODUCTION_MODE:
+        SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+        SESSION_CACHE_ALIAS = 'default'
+    
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': f'dexbot-{TRADING_ENVIRONMENT}',
+            'OPTIONS': {
+                'MAX_ENTRIES': 10000 if PRODUCTION_MODE else 1000,
+            }
+        }
+    }
 
 # =============================================================================
 # REST FRAMEWORK CONFIGURATION
@@ -285,6 +431,14 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 50,
     'DATETIME_FORMAT': '%Y-%m-%dT%H:%M:%S.%fZ',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour' if PRODUCTION_MODE else '1000/hour',
+        'user': '1000/hour' if PRODUCTION_MODE else '10000/hour'
+    }
 }
 
 # =============================================================================
@@ -293,13 +447,20 @@ REST_FRAMEWORK = {
 
 CORS_ALLOWED_ORIGINS = get_env_list('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
 
-# CORS settings for development
-if DEBUG:
+# CORS settings - More restrictive in production
+if DEBUG and not PRODUCTION_MODE:
     CORS_ALLOW_ALL_ORIGINS = True
     CORS_ALLOW_CREDENTIALS = True
+else:
+    CORS_ALLOW_CREDENTIALS = True
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https://\w+\.localhost$",
+        r"^http://localhost:\d+$",
+        r"^http://127\.0\.0\.1:\d+$",
+    ]
 
 # =============================================================================
-# SECURITY SETTINGS
+# SECURITY SETTINGS - ENHANCED FOR PRODUCTION
 # =============================================================================
 
 # Password validation
@@ -318,14 +479,195 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# Security settings for production
-if not DEBUG:
+# Enhanced security settings for production
+if PRODUCTION_MODE or not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
-    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+    
+    # Session security
+    SESSION_COOKIE_SECURE = False  # Set to True if using HTTPS
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Strict'
+    SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+    
+    # CSRF protection
+    CSRF_COOKIE_SECURE = False  # Set to True if using HTTPS
+    CSRF_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_SAMESITE = 'Strict'
+
+# =============================================================================
+# CELERY CONFIGURATION - ENHANCED FOR PRODUCTION
+# =============================================================================
+
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', REDIS_URL)
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', REDIS_URL)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Production Celery optimizations
+if PRODUCTION_MODE:
+    CELERY_TASK_ALWAYS_EAGER = False
+    CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # For trading tasks
+    CELERY_TASK_ACKS_LATE = True
+    CELERY_WORKER_DISABLE_RATE_LIMITS = True
+    CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
+# =============================================================================
+# LOGGING CONFIGURATION - ENHANCED FOR TRADING OPERATIONS
+# =============================================================================
+
+# Create logs directory structure
+LOGS_DIR = BASE_DIR / 'logs'
+LOGS_DIR.mkdir(exist_ok=True)
+
+# Create subdirectories for different log types
+for log_dir in ['trading', 'performance', 'security', 'debug']:
+    (LOGS_DIR / log_dir).mkdir(exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{levelname}] {asctime} {name} {process:d} {thread:d} {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'simple': {
+            'format': '[{levelname}] {asctime} {name} {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'trading': {
+            'format': '[TRADE] {asctime} {levelname} {name} | {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'performance': {
+            'format': '[PERF] {asctime} {levelname} {name} | {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'json': {
+            'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}',
+            'datefmt': '%Y-%m-%dT%H:%M:%S',
+        },
+    },
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        },
+        'require_debug_true': {
+            '()': 'django.utils.log.RequireDebugTrue',
+        },
+        'trading_filter': {
+            '()': 'django.utils.log.CallbackFilter',
+            'callback': lambda record: any(x in record.name.lower() for x in ['trading', 'portfolio', 'gas', 'dex']),
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+            'level': 'INFO',
+        },
+        'console_debug': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+            'level': 'DEBUG',
+            'filters': ['require_debug_true'],
+        },
+        'file_debug': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / 'debug' / 'debug.log',
+            'maxBytes': 50 * 1024 * 1024,  # 50MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+            'level': 'DEBUG',
+        },
+        'file_trading': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / 'trading' / 'trading.log',
+            'maxBytes': 100 * 1024 * 1024,  # 100MB
+            'backupCount': 20,
+            'formatter': 'trading',
+            'level': 'INFO',
+            'filters': ['trading_filter'],
+        },
+        'file_performance': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / 'performance' / 'performance.log',
+            'maxBytes': 50 * 1024 * 1024,  # 50MB
+            'backupCount': 10,
+            'formatter': 'performance',
+            'level': 'INFO',
+        },
+        'file_error': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / 'error.log',
+            'maxBytes': 50 * 1024 * 1024,  # 50MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+            'level': 'ERROR',
+        },
+        'file_security': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / 'security' / 'security.log',
+            'maxBytes': 50 * 1024 * 1024,  # 50MB
+            'backupCount': 20,
+            'formatter': 'json',
+            'level': 'WARNING',
+        },
+    },
+    'root': {
+        'handlers': ['console', 'file_debug', 'file_error'] if DEBUG else ['console', 'file_error'],
+        'level': 'DEBUG' if DEBUG else 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file_debug'] if DEBUG else ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'trading': {
+            'handlers': ['console', 'file_trading', 'file_error'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'engine': {
+            'handlers': ['console', 'file_trading', 'file_error'],
+            'level': os.getenv('ENGINE_LOG_LEVEL', 'DEBUG'),
+            'propagate': False,
+        },
+        'performance': {
+            'handlers': ['file_performance'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'security': {
+            'handlers': ['file_security', 'console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'portfolio': {
+            'handlers': ['console', 'file_trading', 'file_error'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'gas_optimizer': {
+            'handlers': ['console', 'file_trading', 'file_performance'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    },
+}
 
 # =============================================================================
 # INTERNATIONALIZATION
@@ -347,6 +689,10 @@ STATICFILES_DIRS = [
     BASE_DIR / 'static',
 ]
 
+# Production static file optimization
+if PRODUCTION_MODE:
+    STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
+
 # =============================================================================
 # MEDIA FILES CONFIGURATION
 # =============================================================================
@@ -361,112 +707,11 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # =============================================================================
-# CACHE CONFIGURATION
-# =============================================================================
-
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-
-# Check if Redis is available
-REDIS_AVAILABLE = True
-try:
-    import redis
-    r = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=1)
-    r.ping()
-except Exception:
-    REDIS_AVAILABLE = False
-    logger.warning("Redis not available - falling back to in-memory cache")
-
-if REDIS_AVAILABLE:
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': REDIS_URL,
-            'KEY_PREFIX': 'dexproject',
-            'TIMEOUT': 300,
-        }
-    }
-else:
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-            'LOCATION': 'unique-snowflake',
-        }
-    }
-
-# =============================================================================
-# CELERY CONFIGURATION
-# =============================================================================
-
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', REDIS_URL)
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', REDIS_URL)
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = TIME_ZONE
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
-
-# =============================================================================
-# LOGGING CONFIGURATION
-# =============================================================================
-
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
-        },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
-        },
-    },
-    'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'django.log',
-            'formatter': 'verbose',
-        },
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
-        },
-    },
-    'root': {
-        'handlers': ['console', 'file'],
-        'level': 'INFO',
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console', 'file'],
-            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
-            'propagate': False,
-        },
-        'trading': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        'engine': {
-            'handlers': ['console', 'file'],
-            'level': os.getenv('ENGINE_LOG_LEVEL', 'DEBUG'),
-            'propagate': False,
-        },
-    },
-}
-
-# Create logs directory if it doesn't exist
-(BASE_DIR / 'logs').mkdir(exist_ok=True)
-
-# =============================================================================
 # DEVELOPMENT-SPECIFIC SETTINGS
 # =============================================================================
 
-if DEBUG and TESTNET_MODE:
-    # Enable Django debug toolbar for development
+if DEBUG and TESTNET_MODE and not PRODUCTION_MODE:
+    # Enable Django debug toolbar for development only
     try:
         import debug_toolbar
         INSTALLED_APPS.append('debug_toolbar')
@@ -480,13 +725,37 @@ if DEBUG and TESTNET_MODE:
         pass
 
 # =============================================================================
+# PRODUCTION-SPECIFIC SETTINGS
+# =============================================================================
+
+if PRODUCTION_MODE:
+    # Production-specific apps
+    try:
+        import django_extensions
+        INSTALLED_APPS.append('django_extensions')
+    except ImportError:
+        pass
+    
+    # Performance monitoring
+    ENABLE_PERFORMANCE_MONITORING = True
+    PERFORMANCE_MONITORING_SAMPLE_RATE = 0.1  # 10% sampling
+    
+    # Trading operation timeouts (stricter in production)
+    TRADING_OPERATION_TIMEOUT = 60  # seconds
+    GAS_OPTIMIZATION_TIMEOUT = 5    # seconds
+    PORTFOLIO_UPDATE_TIMEOUT = 10   # seconds
+
+# =============================================================================
 # CONFIGURATION VALIDATION
 # =============================================================================
 
 # Validate critical settings
-if not ALCHEMY_API_KEY or ALCHEMY_API_KEY == 'demo':
-    if not DEBUG:
+if PRODUCTION_MODE:
+    if not ALCHEMY_API_KEY or ALCHEMY_API_KEY == 'demo':
         raise ValueError("ALCHEMY_API_KEY must be set in production!")
+    
+    if not BASE_ALCHEMY_API_KEY or BASE_ALCHEMY_API_KEY == 'demo':
+        raise ValueError("BASE_ALCHEMY_API_KEY must be set in production!")
 
 # Validate SIWE configuration
 if not SIWE_DOMAIN:
@@ -495,8 +764,28 @@ if not SIWE_DOMAIN:
 if not SIWE_ALLOWED_CHAIN_IDS:
     raise ValueError("SIWE_ALLOWED_CHAIN_IDS must be configured!")
 
+# Validate trading configuration
+if PRODUCTION_MODE and TRADING_MODE == 'LIVE':
+    logger.warning("⚠️  LIVE TRADING MODE ENABLED IN PRODUCTION!")
+    logger.warning("⚠️  Real money will be used for trades!")
+
+# =============================================================================
+# CONFIGURATION SUMMARY LOGGING
+# =============================================================================
+
 # Log configuration summary
-logger.info(f"Django settings loaded - DEBUG: {DEBUG}, TESTNET_MODE: {TESTNET_MODE}")
-logger.info(f"ALLOWED_HOSTS: {ALLOWED_HOSTS}")
-logger.info(f"SIWE Domain: {SIWE_DOMAIN}, Supported chains: {SIWE_ALLOWED_CHAIN_IDS}")
-logger.info(f"Default chain: {DEFAULT_CHAIN_ID}, Engine live data: {ENGINE_LIVE_DATA}")
+logger.info(f"🚀 Django settings loaded - Environment: {TRADING_ENVIRONMENT}")
+logger.info(f"🔧 Configuration: DEBUG={DEBUG}, PRODUCTION_MODE={PRODUCTION_MODE}")
+logger.info(f"🔗 TESTNET_MODE={TESTNET_MODE}, TRADING_MODE={TRADING_MODE}")
+logger.info(f"🌐 ALLOWED_HOSTS: {ALLOWED_HOSTS}")
+logger.info(f"🔑 SIWE Domain: {SIWE_DOMAIN}")
+logger.info(f"⛓️  Default chain: {DEFAULT_CHAIN_ID}, Supported chains: {SIWE_ALLOWED_CHAIN_IDS}")
+logger.info(f"📊 Engine live data: {ENGINE_LIVE_DATA}")
+logger.info(f"💾 Database: {'PostgreSQL' if 'postgresql' in DATABASE_URL else 'SQLite'}")
+logger.info(f"🗄️  Cache: {'Redis' if REDIS_AVAILABLE else 'Memory'}")
+
+if PRODUCTION_MODE:
+    logger.info("🏭 Production mode optimizations enabled")
+    logger.info(f"💰 Max portfolio: ${MAX_PORTFOLIO_SIZE_USD}, Max position: ${MAX_POSITION_SIZE_USD}")
+    logger.info(f"⛽ Max gas price: {MAX_GAS_PRICE_GWEI} gwei")
+    logger.info(f"🕒 Fast lane target: {FAST_LANE_TARGET_MS}ms")
