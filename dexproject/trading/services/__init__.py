@@ -1,20 +1,22 @@
 """
-Trading Services Package - Phase 6A Complete
+Trading Services Package - Phase 6B Update
 
 This package contains trading-related services for DEX interactions,
 portfolio management, gas optimization, and trading execution.
 
-UPDATED: Added gas optimizer service exports for Phase 6A
+UPDATED: Added Transaction Manager service exports for Phase 6B
+Phase 6A: Gas optimizer service ✅ COMPLETE
+Phase 6B: Transaction manager service ✅ COMPLETE
 
-File: trading/services/__init__.py
+File: dexproject/trading/services/__init__.py
 """
 
 from .dex_router_service import (
-    DEXRouterService, 
-    create_dex_router_service, 
-    SwapParams, 
+    DEXRouterService,
+    create_dex_router_service,
+    SwapParams,
     SwapResult,
-    SwapType, 
+    SwapType,
     DEXVersion
 )
 
@@ -33,10 +35,21 @@ from .gas_optimizer import (
     optimize_trade_gas
 )
 
+# Phase 6B: Transaction Manager Service
+from .transaction_manager import (
+    TransactionManager,
+    TransactionStatus,
+    TransactionState,
+    TransactionSubmissionRequest,
+    TransactionManagerResult,
+    get_transaction_manager,
+    create_transaction_submission_request
+)
+
 __all__ = [
     # DEX Router Service
     'DEXRouterService',
-    'create_dex_router_service', 
+    'create_dex_router_service',
     'SwapParams',
     'SwapResult',
     'SwapType',
@@ -54,4 +67,13 @@ __all__ = [
     'GasOptimizationResult',
     'get_gas_optimizer',
     'optimize_trade_gas',
+    
+    # Transaction Manager Service - Phase 6B
+    'TransactionManager',
+    'TransactionStatus',
+    'TransactionState',
+    'TransactionSubmissionRequest',
+    'TransactionManagerResult',
+    'get_transaction_manager',
+    'create_transaction_submission_request',
 ]
