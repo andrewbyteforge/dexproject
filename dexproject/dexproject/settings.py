@@ -359,7 +359,7 @@ PROVIDER_FAILOVER_THRESHOLD = get_env_int('PROVIDER_FAILOVER_THRESHOLD', '3')
 PROVIDER_RECOVERY_TIME = get_env_int('PROVIDER_RECOVERY_TIME', '300')
 
 # =============================================================================
-# CACHE CONFIGURATION - ENHANCED FOR PRODUCTION
+# CACHE CONFIGURATION - FIXED FOR DJANGO REDIS
 # =============================================================================
 
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
@@ -375,10 +375,21 @@ except Exception as e:
     REDIS_AVAILABLE = False
     logger.warning(f"Redis not available ({e}) - falling back to in-memory cache")
 
+# Try to use django-redis if available and Redis is accessible
+DJANGO_REDIS_AVAILABLE = False
 if REDIS_AVAILABLE:
+    try:
+        import django_redis
+        DJANGO_REDIS_AVAILABLE = True
+        logger.info("django-redis package available")
+    except ImportError:
+        logger.warning("django-redis package not installed - using basic Redis backend")
+
+if REDIS_AVAILABLE and DJANGO_REDIS_AVAILABLE:
+    # Use django-redis backend with full features
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'BACKEND': 'django_redis.cache.RedisCache',  # Use django-redis backend
             'LOCATION': REDIS_URL,
             'OPTIONS': {
                 'CLIENT_CLASS': 'django_redis.client.DefaultClient',
@@ -397,12 +408,27 @@ if REDIS_AVAILABLE:
         }
     }
     
-    # Use Redis for sessions in production
-    if PRODUCTION_MODE:
-        SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-        SESSION_CACHE_ALIAS = 'default'
+elif REDIS_AVAILABLE:
+    # Use basic Redis backend without django-redis features
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',  # Basic Redis backend
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {
+                # Basic options only - no CLIENT_CLASS parameter
+                'CONNECTION_POOL_KWARGS': {
+                    'max_connections': 50 if PRODUCTION_MODE else 20,
+                    'retry_on_timeout': True,
+                },
+            },
+            'KEY_PREFIX': f'dexbot_{TRADING_ENVIRONMENT}',
+            'VERSION': 1,
+            'TIMEOUT': 300,  # 5 minutes default
+        }
+    }
     
 else:
+    # Fallback to in-memory cache
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
@@ -412,6 +438,13 @@ else:
             }
         }
     }
+    logger.info("Using in-memory cache (no Redis available)")
+
+# Use Redis for sessions in production if Redis is available
+if PRODUCTION_MODE and REDIS_AVAILABLE:
+    SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+    SESSION_CACHE_ALIAS = 'default'
+    logger.info("Using Redis for session storage")
 
 # =============================================================================
 # REST FRAMEWORK CONFIGURATION

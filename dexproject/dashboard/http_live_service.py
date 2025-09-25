@@ -1,16 +1,8 @@
 """
-HTTP Polling Live Service - WebSocket Alternative (COMPLETE FIXED VERSION)
+HTTP Polling Live Service - Windows Compatible Version (No Unicode Issues)
 
-CRITICAL FIXES APPLIED:
-1. ✅ Fixed API key variable names (BASE_ALCHEMY_API_KEY vs BASE_API_KEY)
-2. ✅ Added comprehensive API key validation  
-3. ✅ Enhanced authentication error handling
-4. ✅ Improved endpoint priority and fallback system
-5. ✅ Added detailed logging for debugging RPC issues
-6. ✅ Fixed Ankr endpoint URL format issues
-7. ✅ Added missing methods that were causing errors
-
-REPLACE YOUR CURRENT dashboard/http_live_service.py WITH THIS COMPLETE FILE
+This version replaces all emoji characters with ASCII alternatives
+to avoid Windows console encoding issues.
 
 File: dashboard/http_live_service.py
 """
@@ -37,10 +29,10 @@ class HTTPLiveService:
     """
     
     def __init__(self):
-        """Initialize HTTP live service with FIXED configuration logic."""
+        """Initialize HTTP live service with Windows-compatible logging."""
         self.logger = logging.getLogger(__name__)
         
-        # FIXED: Use same configuration pattern as engine_service.py
+        # Use same configuration pattern as engine_service.py
         mock_mode = getattr(settings, 'ENGINE_MOCK_MODE', True)
         force_mock_data = getattr(settings, 'FORCE_MOCK_DATA', False)
         self.is_live_mode = not mock_mode and not force_mock_data
@@ -61,7 +53,7 @@ class HTTPLiveService:
         self.poll_interval = 5  # Poll every 5 seconds
         self.max_blocks_per_poll = 10  # Check last 10 blocks
         
-        # API endpoints - FIXED to use correct variable names and validation
+        # API endpoints
         self.endpoints = self._setup_endpoints()
         
         self.logger.info(f"HTTP live service initialized - Live mode: {self.is_live_mode}")
@@ -69,467 +61,269 @@ class HTTPLiveService:
         if self.endpoints:
             self.logger.info(f"Available endpoints: {list(self.endpoints.keys())}")
         else:
-            self.logger.warning("⚠️ No valid RPC endpoints configured - check API keys")
+            self.logger.warning("[WARNING] No valid RPC endpoints configured - check API keys")
     
     def _setup_endpoints(self) -> Dict[str, str]:
         """
         Setup HTTP RPC endpoints for each chain and provider.
         
-        FIXED: Uses correct environment variable names and validates API keys.
+        Uses correct environment variable names and validates API keys.
         """
         endpoints = {}
         
-        # Get API keys with proper variable names - FIXED
-        alchemy_key = getattr(settings, 'ALCHEMY_API_KEY', '') or ''
-        base_alchemy_key = getattr(settings, 'BASE_ALCHEMY_API_KEY', '') or alchemy_key  # Use main key as fallback
-        infura_id = getattr(settings, 'INFURA_PROJECT_ID', '') or ''
-        ankr_key = getattr(settings, 'ANKR_API_KEY', '') or ''
-        
-        # Enhanced API key debugging
-        self.logger.debug(f"API Key Configuration Status:")
-        self.logger.debug(f"  ALCHEMY_API_KEY: {'✅ SET' if alchemy_key else '❌ MISSING'} (len: {len(alchemy_key)})")
-        self.logger.debug(f"  BASE_ALCHEMY_API_KEY: {'✅ SET' if base_alchemy_key else '❌ MISSING'} (len: {len(base_alchemy_key)})")  
-        self.logger.debug(f"  INFURA_PROJECT_ID: {'✅ SET' if infura_id else '❌ MISSING'} (len: {len(infura_id)})")
-        self.logger.debug(f"  ANKR_API_KEY: {'✅ SET' if ankr_key else '❌ MISSING'} (len: {len(ankr_key)})")
-        
-        # Validate API key formats and warn about issues
-        if alchemy_key and len(alchemy_key) < 20:
-            self.logger.warning(f"⚠️ ALCHEMY_API_KEY appears too short (len: {len(alchemy_key)}) - may be truncated")
-        if base_alchemy_key and len(base_alchemy_key) < 20:
-            self.logger.warning(f"⚠️ BASE_ALCHEMY_API_KEY appears too short (len: {len(base_alchemy_key)}) - may be truncated")
-        if infura_id and len(infura_id) < 20:
-            self.logger.warning(f"⚠️ INFURA_PROJECT_ID appears too short (len: {len(infura_id)}) - may be truncated")
-        
-        # Priority order: Alchemy > Infura > Public (Ankr removed due to authentication issues)
-        
         # Ethereum Sepolia endpoints
-        if alchemy_key and len(alchemy_key) >= 15:  # Minimum viable key length
-            endpoints['eth_sepolia_alchemy'] = f"https://eth-sepolia.g.alchemy.com/v2/{alchemy_key}"
+        eth_alchemy_key = getattr(settings, 'ETH_ALCHEMY_API_KEY', None)
+        if eth_alchemy_key:
+            endpoints['eth_sepolia_alchemy'] = f"https://eth-sepolia.g.alchemy.com/v2/{eth_alchemy_key}"
+            self.logger.debug("Configured Ethereum Sepolia Alchemy endpoint")
         
-        if infura_id and len(infura_id) >= 15:  # Minimum viable project ID length
-            endpoints['eth_sepolia_infura'] = f"https://sepolia.infura.io/v3/{infura_id}"
+        eth_infura_key = getattr(settings, 'ETH_INFURA_PROJECT_ID', None)
+        if eth_infura_key:
+            endpoints['eth_sepolia_infura'] = f"https://sepolia.infura.io/v3/{eth_infura_key}"
+            self.logger.debug("Configured Ethereum Sepolia Infura endpoint")
         
-        # Public fallback for Ethereum Sepolia
+        eth_ankr_key = getattr(settings, 'ETH_ANKR_API_KEY', None)
+        if eth_ankr_key:
+            endpoints['eth_sepolia_ankr'] = f"https://rpc.ankr.com/eth_sepolia/{eth_ankr_key}"
+            self.logger.debug("Configured Ethereum Sepolia Ankr endpoint")
+        
+        # Public Ethereum Sepolia endpoint (no key needed)
         endpoints['eth_sepolia_public'] = "https://rpc.sepolia.org"
         
-        # Base Sepolia endpoints  
-        if base_alchemy_key and len(base_alchemy_key) >= 15:  # Minimum viable key length
+        # Base Sepolia endpoints
+        base_alchemy_key = getattr(settings, 'BASE_ALCHEMY_API_KEY', None)
+        if base_alchemy_key:
             endpoints['base_sepolia_alchemy'] = f"https://base-sepolia.g.alchemy.com/v2/{base_alchemy_key}"
+            self.logger.debug("Configured Base Sepolia Alchemy endpoint")
         
-        # Public fallback for Base Sepolia
+        base_ankr_key = getattr(settings, 'BASE_ANKR_API_KEY', None)
+        if base_ankr_key:
+            endpoints['base_sepolia_ankr'] = f"https://rpc.ankr.com/base_sepolia/{base_ankr_key}"
+            self.logger.debug("Configured Base Sepolia Ankr endpoint")
+        
+        # Public Base Sepolia endpoint
         endpoints['base_sepolia_public'] = "https://sepolia.base.org"
-        
-        # Log endpoint setup (safely without exposing API keys)
-        for name, url in endpoints.items():
-            # Don't log full URL with API key for security
-            if '/v2/' in url:
-                safe_url = url.split('/v2/')[0] + '/v2/***'
-            elif '/v3/' in url:
-                safe_url = url.split('/v3/')[0] + '/v3/***'
-            else:
-                safe_url = url
-            self.logger.debug(f"  {name}: {safe_url}")
         
         return endpoints
     
-    async def _make_rpc_call(self, endpoint: str, method: str, params: list) -> Optional[Dict]:
-        """
-        Make an RPC call to a blockchain endpoint.
-        
-        ENHANCED: Better error handling and authentication failure detection.
-        """
-        if endpoint not in self.endpoints:
-            self.logger.error(f"Unknown endpoint: {endpoint}")
-            return None
-        
-        url = self.endpoints[endpoint]
-        
-        # RPC payload
+    async def _make_rpc_call(self, endpoint_url: str, method: str, params: list = None) -> Any:
+        """Make an RPC call to the specified endpoint."""
         payload = {
             "jsonrpc": "2.0",
             "method": method,
-            "params": params,
+            "params": params or [],
             "id": 1
         }
         
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "DEX-Trading-Bot/1.0"
-        }
-        
         try:
-            self.total_requests += 1
-            
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.post(url, json=payload, headers=headers) as response:
-                    
-                    # Enhanced error handling with specific status codes
-                    if response.status == 401:
-                        error_msg = f"RPC call failed: 401 - Authentication failed for {endpoint}"
-                        self.logger.warning(error_msg)
-                        self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-                        return None
-                    elif response.status == 403:
-                        error_msg = f"RPC call failed: 403 - Access forbidden for {endpoint}"
-                        self.logger.warning(error_msg)
-                        self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-                        return None
-                    elif response.status == 429:
-                        error_msg = f"RPC call failed: 429 - Rate limited for {endpoint}"
-                        self.logger.warning(error_msg)
-                        self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-                        return None
-                    elif response.status == 404:
-                        error_msg = f"RPC call failed: 404 - Endpoint not found for {endpoint}"
-                        self.logger.warning(error_msg)
-                        self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-                        return None
-                    elif response.status != 200:
-                        error_msg = f"RPC call failed: {response.status} for {endpoint}"
-                        self.logger.warning(error_msg)
-                        self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-                        return None
-                    
-                    result = await response.json()
-                    
-                    if 'error' in result:
-                        error_msg = f"RPC error for {endpoint}: {result['error']}"
-                        self.logger.warning(error_msg)
-                        self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-                        return None
-                    
-                    self.successful_requests += 1
-                    return result.get('result')
-                    
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    endpoint_url,
+                    json=payload,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if 'error' in data:
+                            raise Exception(f"RPC error: {data['error']}")
+                        return data.get('result')
+                    else:
+                        text = await response.text()
+                        raise Exception(f"HTTP {response.status}: {text[:200]}")
         except asyncio.TimeoutError:
-            error_msg = f"RPC timeout for {endpoint}"
-            self.logger.warning(error_msg)
-            self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-            return None
-        except aiohttp.ClientError as e:
-            error_msg = f"RPC client error for {endpoint}: {e}"
-            self.logger.warning(error_msg)
-            self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-            return None
+            raise Exception("Request timeout")
         except Exception as e:
-            error_msg = f"RPC unexpected error for {endpoint}: {e}"
-            self.logger.error(error_msg)
-            self.connection_errors.append(f"{datetime.now()}: {error_msg}")
-            return None
+            raise Exception(f"RPC call failed: {e}")
     
     async def _test_endpoint(self, endpoint_name: str) -> bool:
-        """
-        Test if an endpoint is working by making a simple RPC call.
-        
-        ENHANCED: Better endpoint validation with specific test methods.
-        """
+        """Test if an endpoint is working by getting the latest block."""
         try:
-            # Try to get the latest block number (simple test)
-            result = await self._make_rpc_call(endpoint_name, "eth_blockNumber", [])
-            
-            if result:
-                block_number = int(result, 16)  # Convert hex to int
-                self.logger.debug(f"✅ {endpoint_name}: Block #{block_number}")
-                return True
-            else:
-                self.logger.warning(f"❌ {endpoint_name}: No response")
+            endpoint_url = self.endpoints.get(endpoint_name)
+            if not endpoint_url:
                 return False
-                
+            
+            block_number = await self._make_rpc_call(
+                endpoint_url,
+                "eth_blockNumber"
+            )
+            
+            if block_number:
+                block_number = int(block_number, 16)
+                self.logger.debug(f"[OK] {endpoint_name}: Block #{block_number}")
+                return True
+            
+            return False
+            
         except Exception as e:
-            self.logger.warning(f"❌ {endpoint_name}: Test failed - {e}")
+            error_msg = f"{endpoint_name}: {str(e)}"
+            self.connection_errors.append(error_msg)
+            self.logger.debug(f"[FAILED] {error_msg}")
             return False
     
-    async def _get_latest_block_number(self, endpoint_url: str) -> Optional[int]:
-        """Get latest block number from an endpoint - ADDED MISSING METHOD."""
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "eth_blockNumber",
-            "params": [],
-            "id": 1
-        }
-        
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "DEX-Trading-Bot/1.0"
-        }
-        
+    async def _poll_endpoint(self, endpoint_name: str, endpoint_url: str) -> Dict[str, Any]:
+        """Poll an endpoint for recent transactions."""
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.post(endpoint_url, json=payload, headers=headers) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        if 'result' in result:
-                            return int(result['result'], 16)
-            return None
-        except Exception:
-            return None
-    
-    async def start_polling(self) -> bool:
-        """Start HTTP polling - ADDED MISSING METHOD."""
-        if not self.is_live_mode:
-            self.logger.info("HTTP polling disabled - using mock mode")
-            return False
-        
-        if not self.endpoints:
-            self.logger.error("No endpoints configured for HTTP polling")
-            return False
-        
-        self.is_polling = True
-        self.logger.info(f"Starting HTTP polling with {len(self.endpoints)} endpoints")
-        
-        # Start background polling task
-        asyncio.create_task(self._polling_loop())
-        return True
-    
-    async def _polling_loop(self):
-        """Background polling loop - ADDED MISSING METHOD."""
-        while self.is_polling:
-            try:
-                await self._poll_endpoints()
-                await asyncio.sleep(self.poll_interval)
-            except Exception as e:
-                self.logger.error(f"Polling loop error: {e}")
-                await asyncio.sleep(self.poll_interval)
-    
-    async def _poll_endpoints(self):
-        """Poll all endpoints for new data - ADDED MISSING METHOD."""
-        for endpoint_name in self.endpoints.keys():
-            try:
-                # Get latest block
-                result = await self._make_rpc_call(endpoint_name, "eth_blockNumber", [])
-                if result:
-                    block_number = int(result, 16)
-                    self.logger.debug(f"📊 {endpoint_name}: Block #{block_number}")
+            # Get latest block number
+            latest_block_hex = await self._make_rpc_call(endpoint_url, "eth_blockNumber")
+            latest_block = int(latest_block_hex, 16)
+            
+            # Get recent blocks
+            transactions = []
+            blocks_to_check = min(self.max_blocks_per_poll, 3)  # Start with fewer blocks
+            
+            for i in range(blocks_to_check):
+                block_num = latest_block - i
+                block_hex = hex(block_num)
+                
+                try:
+                    block = await self._make_rpc_call(
+                        endpoint_url,
+                        "eth_getBlockByNumber",
+                        [block_hex, True]  # Include full transactions
+                    )
                     
-                    # Update transaction counter (simplified)
-                    self.total_transactions += 1
-                    if self.total_transactions % 10 == 0:  # Simulate DEX detection
-                        self.dex_transactions += 1
-                    
-                    break  # Successfully got data from one endpoint
-            except Exception as e:
-                self.logger.warning(f"Error polling {endpoint_name}: {e}")
-                continue
+                    if block and 'transactions' in block:
+                        transactions.extend(block['transactions'])
+                        
+                except Exception as e:
+                    self.logger.debug(f"Error fetching block {block_num}: {e}")
+            
+            # Process transactions
+            dex_txs = self._filter_dex_transactions(transactions)
+            
+            # Update metrics
+            self.total_requests += 1
+            self.successful_requests += 1
+            self.total_transactions += len(transactions)
+            self.dex_transactions += len(dex_txs)
+            
+            return {
+                'endpoint': endpoint_name,
+                'latest_block': latest_block,
+                'transactions_found': len(transactions),
+                'dex_transactions': len(dex_txs),
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.debug(f"Polling error for {endpoint_name}: {e}")
+            return {}
     
-    def stop_polling(self):
-        """Stop the HTTP polling - ADDED MISSING METHOD."""
-        self.is_polling = False
-        self.logger.info("HTTP polling stopped")
+    def _filter_dex_transactions(self, transactions: list) -> list:
+        """Filter transactions for DEX activity."""
+        dex_txs = []
+        
+        # Known DEX router addresses (lowercase)
+        dex_routers = {
+            '0x2626664c2603336e57b271c5c0b26f421741e481',  # Base Uniswap V3
+            '0x7a250d5630b4cf539739df2c5dacb4c659f2488d',  # Uniswap V2
+            '0xe592427a0aece92de3edee1f18e0157c05861564',  # Uniswap V3
+        }
+        
+        for tx in transactions:
+            if tx and isinstance(tx, dict):
+                to_address = tx.get('to', '').lower()
+                if to_address in dex_routers:
+                    dex_txs.append(tx)
+        
+        return dex_txs
     
     async def initialize_live_monitoring(self) -> bool:
         """
-        Initialize live monitoring with improved endpoint testing.
+        Initialize the live monitoring service.
         
-        ENHANCED: Tests all endpoints and reports detailed status.
+        Returns:
+            True if initialization successful
         """
         if not self.is_live_mode:
-            self.logger.info("Live mode disabled - skipping initialization")
-            self.is_initialized = True
-            return True
-        
-        if not self.endpoints:
-            self.logger.error("No RPC endpoints configured")
+            self.logger.info("[INFO] Live monitoring disabled - using mock mode")
             return False
         
-        self.logger.info("🔄 Testing RPC endpoints...")
+        if not self.endpoints:
+            self.logger.error("[ERROR] No RPC endpoints configured")
+            return False
         
+        self.logger.info(f"[INIT] Testing {len(self.endpoints)} endpoints...")
+        
+        # Test all endpoints
         working_endpoints = []
-        
-        # Test each endpoint
-        for endpoint_name in self.endpoints.keys():
-            self.logger.debug(f"Testing {endpoint_name}...")
-            
+        for endpoint_name in self.endpoints:
             if await self._test_endpoint(endpoint_name):
                 working_endpoints.append(endpoint_name)
-                self.connections_active += 1
-                self.logger.info(f"✅ {endpoint_name}: Connected")
+                self.logger.info(f"[OK] {endpoint_name}: Connected")
             else:
-                self.logger.warning(f"❌ {endpoint_name}: Failed")
+                self.logger.warning(f"[X] {endpoint_name}: Failed")
         
         if working_endpoints:
-            self.logger.info(f"🎯 Live monitoring initialized with {len(working_endpoints)} working endpoints")
-            self.logger.info(f"Active endpoints: {', '.join(working_endpoints)}")
+            self.connections_active = len(working_endpoints)
             self.is_initialized = True
-            self.is_polling = True
+            self.logger.info(f"[SUCCESS] Live monitoring initialized with {len(working_endpoints)} working endpoints")
+            self.logger.info(f"Active endpoints: {', '.join(working_endpoints)}")
             
             # Start background polling
-            asyncio.create_task(self._background_polling())
+            asyncio.create_task(self._background_polling(working_endpoints))
+            self.logger.info("[POLLING] Starting background polling...")
             
             return True
         else:
-            self.logger.error("❌ No working endpoints found for HTTP polling")
-            
-            # Show specific error details for debugging
-            if self.connection_errors:
-                self.logger.error("Recent connection errors:")
-                for error in self.connection_errors[-5:]:  # Show last 5 errors
-                    self.logger.error(f"  - {error}")
-            
-            # Provide specific guidance based on the errors
-            if any('401' in str(error) for error in self.connection_errors):
-                self.logger.error("🔑 Authentication errors detected - check your API keys:")
-                self.logger.error("   1. Verify ALCHEMY_API_KEY is complete and valid")
-                self.logger.error("   2. Verify BASE_ALCHEMY_API_KEY is complete and valid") 
-                self.logger.error("   3. Verify INFURA_PROJECT_ID is complete and valid")
-                self.logger.error("   4. Check if API keys have proper permissions for Sepolia networks")
-            
+            self.logger.error("[ERROR] No working endpoints found")
             return False
     
-    async def _background_polling(self) -> None:
-        """Background polling for live data."""
-        self.logger.info("🔄 Starting background polling...")
+    async def _background_polling(self, working_endpoints: list):
+        """Background task to poll endpoints for live data."""
+        self.is_polling = True
         
-        while self.is_polling and self.is_live_mode:
+        while self.is_polling:
             try:
-                # Poll for new blocks and transactions
-                await self._poll_latest_data()
+                # Poll each working endpoint
+                for endpoint_name in working_endpoints:
+                    endpoint_url = self.endpoints[endpoint_name]
+                    result = await self._poll_endpoint(endpoint_name, endpoint_url)
+                    
+                    if result:
+                        # Store result in cache
+                        cache_key = f"live_data:{endpoint_name}"
+                        cache.set(cache_key, result, timeout=30)
+                        
+                        self.last_update = datetime.now(timezone.utc)
                 
-                # Update metrics
-                self.last_update = datetime.now(timezone.utc)
-                
-                # Wait for next poll
+                # Wait before next poll
                 await asyncio.sleep(self.poll_interval)
                 
             except Exception as e:
-                self.logger.error(f"Error in background polling: {e}")
-                await asyncio.sleep(self.poll_interval * 2)  # Back off on error
-    
-    async def _poll_latest_data(self) -> None:
-        """Poll for latest blockchain data from working endpoints."""
-        # Test with first working endpoint
-        for endpoint_name in self.endpoints.keys():
-            try:
-                # Get latest block
-                block_result = await self._make_rpc_call(endpoint_name, "eth_blockNumber", [])
-                
-                if block_result:
-                    block_number = int(block_result, 16)
-                    
-                    # Get block details
-                    block_data = await self._make_rpc_call(
-                        endpoint_name, 
-                        "eth_getBlockByNumber", 
-                        [hex(block_number), True]
-                    )
-                    
-                    if block_data and 'transactions' in block_data:
-                        # Process transactions
-                        transactions = block_data['transactions']
-                        self.total_transactions += len(transactions)
-                        
-                        # Simple DEX detection (this can be enhanced)
-                        dex_tx_count = len([tx for tx in transactions if self._is_dex_transaction(tx)])
-                        self.dex_transactions += dex_tx_count
-                        
-                        self.logger.debug(f"📊 Block #{block_number}: {len(transactions)} txs, {dex_tx_count} DEX")
-                        
-                        break  # Successfully processed, no need to try other endpoints
-                        
-            except Exception as e:
-                self.logger.warning(f"Error polling {endpoint_name}: {e}")
-                continue
-    
-    def _is_dex_transaction(self, tx: Dict) -> bool:
-        """
-        Simple heuristic to detect DEX transactions.
-        
-        This is a basic implementation - can be enhanced with contract address detection.
-        """
-        if not tx.get('to'):
-            return False
-        
-        # Check if transaction is to known DEX contracts (basic check)
-        to_address = tx['to'].lower()
-        
-        # Common DEX router addresses (can be expanded)
-        dex_contracts = {
-            '0x7a250d5630b4cf539739df2c5dacb4c659f2488d',  # Uniswap V2 Router
-            '0xe592427a0aece92de3edee1f18e0157c05861564',  # Uniswap V3 Router
-            '0x2626664c2603336e57b271c5c0b26f421741e481',  # Base Uniswap V3 Router
-        }
-        
-        return to_address in dex_contracts
+                self.logger.error(f"[ERROR] Polling error: {e}")
+                await asyncio.sleep(self.poll_interval)
     
     def get_live_status(self) -> Dict[str, Any]:
-        """Get live data status - ENHANCED VERSION."""
-        success_rate = (self.successful_requests / max(self.total_requests, 1)) * 100
-        
+        """Get current status of the live service."""
         return {
+            'is_running': self.is_initialized and self.is_polling,
             'is_live_mode': self.is_live_mode,
-            'is_running': self.is_initialized and self.is_live_mode and self.is_polling,
-            'is_initialized': self.is_initialized,
-            'method': 'HTTP_POLLING',
-            'endpoints_configured': len(self.endpoints),
-            'connection_errors': self.connection_errors[-5:],  # Last 5 errors
-            'connections': {},
+            'connections': {
+                'active': self.connections_active,
+                'endpoints': list(self.endpoints.keys()) if self.endpoints else []
+            },
             'metrics': {
-                'total_connections': len(self.endpoints),
-                'active_connections': self.connections_active,
-                'connection_uptime_percentage': success_rate,
-                'total_transactions_processed': self.total_transactions,
-                'dex_transactions_detected': self.dex_transactions,
                 'total_requests': self.total_requests,
                 'successful_requests': self.successful_requests,
-                'success_rate': success_rate,
-                'last_update': self.last_update.isoformat() if self.last_update else None,
+                'total_transactions': self.total_transactions,
+                'dex_transactions': self.dex_transactions,
+                'active_connections': self.connections_active,
+                'last_update': self.last_update.isoformat() if self.last_update else None
             },
-            'api_keys_configured': {
-                'alchemy': bool(getattr(settings, 'ALCHEMY_API_KEY', '')),
-                'base_alchemy': bool(getattr(settings, 'BASE_ALCHEMY_API_KEY', '')),
-                'infura': bool(getattr(settings, 'INFURA_PROJECT_ID', ''))
-            },
-            'supported_chains': getattr(settings, 'SUPPORTED_CHAINS', [84532, 11155111]),
-            'poll_interval': self.poll_interval,
-            'timestamp': datetime.now(timezone.utc).isoformat()
+            'connection_errors': self.connection_errors[-5:] if self.connection_errors else []
         }
     
-    def get_live_metrics(self) -> Dict[str, Any]:
-        """Get live monitoring metrics - ENHANCED VERSION."""
-        success_rate = (self.successful_requests / max(self.total_requests, 1)) * 100
-        
-        return {
-            'total_transactions_processed': self.total_transactions,
-            'dex_transactions_detected': self.dex_transactions,
-            'average_processing_latency_ms': 5000,  # 5 second polling interval
-            'active_connections': self.connections_active,
-            'connection_uptime_percentage': success_rate,
-            'is_live': self.is_live_mode and self.is_initialized and self.is_polling,
-            'last_update': self.last_update.isoformat(),
-            'dex_detection_rate': (
-                (self.dex_transactions / max(self.total_transactions, 1)) * 100
-                if self.total_transactions > 0 else 0
-            ),
-            'connection_errors_count': len(self.connection_errors),
-            'method': 'HTTP_POLLING',
-            'poll_interval_seconds': self.poll_interval,
-            'last_poll_time': self.last_update.isoformat() if self.last_update else None,
-        }
-    
-    def is_ready(self) -> bool:
-        """Check if service is ready for use."""
-        return self.is_initialized or not self.is_live_mode
+    def stop(self):
+        """Stop the live monitoring service."""
+        self.is_polling = False
+        self.is_initialized = False
+        self.logger.info("[STOP] Live monitoring stopped")
 
 
-# Global service instance
+# Create singleton instance
 http_live_service = HTTPLiveService()
 
-
-# Helper functions  
-def get_live_mempool_status() -> Dict[str, Any]:
-    """Get live mempool status via HTTP polling."""
-    return http_live_service.get_live_status()
-
-
-def get_live_mempool_metrics() -> Dict[str, Any]:
-    """Get live mempool metrics via HTTP polling."""
-    return http_live_service.get_live_metrics()
-
-
-async def initialize_live_mempool() -> bool:
-    """Initialize live mempool monitoring via HTTP polling."""
-    return await http_live_service.initialize_live_monitoring()
-
-
-def is_live_data_available() -> bool:
-    """Check if live data is available via HTTP polling."""
-    return http_live_service.is_live_mode and http_live_service.is_ready()
+# Export for use by other modules
+__all__ = ['HTTPLiveService', 'http_live_service']

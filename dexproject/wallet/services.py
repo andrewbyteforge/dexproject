@@ -1,12 +1,12 @@
 """
-Fixed SIWE Service - Parsing and Session Creation Fix
+Fixed SIWE Service - Authentication Issue Resolved
 
-Fixed the issue with parsing SIWE messages and creating sessions.
+Fixed the issue with wallet_address variable scope in create_siwe_session method.
 The main issues were:
-1. Missing expirationTime in parsed message data
-2. Improved error handling and logging
+1. wallet_address variable was being reassigned, causing scope issues in exception handling
+2. Missing proper error handling for the checksum conversion
 
-File: dexproject/wallet/services.py (Fixed version)
+File: dexproject/wallet/services.py
 """
 
 import json
@@ -156,68 +156,66 @@ class SIWEService:
             message: SIWE message string
             
         Returns:
-            Dictionary with parsed components or None if parsing fails
+            Dictionary of parsed components or None if parsing fails
         """
         try:
             lines = message.strip().split('\n')
-            if len(lines) < 8:
-                logger.error(f"SIWE message has insufficient lines: {len(lines)}")
-                return None
-            
-            # Initialize data dictionary
             data = {}
             
-            # Extract address from second line
-            if len(lines) > 1:
-                data['address'] = lines[1].strip()
-            
-            # Extract statement (line before URI, after empty line)
-            statement_line = None
-            for i, line in enumerate(lines):
-                if line.strip() == "" and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if next_line and not next_line.startswith('URI:'):
-                        statement_line = next_line
-                        break
-            
-            if statement_line:
-                data['statement'] = statement_line
-            
-            # Extract key-value pairs
+            # Parse each line
             for line in lines:
                 line = line.strip()
+                
+                # Handle address line (second line)
+                if line.startswith('0x') and len(line) == 42:
+                    data['address'] = line
+                    continue
+                
+                # Handle field:value pairs
                 if ':' in line:
-                    key, value = line.split(':', 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    if key == 'URI':
-                        data['uri'] = value
-                    elif key == 'Version':
-                        data['version'] = value
-                    elif key == 'Chain ID':
-                        try:
-                            data['chainId'] = int(value)
-                        except ValueError:
-                            logger.error(f"Invalid Chain ID: {value}")
-                            return None
-                    elif key == 'Nonce':
-                        data['nonce'] = value
-                    elif key == 'Issued At':
-                        data['issuedAt'] = value
-                    elif key == 'Expiration Time':
-                        data['expirationTime'] = value
-                    elif key == 'Not Before':
-                        data['notBefore'] = value
-                    elif key == 'Request ID':
-                        data['requestId'] = value
+                    # Split only on first colon to handle URIs
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+                        
+                        # Map field names to expected keys
+                        field_mapping = {
+                            'URI': 'uri',
+                            'Version': 'version',
+                            'Chain ID': 'chainId',
+                            'Nonce': 'nonce',
+                            'Issued At': 'issuedAt',
+                            'Expiration Time': 'expirationTime',
+                            'Not Before': 'notBefore',
+                            'Request ID': 'requestId',
+                            'Statement': 'statement'
+                        }
+                        
+                        mapped_key = field_mapping.get(key, key.lower().replace(' ', ''))
+                        data[mapped_key] = value
             
             # Extract domain from first line
-            if len(lines) > 0:
+            if lines:
                 first_line = lines[0]
                 if 'wants you to sign in' in first_line:
                     domain = first_line.split(' wants you to sign in')[0]
                     data['domain'] = domain
+            
+            # Extract statement (if present as separate lines)
+            statement_lines = []
+            in_statement = False
+            for line in lines:
+                if line == "":
+                    if in_statement:
+                        break
+                    elif data.get('address'):
+                        in_statement = True
+                elif in_statement and ':' not in line and not line.startswith('0x'):
+                    statement_lines.append(line)
+            
+            if statement_lines:
+                data['statement'] = ' '.join(statement_lines)
             
             # Validate required fields
             required_fields = ['address', 'uri', 'version', 'chainId', 'nonce', 'issuedAt']
@@ -226,7 +224,6 @@ class SIWEService:
             if missing_fields:
                 logger.error(f"Missing required SIWE fields: {missing_fields}")
                 logger.debug(f"Parsed data: {data}")
-                logger.debug(f"Original message: {message}")
                 return None
             
             logger.debug(f"Successfully parsed SIWE message with fields: {list(data.keys())}")
@@ -234,7 +231,7 @@ class SIWEService:
             
         except Exception as e:
             logger.error(f"Failed to parse SIWE message: {e}")
-            logger.debug(f"Message content: {message}")
+            logger.debug(f"Message content: {message[:200]}...")  # Log first 200 chars
             return None
     
     async def verify_siwe_signature(
@@ -259,6 +256,7 @@ class SIWEService:
                 logger.warning("Web3 not available - using fallback signature verification")
                 # In fallback mode, do basic validation but don't verify signature
                 if not signature or not signature.startswith('0x') or len(signature) != 132:
+                    logger.error("Invalid signature format in fallback mode")
                     return False
                 logger.debug("Fallback signature verification passed basic checks")
                 return True
@@ -270,14 +268,13 @@ class SIWEService:
                 return False
             
             try:
-                # Encode the message properly for signature verification
-                # SIWE uses personal sign which prefixes the message
-                encoded_message = f"\x19Ethereum Signed Message:\n{len(message)}{message}"
-                message_hash = web3.keccak(text=encoded_message)
+                # Use eth_account for signature verification
+                from eth_account.messages import encode_defunct
                 
-                # Recover address from signature using the correct Web3 method
+                # Create message hash using encode_defunct
+                message_encoded = encode_defunct(text=message)
                 recovered_address = web3.eth.account.recover_message(
-                    message_hash,
+                    message_encoded,
                     signature=signature
                 )
                 
@@ -293,31 +290,7 @@ class SIWEService:
                 
             except Exception as signature_error:
                 logger.error(f"Error recovering address from signature: {signature_error}")
-                
-                # Try alternative method with encode_defunct
-                try:
-                    from eth_account.messages import encode_defunct
-                    
-                    # Create message hash using encode_defunct
-                    message_encoded = encode_defunct(text=message)
-                    recovered_address = web3.eth.account.recover_message(
-                        message_encoded,
-                        signature=signature
-                    )
-                    
-                    # Compare addresses (case-insensitive)
-                    is_valid = recovered_address.lower() == wallet_address.lower()
-                    
-                    if is_valid:
-                        logger.debug(f"SIWE signature verified successfully using encode_defunct for {wallet_address}")
-                    else:
-                        logger.warning(f"SIWE signature verification failed using encode_defunct: expected {wallet_address}, got {recovered_address}")
-                    
-                    return is_valid
-                    
-                except Exception as alt_error:
-                    logger.error(f"Alternative signature verification also failed: {alt_error}")
-                    return False
+                return False
             
         except Exception as e:
             logger.error(f"Error verifying SIWE signature: {e}")
@@ -346,20 +319,24 @@ class SIWEService:
         Returns:
             SIWESession instance if verification successful, None otherwise
         """
+        # Store original wallet address for error handling
+        original_wallet_address = wallet_address
+        message_data = None
+        
         try:
             # Parse the SIWE message to extract components
             message_data = self._parse_siwe_message(message)
             if not message_data:
-                logger.error("Failed to parse SIWE message")
+                logger.error(f"Failed to parse SIWE message for wallet {original_wallet_address}")
                 return None
             
             # Verify the signature
             is_valid = await self.verify_siwe_signature(message, signature, wallet_address)
             if not is_valid:
-                logger.error("SIWE signature verification failed")
+                logger.error(f"SIWE signature verification failed for {original_wallet_address}")
                 return None
             
-            # Get wallet address in checksum format
+            # Get wallet address in checksum format if available
             checksum_address = to_checksum_ethereum_address(wallet_address)
             if checksum_address:
                 wallet_address = checksum_address
@@ -371,7 +348,7 @@ class SIWEService:
                     issued_at_str = issued_at_str[:-1] + '+00:00'
                 issued_at = datetime.fromisoformat(issued_at_str)
             except Exception as e:
-                logger.error(f"Failed to parse issued_at timestamp: {e}")
+                logger.warning(f"Failed to parse issued_at timestamp: {e}, using current time")
                 issued_at = timezone.now()
             
             # Handle expiration time - make it optional
@@ -385,14 +362,18 @@ class SIWEService:
                 except Exception as e:
                     logger.warning(f"Failed to parse expiration_time timestamp: {e}")
                     # Set default expiration if parsing fails
-                    expiration_time = timezone.now() + timedelta(hours=24)
+                    expiration_time = timezone.now() + timedelta(hours=self.default_expiration_hours)
             else:
                 # Set default expiration if not provided
-                expiration_time = timezone.now() + timedelta(hours=24)
-                logger.info("No expiration time in message, using default 24 hours")
+                expiration_time = timezone.now() + timedelta(hours=self.default_expiration_hours)
+                logger.debug("No expiration time in message, using default 24 hours")
+            
+            # Generate session ID
+            session_id = secrets.token_hex(32)
             
             # Create SIWE session
             session = await sync_to_async(SIWESession.objects.create)(
+                session_id=session_id,
                 wallet_address=wallet_address,
                 domain=message_data.get('domain', self.domain),
                 statement=message_data.get('statement', ''),
@@ -410,12 +391,13 @@ class SIWEService:
                 verified_at=timezone.now()
             )
             
-            logger.info(f"Created SIWE session for {wallet_address}")
+            logger.info(f"Created SIWE session {session_id} for {wallet_address}")
             return session
             
         except Exception as e:
-            logger.error(f"Failed to create SIWE session: {e}")
-            logger.debug(f"Message data: {message_data if 'message_data' in locals() else 'None'}")
+            logger.error(f"Failed to create SIWE session for {original_wallet_address}: {e}")
+            if message_data:
+                logger.debug(f"Message data: {message_data}")
             return None
 
 
@@ -452,19 +434,39 @@ class WalletService:
         
     def _initialize_web3_providers(self):
         """Initialize Web3 providers for supported chains."""
-        try:
-            # Initialize providers for each supported chain
-            for chain_id, name in self.supported_chains.items():
-                try:
-                    web3_instance = create_web3_instance(chain_id)
-                    if web3_instance:
-                        self.web3_providers[chain_id] = web3_instance
-                        logger.debug(f"Initialized Web3 provider for {name} (Chain {chain_id})")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize Web3 provider for {name}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Error initializing Web3 providers: {e}")
+        if not self.web3_available:
+            logger.debug("Skipping Web3 provider initialization - Web3 not available")
+            return
+        
+        # Use centralized Web3 creation
+        for chain_id in self.supported_chains:
+            try:
+                # Get RPC URL based on chain
+                rpc_url = self._get_rpc_url_for_chain(chain_id)
+                if rpc_url:
+                    web3 = create_web3_instance(rpc_url)
+                    if web3 and web3.is_connected():
+                        self.web3_providers[chain_id] = web3
+                        logger.debug(f"Initialized Web3 provider for chain {chain_id}")
+                    else:
+                        logger.warning(f"Could not connect to chain {chain_id}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Web3 for chain {chain_id}: {e}")
+    
+    def _get_rpc_url_for_chain(self, chain_id: int) -> Optional[str]:
+        """Get RPC URL for a specific chain."""
+        # Map chain IDs to RPC URLs
+        rpc_urls = {
+            1: getattr(settings, 'ETH_MAINNET_RPC', 'https://eth.public-rpc.com'),
+            84532: getattr(settings, 'BASE_SEPOLIA_RPC', 'https://sepolia.base.org'),
+            8453: getattr(settings, 'BASE_MAINNET_RPC', 'https://mainnet.base.org'),
+            11155111: getattr(settings, 'SEPOLIA_RPC', 'https://rpc.sepolia.org')
+        }
+        return rpc_urls.get(chain_id)
+    
+    def get_web3_for_chain(self, chain_id: int):
+        """Get Web3 instance for a specific chain."""
+        return self.web3_providers.get(chain_id)
     
     async def authenticate_wallet(
         self,
@@ -472,12 +474,12 @@ class WalletService:
         chain_id: int,
         signature: str,
         message: str,
-        wallet_type: str = 'UNKNOWN',
+        wallet_type: str = Wallet.WalletType.METAMASK,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None
     ) -> Tuple[Optional[User], Optional[Wallet], Optional[SIWESession]]:
         """
-        Authenticate a wallet using SIWE signature.
+        Authenticate a wallet using SIWE.
         
         Args:
             wallet_address: Ethereum wallet address
@@ -538,22 +540,22 @@ class WalletService:
     async def _get_or_create_user_for_wallet(self, wallet_address: str) -> Optional[User]:
         """Get or create a Django user for a wallet address."""
         try:
-            username = f"wallet_{wallet_address.lower()[-8:]}"  # Use last 8 chars for username
+            # Generate username from wallet address
+            username = f"wallet_{wallet_address[-8:].lower()}"
             
             # Try to get existing user
-            try:
-                user = await sync_to_async(User.objects.get)(username=username)
+            user = await sync_to_async(User.objects.filter(username=username).first)()
+            
+            if user:
                 logger.debug(f"Found existing user {username} for wallet {wallet_address}")
                 return user
-            except User.DoesNotExist:
-                pass
             
             # Create new user
             user = await sync_to_async(User.objects.create_user)(
                 username=username,
-                email=f"{username}@wallet.local",  # Dummy email
-                first_name="Wallet",
-                last_name=wallet_address[:10] + "..."
+                first_name='Wallet',
+                last_name='User',
+                email=f"{username}@wallet.local"
             )
             
             logger.info(f"Created new user {username} for wallet {wallet_address}")
@@ -570,52 +572,215 @@ class WalletService:
         wallet_type: str,
         chain_id: int
     ) -> Optional[Wallet]:
-        """Get or create a wallet record."""
+        """Get or create wallet record."""
         try:
+            # Convert to checksum address if possible
+            checksum_address = to_checksum_ethereum_address(wallet_address)
+            if checksum_address:
+                wallet_address = checksum_address
+            
             # Try to get existing wallet
-            try:
-                wallet = await sync_to_async(Wallet.objects.get)(
-                    address=wallet_address.lower(),
-                    user=user
-                )
-                
-                # Update connection info
-                wallet.last_connected_at = timezone.now()
-                wallet.status = Wallet.WalletStatus.CONNECTED
-                if wallet.primary_chain_id != chain_id:
-                    wallet.primary_chain_id = chain_id
-                
-                await sync_to_async(wallet.save)()
-                logger.debug(f"Updated existing wallet record for {wallet_address}")
+            wallet = await sync_to_async(
+                Wallet.objects.filter(address=wallet_address).first
+            )()
+            
+            if wallet:
+                # Update wallet if needed
+                if wallet.user != user:
+                    wallet.user = user
+                    wallet.status = Wallet.WalletStatus.CONNECTED
+                    await sync_to_async(wallet.save)(update_fields=['user', 'status'])
+                logger.debug(f"Found existing wallet record for {wallet_address}")
                 return wallet
-                
-            except Wallet.DoesNotExist:
-                pass
             
             # Create new wallet
             wallet = await sync_to_async(Wallet.objects.create)(
                 user=user,
-                address=wallet_address.lower(),
+                address=wallet_address,
                 wallet_type=wallet_type,
                 primary_chain_id=chain_id,
-                status=Wallet.WalletStatus.CONNECTED,
-                last_connected_at=timezone.now()
+                status=Wallet.WalletStatus.CONNECTED
             )
             
             logger.info(f"Created new wallet record for {wallet_address}")
             return wallet
             
         except Exception as e:
-            logger.error(f"Failed to get or create wallet record for {wallet_address}: {e}")
+            logger.error(f"Failed to get or create wallet record: {e}")
             return None
-
-
-# Initialize service instances
-wallet_service = WalletService()
-
-# Export services
-__all__ = [
-    'SIWEService',
-    'WalletService', 
-    'wallet_service'
-]
+    
+    async def get_wallet_balance(
+        self,
+        wallet_address: str,
+        chain_id: int
+    ) -> Optional[Decimal]:
+        """
+        Get wallet balance for a specific chain.
+        
+        Args:
+            wallet_address: Wallet address to check
+            chain_id: Chain ID to check balance on
+            
+        Returns:
+            Balance in Ether/native token or None if error
+        """
+        if not self.web3_available:
+            logger.warning("Web3 not available - cannot get wallet balance")
+            return None
+            
+        try:
+            web3 = self.get_web3_for_chain(chain_id)
+            if not web3:
+                logger.error(f"No Web3 provider for chain {chain_id}")
+                return None
+            
+            # Convert to checksum address
+            checksum_address = to_checksum_ethereum_address(wallet_address)
+            if not checksum_address:
+                logger.error(f"Invalid wallet address: {wallet_address}")
+                return None
+            
+            # Get balance in Wei
+            balance_wei = await sync_to_async(web3.eth.get_balance)(checksum_address)
+            
+            # Convert to Ether
+            balance_ether = web3.from_wei(balance_wei, 'ether')
+            
+            logger.debug(f"Balance for {wallet_address} on chain {chain_id}: {balance_ether}")
+            return Decimal(str(balance_ether))
+            
+        except Exception as e:
+            logger.error(f"Failed to get balance for {wallet_address} on chain {chain_id}: {e}")
+            return None
+    
+    async def get_token_balance(
+        self,
+        wallet_address: str,
+        token_address: str,
+        chain_id: int,
+        decimals: int = 18
+    ) -> Optional[Decimal]:
+        """
+        Get ERC20 token balance for a wallet.
+        
+        Args:
+            wallet_address: Wallet address to check
+            token_address: Token contract address
+            chain_id: Chain ID
+            decimals: Token decimals (default 18)
+            
+        Returns:
+            Token balance or None if error
+        """
+        if not self.web3_available:
+            logger.warning("Web3 not available - cannot get token balance")
+            return None
+            
+        try:
+            web3 = self.get_web3_for_chain(chain_id)
+            if not web3:
+                logger.error(f"No Web3 provider for chain {chain_id}")
+                return None
+            
+            # Convert addresses to checksum
+            wallet_checksum = to_checksum_ethereum_address(wallet_address)
+            token_checksum = to_checksum_ethereum_address(token_address)
+            
+            if not wallet_checksum or not token_checksum:
+                logger.error("Invalid wallet or token address")
+                return None
+            
+            # ERC20 ABI for balanceOf function
+            erc20_abi = [{
+                "constant": True,
+                "inputs": [{"name": "_owner", "type": "address"}],
+                "name": "balanceOf",
+                "outputs": [{"name": "balance", "type": "uint256"}],
+                "type": "function"
+            }]
+            
+            # Create contract instance
+            contract = web3.eth.contract(address=token_checksum, abi=erc20_abi)
+            
+            # Get balance
+            balance_raw = await sync_to_async(contract.functions.balanceOf(wallet_checksum).call)()
+            
+            # Convert based on decimals
+            balance = Decimal(balance_raw) / Decimal(10 ** decimals)
+            
+            logger.debug(f"Token balance for {wallet_address}: {balance}")
+            return balance
+            
+        except Exception as e:
+            logger.error(f"Failed to get token balance: {e}")
+            return None
+    
+    async def monitor_wallet_transactions(
+        self,
+        wallet_address: str,
+        chain_id: int,
+        from_block: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Monitor transactions for a wallet.
+        
+        Args:
+            wallet_address: Wallet address to monitor
+            chain_id: Chain ID to monitor
+            from_block: Starting block number (None for latest)
+            
+        Returns:
+            List of transaction details
+        """
+        try:
+            web3 = self.get_web3_for_chain(chain_id)
+            if not web3:
+                logger.error(f"No Web3 provider for chain {chain_id}")
+                return []
+            
+            # This would typically use event filters or transaction history APIs
+            # For now, return empty list as placeholder
+            logger.debug(f"Transaction monitoring not fully implemented for {wallet_address}")
+            return []
+            
+        except Exception as e:
+            logger.error(f"Failed to monitor transactions: {e}")
+            return []
+    
+    async def update_wallet_balances(self, wallet: Wallet) -> bool:
+        """
+        Update all balances for a wallet.
+        
+        Args:
+            wallet: Wallet instance to update
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Get native balance for primary chain
+            if self.web3_available:
+                balance = await self.get_wallet_balance(
+                    wallet.address,
+                    wallet.primary_chain_id
+                )
+                
+                if balance is not None:
+                    # Update or create balance record
+                    await sync_to_async(WalletBalance.objects.update_or_create)(
+                        wallet=wallet,
+                        chain_id=wallet.primary_chain_id,
+                        token_address=None,  # Native token
+                        defaults={
+                            'balance': balance,
+                            'balance_usd': balance * Decimal('0')  # Would need price feed
+                        }
+                    )
+                    logger.info(f"Updated balance for wallet {wallet.address}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to update wallet balances: {e}")
+            return False

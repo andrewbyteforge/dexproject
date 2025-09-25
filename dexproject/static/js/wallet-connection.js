@@ -4,7 +4,15 @@
  * Complete frontend implementation for SIWE (Sign-In with Ethereum) wallet connection.
  * Integrates with MetaMask, WalletConnect, and other Web3 providers.
  * 
- * Phase 5.1B Frontend Implementation
+ * Phase 5.1B Frontend Implementation - UPDATED
+ * 
+ * Updates include:
+ * - Session persistence using localStorage
+ * - Automatic reconnection on page load
+ * - Retry logic for database lock errors
+ * - Better error handling for signature issues
+ * - Maintains connection across page navigation
+ * 
  * File: static/js/wallet-connection.js
  */
 
@@ -16,6 +24,12 @@ class WalletConnectionManager {
         this.chainId = null;
         this.provider = null;
         this.signer = null;
+        this.sessionId = null;
+        this.walletId = null;
+
+        // Retry configuration for database locks
+        this.maxRetries = 3;
+        this.retryDelay = 1000; // Base delay in milliseconds
 
         // Supported chains
         this.supportedChains = {
@@ -57,7 +71,10 @@ class WalletConnectionManager {
     async init() {
         console.log('🔗 Initializing Wallet Connection Manager...');
 
-        // Check if already connected from previous session
+        // Check localStorage for saved session first
+        await this.checkLocalStorageSession();
+
+        // Check if already connected from backend session
         await this.checkExistingConnection();
 
         // Setup event listeners
@@ -66,21 +83,154 @@ class WalletConnectionManager {
         // Setup wallet provider listeners
         this.setupWalletListeners();
 
+        // Monitor page visibility for reconnection
+        this.setupVisibilityListener();
+
         console.log('✅ Wallet Connection Manager initialized');
     }
 
     /**
-     * Check for existing wallet connection
+     * Check localStorage for saved wallet session
+     */
+    async checkLocalStorageSession() {
+        try {
+            const savedSession = localStorage.getItem('walletSession');
+            if (savedSession) {
+                const session = JSON.parse(savedSession);
+
+                // Check if session is less than 24 hours old
+                const sessionAge = Date.now() - session.timestamp;
+                if (sessionAge < 24 * 60 * 60 * 1000) {
+                    console.log('📦 Found saved wallet session in localStorage');
+
+                    // Try to reconnect with saved session
+                    await this.reconnectWithSavedSession(session);
+                } else {
+                    // Session expired, clear it
+                    console.log('⏰ Saved session expired, clearing...');
+                    localStorage.removeItem('walletSession');
+                }
+            }
+        } catch (error) {
+            console.error('Error checking localStorage session:', error);
+            localStorage.removeItem('walletSession');
+        }
+    }
+
+    /**
+     * Reconnect with saved session from localStorage
+     */
+    async reconnectWithSavedSession(session) {
+        try {
+            if (window.ethereum) {
+                // Check if the wallet is still connected
+                const accounts = await window.ethereum.request({
+                    method: 'eth_accounts'
+                });
+
+                if (accounts.length > 0 &&
+                    accounts[0].toLowerCase() === session.walletAddress.toLowerCase()) {
+
+                    // Wallet is still connected, restore session
+                    this.provider = window.ethereum;
+                    this.walletAddress = session.walletAddress;
+                    this.chainId = session.chainId;
+                    this.walletType = session.walletType;
+                    this.sessionId = session.sessionId;
+                    this.walletId = session.walletId;
+                    this.isConnected = true;
+
+                    console.log('🔄 Reconnected with saved session from localStorage');
+                    this.updateConnectionUI();
+
+                    // Verify with backend
+                    await this.verifyBackendSession();
+                } else {
+                    // Wallet changed or disconnected, clear saved session
+                    localStorage.removeItem('walletSession');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to reconnect with saved session:', error);
+            localStorage.removeItem('walletSession');
+        }
+    }
+
+    /**
+     * Verify session with backend
+     */
+    async verifyBackendSession() {
+        try {
+            const response = await fetch('/api/wallet/info/', {
+                headers: {
+                    'X-CSRFToken': this.getCSRFToken()
+                }
+            });
+
+            if (!response.ok) {
+                // Backend session invalid, re-authenticate
+                console.log('⚠️ Backend session invalid, re-authenticating...');
+                await this.authenticateWithSIWE();
+            }
+        } catch (error) {
+            console.error('Failed to verify backend session:', error);
+        }
+    }
+
+    /**
+     * Check for existing wallet connection from backend
      */
     async checkExistingConnection() {
         try {
-            // Check if wallet is connected in session
+            // Check if wallet is connected in backend session
             const sessionData = await this.checkSessionStatus();
             if (sessionData && sessionData.connected) {
                 await this.restoreWalletConnection(sessionData);
             }
         } catch (error) {
-            console.log('No existing wallet connection found');
+            console.log('No existing backend connection found');
+        }
+    }
+
+    /**
+     * Setup page visibility listener for reconnection
+     */
+    setupVisibilityListener() {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && this.isConnected) {
+                // Page became visible and we think we're connected
+                // Verify the connection is still valid
+                this.verifyConnection();
+            }
+        });
+
+        // Also check on focus
+        window.addEventListener('focus', () => {
+            if (this.isConnected) {
+                this.verifyConnection();
+            }
+        });
+    }
+
+    /**
+     * Verify current connection is still valid
+     */
+    async verifyConnection() {
+        if (!this.provider || !window.ethereum) return;
+
+        try {
+            const accounts = await window.ethereum.request({
+                method: 'eth_accounts'
+            });
+
+            if (accounts.length === 0 ||
+                accounts[0].toLowerCase() !== this.walletAddress?.toLowerCase()) {
+                // Connection lost or account changed
+                console.log('⚠️ Connection lost or account changed');
+                this.handleDisconnection();
+            }
+        } catch (error) {
+            console.error('Error verifying connection:', error);
         }
     }
 
@@ -113,12 +263,15 @@ class WalletConnectionManager {
      */
     setupWalletListeners() {
         if (window.ethereum) {
+            // Remove any existing listeners first
+            window.ethereum.removeAllListeners?.();
+
             // Account changes
             window.ethereum.on('accountsChanged', (accounts) => {
                 console.log('👤 Accounts changed:', accounts);
                 if (accounts.length === 0) {
                     this.handleDisconnection();
-                } else if (accounts[0] !== this.walletAddress) {
+                } else if (accounts[0]?.toLowerCase() !== this.walletAddress?.toLowerCase()) {
                     this.handleAccountChange(accounts[0]);
                 }
             });
@@ -196,9 +349,9 @@ class WalletConnectionManager {
     }
 
     /**
-     * Authenticate using SIWE (Sign-In with Ethereum)
+     * Authenticate using SIWE (Sign-In with Ethereum) with retry logic
      */
-    async authenticateWithSIWE() {
+    async authenticateWithSIWE(retryCount = 0) {
         try {
             this.showLoading('Generating authentication message...');
 
@@ -226,16 +379,24 @@ class WalletConnectionManager {
             this.showLoading('Please sign the message in your wallet...');
 
             // Sign message with wallet
-            const signature = await this.provider.request({
-                method: 'personal_sign',
-                params: [message, this.walletAddress]
-            });
+            let signature;
+            try {
+                signature = await this.provider.request({
+                    method: 'personal_sign',
+                    params: [message, this.walletAddress]
+                });
+            } catch (signError) {
+                if (signError.code === 4001) {
+                    throw new Error('User rejected signature request');
+                }
+                throw signError;
+            }
 
             console.log('✏️ Message signed');
 
             this.showLoading('Authenticating...');
 
-            // Authenticate with backend
+            // Authenticate with backend with retry logic for database locks
             const authResponse = await fetch('/api/wallet/auth/siwe/authenticate/', {
                 method: 'POST',
                 headers: {
@@ -253,7 +414,23 @@ class WalletConnectionManager {
 
             if (!authResponse.ok) {
                 const errorData = await authResponse.json();
-                throw new Error(errorData.error || 'Authentication failed');
+                const errorMessage = errorData.error || 'Authentication failed';
+
+                // Check if it's a database lock error and we should retry
+                if (errorMessage.toLowerCase().includes('database is locked') &&
+                    retryCount < this.maxRetries) {
+
+                    console.log(`⏳ Database locked, retrying (${retryCount + 1}/${this.maxRetries})...`);
+
+                    // Wait with exponential backoff
+                    const delay = this.retryDelay * Math.pow(2, retryCount);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+
+                    // Retry authentication
+                    return await this.authenticateWithSIWE(retryCount + 1);
+                }
+
+                throw new Error(errorMessage);
             }
 
             const authData = await authResponse.json();
@@ -263,6 +440,9 @@ class WalletConnectionManager {
             this.isConnected = true;
             this.sessionId = authData.session_id;
             this.walletId = authData.wallet_id;
+
+            // Save session to localStorage
+            this.saveSessionToLocalStorage();
 
             // Update UI
             this.updateConnectionUI();
@@ -276,10 +456,44 @@ class WalletConnectionManager {
                 walletId: this.walletId
             });
 
+            // Reload page to update dashboard with wallet info
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+
         } catch (error) {
             console.error('❌ SIWE authentication failed:', error);
+
+            // Clear any partial session data
+            this.clearSessionFromLocalStorage();
+
             throw error;
         }
+    }
+
+    /**
+     * Save session to localStorage for persistence
+     */
+    saveSessionToLocalStorage() {
+        const session = {
+            walletAddress: this.walletAddress,
+            chainId: this.chainId,
+            walletType: this.walletType,
+            sessionId: this.sessionId,
+            walletId: this.walletId,
+            timestamp: Date.now()
+        };
+
+        localStorage.setItem('walletSession', JSON.stringify(session));
+        console.log('💾 Session saved to localStorage');
+    }
+
+    /**
+     * Clear session from localStorage
+     */
+    clearSessionFromLocalStorage() {
+        localStorage.removeItem('walletSession');
+        console.log('🗑️ Session cleared from localStorage');
     }
 
     /**
@@ -300,10 +514,18 @@ class WalletConnectionManager {
                 });
             }
 
+            // Clear localStorage session
+            this.clearSessionFromLocalStorage();
+
             // Reset state
             this.handleDisconnection();
 
             this.showSuccess('Wallet disconnected successfully!');
+
+            // Reload page to update dashboard
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
 
         } catch (error) {
             console.error('❌ Disconnect error:', error);
@@ -325,6 +547,9 @@ class WalletConnectionManager {
         this.sessionId = null;
         this.walletId = null;
 
+        // Clear localStorage
+        this.clearSessionFromLocalStorage();
+
         this.updateConnectionUI();
 
         // Trigger custom event
@@ -338,12 +563,16 @@ class WalletConnectionManager {
         console.log('👤 Account changed to:', newAddress);
 
         if (this.isConnected) {
+            // Clear current session
+            this.clearSessionFromLocalStorage();
+
             // Disconnect current session and reconnect with new account
             await this.disconnectWallet();
 
             // Small delay before reconnecting
             setTimeout(async () => {
                 try {
+                    this.walletAddress = newAddress;
                     await this.connectWallet();
                 } catch (error) {
                     console.error('Failed to reconnect with new account:', error);
@@ -359,6 +588,12 @@ class WalletConnectionManager {
         console.log('⛓️ Chain changed to:', newChainId);
 
         this.chainId = newChainId;
+
+        // Update saved session
+        if (this.isConnected) {
+            this.saveSessionToLocalStorage();
+        }
+
         this.updateConnectionUI();
 
         // Check if new chain is supported
@@ -537,7 +772,7 @@ class WalletConnectionManager {
      * Restore wallet connection from session
      */
     async restoreWalletConnection(sessionData) {
-        console.log('🔄 Restoring wallet connection...');
+        console.log('🔄 Restoring wallet connection from backend...');
 
         this.isConnected = true;
         this.walletAddress = sessionData.wallet.address;
@@ -549,7 +784,27 @@ class WalletConnectionManager {
         const provider = await this.detectProvider();
         if (provider) {
             this.provider = provider;
+
+            // Verify the account matches
+            try {
+                const accounts = await provider.request({
+                    method: 'eth_accounts'
+                });
+
+                if (accounts.length === 0 ||
+                    accounts[0].toLowerCase() !== this.walletAddress.toLowerCase()) {
+                    // Account mismatch, need to reconnect
+                    console.log('⚠️ Account mismatch, clearing session');
+                    this.handleDisconnection();
+                    return;
+                }
+            } catch (error) {
+                console.error('Error verifying account:', error);
+            }
         }
+
+        // Save to localStorage for persistence
+        this.saveSessionToLocalStorage();
 
         this.updateConnectionUI();
 

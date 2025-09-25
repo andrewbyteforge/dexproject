@@ -16,7 +16,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from decimal import Decimal
-
+import uuid
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.http import require_http_methods, require_POST, require_GET
 from django.views.decorators.csrf import csrf_exempt
@@ -273,9 +273,9 @@ def authenticate_wallet(request) -> Response:
                 }
             )
             
-            # Create a basic SIWE session
+            # Create a basic SIWE session with all required fields
             siwe_session = SIWESession.objects.create(
-                session_id=secrets.token_hex(32),
+                session_id=uuid.uuid4(),  # Use UUID instead of hex string
                 wallet_address=wallet_address,
                 user=user,
                 status=SIWESession.SessionStatus.VERIFIED,
@@ -283,7 +283,14 @@ def authenticate_wallet(request) -> Response:
                 signature=signature,
                 chain_id=chain_id,
                 ip_address=ip_address,
-                user_agent=user_agent
+                user_agent=user_agent,
+                # Add required SIWE message fields
+                domain=request.get_host(),
+                uri=f"https://{request.get_host()}",
+                version='1',
+                nonce=secrets.token_hex(16),  # Generate a nonce
+                issued_at=timezone.now(),  # Required field - set to current time
+                statement="Sign in to access advanced trading features."
             )
         
         # **CRITICAL FIX: Login user with specified backend**
