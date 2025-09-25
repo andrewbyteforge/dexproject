@@ -89,9 +89,10 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         ).order_by('-unrealized_pnl_usd')
         
         # Get performance metrics
+        # Get performance metrics
         performance = PaperPerformanceMetrics.objects.filter(
             session__account=account
-        ).order_by('-date').first()
+        ).order_by('-calculated_at').first()
         
         # Calculate summary statistics
         total_trades = PaperTrade.objects.filter(account=account).count()
@@ -101,9 +102,10 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         ).count()
         
         # Get thought logs for recent decisions
+        # Get thought logs for recent decisions
         recent_thoughts = PaperAIThoughtLog.objects.filter(
-            session__account=account
-        ).order_by('-timestamp')[:5]
+            account=account
+        ).order_by('-created_at')[:5]
         
         # Calculate 24h performance
         yesterday = timezone.now() - timedelta(days=1)
@@ -111,7 +113,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             account=account,
             created_at__gte=yesterday
         ).aggregate(
-            count=Count('id'),
+            count=Count('trade_id'),
             total_volume=Sum('amount_in_usd')
         )
         
@@ -137,9 +139,33 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         return render(request, 'paper_trading/dashboard.html', context)
         
     except Exception as e:
+        # Show the error for debugging
+        import traceback
         logger.error(f"Error loading paper trading dashboard: {e}", exc_info=True)
-        messages.error(request, f"Error loading dashboard: {str(e)}")
-        return redirect('dashboard:home')
+        
+        return HttpResponse(f"""
+            <html>
+            <body style="font-family: monospace;">
+                <h1>Paper Trading Dashboard Error</h1>
+                <p><strong>Error Type:</strong> {type(e).__name__}</p>
+                <p><strong>Error Message:</strong> {str(e)}</p>
+                <h3>Full Traceback:</h3>
+                <pre style="background: #f0f0f0; padding: 10px;">{traceback.format_exc()}</pre>
+                <hr>
+                <p><a href="/dashboard/">Back to Main Dashboard</a></p>
+            </body>
+            </html>
+        """)
+
+
+
+
+
+
+
+
+
+
 
 
 @login_required
@@ -647,11 +673,12 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         ).order_by('-date').first()
         
         # Get historical metrics for chart (last 7 days)
+        # Get historical metrics for chart (last 7 days)
         week_ago = timezone.now() - timedelta(days=7)
         historical_metrics = PaperPerformanceMetrics.objects.filter(
             session__account=account,
-            date__gte=week_ago
-        ).order_by('date')
+            calculated_at__gte=week_ago
+        ).order_by('calculated_at')
         
         # Calculate additional statistics
         total_trades = PaperTrade.objects.filter(account=account)
@@ -671,7 +698,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                     sum=Sum('amount_in_usd'))['sum'] or 0),
             },
             'latest_metrics': {
-                'date': latest_metrics.date.isoformat() if latest_metrics else None,
+                'date': latest_metrics.calculated_at.date().isoformat() if latest_metrics else None,
                 'daily_trades': latest_metrics.daily_trades if latest_metrics else 0,
                 'daily_volume': float(latest_metrics.daily_volume_usd) if latest_metrics else 0,
                 'daily_pnl': float(latest_metrics.daily_pnl_usd) if latest_metrics else 0,
@@ -680,7 +707,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
             } if latest_metrics else None,
             'historical': [
                 {
-                    'date': m.date.isoformat(),
+                    'date': m.calculated_at.date().isoformat(),
                     'daily_pnl': float(m.daily_pnl_usd),
                     'cumulative_pnl': float(m.cumulative_pnl_usd),
                     'daily_trades': m.daily_trades,
@@ -733,9 +760,11 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
             }, status=400)
         
         # Create new session
+        # Create new session with required fields
         session = PaperTradingSession.objects.create(
             account=account,
-            status='ACTIVE'
+            status='ACTIVE',
+            starting_balance_usd=account.current_balance_usd  # Add the starting balance
         )
         
         logger.info(f"Started paper trading bot for account {account.account_id}")
@@ -833,14 +862,16 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         
         if active_session:
             # Get recent thought logs
+            # Get thought logs for recent decisions
             recent_thoughts = PaperAIThoughtLog.objects.filter(
-                session=active_session
-            ).order_by('-timestamp')[:5]
+                account=account
+            ).order_by('-created_at')[:5]  # Also changed timestamp to created_at
             
+            # Get today's metrics
             # Get today's metrics
             today_metrics = PaperPerformanceMetrics.objects.filter(
                 session=active_session,
-                date=timezone.now().date()
+                calculated_at__date=timezone.now().date()
             ).first()
             
             status_data = {
@@ -853,7 +884,7 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
                 },
                 'recent_thoughts': [
                     {
-                        'timestamp': thought.timestamp.isoformat(),
+                        'timestamp': thought.created_at.isoformat(),
                         'decision': thought.decision,
                         'confidence': float(thought.confidence_score),
                     }

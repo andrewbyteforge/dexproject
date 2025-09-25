@@ -1,211 +1,290 @@
 """
-Management command to run the paper trading bot.
+Django Management Command - Run Paper Trading Bot
 
-This command starts the automated paper trading bot with
-configurable parameters.
+This command runs the enhanced paper trading bot with AI decision-making capabilities.
+It provides options for configuration and monitoring of the bot's performance.
+
+Usage:
+    python manage.py run_paper_bot
+    python manage.py run_paper_bot --account-id 2 --tick-interval 10
+    python manage.py run_paper_bot --create-account --reset
 
 File: dexproject/paper_trading/management/commands/run_paper_bot.py
 """
 
 import logging
-from typing import Optional
+import sys
 from decimal import Decimal
+
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 from paper_trading.models import (
     PaperTradingAccount,
+    PaperTradingSession,
     PaperStrategyConfiguration
 )
-from paper_trading.bot.simple_trader import SimplePaperBot
+from paper_trading.bot.simple_trader import EnhancedPaperTradingBot
+
 
 logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    """Run the paper trading bot."""
+    """
+    Django management command to run the enhanced paper trading bot.
     
-    help = 'Starts the automated paper trading bot'
+    This command initializes and runs the paper trading bot with AI-driven
+    decision making, Fast/Smart lane strategies, and comprehensive logging.
+    """
     
-    def __init__(self):
-        """Initialize the command."""
-        super().__init__()
-        self.bot = None
+    help = 'Run the enhanced paper trading bot with AI decision engine'
     
     def add_arguments(self, parser):
-        """Add command arguments."""
+        """Add command-line arguments."""
         parser.add_argument(
-            '--account',
-            type=str,
-            help='Account ID or name to use'
+            '--account-id',
+            type=int,
+            default=None,
+            help='Paper trading account ID to use'
         )
-        parser.add_argument(
-            '--strategy',
-            type=str,
-            help='Strategy configuration ID or name'
-        )
-        parser.add_argument(
-            '--username',
-            type=str,
-            help='Username for account selection'
-        )
+        
         parser.add_argument(
             '--create-account',
             action='store_true',
-            help='Create a new account if needed'
+            help='Create a new paper trading account'
         )
+        
         parser.add_argument(
-            '--interval',
+            '--reset',
+            action='store_true',
+            help='Reset the account balance before starting'
+        )
+        
+        parser.add_argument(
+            '--tick-interval',
             type=int,
-            default=30,
-            help='Check interval in seconds (default: 30)'
+            default=5,
+            help='Seconds between market analysis ticks (default: 5)'
+        )
+        
+        parser.add_argument(
+            '--initial-balance',
+            type=float,
+            default=10000.0,
+            help='Initial account balance in USD (default: 10000)'
+        )
+        
+        parser.add_argument(
+            '--strategy-mode',
+            choices=['FAST', 'SMART', 'HYBRID'],
+            default='HYBRID',
+            help='Trading strategy mode (default: HYBRID)'
+        )
+        
+        parser.add_argument(
+            '--max-position-size',
+            type=float,
+            default=25.0,
+            help='Maximum position size as percentage (default: 25%%)'
+        )
+        
+        parser.add_argument(
+            '--stop-loss',
+            type=float,
+            default=5.0,
+            help='Default stop loss percentage (default: 5%%)'
+        )
+        
+        parser.add_argument(
+            '--take-profit',
+            type=float,
+            default=10.0,
+            help='Default take profit percentage (default: 10%%)'
         )
     
     def handle(self, *args, **options):
         """Execute the command."""
-        self.stdout.write("=" * 80)
-        self.stdout.write(self.style.SUCCESS("PAPER TRADING BOT"))
-        self.stdout.write("=" * 80)
+        self.stdout.write(self.style.SUCCESS('🚀 Starting Enhanced Paper Trading Bot...'))
         
+        # Get or create account
+        account = self._get_or_create_account(options)
+        if not account:
+            self.stdout.write(self.style.ERROR('❌ Failed to get/create account'))
+            return
+        
+        # Configure strategy
+        self._configure_strategy(account, options)
+        
+        # Display configuration
+        self._display_configuration(account, options)
+        
+        # Create and run bot
         try:
-            # Get or create account
-            account = self._get_account(options)
-            if not account:
-                self.stdout.write(self.style.ERROR("No account available"))
-                return
-            
-            # Get strategy configuration
-            strategy = self._get_strategy(account, options)
-            
-            # Display configuration
-            self._display_configuration(account, strategy)
+            self.stdout.write(self.style.SUCCESS(f'🤖 Initializing bot for account: {account.name}'))
             
             # Create bot instance
-            self.bot = SimplePaperBot(
-                account_id=str(account.account_id),
-                strategy_config_id=str(strategy.config_id) if strategy else None
-            )
+            bot = EnhancedPaperTradingBot(account_id=account.id)
+            bot.tick_interval = options['tick_interval']
             
-            # Set check interval
-            if options['interval']:
-                self.bot.check_interval = options['interval']
+            # Initialize bot
+            if not bot.initialize():
+                self.stdout.write(self.style.ERROR('❌ Bot initialization failed'))
+                return
+            
+            self.stdout.write(self.style.SUCCESS('✅ Bot initialized successfully'))
+            self.stdout.write(self.style.WARNING('Press Ctrl+C to stop the bot gracefully\n'))
             
             # Run the bot
-            self.stdout.write("\n🚀 Starting bot...")
-            self.stdout.write("Press Ctrl+C to stop\n")
+            bot.run()
             
+            self.stdout.write(self.style.SUCCESS('\n✅ Bot stopped successfully'))
+            
+        except KeyboardInterrupt:
+            self.stdout.write(self.style.WARNING('\n🛑 Shutting down bot...'))
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'❌ Bot error: {e}'))
+            logger.exception("Bot crashed with exception")
+            sys.exit(1)
+    
+    def _get_or_create_account(self, options):
+        """Get existing account or create new one."""
+        account_id = options.get('account_id')
+        create_new = options.get('create_account')
+        reset = options.get('reset')
+        initial_balance = Decimal(str(options.get('initial_balance', 10000)))
+        
+        if create_new:
+            # Create new account
             try:
-                self.bot.start()
-            except KeyboardInterrupt:
-                self.stdout.write("\n\n⏹️  Stopping bot...")
-                self.bot.stop("User requested shutdown")
+                # Get or create a default user
+                user, _ = User.objects.get_or_create(
+                    username='paper_trader',
+                    defaults={'email': 'paper@trading.bot'}
+                )
+                
+                # Create account with timestamp
+                account = PaperTradingAccount.objects.create(
+                    user=user,
+                    name=f"AI_Bot_{timezone.now().strftime('%Y%m%d_%H%M%S')}",
+                    initial_balance_usd=initial_balance,
+                    current_balance_usd=initial_balance
+                )
+                
+                self.stdout.write(
+                    self.style.SUCCESS(f'✅ Created new account: {account.name} (ID: {account.id})')
+                )
+                return account
+                
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f'Failed to create account: {e}'))
+                return None
+        
+        # Get existing account
+        if account_id:
+            try:
+                account = PaperTradingAccount.objects.get(id=account_id)
+                
+                # Reset if requested
+                if reset:
+                    account.reset_account()
+                    self.stdout.write(
+                        self.style.SUCCESS(f'✅ Reset account: {account.name}')
+                    )
+                
+                return account
+                
+            except PaperTradingAccount.DoesNotExist:
+                self.stdout.write(self.style.ERROR(f'Account with ID {account_id} not found'))
+                return None
+        
+        # Get or create default account
+        try:
+            user, _ = User.objects.get_or_create(
+                username='paper_trader',
+                defaults={'email': 'paper@trading.bot'}
+            )
             
-            self.stdout.write(self.style.SUCCESS("\n✅ Bot stopped successfully"))
+            account, created = PaperTradingAccount.objects.get_or_create(
+                user=user,
+                name='Default_AI_Bot',
+                defaults={
+                    'initial_balance_usd': initial_balance,
+                    'current_balance_usd': initial_balance
+                }
+            )
+            
+            if created:
+                self.stdout.write(
+                    self.style.SUCCESS(f'✅ Created default account: {account.name}')
+                )
+            else:
+                if reset:
+                    account.reset_account()
+                    self.stdout.write(
+                        self.style.SUCCESS(f'✅ Reset account: {account.name}')
+                    )
+            
+            return account
             
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"\n❌ Error: {e}"))
-            logger.error(f"Bot failed", exc_info=True)
+            self.stdout.write(self.style.ERROR(f'Failed to get/create default account: {e}'))
+            return None
     
-    def _get_account(self, options) -> Optional[PaperTradingAccount]:
-        """Get or create paper trading account."""
-        account = None
-        
-        # Try to find by account ID or name
-        if options['account']:
-            try:
-                # Try as UUID first
-                account = PaperTradingAccount.objects.get(
-                    account_id=options['account']
-                )
-            except (PaperTradingAccount.DoesNotExist, ValueError):
-                # Try as name
-                account = PaperTradingAccount.objects.filter(
-                    name__icontains=options['account']
-                ).first()
-        
-        # Try to find by username
-        elif options['username']:
-            try:
-                user = User.objects.get(username=options['username'])
-                account = PaperTradingAccount.objects.filter(
-                    user=user,
-                    is_active=True
-                ).first()
-            except User.DoesNotExist:
-                self.stdout.write(f"User '{options['username']}' not found")
-        
-        # Get first active account
-        else:
-            account = PaperTradingAccount.objects.filter(
-                is_active=True
-            ).first()
-        
-        # Create account if requested
-        if not account and options['create_account']:
-            self.stdout.write("Creating new paper trading account...")
-            
-            # Get or create user
-            user = User.objects.first()
-            if not user:
-                user = User.objects.create_user(
-                    username='paper_bot',
-                    email='bot@papertrading.local'
-                )
-            
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name="Auto-Trading Bot Account",
-                initial_balance_usd=Decimal('10000'),
-                current_balance_usd=Decimal('10000')
+    def _configure_strategy(self, account, options):
+        """Configure trading strategy for the bot."""
+        try:
+            # Get or create strategy configuration
+            strategy, created = PaperStrategyConfiguration.objects.get_or_create(
+                name=f"Strategy_{account.name}",
+                defaults={
+                    'is_active': True,
+                    'mode': options['strategy_mode'],
+                    'fast_lane_enabled': options['strategy_mode'] in ['FAST', 'HYBRID'],
+                    'smart_lane_enabled': options['strategy_mode'] in ['SMART', 'HYBRID'],
+                    'max_position_size': Decimal(str(options['max_position_size'])),
+                    'stop_loss_percent': Decimal(str(options['stop_loss'])),
+                    'take_profit_percent': Decimal(str(options['take_profit'])),
+                    'max_daily_trades': 100,
+                    'min_confidence_score': Decimal("40"),
+                }
             )
-            self.stdout.write(f"Created account: {account.name}")
-        
-        return account
-    
-    def _get_strategy(self, account: PaperTradingAccount, options) -> Optional[PaperStrategyConfiguration]:
-        """Get strategy configuration."""
-        strategy = None
-        
-        if options['strategy']:
-            try:
-                # Try as UUID first
-                strategy = PaperStrategyConfiguration.objects.get(
-                    config_id=options['strategy']
-                )
-            except (PaperStrategyConfiguration.DoesNotExist, ValueError):
-                # Try as name
-                strategy = PaperStrategyConfiguration.objects.filter(
-                    account=account,
-                    name__icontains=options['strategy']
-                ).first()
-        else:
-            # Get first active strategy for account
-            strategy = PaperStrategyConfiguration.objects.filter(
-                account=account,
-                is_active=True
-            ).first()
-        
-        return strategy
-    
-    def _display_configuration(self, account: PaperTradingAccount, strategy: Optional[PaperStrategyConfiguration]):
-        """Display bot configuration."""
-        self.stdout.write("\n📋 Configuration:")
-        self.stdout.write("-" * 40)
-        self.stdout.write(f"Account: {account.name}")
-        self.stdout.write(f"Balance: ${account.current_balance_usd:.2f}")
-        self.stdout.write(f"Total Trades: {account.total_trades}")
-        
-        if strategy:
-            self.stdout.write(f"\nStrategy: {strategy.name}")
-            self.stdout.write(f"Mode: {strategy.trading_mode}")
-            self.stdout.write(f"Confidence: {strategy.confidence_threshold}%")
-            self.stdout.write(f"Max Daily Trades: {strategy.max_daily_trades}")
             
-            lanes = []
-            if strategy.use_fast_lane:
-                lanes.append("Fast")
-            if strategy.use_smart_lane:
-                lanes.append("Smart")
-            self.stdout.write(f"Lanes: {', '.join(lanes) if lanes else 'None'}")
-        else:
-            self.stdout.write("\nStrategy: Default (will be created)")
+            if not created:
+                # Update existing strategy
+                strategy.mode = options['strategy_mode']
+                strategy.fast_lane_enabled = options['strategy_mode'] in ['FAST', 'HYBRID']
+                strategy.smart_lane_enabled = options['strategy_mode'] in ['SMART', 'HYBRID']
+                strategy.max_position_size = Decimal(str(options['max_position_size']))
+                strategy.stop_loss_percent = Decimal(str(options['stop_loss']))
+                strategy.take_profit_percent = Decimal(str(options['take_profit']))
+                strategy.save()
+            
+            self.stdout.write(
+                self.style.SUCCESS(f'✅ Strategy configured: {strategy.mode} mode')
+            )
+            
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'Failed to configure strategy: {e}'))
+    
+    def _display_configuration(self, account, options):
+        """Display bot configuration."""
+        self.stdout.write(self.style.SUCCESS('\n' + '='*60))
+        self.stdout.write(self.style.SUCCESS('📋 BOT CONFIGURATION'))
+        self.stdout.write(self.style.SUCCESS('='*60))
+        
+        config_items = [
+            ('Account', f'{account.name} (ID: {account.id})'),
+            ('Balance', f'${account.current_balance_usd:.2f}'),
+            ('Strategy Mode', options['strategy_mode']),
+            ('Tick Interval', f'{options["tick_interval"]} seconds'),
+            ('Max Position', f'{options["max_position_size"]}%'),
+            ('Stop Loss', f'{options["stop_loss"]}%'),
+            ('Take Profit', f'{options["take_profit"]}%'),
+        ]
+        
+        for label, value in config_items:
+            self.stdout.write(f'  {label:<15} : {value}')
+        
+        self.stdout.write(self.style.SUCCESS('='*60 + '\n'))
