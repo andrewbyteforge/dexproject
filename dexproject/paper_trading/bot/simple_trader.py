@@ -1,3 +1,4 @@
+import uuid
 """
 Enhanced Paper Trading Bot - PTphase2
 
@@ -106,7 +107,7 @@ class EnhancedPaperTradingBot:
         self.trades_executed = 0
         self.successful_trades = 0
         
-        logger.info("🤖 Enhanced Paper Trading Bot initialized")
+        logger.info("[BOT] Enhanced Paper Trading Bot initialized")
     
     def initialize(self) -> bool:
         """
@@ -117,20 +118,21 @@ class EnhancedPaperTradingBot:
         """
         try:
             # Load account
-            self.account = PaperTradingAccount.objects.get(id=self.account_id)
-            logger.info(f"📊 Loaded account: {self.account.name}")
+            self.account = PaperTradingAccount.objects.get(pk=self.account_id)
+            logger.info(f"[DATA] Loaded account: {self.account.name}")
             
             # Create new trading session
             self.session = PaperTradingSession.objects.create(
                 account=self.account,
-                bot_type='ENHANCED_AI',
-                status='RUNNING'
+                name=f"AI_Bot_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                status='RUNNING',
+                starting_balance_usd=self.account.current_balance_usd
             )
-            logger.info(f"🎮 Created trading session: {self.session.id}")
+            logger.info(f"[GAME] Created trading session: {self.session.session_id}")
             
             # Initialize AI engine
             self.ai_engine = create_ai_engine(self.session)
-            logger.info("🧠 AI Engine initialized")
+            logger.info("[AI] AI Engine initialized")
             
             # Load existing positions
             self._load_positions()
@@ -141,7 +143,7 @@ class EnhancedPaperTradingBot:
             return True
             
         except Exception as e:
-            logger.error(f"❌ Initialization failed: {e}")
+            logger.error(f"[ERROR] Initialization failed: {e}")
             return False
     
     def _load_positions(self):
@@ -152,7 +154,7 @@ class EnhancedPaperTradingBot:
         )
         for position in positions:
             self.positions[position.token_symbol] = position
-            logger.info(f"📦 Loaded position: {position.token_symbol} - {position.quantity} tokens")
+            logger.info(f"[POS] Loaded position: {position.token_symbol} - {position.quantity} tokens")
     
     def _initialize_price_history(self):
         """Initialize price history with simulated historical data."""
@@ -176,13 +178,13 @@ class EnhancedPaperTradingBot:
                 history.append(price)
             
             self.price_history[symbol] = history
-            logger.debug(f"📈 Initialized price history for {symbol}")
+            logger.debug(f"[UP] Initialized price history for {symbol}")
     
     def run(self):
         """
         Main bot loop - analyze markets and execute trades.
         """
-        logger.info("🚀 Starting enhanced paper trading bot...")
+        logger.info("[START] Starting enhanced paper trading bot...")
         self.running = True
         
         # Setup signal handlers for graceful shutdown
@@ -195,7 +197,7 @@ class EnhancedPaperTradingBot:
             while self.running:
                 tick_count += 1
                 logger.info(f"\n{'='*60}")
-                logger.info(f"📍 Market Tick #{tick_count} - {datetime.now().strftime('%H:%M:%S')}")
+                logger.info(f"[TICK] Market Tick #{tick_count} - {datetime.now().strftime('%H:%M:%S')}")
                 
                 # Update market prices
                 self._update_market_prices()
@@ -215,7 +217,7 @@ class EnhancedPaperTradingBot:
                     time.sleep(self.tick_interval)
                     
         except Exception as e:
-            logger.error(f"❌ Bot error: {e}")
+            logger.error(f"[ERROR] Bot error: {e}")
             self.running = False
             
         finally:
@@ -253,7 +255,7 @@ class EnhancedPaperTradingBot:
             # Log significant changes
             price_change_pct = ((new_price - current_price) / current_price * 100) if current_price > 0 else 0
             if abs(price_change_pct) > 2:
-                logger.info(f"💹 {symbol}: ${current_price:.6f} → ${new_price:.6f} ({price_change_pct:+.2f}%)")
+                logger.info(f"[PRICE] {symbol}: ${current_price:.6f} -> ${new_price:.6f} ({price_change_pct:+.2f}%)")
     
     def _process_token(self, symbol: str):
         """
@@ -286,7 +288,7 @@ class EnhancedPaperTradingBot:
         )
         
         # Log the decision
-        logger.info(f"🤔 AI Decision for {symbol}: {decision['action']} "
+        logger.info(f"[THINK] AI Decision for {symbol}: {decision['action']} "
                    f"({decision['signal'].value}, {decision['confidence_score']:.0f}% confidence)")
         
         # Execute trade if signaled
@@ -311,37 +313,58 @@ class EnhancedPaperTradingBot:
         
         # Check if we have enough balance
         if action == 'BUY' and trade_value > self.account.current_balance_usd:
-            logger.warning(f"⚠️ Insufficient balance for {symbol} purchase")
+            logger.warning(f"[WARN] Insufficient balance for {symbol} purchase")
             return
         
         # Check if we have position to sell
         if action == 'SELL' and symbol not in self.positions:
-            logger.warning(f"⚠️ No position to sell for {symbol}")
+            logger.warning(f"[WARN] No position to sell for {symbol}")
             return
         
         try:
             with transaction.atomic():
-                # Create the trade
+                # Define token variables BEFORE using them
+                if action == 'BUY':
+                    # Buy trade - USD to token
+                    token_in = 'USDC'
+                    token_in_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
+                    token_out = symbol
+                    token_out_address = decision['token_address']
+                    amount_in_usd = trade_value
+                    amount_out = trade_value / current_price
+                    amount_in = trade_value
+                else:
+                    # Sell trade - token to USD
+                    position = self.positions[symbol]
+                    token_in = symbol
+                    token_in_address = decision['token_address']
+                    token_out = 'USDC'
+                    token_out_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
+                    amount_in = position.quantity
+                    amount_out = position.quantity * current_price
+                    amount_in_usd = amount_out
+                
+                # Create the trade record
                 trade = PaperTrade.objects.create(
                     account=self.account,
-                    session=self.session,
-                    trade_type=action,
-                    token_address=decision['token_address'],
-                    token_symbol=symbol,
-                    quantity=trade_value / current_price if action == 'BUY' else self.positions[symbol].quantity,
-                    price=current_price,
-                    total_value=trade_value,
-                    gas_fee=Decimal("5.00"),  # Simulated gas
-                    slippage=Decimal("0.5"),  # Simulated slippage
-                    
-                    # AI metadata
-                    strategy_used=decision['lane_type'],
-                    confidence_score=decision['confidence_score'],
-                    risk_score=decision['risk_assessment']['risk_score'],
-                    
-                    # Execution
-                    status='COMPLETED',
-                    executed_at=timezone.now()
+                    trade_type=action.lower(),  # 'buy' or 'sell'
+                    token_in_address=token_in_address,
+                    token_in_symbol=token_in,
+                    token_out_address=token_out_address,
+                    token_out_symbol=token_out,
+                    amount_in=amount_in,
+                    amount_in_usd=amount_in_usd,
+                    expected_amount_out=amount_out,
+                    actual_amount_out=amount_out * Decimal("0.995"),  # 0.5% slippage
+                    simulated_gas_price_gwei=Decimal("30"),
+                    simulated_gas_used=150000,
+                    simulated_gas_cost_usd=Decimal("5.00"),
+                    simulated_slippage_percent=Decimal("0.5"),
+                    status='completed',
+                    executed_at=timezone.now(),
+                    execution_time_ms=500,
+                    strategy_name=decision['lane_type'],
+                    mock_tx_hash=f"0x{uuid.uuid4().hex[:64]}"
                 )
                 
                 # Update position
@@ -350,9 +373,11 @@ class EnhancedPaperTradingBot:
                     if symbol in self.positions:
                         position = self.positions[symbol]
                         # Average the entry price
-                        total_value = (position.quantity * position.entry_price) + trade_value
-                        position.quantity += trade.quantity
-                        position.entry_price = total_value / position.quantity
+                        total_value = (position.quantity * position.average_entry_price_usd) + trade_value
+                        position.quantity += amount_out
+                        position.average_entry_price_usd = total_value / position.quantity
+                        position.current_price_usd = current_price
+                        position.total_invested_usd += trade_value
                         position.last_updated = timezone.now()
                         position.save()
                     else:
@@ -360,9 +385,10 @@ class EnhancedPaperTradingBot:
                             account=self.account,
                             token_address=decision['token_address'],
                             token_symbol=symbol,
-                            quantity=trade.quantity,
-                            entry_price=current_price,
-                            current_price=current_price,
+                            quantity=amount_out,
+                            average_entry_price_usd=current_price,
+                            current_price_usd=current_price,
+                            total_invested_usd=trade_value,
                             is_open=True
                         )
                         self.positions[symbol] = position
@@ -374,14 +400,12 @@ class EnhancedPaperTradingBot:
                     position = self.positions[symbol]
                     
                     # Calculate P&L
-                    pnl = (current_price - position.entry_price) * position.quantity
-                    trade.pnl = pnl
-                    trade.pnl_percent = (pnl / (position.entry_price * position.quantity)) * 100
-                    trade.save()
+                    pnl = (current_price - position.average_entry_price_usd) * position.quantity
+                    pnl_percent = (pnl / position.total_invested_usd) * 100 if position.total_invested_usd > 0 else 0
                     
-                    # Update position
-                    position.current_price = current_price
-                    position.realized_pnl = pnl
+                    # Update position for closure
+                    position.current_price_usd = current_price
+                    position.realized_pnl_usd = pnl
                     position.is_open = False
                     position.closed_at = timezone.now()
                     position.save()
@@ -390,7 +414,7 @@ class EnhancedPaperTradingBot:
                     del self.positions[symbol]
                     
                     # Update account balance
-                    self.account.current_balance_usd += trade_value
+                    self.account.current_balance_usd += amount_out - Decimal("5.00")  # Minus gas
                     
                     # Track performance
                     if pnl > 0:
@@ -405,11 +429,11 @@ class EnhancedPaperTradingBot:
                 self.last_trade_time = datetime.now()
                 
                 # Log trade execution
-                logger.info(f"✅ {action} executed: {trade.quantity:.6f} {symbol} @ ${current_price:.6f}")
-                logger.info(f"💰 Value: ${trade_value:.2f}, New balance: ${self.account.current_balance_usd:.2f}")
+                logger.info(f"[OK] {action} executed: {amount_out:.6f} {symbol} @ ${current_price:.6f}")
+                logger.info(f"[MONEY] Value: ${trade_value:.2f}, New balance: ${self.account.current_balance_usd:.2f}")
                 
-                if action == 'SELL' and pnl is not None:
-                    logger.info(f"📊 P&L: ${pnl:.2f} ({trade.pnl_percent:.2f}%)")
+                if action == 'SELL':
+                    logger.info(f"[DATA] P&L: ${pnl:.2f} ({pnl_percent:.2f}%)")
                 
                 # Update AI performance metrics
                 if action == 'SELL':
@@ -419,8 +443,8 @@ class EnhancedPaperTradingBot:
                     })
                 
         except Exception as e:
-            logger.error(f"❌ Trade execution failed: {e}")
-    
+            logger.error(f"[ERROR] Trade execution failed: {e}")
+
     def _update_session_metrics(self):
         """Update trading session metrics."""
         try:
@@ -448,7 +472,7 @@ class EnhancedPaperTradingBot:
     
     def _display_status(self):
         """Display current bot status."""
-        logger.info(f"\n📊 Bot Status:")
+        logger.info(f"\n[DATA] Bot Status:")
         logger.info(f"   Account Balance: ${self.account.current_balance_usd:.2f}")
         logger.info(f"   Open Positions: {len(self.positions)}")
         logger.info(f"   Trades Executed: {self.trades_executed}")
@@ -459,18 +483,18 @@ class EnhancedPaperTradingBot:
         
         # Display positions
         if self.positions:
-            logger.info(f"\n📦 Open Positions:")
+            logger.info(f"\n[POS] Open Positions:")
             for symbol, position in self.positions.items():
                 current_price = self.price_history[symbol][-1]
-                unrealized_pnl = (current_price - position.entry_price) * position.quantity
-                pnl_percent = (unrealized_pnl / (position.entry_price * position.quantity)) * 100
+                unrealized_pnl = (current_price - position.average_entry_price_usd) * position.quantity
+                pnl_percent = (unrealized_pnl / (position.average_entry_price_usd * position.quantity)) * 100
                 
-                logger.info(f"   {symbol}: {position.quantity:.6f} @ ${position.entry_price:.6f}")
+                logger.info(f"   {symbol}: {position.quantity:.6f} @ ${position.average_entry_price_usd:.6f}")
                 logger.info(f"      Current: ${current_price:.6f}, P&L: ${unrealized_pnl:.2f} ({pnl_percent:+.2f}%)")
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
-        logger.info("\n🛑 Shutdown signal received...")
+        logger.info("\n[STOP] Shutdown signal received...")
         self.running = False
     
     def _cleanup(self):
@@ -481,16 +505,16 @@ class EnhancedPaperTradingBot:
                 self.session.status = 'STOPPED'
                 self.session.ended_at = timezone.now()
                 self.session.save()
-                logger.info(f"📊 Session {self.session.id} ended")
+                logger.info(f"[DATA] Session {self.session.session_id} ended")
             
             # Close any open positions (mark as closed in session)
             for symbol, position in self.positions.items():
                 current_price = self.price_history[symbol][-1]
                 position.current_price = current_price
                 position.save()
-                logger.info(f"📦 Position {symbol} marked with final price ${current_price:.6f}")
+                logger.info(f"[POS] Position {symbol} marked with final price ${current_price:.6f}")
             
-            logger.info("✅ Cleanup completed")
+            logger.info("[OK] Cleanup completed")
             
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
@@ -513,10 +537,10 @@ def main():
     bot.tick_interval = args.tick_interval
     
     if bot.initialize():
-        logger.info("✅ Bot initialized successfully")
+        logger.info("[OK] Bot initialized successfully")
         bot.run()
     else:
-        logger.error("❌ Bot initialization failed")
+        logger.error("[ERROR] Bot initialization failed")
         sys.exit(1)
 
 
