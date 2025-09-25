@@ -1,10 +1,10 @@
 """
 URL configuration for dexproject project.
 
-Updated to include dashboard app URLs and provide proper routing
-for the Phase 2 dashboard interface.
+Updated to include dashboard app URLs, paper trading URLs, and provide 
+proper routing for the complete trading platform.
 
-File: dexproject/urls.py
+File: dexproject/dexproject/urls.py
 """
 
 from django.contrib import admin
@@ -18,9 +18,12 @@ urlpatterns = [
     # Dashboard app (main interface)
     path('dashboard/', include('dashboard.urls')),
     
+    # Paper Trading app (NEW - PTphase1)
+    path('paper-trading/', include('paper_trading.urls')),
+    
     # API endpoints (future expansion)
     path('api/trading/', include('trading.urls')),
-    path('api/risk/', include('risk.urls')), 
+    path('api/risk/', include('risk.urls')),
     path('api/wallet/', include('wallet.urls')),
     path('api/analytics/', include('analytics.urls')),
     
