@@ -26,11 +26,8 @@ def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
     """
     Server-Sent Events endpoint for real-time metrics with Fast Lane integration.
     
-    FIXED: Removed problematic 'Connection: keep-alive' header that caused
-    AssertionError: Hop-by-hop header not allowed in streaming responses.
-    
-    Streams live trading metrics from the Fast Lane engine to the dashboard.
-    Falls back to mock data if engine is unavailable.
+    Enhanced with comprehensive error handling, configuration checks, and proper
+    resource management to prevent server hanging issues.
     
     Args:
         request: Django HTTP request object
@@ -38,59 +35,124 @@ def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
     Returns:
         StreamingHttpResponse with Server-Sent Events format
     """
+    # Start time for performance monitoring
+    stream_start_time = time.time()
+    user_identifier = getattr(request.user, 'username', 'anonymous')
+    
+    logger.info(f"[SSE] Starting metrics stream for user: {user_identifier}")
+    
     def event_stream() -> Generator[str, None, None]:
         """
-        Generator function for SSE data stream with Fast Lane integration.
-        
-        Yields formatted SSE data with real-time metrics and status updates.
-        Includes connection confirmation, periodic updates, and error handling.
+        Generator function for SSE data stream with comprehensive error handling.
         
         Yields:
             str: Formatted SSE data strings
         """
+        counter = 0
+        error_count = 0
+        max_consecutive_errors = 5
+        consecutive_errors = 0
+        
         try:
-            # Initialize engine if needed
+            # Check if SSE is enabled
+            sse_enabled = getattr(settings, 'SSE_ENABLED', True)
+            if not sse_enabled:
+                logger.info(f"[SSE] SSE is disabled in configuration for user: {user_identifier}")
+                yield f"data: {json.dumps({'type': 'disabled', 'message': 'SSE is disabled in server configuration', 'timestamp': datetime.now().isoformat()})}\n\n"
+                return
+            
+            # Get configuration values with defaults
+            max_iterations = getattr(settings, 'SSE_MAX_ITERATIONS', 10)  # Reduced from 100
+            update_interval = getattr(settings, 'DASHBOARD_SSE_UPDATE_INTERVAL', 3)  # Increased from 2
+            
+            logger.info(f"[SSE] Configuration - Max iterations: {max_iterations}, Update interval: {update_interval}s")
+            
+            # Initialize engine if needed (with timeout)
+            engine_initialized = False
             try:
-                run_async_in_view(ensure_engine_initialized())
+                logger.debug("[SSE] Attempting engine initialization...")
+                # Use a timeout to prevent hanging on initialization
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+                
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(run_async_in_view, ensure_engine_initialized())
+                    try:
+                        future.result(timeout=5)  # 5 second timeout
+                        engine_initialized = True
+                        logger.info("[SSE] Engine initialized successfully")
+                    except FutureTimeoutError:
+                        logger.warning("[SSE] Engine initialization timed out after 5 seconds")
+                    except Exception as e:
+                        logger.warning(f"[SSE] Engine initialization failed: {e}")
             except Exception as e:
-                logger.warning(f"Engine initialization failed: {e}")
+                logger.error(f"[SSE] Critical error during engine initialization: {e}", exc_info=True)
             
             # Send initial connection confirmation
-            try:
-                initial_status = engine_service.get_engine_status()
-            except Exception as e:
-                logger.warning(f"Could not get engine status: {e}")
-                initial_status = {'_mock': True, 'status': 'unavailable'}
+            initial_status = {'status': 'initializing', '_mock': True}
+            data_source = 'MOCK'
+            
+            if engine_initialized:
+                try:
+                    initial_status = engine_service.get_engine_status()
+                    data_source = 'LIVE' if not initial_status.get('_mock', False) else 'MOCK'
+                    logger.debug(f"[SSE] Engine status retrieved: {initial_status.get('status', 'unknown')}")
+                except Exception as e:
+                    logger.warning(f"[SSE] Could not get engine status: {e}")
             
             initial_data = {
                 'type': 'connection',
                 'status': 'connected',
-                'engine_status': initial_status,
-                'data_source': 'LIVE' if not initial_status.get('_mock', False) else 'MOCK',
-                'timestamp': datetime.now().isoformat()
+                'engine_status': initial_status.get('status', 'unavailable'),
+                'engine_initialized': engine_initialized,
+                'data_source': data_source,
+                'timestamp': datetime.now().isoformat(),
+                'config': {
+                    'max_iterations': max_iterations,
+                    'update_interval': update_interval
+                }
             }
+            
             yield f"data: {json.dumps(initial_data)}\n\n"
+            logger.info(f"[SSE] Initial connection sent to user: {user_identifier} (Data source: {data_source})")
             
-            # Stream metrics updates
-            counter = 0
-            max_iterations = getattr(settings, 'SSE_MAX_ITERATIONS', 100)
-            update_interval = getattr(settings, 'DASHBOARD_SSE_UPDATE_INTERVAL', 2)
-            
-            while counter < max_iterations:  # Limit to prevent long-running processes
+            # Main streaming loop
+            while counter < max_iterations:
+                loop_start = time.time()
+                
                 try:
-                    # Get real-time metrics from engine service
-                    try:
-                        metrics = engine_service.get_performance_metrics()
-                        status = engine_service.get_engine_status()
-                        is_mock = status.get('_mock', False)
-                    except Exception as e:
-                        logger.warning(f"Error getting metrics: {e}")
-                        # Provide fallback data
+                    # Prepare metrics data
+                    metrics = None
+                    status = None
+                    is_mock = True
+                    
+                    if engine_initialized:
+                        try:
+                            # Get metrics with timeout
+                            metrics = engine_service.get_performance_metrics()
+                            status = engine_service.get_engine_status()
+                            is_mock = status.get('_mock', False)
+                            consecutive_errors = 0  # Reset on success
+                            
+                        except Exception as e:
+                            consecutive_errors += 1
+                            error_count += 1
+                            logger.warning(f"[SSE] Error getting metrics (attempt {counter}, error {error_count}): {e}")
+                            
+                            if consecutive_errors >= max_consecutive_errors:
+                                logger.error(f"[SSE] Max consecutive errors ({max_consecutive_errors}) reached. Terminating stream.")
+                                yield f"data: {json.dumps({'type': 'error', 'message': 'Too many consecutive errors', 'timestamp': datetime.now().isoformat()})}\n\n"
+                                break
+                    
+                    # Use fallback data if needed
+                    if metrics is None:
                         metrics = {
-                            'execution_time_ms': 500,
-                            'success_rate': 95.5,
-                            'trades_per_minute': 0
+                            'execution_time_ms': 0,
+                            'success_rate': 0,
+                            'trades_per_minute': 0,
+                            'last_update': datetime.now().isoformat()
                         }
+                    
+                    if status is None:
                         status = {
                             'fast_lane_active': False,
                             'smart_lane_active': False,
@@ -99,11 +161,12 @@ def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
                             'pending_transactions': 0,
                             '_mock': True
                         }
-                        is_mock = True
                     
+                    # Construct message
                     message_data = {
                         'type': 'metrics_update',
                         'timestamp': datetime.now().isoformat(),
+                        'iteration': counter,
                         'metrics': {
                             'execution_time_ms': metrics.get('execution_time_ms', 0),
                             'success_rate': metrics.get('success_rate', 0),
@@ -115,65 +178,136 @@ def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
                             'pending_transactions': status.get('pending_transactions', 0)
                         },
                         'data_source': 'LIVE' if not is_mock else 'MOCK',
-                        'iteration': counter
+                        'health': {
+                            'errors_total': error_count,
+                            'consecutive_errors': consecutive_errors,
+                            'uptime_seconds': int(time.time() - stream_start_time)
+                        }
                     }
                     
                     yield f"data: {json.dumps(message_data)}\n\n"
+                    
+                    # Periodic logging
+                    if counter % 10 == 0:
+                        logger.debug(f"[SSE] Stream healthy - iteration {counter} for user {user_identifier} (errors: {error_count})")
+                    
                     counter += 1
                     
-                    # Log every 30 iterations for debugging
-                    if counter % 30 == 0:
-                        logger.debug(f"Metrics stream iteration {counter} for user {request.user.username}")
+                    # Calculate sleep time to maintain consistent interval
+                    loop_duration = time.time() - loop_start
+                    sleep_time = max(0, update_interval - loop_duration)
+                    
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    else:
+                        logger.warning(f"[SSE] Loop took {loop_duration:.2f}s, longer than interval {update_interval}s")
+                    
+                except KeyboardInterrupt:
+                    logger.info(f"[SSE] Stream interrupted by user for: {user_identifier}")
+                    break
                     
                 except Exception as e:
-                    logger.error(f"Error in metrics stream (iteration {counter}): {e}")
+                    error_count += 1
+                    consecutive_errors += 1
+                    logger.error(f"[SSE] Error in stream loop (iteration {counter}): {e}", exc_info=True)
+                    
+                    # Send error notification to client
                     error_data = {
                         'type': 'error',
                         'error': 'Stream error',
                         'message': str(e),
                         'timestamp': datetime.now().isoformat(),
-                        'iteration': counter
+                        'iteration': counter,
+                        'will_retry': consecutive_errors < max_consecutive_errors
                     }
                     yield f"data: {json.dumps(error_data)}\n\n"
-                
-                time.sleep(update_interval)  # Update every 2 seconds (or configured interval)
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error(f"[SSE] Terminating stream due to excessive errors for user: {user_identifier}")
+                        break
+                    
+                    # Brief pause before retry
+                    time.sleep(1)
             
-            # Send final message
+            # Send stream end notification
+            stream_duration = time.time() - stream_start_time
             final_data = {
                 'type': 'stream_end',
                 'message': 'Stream ended normally',
                 'total_iterations': counter,
+                'total_errors': error_count,
+                'duration_seconds': int(stream_duration),
                 'timestamp': datetime.now().isoformat()
             }
             yield f"data: {json.dumps(final_data)}\n\n"
             
+            logger.info(f"[SSE] Stream ended normally for user {user_identifier} - "
+                       f"Duration: {stream_duration:.1f}s, Iterations: {counter}, Errors: {error_count}")
+            
         except Exception as e:
-            logger.error(f"Fatal error in metrics stream: {e}", exc_info=True)
-            error_data = {
-                'type': 'fatal_error',
-                'error': 'Fatal stream error',
-                'message': str(e),
-                'timestamp': datetime.now().isoformat()
-            }
-            yield f"data: {json.dumps(error_data)}\n\n"
+            # Catch-all for any unhandled exceptions
+            logger.error(f"[SSE] Fatal error in metrics stream for user {user_identifier}: {e}", exc_info=True)
+            
+            try:
+                error_data = {
+                    'type': 'fatal_error',
+                    'error': 'Fatal stream error',
+                    'message': str(e),
+                    'timestamp': datetime.now().isoformat()
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+            except Exception as json_error:
+                logger.error(f"[SSE] Could not send error message: {json_error}")
+                yield f"data: {{'type': 'fatal_error', 'message': 'Critical failure'}}\n\n"
         
-        logger.info(f"Metrics stream ended for user {request.user.username} after {counter} iterations")
+        finally:
+            # Cleanup and final logging
+            stream_duration = time.time() - stream_start_time
+            logger.info(f"[SSE] Stream cleanup completed for user {user_identifier} - Total duration: {stream_duration:.1f}s")
     
-    # Create the streaming response - FIXED: Removed 'Connection' header
-    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-    
-    # Set only the allowed headers for SSE
-    response['Cache-Control'] = 'no-cache'
-    response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
-    
-    # CORS headers (restrict in production)
-    response['Access-Control-Allow-Origin'] = '*'  
-    response['Access-Control-Allow-Headers'] = 'Cache-Control'
-    
-    # DO NOT set Connection header - this causes the error!
-    # response['Connection'] = 'keep-alive'  # <-- REMOVED THIS LINE
-    
-    return response
+    # Create the streaming response
+    try:
+        response = StreamingHttpResponse(
+            event_stream(), 
+            content_type='text/event-stream'
+        )
+        
+        # Set appropriate headers for SSE
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
+        response['Pragma'] = 'no-cache'
+        response['Expires'] = '0'
+        
+        # CORS headers (restrict in production)
+        if settings.DEBUG:
+            response['Access-Control-Allow-Origin'] = '*'
+            response['Access-Control-Allow-Headers'] = 'Cache-Control'
+        
+        logger.debug(f"[SSE] Response created successfully for user: {user_identifier}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"[SSE] Failed to create streaming response for user {user_identifier}: {e}", exc_info=True)
+        
+        # Return error response
+        from django.http import JsonResponse
+        return JsonResponse({
+            'error': 'Failed to initialize stream',
+            'message': str(e),
+            'timestamp': datetime.now().isoformat()
+        }, status=500)
+
+
+
+
+
+
+
+
+
+
+
+
 
 def smart_lane_stream(request: HttpRequest) -> StreamingHttpResponse:
     """

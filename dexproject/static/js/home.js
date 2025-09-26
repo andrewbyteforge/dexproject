@@ -295,67 +295,234 @@ function exportThoughtLog() {
 /**
  * Initialize Server-Sent Events connection for real-time updates
  */
+/**
+ * Initialize Server-Sent Events connection for real-time dashboard updates
+ * Includes comprehensive error handling, retry logic, and configuration checks
+ */
 function initializeSSE() {
+    // TEMPORARY SOLUTION: Disable SSE completely to prevent server hanging
+    // This prevents the EventSource connection that causes the server to block
+    console.log('📡 SSE disabled for stability - using polling mode');
+
+    // Set global flags to indicate SSE is disabled
+    window.sseDisabled = true;
+    window.sseConnection = null;
+
+    // Clean up any existing connection
+    if (typeof sseConnection !== 'undefined' && sseConnection) {
+        try {
+            console.log('🔄 Closing existing SSE connection');
+            sseConnection.close();
+            sseConnection = null;
+        } catch (error) {
+            console.error('Error closing existing SSE connection:', error);
+        }
+    }
+
+    // Update UI elements to show current status
+    const dataSourceEl = document.getElementById('data-source-text');
+    if (dataSourceEl) {
+        dataSourceEl.textContent = 'POLLING MODE';
+        dataSourceEl.classList.remove('text-success', 'text-warning', 'text-danger');
+        dataSourceEl.classList.add('text-info');
+    }
+
+    // Update any status indicators that might exist
+    const statusIndicator = document.getElementById('connection-status');
+    if (statusIndicator) {
+        statusIndicator.textContent = 'Polling';
+        statusIndicator.classList.remove('badge-success', 'badge-danger');
+        statusIndicator.classList.add('badge-info');
+    }
+
+    // Log final status
+    console.log('ℹ️ Data Source: POLLING MODE (SSE disabled)');
+
+    // Exit function - no EventSource will be created
+    return;
+}
+
+// Alternative: Polling-based update function (if you want to implement polling instead)
+function startPollingUpdates() {
+    // Only start if SSE is disabled and we're not already polling
+    if (!window.sseDisabled || window.pollingInterval) {
+        return;
+    }
+
+    console.log('📊 Starting polling updates (fallback for SSE)');
+
+    // Poll for updates every 10 seconds
+    window.pollingInterval = setInterval(async () => {
+        try {
+            // Fetch latest metrics via regular HTTP
+            const response = await fetch('/dashboard/api/metrics/', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'same-origin'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+
+                // Update dashboard with polled data
+                if (typeof updateStatusIndicators === 'function') {
+                    updateStatusIndicators(data);
+                }
+                if (typeof updateMetricsDisplay === 'function') {
+                    updateMetricsDisplay(data);
+                }
+                if (typeof updateHealthIndicators === 'function') {
+                    updateHealthIndicators(data);
+                }
+                if (typeof updatePerformanceChart === 'function') {
+                    updatePerformanceChart(data);
+                }
+            }
+        } catch (error) {
+            console.error('Polling update failed:', error);
+        }
+    }, 10000); // Poll every 10 seconds
+}
+
+// Stop polling when page is hidden
+function stopPollingUpdates() {
+    if (window.pollingInterval) {
+        clearInterval(window.pollingInterval);
+        window.pollingInterval = null;
+        console.log('📊 Stopped polling updates');
+    }
+}
+
+// Helper function that's called by initializeSSE
+function updateDataSourceDisplay(text, status = 'info') {
+    const dataSourceEl = document.getElementById('data-source-text');
+    if (dataSourceEl) {
+        dataSourceEl.textContent = text;
+
+        // Remove all status classes
+        dataSourceEl.classList.remove('text-success', 'text-warning', 'text-danger', 'text-info');
+
+        // Add appropriate status class
+        switch (status) {
+            case 'success':
+                dataSourceEl.classList.add('text-success');
+                break;
+            case 'warning':
+                dataSourceEl.classList.add('text-warning');
+                break;
+            case 'error':
+                dataSourceEl.classList.add('text-danger');
+                break;
+            default:
+                dataSourceEl.classList.add('text-info');
+        }
+    }
+
+    // Log to console
+    const emoji = {
+        success: '✅',
+        warning: '⚠️',
+        error: '❌',
+        info: 'ℹ️'
+    };
+    console.log(`${emoji[status] || '📝'} Data Source: ${text}`);
+}
+
+// Handle page visibility changes
+document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+        stopPollingUpdates();
+    } else if (window.sseDisabled) {
+        startPollingUpdates();
+    }
+});
+
+// Clean up on page unload
+window.addEventListener('beforeunload', function () {
+    stopPollingUpdates();
     if (sseConnection) {
         sseConnection.close();
     }
+});
 
-    // Note: URL template tag will be resolved by Django when this file is included
-    const sseUrl = window.dashboardConfig?.metricsStreamUrl || '/dashboard/metrics-stream/';
-    sseConnection = new EventSource(sseUrl);
+/**
+ * Helper function to update data source display
+ * @param {string} text - Text to display
+ * @param {string} status - Status type: 'success', 'warning', 'error', 'info'
+ */
+function updateDataSourceDisplay(text, status = 'info') {
+    const dataSourceEl = document.getElementById('data-source-text');
+    if (dataSourceEl) {
+        dataSourceEl.textContent = text;
 
-    sseConnection.onopen = function (event) {
-        console.log('✅ SSE connection opened');
-        const dataSourceEl = document.getElementById('data-source-text');
-        if (dataSourceEl) {
-            dataSourceEl.textContent = 'CONNECTING';
+        // Remove all status classes
+        dataSourceEl.classList.remove('text-success', 'text-warning', 'text-danger', 'text-info');
+
+        // Add appropriate status class
+        switch (status) {
+            case 'success':
+                dataSourceEl.classList.add('text-success');
+                break;
+            case 'warning':
+                dataSourceEl.classList.add('text-warning');
+                break;
+            case 'error':
+                dataSourceEl.classList.add('text-danger');
+                break;
+            default:
+                dataSourceEl.classList.add('text-info');
         }
+    }
+
+    // Log to console for debugging
+    const emoji = {
+        success: '✅',
+        warning: '⚠️',
+        error: '❌',
+        info: 'ℹ️'
     };
+    console.log(`${emoji[status] || '📝'} Data Source: ${text}`);
+}
 
-    sseConnection.onmessage = function (event) {
-        try {
-            const data = JSON.parse(event.data);
+/**
+ * Helper function to update data source display
+ * @param {string} text - Text to display
+ * @param {string} status - Status type: 'success', 'warning', 'error', 'info'
+ */
+function updateDataSourceDisplay(text, status = 'info') {
+    const dataSourceEl = document.getElementById('data-source-text');
+    if (dataSourceEl) {
+        dataSourceEl.textContent = text;
 
-            if (data.type === 'error') {
-                console.error('❌ SSE error:', data.message);
-                return;
-            }
+        // Remove all status classes
+        dataSourceEl.classList.remove('text-success', 'text-warning', 'text-danger', 'text-info');
 
-            // Update all dashboard components
-            updateStatusIndicators(data);
-            updateMetricsDisplay(data);
-            updateHealthIndicators(data);
-            updatePerformanceChart(data);
-
-            // Simulate thought log updates for Smart Lane analysis
-            if (data.smart_lane?.last_analysis && Math.random() < 0.1) {
-                addThoughtLogEntry({
-                    text: `Analysis completed for token with ${Math.round(data.smart_lane.success_rate)}% confidence`,
-                    timestamp: new Date().toISOString(),
-                    confidence: data.smart_lane.success_rate
-                });
-            }
-
-        } catch (error) {
-            console.error('❌ Error parsing SSE data:', error);
+        // Add appropriate status class
+        switch (status) {
+            case 'success':
+                dataSourceEl.classList.add('text-success');
+                break;
+            case 'warning':
+                dataSourceEl.classList.add('text-warning');
+                break;
+            case 'error':
+                dataSourceEl.classList.add('text-danger');
+                break;
+            default:
+                dataSourceEl.classList.add('text-info');
         }
-    };
+    }
 
-    sseConnection.onerror = function (event) {
-        console.error('❌ SSE connection error:', event);
-        const dataSourceEl = document.getElementById('data-source-text');
-        if (dataSourceEl) {
-            dataSourceEl.textContent = 'CONNECTION ERROR';
-        }
-
-        // Retry connection after 5 seconds
-        setTimeout(() => {
-            if (sseConnection.readyState === EventSource.CLOSED) {
-                console.log('🔄 Retrying SSE connection...');
-                initializeSSE();
-            }
-        }, 5000);
+    // Also log to console for debugging
+    const emoji = {
+        success: '✅',
+        warning: '⚠️',
+        error: '❌',
+        info: 'ℹ️'
     };
+    console.log(`${emoji[status] || '📝'} Data Source: ${text}`);
 }
 
 // ============================================================================

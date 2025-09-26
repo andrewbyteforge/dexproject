@@ -383,7 +383,7 @@
 <!-- Dashboard Configuration (Django template variables) -->
 <script>
 window.dashboardConfig = {
-    metricsStreamUrl: '{% url "dashboard:metrics_stream" %}',
+    // metricsStreamUrl: '/dashboard/metrics/stream/', // Commented out - SSE disabled
     analyticsUrl: '{% url "dashboard:analytics" %}',
     fastLaneActive: {{ fast_lane_active|yesno:"true,false" }},
     smartLaneActive: {{ smart_lane_active|yesno:"true,false" }},

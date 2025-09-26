@@ -1,16 +1,15 @@
 """
-Enhanced Django settings for dexproject with Web3 integration and SIWE support
+Enhanced Django settings for dexproject with Web3 integration, SIWE support, and Channels
 
 This settings file includes Web3 configuration, testnet support, SIWE wallet
-authentication, and enhanced trading engine settings for both development 
-and production.
+authentication, Django Channels for WebSocket support, and enhanced trading 
+engine settings for both development and production.
 
-UPDATED: Phase 7 - Enhanced for Local Production Trading Operations
-- Production-grade database configuration
-- Advanced logging for trading operations  
-- Redis caching optimization
-- Security enhancements
-- Performance monitoring
+UPDATED: PTphase3 - Added Django Channels and WebSocket configuration
+- Django Channels for real-time updates
+- WebSocket support for paper trading dashboard
+- Channel layers configuration
+- ASGI application setup
 
 File: dexproject/dexproject/settings.py
 """
@@ -98,6 +97,7 @@ if not DEBUG and len(ALLOWED_HOSTS) <= 2 and not PRODUCTION_MODE:  # Only localh
 
 # Application definition
 DJANGO_APPS = [
+    'daphne',  # Add at the top for ASGI/WebSocket support
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -109,6 +109,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     'rest_framework',
     'corsheaders',
+    'channels',  # Django Channels for WebSocket support
 ]
 
 LOCAL_APPS = [
@@ -119,7 +120,6 @@ LOCAL_APPS = [
     'wallet',
     'analytics',
     'paper_trading',
-    
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -159,8 +159,82 @@ TEMPLATES = [
     },
 ]
 
+# ASGI configuration for WebSocket support
 WSGI_APPLICATION = 'dexproject.wsgi.application'
 ASGI_APPLICATION = 'dexproject.asgi.application'
+
+
+# =============================================================================
+# SSE (SERVER-SENT EVENTS) CONFIGURATION
+# =============================================================================
+
+# Control SSE streaming for dashboard metrics
+SSE_ENABLED = get_env_bool('SSE_ENABLED', 'False')  # Disable by default to prevent hanging
+SSE_MAX_ITERATIONS = get_env_int('SSE_MAX_ITERATIONS', '10')  # Reduced from 100
+DASHBOARD_SSE_UPDATE_INTERVAL = get_env_int('DASHBOARD_SSE_UPDATE_INTERVAL', '5')  # Increased from 2
+
+# Log SSE configuration
+logger.info(f"📡 SSE Configuration: Enabled={SSE_ENABLED}, Max Iterations={SSE_MAX_ITERATIONS}, Interval={DASHBOARD_SSE_UPDATE_INTERVAL}s")
+
+
+
+# =============================================================================
+# DJANGO CHANNELS CONFIGURATION (WebSocket Support)
+# =============================================================================
+
+# Channel Layers - For WebSocket message passing
+# Development: Use in-memory channel layer
+# Production: Use Redis channel layer for scalability
+
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+# Check if Redis is available
+REDIS_AVAILABLE = False
+try:
+    import redis
+    r = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=1)
+    r.ping()
+    REDIS_AVAILABLE = True
+    logger.info("Redis connection successful for Channel Layer")
+except Exception as e:
+    logger.warning(f"Redis not available for Channel Layer ({e}) - using in-memory")
+
+# Configure Channel Layers based on Redis availability and environment
+if REDIS_AVAILABLE and PRODUCTION_MODE:
+    # Production with Redis
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [(REDIS_URL)],
+                "capacity": 1500,
+                "expiry": 10,
+            },
+        },
+    }
+    logger.info("Using Redis Channel Layer for WebSockets")
+elif REDIS_AVAILABLE:
+    # Development with Redis available
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [(REDIS_URL)],
+            },
+        },
+    }
+    logger.info("Using Redis Channel Layer for WebSockets (development)")
+else:
+    # Fallback to in-memory (development only)
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer'
+        }
+    }
+    logger.info("Using In-Memory Channel Layer for WebSockets")
+
+# WebSocket configuration
+WEBSOCKET_ACCEPT_ALL = get_env_bool('WEBSOCKET_ACCEPT_ALL', 'True') if DEBUG else False
 
 # =============================================================================
 # AUTHENTICATION CONFIGURATION
@@ -364,20 +438,7 @@ PROVIDER_RECOVERY_TIME = get_env_int('PROVIDER_RECOVERY_TIME', '300')
 # CACHE CONFIGURATION - FIXED FOR DJANGO REDIS
 # =============================================================================
 
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-
-# Check if Redis is available and configure accordingly
-REDIS_AVAILABLE = True
-try:
-    import redis
-    r = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=1)
-    r.ping()
-    logger.info("Redis connection successful")
-except Exception as e:
-    REDIS_AVAILABLE = False
-    logger.warning(f"Redis not available ({e}) - falling back to in-memory cache")
-
-# Try to use django-redis if available and Redis is accessible
+# Check if django-redis is available
 DJANGO_REDIS_AVAILABLE = False
 if REDIS_AVAILABLE:
     try:
@@ -391,7 +452,7 @@ if REDIS_AVAILABLE and DJANGO_REDIS_AVAILABLE:
     # Use django-redis backend with full features
     CACHES = {
         'default': {
-            'BACKEND': 'django_redis.cache.RedisCache',  # Use django-redis backend
+            'BACKEND': 'django_redis.cache.RedisCache',
             'LOCATION': REDIS_URL,
             'OPTIONS': {
                 'CLIENT_CLASS': 'django_redis.client.DefaultClient',
@@ -414,10 +475,9 @@ elif REDIS_AVAILABLE:
     # Use basic Redis backend without django-redis features
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',  # Basic Redis backend
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
             'LOCATION': REDIS_URL,
             'OPTIONS': {
-                # Basic options only - no CLIENT_CLASS parameter
                 'CONNECTION_POOL_KWARGS': {
                     'max_connections': 50 if PRODUCTION_MODE else 20,
                     'retry_on_timeout': True,
@@ -425,7 +485,7 @@ elif REDIS_AVAILABLE:
             },
             'KEY_PREFIX': f'dexbot_{TRADING_ENVIRONMENT}',
             'VERSION': 1,
-            'TIMEOUT': 300,  # 5 minutes default
+            'TIMEOUT': 300,
         }
     }
     
@@ -563,7 +623,7 @@ LOGS_DIR = BASE_DIR / 'logs'
 LOGS_DIR.mkdir(exist_ok=True)
 
 # Create subdirectories for different log types
-for log_dir in ['trading', 'performance', 'security', 'debug']:
+for log_dir in ['trading', 'performance', 'security', 'debug', 'websocket']:
     (LOGS_DIR / log_dir).mkdir(exist_ok=True)
 
 LOGGING = {
@@ -585,6 +645,11 @@ LOGGING = {
             'style': '{',
             'datefmt': '%Y-%m-%d %H:%M:%S',
         },
+        'websocket': {
+            'format': '[WS] {asctime} {levelname} {name} | {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
         'performance': {
             'format': '[PERF] {asctime} {levelname} {name} | {message}',
             'style': '{',
@@ -601,10 +666,6 @@ LOGGING = {
         },
         'require_debug_true': {
             '()': 'django.utils.log.RequireDebugTrue',
-        },
-        'trading_filter': {
-            '()': 'django.utils.log.CallbackFilter',
-            'callback': lambda record: any(x in record.name.lower() for x in ['trading', 'portfolio', 'gas', 'dex']),
         },
     },
     'handlers': {
@@ -634,7 +695,14 @@ LOGGING = {
             'backupCount': 20,
             'formatter': 'trading',
             'level': 'INFO',
-            'filters': ['trading_filter'],
+        },
+        'file_websocket': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOGS_DIR / 'websocket' / 'websocket.log',
+            'maxBytes': 50 * 1024 * 1024,  # 50MB
+            'backupCount': 10,
+            'formatter': 'websocket',
+            'level': 'INFO',
         },
         'file_performance': {
             'class': 'logging.handlers.RotatingFileHandler',
@@ -669,6 +737,26 @@ LOGGING = {
         'django': {
             'handlers': ['console', 'file_debug'] if DEBUG else ['console'],
             'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'channels': {
+            'handlers': ['console', 'file_websocket'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'daphne': {
+            'handlers': ['console', 'file_websocket'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'paper_trading.consumers': {
+            'handlers': ['console', 'file_websocket', 'file_trading'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'paper_trading': {
+            'handlers': ['console', 'file_trading', 'file_error'],
+            'level': 'DEBUG',
             'propagate': False,
         },
         'trading': {
@@ -818,9 +906,17 @@ logger.info(f"⛓️  Default chain: {DEFAULT_CHAIN_ID}, Supported chains: {SIWE
 logger.info(f"📊 Engine live data: {ENGINE_LIVE_DATA}")
 logger.info(f"💾 Database: {'PostgreSQL' if 'postgresql' in DATABASE_URL else 'SQLite'}")
 logger.info(f"🗄️  Cache: {'Redis' if REDIS_AVAILABLE else 'Memory'}")
+logger.info(f"📡 WebSocket Layer: {'Redis Channel Layer' if REDIS_AVAILABLE else 'In-Memory Channel Layer'}")
+logger.info(f"🔄 ASGI Application: {ASGI_APPLICATION}")
 
 if PRODUCTION_MODE:
     logger.info("🏭 Production mode optimizations enabled")
     logger.info(f"💰 Max portfolio: ${MAX_PORTFOLIO_SIZE_USD}, Max position: ${MAX_POSITION_SIZE_USD}")
     logger.info(f"⛽ Max gas price: {MAX_GAS_PRICE_GWEI} gwei")
     logger.info(f"🕒 Fast lane target: {FAST_LANE_TARGET_MS}ms")
+    
+# PTphase3 specific logging
+logger.info("✅ PTphase3 WebSocket Support Configured")
+logger.info(f"   - Django Channels: Installed")
+logger.info(f"   - Channel Layer: {'Redis' if REDIS_AVAILABLE else 'In-Memory'}")
+logger.info(f"   - WebSocket Logging: {LOGS_DIR / 'websocket'}")
