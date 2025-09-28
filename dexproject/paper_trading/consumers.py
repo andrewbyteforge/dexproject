@@ -1,31 +1,31 @@
 """
-WebSocket consumers for real-time paper trading updates.
+Paper Trading WebSocket Consumer
 
-This module handles WebSocket connections for live dashboard updates,
-including trades, portfolio changes, and performance metrics.
+Real-time WebSocket consumer for paper trading dashboard updates.
+Provides live notifications for trades, positions, and performance metrics.
 
 File: dexproject/paper_trading/consumers.py
 """
 
 import json
 import logging
-import asyncio
 from typing import Dict, Any, Optional
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from django.contrib.auth.models import User
 from django.utils import timezone
-from django.core.serializers.json import DjangoJSONEncoder
 
 from .models import (
     PaperTradingAccount,
     PaperTrade,
     PaperPosition,
+    PaperTradingSession,
     PaperAIThoughtLog,
-    PaperPerformanceMetrics,
-    PaperTradingSession
+    PaperStrategyConfiguration,
+    PaperPerformanceMetrics
 )
 
 logger = logging.getLogger(__name__)
@@ -35,50 +35,42 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for real-time paper trading updates.
     
-    Handles:
-    - Portfolio value updates
-    - New trade notifications
-    - Position changes
-    - Performance metrics
-    - AI thought logs
+    Features:
+    - Real-time trade notifications
+    - Position updates
+    - Performance metrics streaming
+    - AI thought process streaming
     - Bot status updates
     """
     
-    def __init__(self, *args, **kwargs):
-        """Initialize the consumer with default values."""
-        super().__init__(*args, **kwargs)
-        self.user = None
-        self.account_id = None
-        self.room_group_name = None
-        self.update_task = None
-        
     async def connect(self) -> None:
         """
         Handle WebSocket connection.
         
-        Sets up the connection, joins appropriate groups,
-        and starts sending periodic updates.
+        Authenticates user and joins their personal paper trading channel.
         """
         try:
             # Get user from scope
-            self.user = self.scope["user"]
+            self.user = self.scope.get("user")
             
-            if not self.user.is_authenticated:
+            # Only allow authenticated users
+            if not self.user or not self.user.is_authenticated:
                 logger.warning("Unauthenticated WebSocket connection attempt")
-                await self.close()
+                await self.close(code=4001)
                 return
-                
+            
             # Get user's paper trading account
             account = await self.get_user_account()
             if not account:
                 logger.error(f"No paper trading account for user {self.user.username}")
-                await self.close()
+                await self.close(code=4004)
                 return
-                
-            self.account_id = account.account_id
             
-            # Create room name for this user's updates
-            self.room_group_name = f'paper_trading_{self.user.id}'
+            # Store account_id using the correct field name
+            self.account_id = str(account.account_id)
+            
+            # Create unique group name for this user's paper trading
+            self.room_group_name = f"paper_trading_{self.account_id}"
             
             # Join room group
             await self.channel_layer.group_add(
@@ -86,19 +78,23 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
             
+            # Accept the connection
             await self.accept()
             
-            # Send initial data
-            await self.send_initial_data()
+            logger.info(
+                f"Paper trading WebSocket connected: user={self.user.username}, "
+                f"account={self.account_id}"
+            )
             
-            # Start periodic updates (every 2 seconds)
-            self.update_task = asyncio.create_task(self.send_periodic_updates())
+            # Send connection confirmation with initial data
+            await self.send_connection_confirmed()
             
-            logger.info(f"WebSocket connected for user {self.user.username}")
+            # Send initial portfolio snapshot
+            await self.send_initial_snapshot()
             
         except Exception as e:
             logger.error(f"Error in WebSocket connect: {e}", exc_info=True)
-            await self.close()
+            await self.close(code=4500)
     
     async def disconnect(self, close_code: int) -> None:
         """
@@ -108,363 +104,519 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             close_code: WebSocket close code
         """
         try:
-            # Cancel update task if running
-            if self.update_task:
-                self.update_task.cancel()
-                
             # Leave room group
-            if self.room_group_name:
+            if hasattr(self, 'room_group_name'):
                 await self.channel_layer.group_discard(
                     self.room_group_name,
                     self.channel_name
                 )
-                
-            logger.info(f"WebSocket disconnected for user {self.user.username if self.user else 'unknown'}")
+            
+            logger.info(
+                f"Paper trading WebSocket disconnected: "
+                f"user={getattr(self, 'user', 'unknown')}, "
+                f"code={close_code}"
+            )
             
         except Exception as e:
             logger.error(f"Error in WebSocket disconnect: {e}", exc_info=True)
     
     async def receive(self, text_data: str) -> None:
         """
-        Handle incoming WebSocket messages.
+        Handle messages from WebSocket client.
         
         Args:
-            text_data: JSON string with message data
+            text_data: JSON string from client
         """
         try:
             data = json.loads(text_data)
             message_type = data.get('type')
             
+            logger.debug(f"Received WebSocket message: type={message_type}")
+            
             # Handle different message types
             if message_type == 'ping':
-                await self.send_pong()
-                
-            elif message_type == 'request_update':
-                await self.send_full_update()
-                
-            elif message_type == 'subscribe':
-                # Handle subscription to specific data streams
-                stream = data.get('stream')
-                await self.handle_subscription(stream)
-                
+                await self.send_pong(data.get('timestamp'))
+            
+            elif message_type == 'request_portfolio_update':
+                await self.send_portfolio_update()
+            
+            elif message_type == 'request_trade_history':
+                limit = data.get('limit', 10)
+                await self.send_trade_history(limit)
+            
+            elif message_type == 'request_open_positions':
+                await self.send_open_positions()
+            
+            elif message_type == 'request_performance_metrics':
+                await self.send_performance_metrics()
+            
             else:
-                logger.warning(f"Unknown message type: {message_type}")
+                logger.warning(f"Unknown WebSocket message type: {message_type}")
+                await self.send_error(f"Unknown message type: {message_type}")
                 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON received: {e}")
+            await self.send_error("Invalid JSON format")
+        
         except Exception as e:
             logger.error(f"Error handling WebSocket message: {e}", exc_info=True)
+            await self.send_error("Internal server error")
     
-    async def send_initial_data(self) -> None:
-        """Send initial dashboard data when connection is established."""
-        try:
-            # Get all initial data
-            account_data = await self.get_account_data()
-            portfolio_data = await self.get_portfolio_data()
-            recent_trades = await self.get_recent_trades(limit=10)
-            performance_data = await self.get_performance_data()
-            session_data = await self.get_session_status()
-            thought_logs = await self.get_recent_thoughts(limit=5)
-            
-            # Send initial data package
-            await self.send(text_data=json.dumps({
-                'type': 'initial_data',
-                'timestamp': datetime.now().isoformat(),
-                'data': {
-                    'account': account_data,
-                    'portfolio': portfolio_data,
-                    'recent_trades': recent_trades,
-                    'performance': performance_data,
-                    'session': session_data,
-                    'thoughts': thought_logs
-                }
-            }, cls=DjangoJSONEncoder))
-            
-        except Exception as e:
-            logger.error(f"Error sending initial data: {e}", exc_info=True)
+    # =========================================================================
+    # MESSAGE SENDERS - Client Communication
+    # =========================================================================
     
-    async def send_periodic_updates(self) -> None:
-        """Send periodic updates every 2 seconds."""
-        while True:
-            try:
-                await asyncio.sleep(2)  # Update every 2 seconds
-                
-                # Get latest data
-                portfolio_data = await self.get_portfolio_data()
-                performance_data = await self.get_performance_data()
-                session_data = await self.get_session_status()
-                
-                # Check for new trades
-                new_trades = await self.get_new_trades_since(seconds=2)
-                
-                # Check for new thoughts
-                new_thoughts = await self.get_new_thoughts_since(seconds=2)
-                
-                # Send update
-                await self.send(text_data=json.dumps({
-                    'type': 'periodic_update',
-                    'timestamp': datetime.now().isoformat(),
-                    'data': {
-                        'portfolio': portfolio_data,
-                        'performance': performance_data,
-                        'session': session_data,
-                        'new_trades': new_trades,
-                        'new_thoughts': new_thoughts
-                    }
-                }, cls=DjangoJSONEncoder))
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in periodic update: {e}", exc_info=True)
-                await asyncio.sleep(5)  # Wait longer on error
+    async def send_connection_confirmed(self) -> None:
+        """Send connection confirmation to client."""
+        await self.send(text_data=json.dumps({
+            'type': 'connection_confirmed',
+            'timestamp': timezone.now().isoformat(),
+            'account_id': self.account_id,
+            'message': 'WebSocket connected successfully'
+        }))
     
-    async def send_full_update(self) -> None:
-        """Send a complete data update on request."""
-        try:
-            account_data = await self.get_account_data()
-            portfolio_data = await self.get_portfolio_data()
-            recent_trades = await self.get_recent_trades(limit=20)
-            performance_data = await self.get_performance_data()
-            session_data = await self.get_session_status()
-            
-            await self.send(text_data=json.dumps({
-                'type': 'full_update',
-                'timestamp': datetime.now().isoformat(),
-                'data': {
-                    'account': account_data,
-                    'portfolio': portfolio_data,
-                    'recent_trades': recent_trades,
-                    'performance': performance_data,
-                    'session': session_data
-                }
-            }, cls=DjangoJSONEncoder))
-            
-        except Exception as e:
-            logger.error(f"Error sending full update: {e}", exc_info=True)
-    
-    async def send_pong(self) -> None:
+    async def send_pong(self, timestamp: Optional[str] = None) -> None:
         """Send pong response to ping."""
         await self.send(text_data=json.dumps({
             'type': 'pong',
-            'timestamp': datetime.now().isoformat()
+            'timestamp': timestamp or timezone.now().isoformat()
         }))
     
-    # =========================================================================
-    # Database query methods (async)
-    # =========================================================================
+    async def send_error(self, message: str) -> None:
+        """Send error message to client."""
+        await self.send(text_data=json.dumps({
+            'type': 'error',
+            'message': message,
+            'timestamp': timezone.now().isoformat()
+        }))
     
-    @database_sync_to_async
-    def get_user_account(self) -> Optional[PaperTradingAccount]:
-        """Get the user's paper trading account."""
-        return PaperTradingAccount.objects.filter(
-            user=self.user,
-            is_active=True
-        ).first()
-    
-    @database_sync_to_async
-    def get_account_data(self) -> Dict[str, Any]:
-        """Get account summary data."""
-        account = PaperTradingAccount.objects.get(account_id=self.account_id)
-        return {
-            'id': account.account_id,
-            'name': account.name,
-            'initial_balance': float(account.initial_balance_usd),
-            'current_balance': float(account.current_balance_usd),
-            'total_pnl': float(account.total_pnl_usd),
-            'return_percent': float(account.total_return_percent),
-            'created_at': account.created_at.isoformat()
-        }
-    
-    @database_sync_to_async
-    def get_portfolio_data(self) -> Dict[str, Any]:
-        """Get current portfolio data including positions."""
-        positions = PaperPosition.objects.filter(
-            account_id=self.account_id,
-            is_open=True
-        ).order_by('-current_value_usd')
-        
-        position_list = []
-        total_value = Decimal('0')
-        total_unrealized_pnl = Decimal('0')
-        
-        for pos in positions:
-            position_list.append({
-                'token_symbol': pos.token_symbol,
-                'quantity': float(pos.quantity),
-                'entry_price': float(pos.entry_price),
-                'current_price': float(pos.current_price),
-                'current_value': float(pos.current_value_usd),
-                'unrealized_pnl': float(pos.unrealized_pnl_usd),
-                'pnl_percent': float(pos.unrealized_pnl_percent)
-            })
-            total_value += pos.current_value_usd
-            total_unrealized_pnl += pos.unrealized_pnl_usd
-        
-        return {
-            'positions': position_list,
-            'total_value': float(total_value),
-            'total_unrealized_pnl': float(total_unrealized_pnl),
-            'position_count': len(position_list)
-        }
-    
-    @database_sync_to_async
-    def get_recent_trades(self, limit: int = 10) -> list:
-        """Get recent trades."""
-        trades = PaperTrade.objects.filter(
-            account_id=self.account_id
-        ).order_by('-created_at')[:limit]
-        
-        return [{
-            'id': trade.trade_id,
-            'trade_type': trade.trade_type,
-            'token_in': trade.token_in_symbol,
-            'token_out': trade.token_out_symbol,
-            'amount_in': float(trade.amount_in),
-            'amount_out': float(trade.amount_out),
-            'amount_usd': float(trade.amount_in_usd),
-            'status': trade.status,
-            'created_at': trade.created_at.isoformat(),
-            'strategy': trade.strategy_name
-        } for trade in trades]
-    
-    @database_sync_to_async
-    def get_performance_data(self) -> Dict[str, Any]:
-        """Get performance metrics."""
-        metrics = PaperPerformanceMetrics.objects.filter(
-            session__account_id=self.account_id
-        ).order_by('-calculated_at').first()
-        
-        if metrics:
-            return {
-                'total_trades': metrics.total_trades,
-                'winning_trades': metrics.winning_trades,
-                'losing_trades': metrics.losing_trades,
-                'win_rate': float(metrics.win_rate),
-                'avg_win_usd': float(metrics.avg_win_usd),
-                'avg_loss_usd': float(metrics.avg_loss_usd),
-                'profit_factor': float(metrics.profit_factor),
-                'sharpe_ratio': float(metrics.sharpe_ratio) if metrics.sharpe_ratio else None,
-                'max_drawdown_percent': float(metrics.max_drawdown_percent),
-                'calculated_at': metrics.calculated_at.isoformat()
+    async def send_initial_snapshot(self) -> None:
+        """Send initial data snapshot after connection."""
+        try:
+            account_data = await self.get_account_data()
+            active_session = await self.get_active_session()
+            
+            snapshot = {
+                'type': 'initial_snapshot',
+                'timestamp': timezone.now().isoformat(),
+                'account': account_data,
+                'session': active_session,
             }
-        return {}
-    
-    @database_sync_to_async
-    def get_session_status(self) -> Dict[str, Any]:
-        """Get current trading session status."""
-        session = PaperTradingSession.objects.filter(
-            account_id=self.account_id,
-            status='ACTIVE'
-        ).first()
-        
-        if session:
-            return {
-                'active': True,
-                'session_id': session.session_id,
-                'strategy': session.strategy_name,
-                'started_at': session.start_time.isoformat(),
-                'trades_executed': session.trades_executed,
-                'status': session.status
-            }
-        return {'active': False}
-    
-    @database_sync_to_async
-    def get_recent_thoughts(self, limit: int = 5) -> list:
-        """Get recent AI thought logs."""
-        thoughts = PaperAIThoughtLog.objects.filter(
-            account_id=self.account_id
-        ).order_by('-created_at')[:limit]
-        
-        return [{
-            'id': thought.thought_id,
-            'action': thought.action,
-            'decision_type': thought.decision_type,
-            'reasoning': thought.reasoning,
-            'confidence': float(thought.confidence_score),
-            'created_at': thought.created_at.isoformat()
-        } for thought in thoughts]
-    
-    @database_sync_to_async
-    def get_new_trades_since(self, seconds: int = 2) -> list:
-        """Get trades created in the last N seconds."""
-        cutoff = timezone.now() - timedelta(seconds=seconds)
-        trades = PaperTrade.objects.filter(
-            account_id=self.account_id,
-            created_at__gte=cutoff
-        ).order_by('-created_at')
-        
-        return [{
-            'id': trade.trade_id,
-            'trade_type': trade.trade_type,
-            'token_out': trade.token_out_symbol,
-            'amount_usd': float(trade.amount_in_usd),
-            'status': trade.status,
-            'created_at': trade.created_at.isoformat()
-        } for trade in trades]
-    
-    @database_sync_to_async
-    def get_new_thoughts_since(self, seconds: int = 2) -> list:
-        """Get thought logs created in the last N seconds."""
-        cutoff = timezone.now() - timedelta(seconds=seconds)
-        thoughts = PaperAIThoughtLog.objects.filter(
-            account_id=self.account_id,
-            created_at__gte=cutoff
-        ).order_by('-created_at')
-        
-        return [{
-            'action': thought.action,
-            'reasoning': thought.reasoning[:100] + '...' if len(thought.reasoning) > 100 else thought.reasoning,
-            'confidence': float(thought.confidence_score),
-            'created_at': thought.created_at.isoformat()
-        } for thought in thoughts]
-    
-    async def handle_subscription(self, stream: str) -> None:
-        """
-        Handle subscription to specific data streams.
-        
-        Args:
-            stream: Name of the stream to subscribe to
-        """
-        # This can be extended to handle specific subscriptions
-        logger.info(f"Subscription request for stream: {stream}")
+            
+            await self.send(text_data=json.dumps(snapshot, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending initial snapshot: {e}", exc_info=True)
     
     # =========================================================================
-    # Group message handlers
+    # GROUP MESSAGE HANDLERS - Broadcast to Client
     # =========================================================================
     
-    async def trade_update(self, event: Dict[str, Any]) -> None:
+    async def trade_executed(self, event: Dict[str, Any]) -> None:
         """
-        Handle trade update messages from the group.
+        Handle trade_executed event from channel layer.
         
         Args:
             event: Event data containing trade information
         """
-        await self.send(text_data=json.dumps({
-            'type': 'trade_update',
-            'data': event['data']
-        }, cls=DjangoJSONEncoder))
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'trade_executed',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending trade_executed: {e}", exc_info=True)
     
-    async def portfolio_update(self, event: Dict[str, Any]) -> None:
+    async def position_updated(self, event: Dict[str, Any]) -> None:
         """
-        Handle portfolio update messages from the group.
+        Handle position_updated event from channel layer.
         
         Args:
-            event: Event data containing portfolio information
+            event: Event data containing position information
         """
-        await self.send(text_data=json.dumps({
-            'type': 'portfolio_update',
-            'data': event['data']
-        }, cls=DjangoJSONEncoder))
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'position_updated',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending position_updated: {e}", exc_info=True)
     
-    async def bot_status_update(self, event: Dict[str, Any]) -> None:
+    async def position_closed(self, event: Dict[str, Any]) -> None:
         """
-        Handle bot status update messages from the group.
+        Handle position_closed event from channel layer.
         
         Args:
-            event: Event data containing bot status
+            event: Event data containing closed position information
         """
-        await self.send(text_data=json.dumps({
-            'type': 'bot_status_update',
-            'data': event['data']
-        }, cls=DjangoJSONEncoder))
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'position_closed',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending position_closed: {e}", exc_info=True)
+    
+    async def account_updated(self, event: Dict[str, Any]) -> None:
+        """
+        Handle account_updated event from channel layer.
+        
+        Args:
+            event: Event data containing account information
+        """
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'account_updated',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending account_updated: {e}", exc_info=True)
+    
+    async def thought_log_created(self, event: Dict[str, Any]) -> None:
+        """
+        Handle thought_log_created event from channel layer.
+        
+        Args:
+            event: Event data containing AI thought log
+        """
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'thought_log_created',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending thought_log_created: {e}", exc_info=True)
+    
+    async def session_started(self, event: Dict[str, Any]) -> None:
+        """
+        Handle session_started event from channel layer.
+        
+        Args:
+            event: Event data containing session information
+        """
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'session_started',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending session_started: {e}", exc_info=True)
+    
+    async def session_stopped(self, event: Dict[str, Any]) -> None:
+        """
+        Handle session_stopped event from channel layer.
+        
+        Args:
+            event: Event data containing session information
+        """
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'session_stopped',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending session_stopped: {e}", exc_info=True)
+    
+    async def metrics_updated(self, event: Dict[str, Any]) -> None:
+        """
+        Handle metrics_updated event from channel layer.
+        
+        Args:
+            event: Event data containing performance metrics
+        """
+        try:
+            await self.send(text_data=json.dumps({
+                'type': 'metrics_updated',
+                'data': event.get('data', {}),
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending metrics_updated: {e}", exc_info=True)
+    
+    # =========================================================================
+    # DATA REQUEST HANDLERS - Client Requested Updates
+    # =========================================================================
+    
+    async def send_portfolio_update(self) -> None:
+        """Send current portfolio data to client."""
+        try:
+            account_data = await self.get_account_data()
+            
+            await self.send(text_data=json.dumps({
+                'type': 'portfolio_update',
+                'data': account_data,
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending portfolio update: {e}", exc_info=True)
+            await self.send_error("Failed to retrieve portfolio data")
+    
+    async def send_trade_history(self, limit: int = 10) -> None:
+        """
+        Send recent trade history to client.
+        
+        Args:
+            limit: Number of recent trades to retrieve
+        """
+        try:
+            trades = await self.get_recent_trades(limit)
+            
+            await self.send(text_data=json.dumps({
+                'type': 'trade_history',
+                'data': trades,
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending trade history: {e}", exc_info=True)
+            await self.send_error("Failed to retrieve trade history")
+    
+    async def send_open_positions(self) -> None:
+        """Send current open positions to client."""
+        try:
+            positions = await self.get_open_positions()
+            
+            await self.send(text_data=json.dumps({
+                'type': 'open_positions',
+                'data': positions,
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending open positions: {e}", exc_info=True)
+            await self.send_error("Failed to retrieve open positions")
+    
+    async def send_performance_metrics(self) -> None:
+        """Send current performance metrics to client."""
+        try:
+            metrics = await self.get_performance_metrics()
+            
+            await self.send(text_data=json.dumps({
+                'type': 'performance_metrics',
+                'data': metrics,
+                'timestamp': timezone.now().isoformat()
+            }, default=str))
+            
+        except Exception as e:
+            logger.error(f"Error sending performance metrics: {e}", exc_info=True)
+            await self.send_error("Failed to retrieve performance metrics")
+    
+    # =========================================================================
+    # DATABASE OPERATIONS - Async Wrapped
+    # =========================================================================
+    
+    @database_sync_to_async
+    def get_user_account(self) -> Optional[PaperTradingAccount]:
+        """
+        Get user's active paper trading account.
+        
+        Returns:
+            PaperTradingAccount or None if not found
+        """
+        try:
+            return PaperTradingAccount.objects.filter(
+                user=self.user,
+                is_active=True
+            ).first()
+        except Exception as e:
+            logger.error(f"Error getting user account: {e}", exc_info=True)
+            return None
+    
+    @database_sync_to_async
+    def get_account_data(self) -> Dict[str, Any]:
+        """
+        Get account data for client.
+        
+        Returns:
+            Dictionary with account information
+        """
+        try:
+            account = PaperTradingAccount.objects.get(
+                account_id=self.account_id
+            )
+            
+            return {
+                'account_id': str(account.account_id),
+                'name': account.name,
+                'current_balance_usd': float(account.current_balance_usd),
+                'initial_balance_usd': float(account.initial_balance_usd),
+                'total_pnl_usd': float(account.total_pnl_usd),
+                'total_trades': account.total_trades,
+                'successful_trades': account.successful_trades,
+                'failed_trades': account.failed_trades,
+                'win_rate': (
+                    float((account.successful_trades / account.total_trades) * 100)
+                    if account.total_trades > 0 else 0.0
+                ),
+                'is_active': account.is_active,
+                'created_at': account.created_at.isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting account data: {e}", exc_info=True)
+            return {}
+    
+    @database_sync_to_async
+    def get_active_session(self) -> Optional[Dict[str, Any]]:
+        """
+        Get active trading session data.
+        
+        Returns:
+            Dictionary with session information or None
+        """
+        try:
+            session = PaperTradingSession.objects.filter(
+                account__account_id=self.account_id,
+                status='ACTIVE'
+            ).first()
+            
+            if not session:
+                return None
+            
+            return {
+                'session_id': str(session.session_id),
+                'start_time': session.start_time.isoformat(),
+                'trades_executed': session.trades_executed,
+                'strategy_name': session.strategy_name,
+                'status': session.status,
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting active session: {e}", exc_info=True)
+            return None
+    
+    @database_sync_to_async
+    def get_recent_trades(self, limit: int = 10) -> list:
+        """
+        Get recent trades for account.
+        
+        Args:
+            limit: Number of trades to retrieve
+            
+        Returns:
+            List of trade dictionaries
+        """
+        try:
+            trades = PaperTrade.objects.filter(
+                account__account_id=self.account_id
+            ).order_by('-created_at')[:limit]
+            
+            return [
+                {
+                    'trade_id': str(trade.trade_id),
+                    'trade_type': trade.trade_type,
+                    'token_in_symbol': trade.token_in_symbol,
+                    'token_out_symbol': trade.token_out_symbol,
+                    'amount_in_usd': float(trade.amount_in_usd),
+                    'status': trade.status,
+                    'created_at': trade.created_at.isoformat(),
+                    'executed_at': (
+                        trade.executed_at.isoformat() 
+                        if trade.executed_at else None
+                    ),
+                }
+                for trade in trades
+            ]
+            
+        except Exception as e:
+            logger.error(f"Error getting recent trades: {e}", exc_info=True)
+            return []
+    
+    @database_sync_to_async
+    def get_open_positions(self) -> list:
+        """
+        Get open positions for account.
+        
+        Returns:
+            List of position dictionaries
+        """
+        try:
+            positions = PaperPosition.objects.filter(
+                account__account_id=self.account_id,
+                is_open=True
+            ).order_by('-created_at')
+            
+            return [
+                {
+                    'position_id': str(position.position_id),
+                    'token_symbol': position.token_symbol,
+                    'token_address': position.token_address,
+                    'quantity': float(position.quantity),
+                    'average_entry_price_usd': float(position.average_entry_price_usd),
+                    'current_value_usd': (
+                        float(position.current_value_usd) 
+                        if position.current_value_usd else 0.0
+                    ),
+                    'unrealized_pnl_usd': float(position.unrealized_pnl_usd),
+                    'created_at': position.created_at.isoformat(),
+                }
+                for position in positions
+            ]
+            
+        except Exception as e:
+            logger.error(f"Error getting open positions: {e}", exc_info=True)
+            return []
+    
+    @database_sync_to_async
+    def get_performance_metrics(self) -> Optional[Dict[str, Any]]:
+        """
+        Get latest performance metrics.
+        
+        Returns:
+            Dictionary with performance metrics or None
+        """
+        try:
+            session = PaperTradingSession.objects.filter(
+                account__account_id=self.account_id,
+                status='ACTIVE'
+            ).first()
+            
+            if not session:
+                return None
+            
+            metrics = PaperPerformanceMetrics.objects.filter(
+                session=session
+            ).order_by('-period_end').first()
+            
+            if not metrics:
+                return None
+            
+            return {
+                'metrics_id': str(metrics.metrics_id),
+                'total_trades': metrics.total_trades,
+                'winning_trades': metrics.winning_trades,
+                'losing_trades': metrics.losing_trades,
+                'win_rate': float(metrics.win_rate),
+                'total_pnl_usd': float(metrics.total_pnl_usd),
+                'total_pnl_percent': float(metrics.total_pnl_percent),
+                'avg_win_usd': float(metrics.avg_win_usd),
+                'avg_loss_usd': float(metrics.avg_loss_usd),
+                'largest_win_usd': float(metrics.largest_win_usd),
+                'largest_loss_usd': float(metrics.largest_loss_usd),
+                'max_drawdown_percent': (
+                    float(metrics.max_drawdown_percent)
+                    if metrics.max_drawdown_percent else 0.0
+                ),
+                'period_start': metrics.period_start.isoformat(),
+                'period_end': metrics.period_end.isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting performance metrics: {e}", exc_info=True)
+            return None
