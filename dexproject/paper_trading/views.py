@@ -109,13 +109,16 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         ).order_by('-created_at')[:5]
         
         # Get performance metrics
-        performance = PaperPerformanceMetrics.objects.filter(
-            account=account
-        ).order_by('-created_at').first()
+        if active_session:
+            performance = PaperPerformanceMetrics.objects.filter(
+                session=active_session
+            ).order_by('-calculated_at').first()
+        else:
+            performance = None
         
         # Calculate summary statistics
         total_trades = account.total_trades
-        successful_trades = account.winning_trades
+        successful_trades = account.successful_trades
         
         # Get 24h stats
         time_24h_ago = timezone.now() - timedelta(hours=24)
@@ -985,6 +988,11 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
     except Exception as e:
         logger.error(f"Error in performance metrics API: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
+
+
+
+
+
 
 
 # =============================================================================
