@@ -1122,103 +1122,117 @@ def delete_trade(request: HttpRequest, trade_id: str) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
-def api_recent_trades(request):
+@csrf_exempt
+def api_recent_trades(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint to get recent trades.
+    API endpoint for fetching recent trades.
     
-    Behavior:
-    - If 'since' parameter is provided: returns NEW trades after that timestamp
-    - If no 'since' parameter: returns the 10 most recent trades (initial load)
+    Supports polling for new trades with 'since' parameter.
     
     Query Parameters:
-        since: ISO format timestamp to get trades after this time (optional)
-        limit: Maximum number of trades to return (default: 10, max: 50)
-    
+        - limit: Number of trades to return (default: 10, max: 50)
+        - since: ISO timestamp to get trades created after this time
+        
     Returns:
         JSON response with recent trades data
     """
     try:
-        # Get the user's paper trading account
+        # Get demo user account
+        from django.contrib.auth.models import User
+        
+        # Check if user is authenticated first, otherwise use demo user
+        if request.user.is_authenticated:
+            user = request.user
+        else:
+            try:
+                user = User.objects.get(username='demo_user')
+            except User.DoesNotExist:
+                logger.error("Demo user not found")
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Demo user not configured'
+                }, status=404)
+        
+        # Get active paper trading account
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
+            logger.warning(f"No active paper trading account for user {user.username}")
             return JsonResponse({
                 'success': False,
-                'error': 'No active paper trading account found'
+                'error': 'No active paper trading account found',
+                'trades': []
             })
         
-        # Get parameters
-        since_param = request.GET.get('since', None)
-        limit = min(int(request.GET.get('limit', 10)), 50)  # Default 10, max 50
+        # Build base query
+        trades_query = PaperTrade.objects.filter(account=account)
         
-        # Build base query for trades
-        trades_query = PaperTrade.objects.filter(
-            account=account
-        ).select_related().order_by('-created_at')
-        
-        # If 'since' is provided, get only NEW trades after that timestamp
-        if since_param:
+        # Apply 'since' filter if provided
+        since = request.GET.get('since')
+        if since:
             try:
-                # Parse ISO format timestamp
-                since_datetime = datetime.fromisoformat(
-                    since_param.replace('Z', '+00:00')
-                )
-                # Get trades created AFTER the since timestamp
-                trades_query = trades_query.filter(created_at__gt=since_datetime)
-                # For updates, we might get 0 trades if nothing new
-                trades = list(trades_query[:limit])
-            except (ValueError, AttributeError) as e:
-                logger.warning(f"Invalid since parameter: {since_param}, returning recent trades")
-                # If since parameter is invalid, just return recent trades
-                trades = list(trades_query[:limit])
-        else:
-            # No 'since' parameter - this is the initial load
-            # Always return the 10 most recent trades
-            trades = list(trades_query[:limit])
+                # Parse the ISO timestamp
+                from django.utils.dateparse import parse_datetime
+                since_datetime = parse_datetime(since)
+                if since_datetime:
+                    # Make it timezone aware if it isn't already
+                    if timezone.is_naive(since_datetime):
+                        since_datetime = timezone.make_aware(since_datetime)
+                    trades_query = trades_query.filter(created_at__gt=since_datetime)
+                    logger.debug(f"Filtering trades since {since_datetime}")
+            except Exception as e:
+                logger.warning(f"Error parsing 'since' parameter: {e}")
         
-        # Serialize trades data
+        # Apply limit
+        limit = min(int(request.GET.get('limit', 10)), 50)
+        
+        # Order by most recent first
+        trades = trades_query.order_by('-created_at')[:limit]
+        
+        # Build response data
         trades_data = []
         for trade in trades:
-            trade_data = {
-                'trade_id': str(trade.trade_id),
-                'trade_type': trade.trade_type,
-                'token_symbol': trade.token_out_symbol or trade.token_in_symbol,
-                'token_out_symbol': trade.token_out_symbol,
-                'token_in_symbol': trade.token_in_symbol,
-                'amount_in': float(trade.amount_in) if trade.amount_in else 0,
-                'amount_out': float(trade.amount_out) if trade.amount_out else 0,
-                'amount_in_usd': float(trade.amount_in_usd),
-                'amount_out_usd': float(trade.amount_out_usd) if trade.amount_out_usd else 0,
-                'status': trade.status,
-                'created_at': trade.created_at.isoformat(),
-                'execution_time_ms': trade.execution_time_ms if hasattr(trade, 'execution_time_ms') else None,
-            }
-            
-            # Add P&L if available
-            if hasattr(trade, 'pnl_usd') and trade.pnl_usd is not None:
-                trade_data['pnl_usd'] = float(trade.pnl_usd)
-                trade_data['pnl_percent'] = float(trade.pnl_percent) if hasattr(trade, 'pnl_percent') and trade.pnl_percent else 0
-            
-            trades_data.append(trade_data)
+            try:
+                trade_dict = {
+                    'trade_id': str(trade.trade_id),
+                    'trade_type': trade.trade_type.upper() if trade.trade_type else 'UNKNOWN',
+                    'status': trade.status.upper() if trade.status else 'PENDING',
+                    'token_symbol': trade.token_out_symbol or trade.token_in_symbol or 'N/A',
+                    'token_in_symbol': trade.token_in_symbol or 'N/A',
+                    'token_out_symbol': trade.token_out_symbol or 'N/A',
+                    'amount_in': float(trade.amount_in) if trade.amount_in else 0,
+                    'amount_in_usd': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
+                    'amount_out': float(trade.actual_amount_out) if trade.actual_amount_out else 0,
+                    'created_at': trade.created_at.isoformat() if trade.created_at else None,
+                    'executed_at': trade.executed_at.isoformat() if trade.executed_at else None,
+                }
+                trades_data.append(trade_dict)
+            except Exception as e:
+                logger.error(f"Error serializing trade {trade.trade_id}: {e}")
+                continue
         
-        return JsonResponse({
+        # Log for debugging
+        logger.info(f"Returning {len(trades_data)} trades for account {account.account_id}")
+        
+        response = {
             'success': True,
             'trades': trades_data,
             'count': len(trades_data),
-            'timestamp': datetime.now().isoformat(),
-            'is_initial': since_param is None  # Flag to indicate if this is initial load
-        })
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        return JsonResponse(response)
         
     except Exception as e:
-        logger.error(f"Error in api_recent_trades: {str(e)}", exc_info=True)
+        logger.error(f"Error in api_recent_trades: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
-            'error': 'Failed to fetch recent trades'
+            'error': str(e),
+            'trades': []
         }, status=500)
-
 
 
 
