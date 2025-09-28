@@ -1,13 +1,9 @@
+#!/usr/bin/env python
 """
-Django Management Command - Run Paper Trading Bot
+FIXED Paper Trading Bot Management Command
 
-This command runs the enhanced paper trading bot with AI decision-making capabilities.
-It provides options for configuration and monitoring of the bot's performance.
-
-Usage:
-    python manage.py run_paper_bot
-    python manage.py run_paper_bot --account-id 2 --tick-interval 10
-    python manage.py run_paper_bot --create-account --reset
+This is the corrected version that uses the same user account as the dashboard
+to ensure data synchronization between the web interface and management command.
 
 File: dexproject/paper_trading/management/commands/run_paper_bot.py
 """
@@ -27,16 +23,15 @@ from paper_trading.models import (
 )
 from paper_trading.bot.simple_trader import EnhancedPaperTradingBot
 
-
 logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
     """
-    Django management command to run the enhanced paper trading bot.
+    FIXED Django management command to run the enhanced paper trading bot.
     
-    This command initializes and runs the paper trading bot with AI-driven
-    decision making, Fast/Smart lane strategies, and comprehensive logging.
+    This command now uses the same 'demo_user' account as the web dashboard
+    to ensure proper data synchronization.
     """
     
     help = 'Run the enhanced paper trading bot with AI decision engine'
@@ -87,28 +82,28 @@ class Command(BaseCommand):
             '--max-position-size',
             type=float,
             default=25.0,
-            help='Maximum position size as percentage (default: 25%%)'
+            help='Maximum position size as percentage (default: 25%)'
         )
         
         parser.add_argument(
             '--stop-loss',
             type=float,
             default=5.0,
-            help='Default stop loss percentage (default: 5%%)'
+            help='Default stop loss percentage (default: 5%)'
         )
         
         parser.add_argument(
             '--take-profit',
             type=float,
             default=10.0,
-            help='Default take profit percentage (default: 10%%)'
+            help='Default take profit percentage (default: 10%)'
         )
     
     def handle(self, *args, **options):
         """Execute the command."""
         self.stdout.write(self.style.SUCCESS('🚀 Starting Enhanced Paper Trading Bot...'))
         
-        # Get or create account
+        # Get or create account (FIXED: Use same user as dashboard)
         account = self._get_or_create_account(options)
         if not account:
             self.stdout.write(self.style.ERROR('❌ Failed to get/create account'))
@@ -149,31 +144,48 @@ class Command(BaseCommand):
             sys.exit(1)
     
     def _get_or_create_account(self, options):
-        """Get existing account or create new one."""
+        """
+        Get existing account or create new one.
+        
+        FIXED: Now uses 'demo_user' (same as dashboard) instead of 'paper_trader'
+        """
         account_id = options.get('account_id')
         create_new = options.get('create_account')
         reset = options.get('reset')
         initial_balance = Decimal(str(options.get('initial_balance', 10000)))
         
+        # FIXED: Use demo_user (same as web dashboard)
+        try:
+            demo_user, created = User.objects.get_or_create(
+                username='demo_user',  # FIXED: Changed from 'paper_trader' to 'demo_user'
+                defaults={
+                    'email': 'demo@example.com',
+                    'first_name': 'Demo',
+                    'last_name': 'User'
+                }
+            )
+            
+            if created:
+                self.stdout.write(self.style.SUCCESS('✅ Created demo_user'))
+            else:
+                self.stdout.write('✅ Using existing demo_user')
+        
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f'Failed to get/create demo_user: {e}'))
+            return None
+        
         if create_new:
-            # Create new account
+            # Create new account for demo_user
             try:
-                # Get or create a default user
-                user, _ = User.objects.get_or_create(
-                    username='paper_trader',
-                    defaults={'email': 'paper@trading.bot'}
-                )
-                
-                # Create account with timestamp
                 account = PaperTradingAccount.objects.create(
-                    user=user,
-                    name=f"AI_Bot_{timezone.now().strftime('%Y%m%d_%H%M%S')}",
+                    user=demo_user,  # FIXED: Use demo_user
+                    name=f"Demo_Bot_{timezone.now().strftime('%Y%m%d_%H%M%S')}",
                     initial_balance_usd=initial_balance,
                     current_balance_usd=initial_balance
                 )
                 
                 self.stdout.write(
-                    self.style.SUCCESS(f'✅ Created new account: {account.name} (ID: {account.id})')
+                    self.style.SUCCESS(f'✅ Created new account: {account.name} (ID: {account.pk})')
                 )
                 return account
                 
@@ -181,10 +193,17 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f'Failed to create account: {e}'))
                 return None
         
-        # Get existing account
+        # Get existing account by ID
         if account_id:
             try:
-                account = PaperTradingAccount.objects.get(id=account_id)
+                account = PaperTradingAccount.objects.get(pk=account_id)
+                
+                # Verify account belongs to demo_user
+                if account.user != demo_user:
+                    self.stdout.write(self.style.ERROR(
+                        f'Account {account_id} does not belong to demo_user'
+                    ))
+                    return None
                 
                 # Reset if requested
                 if reset:
@@ -199,19 +218,15 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f'Account with ID {account_id} not found'))
                 return None
         
-        # Get or create default account
+        # Get or create default account for demo_user
         try:
-            user, _ = User.objects.get_or_create(
-                username='paper_trader',
-                defaults={'email': 'paper@trading.bot'}
-            )
-            
             account, created = PaperTradingAccount.objects.get_or_create(
-                user=user,
-                name='Default_AI_Bot',
+                user=demo_user,  # FIXED: Use demo_user
+                name='Demo Paper Trading Account',  # FIXED: Use dashboard-friendly name
                 defaults={
                     'initial_balance_usd': initial_balance,
-                    'current_balance_usd': initial_balance
+                    'current_balance_usd': initial_balance,
+                    'is_active': True
                 }
             )
             
@@ -225,6 +240,10 @@ class Command(BaseCommand):
                     self.stdout.write(
                         self.style.SUCCESS(f'✅ Reset account: {account.name}')
                     )
+                else:
+                    self.stdout.write(
+                        self.style.SUCCESS(f'✅ Using existing account: {account.name}')
+                    )
             
             return account
             
@@ -237,9 +256,9 @@ class Command(BaseCommand):
         try:
             # Map strategy mode to trading mode
             mode_mapping = {
-            'FAST': 'AGGRESSIVE',
-            'SMART': 'CONSERVATIVE',
-            'HYBRID': 'MODERATE'
+                'FAST': 'AGGRESSIVE',
+                'SMART': 'CONSERVATIVE',
+                'HYBRID': 'MODERATE'
             }
 
             # Get or create strategy configuration
@@ -278,21 +297,16 @@ class Command(BaseCommand):
     
     def _display_configuration(self, account, options):
         """Display bot configuration."""
-        self.stdout.write(self.style.SUCCESS('\n' + '='*60))
-        self.stdout.write(self.style.SUCCESS('📋 BOT CONFIGURATION'))
-        self.stdout.write(self.style.SUCCESS('='*60))
-        
-        config_items = [
-            ('Account', f'{account.name} (ID: {account.pk})'),
-            ('Balance', f'${account.current_balance_usd:.2f}'),
-            ('Strategy Mode', options['strategy_mode']),
-            ('Tick Interval', f'{options["tick_interval"]} seconds'),
-            ('Max Position', f'{options["max_position_size"]}%'),
-            ('Stop Loss', f'{options["stop_loss"]}%'),
-            ('Take Profit', f'{options["take_profit"]}%'),
-        ]
-        
-        for label, value in config_items:
-            self.stdout.write(f'  {label:<15} : {value}')
-        
-        self.stdout.write(self.style.SUCCESS('='*60 + '\n'))
+        self.stdout.write("\n" + "=" * 60)
+        self.stdout.write("📋 BOT CONFIGURATION")
+        self.stdout.write("=" * 60)
+        self.stdout.write(f"  Account         : {account.name} (ID: {account.account_id})")
+        self.stdout.write(f"  User            : {account.user.username}")  # ADDED: Show user
+        self.stdout.write(f"  Balance         : ${account.current_balance_usd}")
+        self.stdout.write(f"  Strategy Mode   : {options['strategy_mode']}")
+        self.stdout.write(f"  Tick Interval   : {options['tick_interval']} seconds")
+        self.stdout.write(f"  Max Position    : {options['max_position_size']}%")
+        self.stdout.write(f"  Stop Loss       : {options['stop_loss']}%")
+        self.stdout.write(f"  Take Profit     : {options['take_profit']}%")
+        self.stdout.write("=" * 60)
+        self.stdout.write("")

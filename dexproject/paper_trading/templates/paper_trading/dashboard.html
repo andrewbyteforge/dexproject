@@ -8,9 +8,11 @@
 <style>
     /* Additional Paper Trading Specific Styles */
     .thought-log-container {
-        max-height: 300px;
+        max-height: 400px !important;
         overflow-y: auto;
         padding: 10px;
+        scroll-behavior: smooth;
+        position: relative;
     }
     
     .thought-log-step {
@@ -21,6 +23,28 @@
         border-left: 3px solid #17a2b8;
         font-size: 0.9em;
         line-height: 1.4;
+        transition: all 0.3s ease-out;
+        opacity: 1;
+    }
+    
+    .thought-log-step.fade-out {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+    
+    .thought-log-step.fade-in {
+        animation: slideInFade 0.5s ease-out;
+    }
+    
+    @keyframes slideInFade {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
     
     .confidence-bar {
@@ -64,6 +88,33 @@
     .ai-thoughts-card {
         background: linear-gradient(135deg, rgba(23, 162, 184, 0.1), rgba(111, 66, 193, 0.1));
         border: 1px solid rgba(255, 255, 255, 0.2);
+        position: relative;
+    }
+    
+    .scroll-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+    
+    /* Scrollbar styling for thought log */
+    .thought-log-container::-webkit-scrollbar {
+        width: 6px;
+    }
+    
+    .thought-log-container::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+    }
+    
+    .thought-log-container::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 3px;
+    }
+    
+    .thought-log-container::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.5);
     }
     
     @keyframes pulse-dot {
@@ -86,6 +137,13 @@
     
     .status-inactive {
         background: #dc3545;
+    }
+    
+    /* Auto-expand/collapse for mobile */
+    @media (max-width: 768px) {
+        .thought-log-container {
+            max-height: 300px !important;
+        }
     }
 </style>
 {% endblock %}
@@ -245,7 +303,15 @@
                         <span class="badge bg-success" id="ai-status">Live</span>
                     </small>
                 </div>
-                <div class="card-body p-0">
+                <div class="card-body p-0" style="position: relative;">
+                    <div class="scroll-controls">
+                        <button class="btn btn-sm btn-outline-light me-1" onclick="scrollToNewest()" title="Scroll to newest">
+                            <i class="bi bi-arrow-up"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-light" onclick="clearThoughts()" title="Clear all thoughts">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
                     <div class="thought-log-container" id="thought-log-container">
                         {% if recent_thoughts %}
                             {% for thought in recent_thoughts %}
@@ -444,7 +510,7 @@
 window.paperTradingConfig = {
     apiBaseUrl: '/paper-trading/api/',
     updateInterval: 5000, // 5 seconds
-    maxThoughts: 10
+    maxThoughts: 8 // Reduced for better UX
 };
 </script>
 
@@ -471,10 +537,14 @@ window.paperTradingConfig = {
             });
     }
     
+    // Enhanced updateThoughtsDisplay with scroll management
     function updateThoughtsDisplay(newThoughts) {
         const container = document.getElementById('thought-log-container');
+        if (!container) return;
         
-        // Add new thoughts to the top
+        const MAX_THOUGHTS = window.paperTradingConfig.maxThoughts;
+        
+        // Add new thoughts to the top with animation
         newThoughts.reverse().forEach(thought => {
             // Check if thought already exists
             if (document.querySelector(`[data-thought-id="${thought.id}"]`)) {
@@ -482,14 +552,23 @@ window.paperTradingConfig = {
             }
             
             const thoughtElement = createThoughtElement(thought);
+            thoughtElement.classList.add('fade-in');
             container.insertBefore(thoughtElement, container.firstChild);
         });
         
-        // Keep only the latest 10 thoughts
+        // Remove excess thoughts with fade effect
         const thoughtItems = container.querySelectorAll('.thought-log-step');
-        if (thoughtItems.length > 10) {
-            for (let i = 10; i < thoughtItems.length; i++) {
-                thoughtItems[i].remove();
+        if (thoughtItems.length > MAX_THOUGHTS) {
+            for (let i = MAX_THOUGHTS; i < thoughtItems.length; i++) {
+                const item = thoughtItems[i];
+                item.classList.add('fade-out');
+                
+                // Remove after animation completes
+                setTimeout(() => {
+                    if (item.parentNode) {
+                        item.remove();
+                    }
+                }, 300);
             }
         }
     }
@@ -501,6 +580,7 @@ window.paperTradingConfig = {
         
         const time = new Date(thought.timestamp).toLocaleTimeString();
         const laneClass = thought.lane_used === 'FAST' ? 'fast-lane-badge' : 'smart-lane-badge';
+        const confidence = Math.round(thought.confidence_percent || 0);
         
         div.innerHTML = `
             <div class="d-flex justify-content-between align-items-start mb-2">
@@ -514,9 +594,9 @@ window.paperTradingConfig = {
             <div class="d-flex align-items-center mb-2">
                 <small class="me-2">Confidence:</small>
                 <div class="confidence-bar flex-grow-1">
-                    <div class="confidence-fill" style="width: ${thought.confidence_percent}%"></div>
+                    <div class="confidence-fill" style="width: ${confidence}%"></div>
                 </div>
-                <small class="ms-2 fw-bold">${Math.round(thought.confidence_percent)}%</small>
+                <small class="ms-2 fw-bold">${confidence}%</small>
             </div>
             <div class="small">
                 ${thought.primary_reasoning || 'Analyzing market conditions...'}
@@ -524,6 +604,31 @@ window.paperTradingConfig = {
         `;
         
         return div;
+    }
+    
+    // Scroll management functions
+    function scrollToNewest() {
+        const container = document.getElementById('thought-log-container');
+        if (container) {
+            container.scrollTop = 0; // Scroll to top where newest thoughts are
+        }
+    }
+    
+    // Clear all thoughts function
+    function clearThoughts() {
+        if (confirm('Clear all AI thoughts from display?')) {
+            const container = document.getElementById('thought-log-container');
+            if (container) {
+                // Fade out all thoughts
+                const thoughts = container.querySelectorAll('.thought-log-step');
+                thoughts.forEach((thought, index) => {
+                    setTimeout(() => {
+                        thought.classList.add('fade-out');
+                        setTimeout(() => thought.remove(), 300);
+                    }, index * 50);
+                });
+            }
+        }
     }
     
     // Bot control functions
