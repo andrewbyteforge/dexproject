@@ -11,6 +11,9 @@ Features:
 - Risk assessment
 - Detailed reasoning generation
 - Buy/sell signal generation
+- WebSocket notifications for real-time updates
+- Fixed timezone handling for datetime operations
+- Database logging of AI thoughts
 
 File: dexproject/paper_trading/bot/ai_engine.py
 """
@@ -21,6 +24,11 @@ from typing import Dict, Any, Optional, Tuple, List
 from decimal import Decimal
 from datetime import datetime, timedelta
 from enum import Enum
+
+# Django imports for timezone-aware datetime
+from django.utils import timezone
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from paper_trading.models import (
     PaperAIThoughtLog,
@@ -79,9 +87,35 @@ class PaperTradingAIEngine:
         # Performance tracking
         self.decision_count = 0
         self.successful_decisions = 0
-        self.session_start_time = datetime.now()
+        self.session_start_time = timezone.now()  # Use timezone-aware datetime
+        
+        # Initialize channel layer for WebSocket notifications
+        self.channel_layer = get_channel_layer()
         
         logger.info(f"[BOT] AI Engine initialized for session {session.session_id}")
+    
+    def send_websocket_update(self, message_type: str, data: Dict[str, Any]) -> None:
+        """
+        Send WebSocket update to connected clients.
+        
+        Args:
+            message_type: Type of message (e.g., 'ai_decision', 'performance_update')
+            data: Data to send
+        """
+        try:
+            if self.channel_layer:
+                room_group_name = f"paper_trading_{self.session.account.account_id}"
+                
+                async_to_sync(self.channel_layer.group_send)(
+                    room_group_name,
+                    {
+                        'type': message_type,
+                        'data': data
+                    }
+                )
+                logger.debug(f"Sent WebSocket update: {message_type}")
+        except Exception as e:
+            logger.error(f"Failed to send WebSocket update: {e}")
     
     def analyze_market(self, current_price: Decimal, price_history: List[Decimal]) -> Dict[str, Any]:
         """
@@ -95,7 +129,7 @@ class PaperTradingAIEngine:
             Dictionary containing market analysis results
         """
         analysis = {
-            "timestamp": datetime.now(),
+            "timestamp": timezone.now(),  # Use timezone-aware datetime
             "current_price": current_price,
             "price_change_percent": Decimal("0"),
             "volatility": Decimal("0"),
@@ -361,7 +395,7 @@ class PaperTradingAIEngine:
             Complete decision dictionary with signal, reasoning, and parameters
         """
         self.decision_count += 1
-        decision_start = datetime.now()
+        decision_start = timezone.now()  # Use timezone-aware datetime
         
         logger.info(f"[AI] Generating decision #{self.decision_count} for {token_symbol}")
         
@@ -390,7 +424,7 @@ class PaperTradingAIEngine:
             "market_analysis": market_analysis,
             "risk_assessment": risk_assessment,
             "confidence_score": market_analysis["confidence_score"],
-            "processing_time_ms": (datetime.now() - decision_start).total_seconds() * 1000,
+            "processing_time_ms": (timezone.now() - decision_start).total_seconds() * 1000,
         }
         
         # Step 6: Generate detailed reasoning
@@ -404,6 +438,17 @@ class PaperTradingAIEngine:
         
         # Step 7: Log the thought process
         self._log_thought(decision)
+        
+        # Step 8: Send WebSocket notification for AI decision
+        self.send_websocket_update('ai_decision', {
+            'token_symbol': token_symbol,
+            'signal': signal.value,
+            'action': decision["action"],
+            'confidence': float(market_analysis["confidence_score"]),
+            'lane_type': lane_type,
+            'position_size': float(position_size),
+            'reasoning': reasoning[:200]  # Send brief summary
+        })
         
         logger.info(
             f"[OK] Decision complete: {signal.value} signal for {token_symbol} "
@@ -444,13 +489,13 @@ class PaperTradingAIEngine:
         action = decision["action"]
         position_size = decision["position_size_percent"]
         
-        # Build comprehensive reasoning
+        # Build comprehensive reasoning (removed emoji to avoid encoding issues)
         reasoning_parts = [
             f"[DATA] Market Analysis: {market_analysis['market_condition'].value.upper()} conditions detected.",
             f"Price changed {market_analysis['price_change_percent']:.2f}% with {market_analysis['volatility']:.2f}% volatility.",
             f"Momentum indicator: {market_analysis['momentum']:.2f}%, Trend: {market_analysis['trend'].upper()}.",
             "",
-            f"🛤️ Strategy Selection: {lane_reasoning}",
+            f"[LANE] Strategy Selection: {lane_reasoning}",
             "",
             f"[UP] Trading Signal: {signal.value.upper()} generated with {market_analysis['confidence_score']:.0f}% confidence.",
             f"Action: {action} with {position_size:.1f}% position size.",
@@ -499,11 +544,132 @@ class PaperTradingAIEngine:
                 f"{decision.get('action', '?')} with {decision.get('confidence_score', 0):.0f}% confidence"
             )
             
-            # Note: PaperAIThoughtLog model creation disabled until model fields are verified
-            # This prevents database constraint errors during bot operation
+            # Create thought log in database
+            thought_log = PaperAIThoughtLog.objects.create(
+                account=self.session.account,
+                decision_type=decision.get('action', 'HOLD'),
+                token_address=decision.get('token_address', ''),
+                token_symbol=decision.get('token_symbol', ''),
+                confidence_level=self._get_confidence_level(decision.get('confidence_score', 50)),
+                confidence_percent=decision.get('confidence_score', 50),
+                risk_score=decision.get('risk_assessment', {}).get('risk_score', 0),
+                opportunity_score=decision.get('market_analysis', {}).get('momentum', 0),
+                primary_reasoning=decision.get('reasoning', '')[:1000],  # Limit to 1000 chars
+                key_factors=[
+                    f"Lane: {decision.get('lane_type', 'UNKNOWN')}",
+                    f"Signal: {decision.get('signal', TradingSignal.HOLD).value}",
+                    f"Position Size: {decision.get('position_size_percent', 0):.1f}%"
+                ],
+                positive_signals=self._extract_positive_signals(decision),
+                negative_signals=self._extract_negative_signals(decision),
+                market_data={
+                    'current_price': float(decision.get('current_price', 0)),
+                    'price_change_percent': float(decision.get('market_analysis', {}).get('price_change_percent', 0)),
+                    'volatility': float(decision.get('market_analysis', {}).get('volatility', 0)),
+                    'momentum': float(decision.get('market_analysis', {}).get('momentum', 0)),
+                    'trend': decision.get('market_analysis', {}).get('trend', 'neutral'),
+                },
+                strategy_name=self.strategy_config.name,
+                lane_used=decision.get('lane_type', 'SMART'),
+                analysis_time_ms=int(decision.get('processing_time_ms', 0))
+            )
+            
+            # Send WebSocket notification for thought log
+            self.send_websocket_update('thought_log_created', {
+                'thought_id': str(thought_log.thought_id),
+                'token_symbol': thought_log.token_symbol,
+                'decision_type': thought_log.decision_type,
+                'confidence': float(thought_log.confidence_percent),
+                'risk_score': float(thought_log.risk_score),
+                'lane_used': thought_log.lane_used,
+                'reasoning': thought_log.primary_reasoning[:200],
+                'created_at': thought_log.created_at.isoformat()
+            })
+            
+            logger.info(
+                f"[THOUGHT] Logged decision for {thought_log.token_symbol}: "
+                f"{thought_log.decision_type} ({thought_log.confidence_percent:.0f}% confidence)"
+            )
             
         except Exception as e:
             logger.error(f"Failed to log thought: {e}", exc_info=True)
+    
+    def _get_confidence_level(self, confidence_percent: Decimal) -> str:
+        """
+        Convert confidence percentage to level category.
+        
+        Args:
+            confidence_percent: Confidence as percentage (0-100)
+            
+        Returns:
+            Confidence level string
+        """
+        if confidence_percent >= 80:
+            return 'VERY_HIGH'
+        elif confidence_percent >= 60:
+            return 'HIGH'
+        elif confidence_percent >= 40:
+            return 'MEDIUM'
+        elif confidence_percent >= 20:
+            return 'LOW'
+        else:
+            return 'VERY_LOW'
+    
+    def _extract_positive_signals(self, decision: Dict[str, Any]) -> List[str]:
+        """
+        Extract positive signals from decision data.
+        
+        Args:
+            decision: Decision dictionary
+            
+        Returns:
+            List of positive signals
+        """
+        signals = []
+        market_analysis = decision.get('market_analysis', {})
+        
+        if market_analysis.get('trend') == 'bullish':
+            signals.append('Bullish trend detected')
+        
+        if market_analysis.get('momentum', 0) > 5:
+            signals.append(f"Strong momentum: {market_analysis['momentum']:.1f}%")
+        
+        if market_analysis.get('confidence_score', 0) > 70:
+            signals.append(f"High confidence: {market_analysis['confidence_score']:.0f}%")
+        
+        if decision.get('risk_assessment', {}).get('risk_reward_ratio', 0) > 2:
+            ratio = decision['risk_assessment']['risk_reward_ratio']
+            signals.append(f"Good risk/reward: 1:{ratio:.1f}")
+        
+        return signals if signals else ['Standard market conditions']
+    
+    def _extract_negative_signals(self, decision: Dict[str, Any]) -> List[str]:
+        """
+        Extract negative signals/risks from decision data.
+        
+        Args:
+            decision: Decision dictionary
+            
+        Returns:
+            List of negative signals
+        """
+        signals = []
+        market_analysis = decision.get('market_analysis', {})
+        risk_assessment = decision.get('risk_assessment', {})
+        
+        if market_analysis.get('volatility', 0) > 5:
+            signals.append(f"High volatility: {market_analysis['volatility']:.1f}%")
+        
+        if market_analysis.get('trend') == 'bearish':
+            signals.append('Bearish trend detected')
+        
+        if risk_assessment.get('risk_level') == 'HIGH':
+            signals.append(f"High risk score: {risk_assessment.get('risk_score', 0):.0f}")
+        
+        if market_analysis.get('momentum', 0) < -5:
+            signals.append(f"Negative momentum: {market_analysis['momentum']:.1f}%")
+        
+        return signals if signals else ['No significant risks identified']
 
     def update_performance_metrics(self, trade_result: Dict[str, Any]) -> None:
         """
@@ -521,8 +687,8 @@ class PaperTradingAIEngine:
                 - 'execution_time_ms': int - Trade execution time
         """
         try:
-            # Get the current time for period tracking
-            current_time = datetime.now()
+            # Use timezone-aware datetime for consistency
+            current_time = timezone.now()
             
             # Try to get existing metrics for this session, or create new one
             metrics = PaperPerformanceMetrics.objects.filter(
@@ -530,11 +696,12 @@ class PaperTradingAIEngine:
             ).order_by('-period_end').first()
             
             # If no metrics exist or current period is old, create new metrics record
+            # Fix: Ensure both datetimes are timezone-aware
             if not metrics or (current_time - metrics.period_end) > timedelta(hours=24):
                 logger.info("[METRICS] Creating new performance metrics record")
                 metrics = PaperPerformanceMetrics.objects.create(
                     session=self.session,
-                    period_start=self.session_start_time,
+                    period_start=self.session_start_time,  # Already timezone-aware
                     period_end=current_time,
                     # Trade statistics
                     total_trades=0,
@@ -635,9 +802,20 @@ class PaperTradingAIEngine:
             # Save updated metrics
             metrics.save()
             
-            # Log the performance update
+            # Send WebSocket notification for performance update
+            self.send_websocket_update('performance_update', {
+                'win_rate': float(metrics.win_rate),
+                'total_pnl': float(metrics.total_pnl_usd),
+                'total_trades': metrics.total_trades,
+                'winning_trades': metrics.winning_trades,
+                'losing_trades': metrics.losing_trades,
+                'fast_lane_win_rate': float(metrics.fast_lane_win_rate),
+                'smart_lane_win_rate': float(metrics.smart_lane_win_rate),
+            })
+            
+            # Log the performance update (without emoji to avoid encoding issues)
             logger.info(
-                f"📊 Performance updated: "
+                f"[METRICS] Performance updated: "
                 f"Win rate {metrics.win_rate:.1f}% ({metrics.winning_trades}W/{metrics.losing_trades}L), "
                 f"Total P&L: ${metrics.total_pnl_usd:.2f}, "
                 f"Trades: {metrics.total_trades}"

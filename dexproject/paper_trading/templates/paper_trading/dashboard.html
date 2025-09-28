@@ -8,8 +8,10 @@
 <style>
     /* Additional Paper Trading Specific Styles */
     .thought-log-container {
-        max-height: 400px !important;
+        max-height: 350px !important; /* Reduced from 400px for better viewport management */
+        min-height: 200px; /* Ensure minimum height */
         overflow-y: auto;
+        overflow-x: hidden;
         padding: 10px;
         scroll-behavior: smooth;
         position: relative;
@@ -21,7 +23,7 @@
         background: rgba(255, 255, 255, 0.1);
         border-radius: 6px;
         border-left: 3px solid #17a2b8;
-        font-size: 0.9em;
+        font-size: 0.85em; /* Slightly smaller font for more compact display */
         line-height: 1.4;
         transition: all 0.3s ease-out;
         opacity: 1;
@@ -63,7 +65,7 @@
     }
     
     .lane-badge {
-        font-size: 0.7em;
+        font-size: 0.65em; /* Smaller badge */
         padding: 2px 6px;
         border-radius: 8px;
         font-weight: 600;
@@ -89,6 +91,7 @@
         background: linear-gradient(135deg, rgba(23, 162, 184, 0.1), rgba(111, 66, 193, 0.1));
         border: 1px solid rgba(255, 255, 255, 0.2);
         position: relative;
+        max-height: 500px; /* Limit card height */
     }
     
     .scroll-controls {
@@ -96,6 +99,15 @@
         top: 10px;
         right: 10px;
         z-index: 10;
+    }
+    
+    .scroll-controls button {
+        opacity: 0.7;
+        transition: opacity 0.2s;
+    }
+    
+    .scroll-controls button:hover {
+        opacity: 1;
     }
     
     /* Scrollbar styling for thought log */
@@ -139,10 +151,34 @@
         background: #dc3545;
     }
     
+    /* Compact thought display */
+    .thought-summary {
+        display: -webkit-box;
+        -webkit-line-clamp: 2; /* Limit to 2 lines */
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 0.85em;
+        color: rgba(255, 255, 255, 0.8);
+    }
+    
+    /* Thought counter badge */
+    .thought-counter {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        font-size: 0.75em;
+        color: rgba(255, 255, 255, 0.5);
+    }
+    
     /* Auto-expand/collapse for mobile */
     @media (max-width: 768px) {
         .thought-log-container {
-            max-height: 300px !important;
+            max-height: 250px !important;
+        }
+        
+        .ai-thoughts-card {
+            max-height: 400px;
         }
     }
 </style>
@@ -301,6 +337,7 @@
                     </h5>
                     <small class="text-muted">
                         <span class="badge bg-success" id="ai-status">Live</span>
+                        <span class="badge bg-secondary ms-1" id="thought-count">0</span>
                     </small>
                 </div>
                 <div class="card-body p-0" style="position: relative;">
@@ -308,13 +345,16 @@
                         <button class="btn btn-sm btn-outline-light me-1" onclick="scrollToNewest()" title="Scroll to newest">
                             <i class="bi bi-arrow-up"></i>
                         </button>
-                        <button class="btn btn-sm btn-outline-light" onclick="clearThoughts()" title="Clear all thoughts">
+                        <button class="btn btn-sm btn-outline-light" onclick="toggleAutoScroll()" title="Toggle auto-scroll">
+                            <i class="bi bi-arrow-repeat" id="auto-scroll-icon"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-light ms-1" onclick="clearThoughts()" title="Clear all thoughts">
                             <i class="bi bi-trash"></i>
                         </button>
                     </div>
                     <div class="thought-log-container" id="thought-log-container">
                         {% if recent_thoughts %}
-                            {% for thought in recent_thoughts %}
+                            {% for thought in recent_thoughts|slice:":6" %}
                             <div class="thought-log-step" data-thought-id="{{ thought.thought_id }}">
                                 <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div>
@@ -333,7 +373,7 @@
                                     </div>
                                     <small class="ms-2 fw-bold">{{ thought.confidence_percent|floatformat:0 }}%</small>
                                 </div>
-                                <div class="small">
+                                <div class="thought-summary">
                                     {{ thought.primary_reasoning|default:"Analyzing market conditions..." }}
                                 </div>
                             </div>
@@ -344,6 +384,9 @@
                                 No AI decisions yet. Start the bot to see real-time analysis!
                             </div>
                         {% endif %}
+                    </div>
+                    <div class="thought-counter">
+                        <span id="thought-counter-text">Showing latest thoughts</span>
                     </div>
                 </div>
             </div>
@@ -510,7 +553,8 @@
 window.paperTradingConfig = {
     apiBaseUrl: '/paper-trading/api/',
     updateInterval: 5000, // 5 seconds
-    maxThoughts: 8 // Reduced for better UX
+    maxThoughts: 3, // Reduced to 6 for better UX
+    autoScroll: false // Auto-scroll disabled by default
 };
 </script>
 
@@ -518,6 +562,7 @@ window.paperTradingConfig = {
 <script>
     // Real-time AI Thoughts Updates
     let lastThoughtUpdate = new Date().toISOString();
+    let thoughtCount = 0;
     
     function updateAIThoughts() {
         fetch(`/paper-trading/api/ai-thoughts/?since=${lastThoughtUpdate}&limit=5`)
@@ -537,12 +582,18 @@ window.paperTradingConfig = {
             });
     }
     
-    // Enhanced updateThoughtsDisplay with scroll management
+    // Enhanced updateThoughtsDisplay with better management
     function updateThoughtsDisplay(newThoughts) {
         const container = document.getElementById('thought-log-container');
         if (!container) return;
         
         const MAX_THOUGHTS = window.paperTradingConfig.maxThoughts;
+        
+        // Remove the placeholder if it exists
+        const placeholder = container.querySelector('.text-center');
+        if (placeholder && newThoughts.length > 0) {
+            placeholder.remove();
+        }
         
         // Add new thoughts to the top with animation
         newThoughts.reverse().forEach(thought => {
@@ -554,10 +605,11 @@ window.paperTradingConfig = {
             const thoughtElement = createThoughtElement(thought);
             thoughtElement.classList.add('fade-in');
             container.insertBefore(thoughtElement, container.firstChild);
+            thoughtCount++;
         });
         
         // Remove excess thoughts with fade effect
-        const thoughtItems = container.querySelectorAll('.thought-log-step');
+        const thoughtItems = container.querySelectorAll('.thought-log-step:not(.text-center)');
         if (thoughtItems.length > MAX_THOUGHTS) {
             for (let i = MAX_THOUGHTS; i < thoughtItems.length; i++) {
                 const item = thoughtItems[i];
@@ -571,6 +623,14 @@ window.paperTradingConfig = {
                 }, 300);
             }
         }
+        
+        // Update counter
+        updateThoughtCounter();
+        
+        // Auto-scroll if enabled
+        if (window.paperTradingConfig.autoScroll) {
+            scrollToNewest();
+        }
     }
     
     function createThoughtElement(thought) {
@@ -581,6 +641,10 @@ window.paperTradingConfig = {
         const time = new Date(thought.timestamp).toLocaleTimeString();
         const laneClass = thought.lane_used === 'FAST' ? 'fast-lane-badge' : 'smart-lane-badge';
         const confidence = Math.round(thought.confidence_percent || 0);
+        
+        // Truncate reasoning for display
+        const reasoning = thought.primary_reasoning || 'Analyzing market conditions...';
+        const truncatedReasoning = reasoning.length > 150 ? reasoning.substring(0, 150) + '...' : reasoning;
         
         div.innerHTML = `
             <div class="d-flex justify-content-between align-items-start mb-2">
@@ -598,12 +662,27 @@ window.paperTradingConfig = {
                 </div>
                 <small class="ms-2 fw-bold">${confidence}%</small>
             </div>
-            <div class="small">
-                ${thought.primary_reasoning || 'Analyzing market conditions...'}
+            <div class="thought-summary">
+                ${truncatedReasoning}
             </div>
         `;
         
         return div;
+    }
+    
+    function updateThoughtCounter() {
+        const container = document.getElementById('thought-log-container');
+        const thoughts = container.querySelectorAll('.thought-log-step:not(.text-center)');
+        const countBadge = document.getElementById('thought-count');
+        const counterText = document.getElementById('thought-counter-text');
+        
+        if (countBadge) {
+            countBadge.textContent = thoughts.length;
+        }
+        
+        if (counterText) {
+            counterText.textContent = `Showing ${thoughts.length} latest thoughts (max ${window.paperTradingConfig.maxThoughts})`;
+        }
     }
     
     // Scroll management functions
@@ -614,19 +693,39 @@ window.paperTradingConfig = {
         }
     }
     
+    function toggleAutoScroll() {
+        window.paperTradingConfig.autoScroll = !window.paperTradingConfig.autoScroll;
+        const icon = document.getElementById('auto-scroll-icon');
+        if (icon) {
+            if (window.paperTradingConfig.autoScroll) {
+                icon.classList.add('text-success');
+                showToast('Auto-scroll enabled', 'info');
+            } else {
+                icon.classList.remove('text-success');
+                showToast('Auto-scroll disabled', 'info');
+            }
+        }
+    }
+    
     // Clear all thoughts function
     function clearThoughts() {
         if (confirm('Clear all AI thoughts from display?')) {
             const container = document.getElementById('thought-log-container');
             if (container) {
                 // Fade out all thoughts
-                const thoughts = container.querySelectorAll('.thought-log-step');
+                const thoughts = container.querySelectorAll('.thought-log-step:not(.text-center)');
                 thoughts.forEach((thought, index) => {
                     setTimeout(() => {
                         thought.classList.add('fade-out');
                         setTimeout(() => thought.remove(), 300);
                     }, index * 50);
                 });
+                
+                // Reset counter after clearing
+                setTimeout(() => {
+                    thoughtCount = 0;
+                    updateThoughtCounter();
+                }, thoughts.length * 50 + 300);
             }
         }
     }
@@ -722,6 +821,9 @@ window.paperTradingConfig = {
     
     // Start real-time updates when page loads
     document.addEventListener('DOMContentLoaded', function() {
+        // Initialize counter
+        updateThoughtCounter();
+        
         // Update AI thoughts every 5 seconds
         setInterval(updateAIThoughts, window.paperTradingConfig.updateInterval);
         
