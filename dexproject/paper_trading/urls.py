@@ -43,7 +43,7 @@ urlpatterns = [
     # ADD THESE TWO NEW ENDPOINTS FOR REAL-TIME UPDATES
     path('api/trades/recent/', views.api_recent_trades, name='api_recent_trades'),
     path('api/positions/open/', views.api_open_positions, name='api_open_positions'),
-    path('api/trades/recent/', views.api_recent_trades, name='api_recent_trades'),
+    
 
     
     # Configuration management API (GET/POST)

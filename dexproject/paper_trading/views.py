@@ -22,12 +22,9 @@ from django.db.models import Q, Sum, Avg, Count, F
 from django.utils import timezone
 from django.contrib import messages
 from django.core.cache import cache
-# Add to your existing imports if not already present:
-from django.http import JsonResponse
-from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from datetime import datetime
-from decimal import Decimal
+
+# Import all models
 from .models import (
     PaperTradingAccount,
     PaperTrade,
@@ -58,50 +55,44 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         request: Django HTTP request
         
     Returns:
-        Rendered dashboard template
+        Rendered dashboard template with context data
     """
     try:
-        # Get or create default account for user (no authentication needed)
-        # For demo purposes, we'll use a default user or create one
         from django.contrib.auth.models import User
         
-        # Get or create a demo user for paper trading
-        demo_user, created = User.objects.get_or_create(
-            username='demo_user',
+        # Get demo user for now (will be replaced with actual user)
+        try:
+            demo_user = User.objects.get(username='demo_user')
+        except User.DoesNotExist:
+            # Create demo user if it doesn't exist
+            demo_user = User.objects.create_user(
+                username='demo_user',
+                email='demo@example.com',
+                password='demo_password'
+            )
+            logger.info("Created demo_user for paper trading")
+        
+        # Get or create paper trading account
+        account, created = PaperTradingAccount.objects.get_or_create(
+            user=demo_user,
+            is_active=True,
             defaults={
-                'email': 'demo@example.com',
-                'first_name': 'Demo',
-                'last_name': 'User'
+                'name': 'Demo Paper Trading Account',
+                'initial_balance_usd': Decimal('10000.00'),
+                'current_balance_usd': Decimal('10000.00')
             }
         )
         
-        # FIXED: Get the specific account with trades
-        account = PaperTradingAccount.objects.filter(
-            account_id='435f14e1-56b5-46dd-add6-2fd242177c29'
-        ).first()
+        if created:
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
-        if not account:
-            # Fallback to original logic if specific account not found
-            account = PaperTradingAccount.objects.filter(
-                user=demo_user,
-                is_active=True
-            ).first()
-            
-            if not account:
-                # Create default account if none exists
-                account = PaperTradingAccount.objects.create(
-                    user=demo_user,
-                    name=f"Demo Paper Trading Account"
-                )
-                logger.info(f"Created new paper trading account for demo user")
-        
-        # Get active trading session if any
+        # Get active session if exists
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='ACTIVE'  # FIXED: Use correct status value
+            status="ACTIVE"
         ).first()
         
-        # Get recent trades (last 10)
+        # Get recent trades
         recent_trades = PaperTrade.objects.filter(
             account=account
         ).order_by('-created_at')[:10]
@@ -110,32 +101,29 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         open_positions = PaperPosition.objects.filter(
             account=account,
             is_open=True
-        ).order_by('-unrealized_pnl_usd')
+        ).order_by('-current_value_usd')
         
-        # Get performance metrics (latest)
-        performance = PaperPerformanceMetrics.objects.filter(
-            session__account=account
-        ).order_by('-calculated_at').first()
-        
-        # Calculate summary statistics - FIXED field references
-        total_trades = PaperTrade.objects.filter(account=account).count()
-        successful_trades = PaperTrade.objects.filter(
-            account=account,
-            status='COMPLETED'  # FIXED: Use correct status value
-        ).count()
-        
-        # Get thought logs for recent decisions
+        # Get recent AI thoughts
         recent_thoughts = PaperAIThoughtLog.objects.filter(
             account=account
         ).order_by('-created_at')[:5]
         
-        # Calculate 24h performance - FIXED field reference
-        yesterday = timezone.now() - timedelta(days=1)
+        # Get performance metrics
+        performance = PaperPerformanceMetrics.objects.filter(
+            account=account
+        ).order_by('-created_at').first()
+        
+        # Calculate summary statistics
+        total_trades = account.total_trades
+        successful_trades = account.winning_trades
+        
+        # Get 24h stats
+        time_24h_ago = timezone.now() - timedelta(hours=24)
         trades_24h = PaperTrade.objects.filter(
             account=account,
-            created_at__gte=yesterday
+            created_at__gte=time_24h_ago
         ).aggregate(
-            count=Count('trade_id'),  # FIXED: Use trade_id instead of id
+            count=Count('trade_id'),
             total_volume=Sum('amount_in_usd')
         )
         
@@ -163,7 +151,24 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
     except Exception as e:
         logger.error(f"Error loading paper trading dashboard: {e}", exc_info=True)
         messages.error(request, f"Error loading dashboard: {str(e)}")
-        return redirect('dashboard:home')
+        return render(request, 'paper_trading/error.html', {"error": str(e)})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def trade_history(request: HttpRequest) -> HttpResponse:
@@ -177,7 +182,6 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         Rendered trade history template
     """
     try:
-        # Get demo user's active account
         from django.contrib.auth.models import User
         demo_user = User.objects.get(username='demo_user')
         
@@ -190,15 +194,23 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         # Build query with filters
         trades_query = PaperTrade.objects.filter(account=account)
         
-        # Apply filters from request
+        # Apply filters
         status_filter = request.GET.get('status')
         if status_filter:
             trades_query = trades_query.filter(status=status_filter)
         
-        trade_type_filter = request.GET.get('trade_type')
-        if trade_type_filter:
-            trades_query = trades_query.filter(trade_type=trade_type_filter)
+        trade_type = request.GET.get('type')
+        if trade_type:
+            trades_query = trades_query.filter(trade_type=trade_type)
         
+        token_symbol = request.GET.get('token')
+        if token_symbol:
+            trades_query = trades_query.filter(
+                Q(token_in_symbol__icontains=token_symbol) | 
+                Q(token_out_symbol__icontains=token_symbol)
+            )
+        
+        # Date range filter
         date_from = request.GET.get('date_from')
         if date_from:
             trades_query = trades_query.filter(created_at__gte=date_from)
@@ -207,31 +219,35 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         if date_to:
             trades_query = trades_query.filter(created_at__lte=date_to)
         
-        # Order by creation date (newest first)
+        # Order by creation date
         trades_query = trades_query.order_by('-created_at')
         
-        # Paginate results
-        paginator = Paginator(trades_query, 25)  # 25 trades per page
+        # Pagination
+        paginator = Paginator(trades_query, 25)
         page_number = request.GET.get('page')
-        trades_page = paginator.get_page(page_number)
+        page_obj = paginator.get_page(page_number)
         
-        # Calculate summary statistics for filtered results
+        # Calculate summary stats for filtered results
         summary_stats = trades_query.aggregate(
-            total_trades=Count('trade_id'),  # FIXED: Use trade_id
+            total_trades=Count('trade_id'),
             total_volume=Sum('amount_in_usd'),
             avg_trade_size=Avg('amount_in_usd'),
-            total_gas_cost=Sum('simulated_gas_cost_usd')
+            successful_trades=Count('trade_id', filter=Q(status='completed'))
         )
         
         context = {
             'page_title': 'Trade History',
             'account': account,
-            'trades': trades_page,
-            'summary_stats': summary_stats,
-            'status_filter': status_filter,
-            'trade_type_filter': trade_type_filter,
-            'date_from': date_from,
-            'date_to': date_to,
+            'page_obj': page_obj,
+            'trades': page_obj,
+            'filters': {
+                'status': status_filter,
+                'type': trade_type,
+                'token': token_symbol,
+                'date_from': date_from,
+                'date_to': date_to,
+            },
+            'summary': summary_stats,
         }
         
         return render(request, 'paper_trading/trade_history.html', context)
@@ -244,7 +260,7 @@ def trade_history(request: HttpRequest) -> HttpResponse:
 
 def portfolio_view(request: HttpRequest) -> HttpResponse:
     """
-    Display detailed portfolio view with positions and analytics.
+    Display portfolio positions and allocation.
     
     Args:
         request: Django HTTP request
@@ -324,7 +340,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         request: Django HTTP request
         
     Returns:
-        Rendered configuration template or redirect after save
+        Rendered configuration template or redirect after update
     """
     try:
         from django.contrib.auth.models import User
@@ -336,57 +352,52 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
             is_active=True
         )
         
-        # Get or create strategy configuration
-        strategy_config = PaperStrategyConfiguration.objects.filter(
+        # Get or create configuration
+        config, created = PaperStrategyConfiguration.objects.get_or_create(
             account=account,
-            is_active=True
-        ).first()
+            defaults={
+                'strategy_name': 'default',
+                'is_active': True,
+                'configuration': {}
+            }
+        )
         
         if request.method == 'POST':
             # Handle configuration update
             try:
-                # Update or create configuration
-                if not strategy_config:
-                    strategy_config = PaperStrategyConfiguration(account=account)
+                # Parse JSON configuration
+                config_data = json.loads(request.POST.get('configuration', '{}'))
                 
-                # Update fields from form - FIXED field names
-                strategy_config.name = request.POST.get('name', 'My Strategy')
-                strategy_config.trading_mode = request.POST.get('trading_mode', 'MODERATE')
-                strategy_config.use_fast_lane = request.POST.get('use_fast_lane') == 'on'
-                strategy_config.use_smart_lane = request.POST.get('use_smart_lane') == 'on'
-                strategy_config.max_position_size_percent = Decimal(request.POST.get('max_position_size_percent', '100'))  # FIXED
-                strategy_config.max_daily_trades = int(request.POST.get('max_daily_trades', '20'))
-                strategy_config.stop_loss_percent = Decimal(request.POST.get('stop_loss_percent', '5'))
-                strategy_config.take_profit_percent = Decimal(request.POST.get('take_profit_percent', '10'))
-                strategy_config.confidence_threshold = Decimal(request.POST.get('confidence_threshold', '60'))
+                # Update configuration
+                config.configuration = config_data
+                config.strategy_name = request.POST.get('strategy_name', config.strategy_name)
+                config.is_active = request.POST.get('is_active') == 'true'
+                config.save()
                 
-                # Save configuration
-                strategy_config.save()
+                messages.success(request, 'Configuration updated successfully')
+                logger.info(f"Updated configuration for account {account.account_id}")
                 
-                messages.success(request, 'Strategy configuration updated successfully!')
-                logger.info(f"Updated strategy config {strategy_config.config_id} for account {account.account_id}")
-                
-                return redirect('paper_trading:configuration')
-                
+            except json.JSONDecodeError as e:
+                messages.error(request, f'Invalid JSON configuration: {e}')
+                logger.error(f"JSON decode error: {e}")
             except Exception as e:
-                logger.error(f"Error saving configuration: {e}", exc_info=True)
-                messages.error(request, f"Error saving configuration: {str(e)}")
+                messages.error(request, f'Error updating configuration: {e}')
+                logger.error(f"Configuration update error: {e}", exc_info=True)
         
-        # Get all configurations for this account
-        all_configs = PaperStrategyConfiguration.objects.filter(
-            account=account
-        ).order_by('-created_at')
-        
-        # Get trading config
-        trading_config = PaperTradingConfig.objects.filter(account=account).first()
+        # Load available strategies
+        available_strategies = [
+            {'name': 'smart_lane', 'display': 'Smart Lane Strategy'},
+            {'name': 'momentum', 'display': 'Momentum Trading'},
+            {'name': 'mean_reversion', 'display': 'Mean Reversion'},
+            {'name': 'arbitrage', 'display': 'Arbitrage Bot'},
+        ]
         
         context = {
             'page_title': 'Strategy Configuration',
             'account': account,
-            'strategy_config': strategy_config,
-            'all_configs': all_configs,
-            'trading_config': trading_config,
-            'trading_modes': ['CONSERVATIVE', 'MODERATE', 'AGGRESSIVE'],
+            'config': config,
+            'config_json': json.dumps(config.configuration, indent=2),
+            'available_strategies': available_strategies,
         }
         
         return render(request, 'paper_trading/configuration.html', context)
@@ -398,32 +409,21 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
 
 
 # =============================================================================
-# API ENDPOINTS  
+# API ENDPOINTS
 # =============================================================================
 
 
 @require_http_methods(["GET"])
-@csrf_exempt
 def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint for AI thought logs - THE STAR FEATURE!
+    API endpoint for AI thought logs with real-time updates.
     
-    Returns recent AI decisions with full reasoning, confidence, and risk assessment.
-    Used for real-time dashboard updates to show bot's decision-making process.
-    
-    Args:
-        request: Django HTTP request with optional query parameters:
-            - limit: Number of thoughts to return (default: 10, max: 50)
-            - since: ISO timestamp to get thoughts after this time
-            - decision_type: Filter by decision type (BUY, SELL, HOLD, etc.)
-        
-    Returns:
-        JSON response with AI thought data
+    Returns recent AI decision-making thoughts for transparency.
     """
     try:
         from django.contrib.auth.models import User
         demo_user = User.objects.get(username='demo_user')
-            
+        
         account = PaperTradingAccount.objects.filter(
             user=demo_user,
             is_active=True
@@ -432,75 +432,31 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
         if not account:
             return JsonResponse({'error': 'No active account found'}, status=404)
         
-        # Build query for thought logs
+        # Get recent thoughts
+        limit = int(request.GET.get('limit', 10))
+        since = request.GET.get('since')
+        
         thoughts_query = PaperAIThoughtLog.objects.filter(account=account)
         
-        # Apply filters
-        decision_type = request.GET.get('decision_type')
-        if decision_type:
-            thoughts_query = thoughts_query.filter(decision_type=decision_type)
-        
-        # Filter by time (for incremental updates)
-        since = request.GET.get('since')
         if since:
-            try:
-                since_datetime = datetime.fromisoformat(since.replace('Z', '+00:00'))
-                thoughts_query = thoughts_query.filter(created_at__gt=since_datetime)
-            except ValueError:
-                logger.warning(f"Invalid 'since' timestamp: {since}")
+            since_datetime = datetime.fromisoformat(since)
+            thoughts_query = thoughts_query.filter(created_at__gt=since_datetime)
         
-        # Limit results
-        limit = min(int(request.GET.get('limit', 10)), 50)  # Cap at 50
-        thoughts_query = thoughts_query.order_by('-created_at')[:limit]
+        thoughts = thoughts_query.order_by('-created_at')[:limit]
         
-        # Build thoughts data with full AI transparency
         thoughts_data = {
             'thoughts': [
                 {
-                    # Basic decision info - FIXED field references
-                    'id': str(thought.thought_id),  # FIXED: Use thought_id
-                    'timestamp': thought.created_at.isoformat(),
-                    'decision_type': thought.decision_type,
-                    'token_symbol': thought.token_symbol,
-                    'token_address': thought.token_address,
-                    
-                    # Confidence and scoring
-                    'confidence_level': thought.confidence_level,
-                    'confidence_percent': float(thought.confidence_percent),
-                    'risk_score': float(thought.risk_score),
-                    'opportunity_score': float(thought.opportunity_score),
-                    
-                    # AI reasoning (the gold!)
-                    'primary_reasoning': thought.primary_reasoning,
-                    'key_factors': thought.key_factors,  # JSON field
-                    'positive_signals': thought.positive_signals,
-                    'negative_signals': thought.negative_signals,
-                    
-                    # Market context
-                    'market_data': thought.market_data,  # JSON field
-                    
-                    # Strategy info
-                    'lane_used': thought.lane_used,
-                    'strategy_name': thought.strategy_name,
-                    
-                    # Performance tracking
-                    'analysis_time_ms': thought.analysis_time_ms,
-                    
-                    # Related trade (if executed)
-                    'paper_trade_id': str(thought.paper_trade.trade_id) if thought.paper_trade else None,
+                    'id': str(thought.thought_id),
+                    'category': thought.thought_category,
+                    'content': thought.thought_content,
+                    'metadata': thought.metadata or {},
+                    'created_at': thought.created_at.isoformat(),
+                    'importance': thought.importance_score,
                 }
-                for thought in thoughts_query
+                for thought in thoughts
             ],
-            'meta': {
-                'count': len(thoughts_query),
-                'account_id': str(account.account_id),  # FIXED: Use account_id
-                'has_more': len(thoughts_query) == limit,  # Indicates if there are more results
-                'filters_applied': {
-                    'decision_type': decision_type,
-                    'since': since,
-                    'limit': limit,
-                },
-            },
+            'count': len(thoughts),
             'timestamp': timezone.now().isoformat(),
         }
         
@@ -660,515 +616,109 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@require_http_methods(["GET", "POST"])
-@csrf_exempt
-def api_configuration(request: HttpRequest) -> JsonResponse:
-    """
-    API endpoint for strategy configuration management.
-    
-    GET: Returns current configuration
-    POST: Updates configuration
-    
-    Args:
-        request: Django HTTP request
-        
-    Returns:
-        JSON response with configuration data or update status
-    """
-    try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
-            
-        account = PaperTradingAccount.objects.filter(
-            user=demo_user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
-        
-        if request.method == 'POST':
-            # Handle configuration update
-            try:
-                data = json.loads(request.body)
-                
-                # Get or create configuration
-                config, created = PaperStrategyConfiguration.objects.get_or_create(
-                    account=account,
-                    is_active=True,
-                    defaults={'name': 'Default Strategy'}
-                )
-                
-                # Update fields - FIXED field names and validation
-                for field, value in data.items():
-                    if hasattr(config, field):
-                        if field in ['max_position_size_percent', 'stop_loss_percent', 
-                                   'take_profit_percent', 'confidence_threshold']:
-                            value = Decimal(str(value))
-                        elif field in ['max_daily_trades']:
-                            value = int(value)
-                        elif field in ['use_fast_lane', 'use_smart_lane', 'is_active']:
-                            value = bool(value)
-                        
-                        setattr(config, field, value)
-                
-                config.save()
-                
-                return JsonResponse({
-                    'success': True,
-                    'message': 'Configuration updated successfully',
-                    'config_id': str(config.config_id),  # FIXED: Use config_id
-                })
-                
-            except Exception as e:
-                logger.error(f"Error updating configuration: {e}", exc_info=True)
-                return JsonResponse({'error': str(e)}, status=400)
-        
-        else:
-            # GET request - return current configuration
-            config = PaperStrategyConfiguration.objects.filter(
-                account=account,
-                is_active=True
-            ).first()
-            
-            if not config:
-                return JsonResponse({'error': 'No active configuration found'}, status=404)
-            
-            # FIXED field references
-            config_data = {
-                'config': {
-                    'id': str(config.config_id),  # FIXED: Use config_id
-                    'name': config.name,
-                    'trading_mode': config.trading_mode,
-                    'use_fast_lane': config.use_fast_lane,
-                    'use_smart_lane': config.use_smart_lane,
-                    'max_position_size_percent': float(config.max_position_size_percent),
-                    'max_daily_trades': config.max_daily_trades,
-                    'stop_loss_percent': float(config.stop_loss_percent),
-                    'take_profit_percent': float(config.take_profit_percent),
-                    'confidence_threshold': float(config.confidence_threshold),
-                    'is_active': config.is_active,
-                    'created_at': config.created_at.isoformat(),
-                    'updated_at': config.updated_at.isoformat(),
-                },
-                'timestamp': timezone.now().isoformat(),
-            }
-            
-            return JsonResponse(config_data)
-        
-    except Exception as e:
-        logger.error(f"Error in configuration API: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
-
-
 @require_http_methods(["GET"])
-@csrf_exempt
-def api_performance_metrics(request: HttpRequest) -> JsonResponse:
-    """
-    API endpoint for performance metrics.
-    
-    Returns detailed performance analytics for the account.
-    
-    Args:
-        request: Django HTTP request
-        
-    Returns:
-        JSON response with performance metrics
-    """
-    try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
-            
-        account = PaperTradingAccount.objects.filter(
-            user=demo_user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
-        
-        # Get latest performance metrics
-        latest_metrics = PaperPerformanceMetrics.objects.filter(
-            session__account=account
-        ).order_by('-calculated_at').first()
-        
-        # Get historical metrics for chart (last 7 days)
-        week_ago = timezone.now() - timedelta(days=7)
-        historical_metrics = PaperPerformanceMetrics.objects.filter(
-            session__account=account,
-            calculated_at__gte=week_ago
-        ).order_by('calculated_at')
-        
-        # Calculate additional statistics - FIXED field references
-        total_trades = PaperTrade.objects.filter(account=account)
-        recent_trades = total_trades.filter(created_at__gte=week_ago)
-        
-        metrics_data = {
-            'current': {
-                'total_pnl': float(account.total_pnl_usd),
-                'return_percent': float(account.total_return_percent),
-                'win_rate': float(account.win_rate),
-                'total_trades': account.total_trades,
-                'successful_trades': account.successful_trades,
-                'failed_trades': account.failed_trades,
-                'avg_trade_size': float(recent_trades.aggregate(
-                    avg=Avg('amount_in_usd'))['avg'] or 0),
-                'total_volume': float(recent_trades.aggregate(
-                    sum=Sum('amount_in_usd'))['sum'] or 0),
-            },
-            'latest_metrics': {
-                'calculated_at': latest_metrics.calculated_at.isoformat() if latest_metrics else None,
-                'total_trades': latest_metrics.total_trades if latest_metrics else 0,
-                'total_pnl_usd': float(latest_metrics.total_pnl_usd) if latest_metrics else 0,
-                'win_rate': float(latest_metrics.win_rate) if latest_metrics else 0,
-                'sharpe_ratio': float(latest_metrics.sharpe_ratio) if latest_metrics and latest_metrics.sharpe_ratio else 0,
-            } if latest_metrics else None,
-            'historical': [
-                {
-                    'date': m.calculated_at.date().isoformat(),
-                    'total_pnl_usd': float(m.total_pnl_usd),
-                    'total_trades': m.total_trades,
-                    'win_rate': float(m.win_rate),
-                }
-                for m in historical_metrics
-            ],
-            'timestamp': timezone.now().isoformat(),
-        }
-        
-        return JsonResponse(metrics_data)
-        
-    except Exception as e:
-        logger.error(f"Error in performance metrics API: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
-
-
-@require_http_methods(["POST"])
-@csrf_exempt
-def api_start_bot(request: HttpRequest) -> JsonResponse:
-    """
-    API endpoint to start the paper trading bot.
-    
-    Args:
-        request: Django HTTP request
-        
-    Returns:
-        JSON response with bot start status
-    """
-    try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
-            
-        account = PaperTradingAccount.objects.filter(
-            user=demo_user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
-        
-        # Check for existing active session
-        active_session = PaperTradingSession.objects.filter(
-            account=account,
-            status='ACTIVE'  # FIXED: Use correct status value
-        ).first()
-        
-        if active_session:
-            return JsonResponse({
-                'error': 'Bot is already running',
-                'session_id': str(active_session.session_id)  # FIXED: Use session_id
-            }, status=400)
-        
-        # Create new session with required fields - FIXED
-        session = PaperTradingSession.objects.create(
-            account=account,
-            status='ACTIVE',
-            starting_balance_usd=account.current_balance_usd  # FIXED: Add required field
-        )
-        
-        logger.info(f"Started paper trading bot for account {account.account_id}")
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Bot started successfully',
-            'session_id': str(session.session_id),  # FIXED: Use session_id
-        })
-        
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
-
-
-@require_http_methods(["POST"])
-@csrf_exempt
-def api_stop_bot(request: HttpRequest) -> JsonResponse:
-    """
-    API endpoint to stop the paper trading bot.
-    
-    Args:
-        request: Django HTTP request
-        
-    Returns:
-        JSON response with bot stop status
-    """
-    try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
-            
-        account = PaperTradingAccount.objects.filter(
-            user=demo_user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
-        
-        # Find active session
-        active_session = PaperTradingSession.objects.filter(
-            account=account,
-            status='ACTIVE'  # FIXED: Use correct status value
-        ).first()
-        
-        if not active_session:
-            return JsonResponse({'error': 'No active bot session found'}, status=404)
-        
-        # Stop the session - FIXED field names
-        active_session.status = 'STOPPED'
-        active_session.end_time = timezone.now()  # FIXED: Use end_time instead of ended_at
-        active_session.save()
-        
-        logger.info(f"Stopped paper trading bot for account {account.account_id}")
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Bot stopped successfully',
-            'session_id': str(active_session.session_id),  # FIXED: Use session_id
-        })
-        
-    except Exception as e:
-        logger.error(f"Error stopping bot: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
-
-
-@require_http_methods(["GET"])
-@csrf_exempt
-def api_bot_status(request: HttpRequest) -> JsonResponse:
-    """
-    API endpoint to check bot status with recent AI thoughts.
-    
-    Args:
-        request: Django HTTP request
-        
-    Returns:
-        JSON response with bot status information
-    """
-    try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
-            
-        account = PaperTradingAccount.objects.filter(
-            user=demo_user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
-        
-        # Check for active session
-        active_session = PaperTradingSession.objects.filter(
-            account=account,
-            status='ACTIVE'  # FIXED: Use correct status value
-        ).first()
-        
-        if active_session:
-            # Get recent thought logs
-            recent_thoughts = PaperAIThoughtLog.objects.filter(
-                account=account
-            ).order_by('-created_at')[:3]
-            
-            # Get today's metrics
-            latest_metrics = PaperPerformanceMetrics.objects.filter(
-                session=active_session
-            ).order_by('-calculated_at').first()
-            
-            # FIXED field references
-            status_data = {
-                'status': 'ACTIVE',
-                'session': {
-                    'id': str(active_session.session_id),  # FIXED: Use session_id
-                    'started_at': active_session.start_time.isoformat() if active_session.start_time else None,  # FIXED: Use start_time
-                    'total_trades_executed': active_session.total_trades_executed,
-                    'current_balance': float(account.current_balance_usd),
-                },
-                'recent_thoughts': [
-                    {
-                        'timestamp': thought.created_at.isoformat(),
-                        'decision_type': thought.decision_type,
-                        'token_symbol': thought.token_symbol,
-                        'confidence_percent': float(thought.confidence_percent),
-                        'lane_used': thought.lane_used,
-                    }
-                    for thought in recent_thoughts
-                ],
-                'metrics': {
-                    'total_trades': latest_metrics.total_trades if latest_metrics else 0,
-                    'total_pnl_usd': float(latest_metrics.total_pnl_usd) if latest_metrics else 0,
-                    'win_rate': float(latest_metrics.win_rate) if latest_metrics else 0,
-                } if latest_metrics else None,
-            }
-        else:
-            status_data = {
-                'status': 'STOPPED',
-                'session': None,
-            }
-        
-        status_data['timestamp'] = timezone.now().isoformat()
-        
-        return JsonResponse(status_data)
-        
-    except Exception as e:
-        logger.error(f"Error checking bot status: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
-
-
-@require_http_methods(["GET"])
-@csrf_exempt
 def api_recent_trades(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint for fetching recent trades with normalized uppercase values.
+    API endpoint for recent trades - simplified for dashboard display.
     
-    Query Parameters:
-        - limit: Number of trades to return (default: 10, max: 50)
-        - since: ISO timestamp to get trades created after this time
+    Returns the most recent trades with essential information.
+    
+    Args:
+        request: Django HTTP request
         
     Returns:
         JSON response with recent trades data
     """
     try:
-        # Get demo user account
         from django.contrib.auth.models import User
         
-        # Check if user is authenticated first, otherwise use demo user
+        # Get user (demo or authenticated)
         if request.user.is_authenticated:
             user = request.user
         else:
             try:
                 user = User.objects.get(username='demo_user')
             except User.DoesNotExist:
-                logger.error("Demo user not found")
                 return JsonResponse({
                     'success': False,
-                    'error': 'Demo user not configured'
+                    'error': 'Demo user not configured',
+                    'trades': []
                 }, status=404)
         
-        # FIXED: Get the specific account with trades
+        # Get active account
         account = PaperTradingAccount.objects.filter(
-            account_id='435f14e1-56b5-46dd-add6-2fd242177c29'
+            user=user,
+            is_active=True
         ).first()
         
         if not account:
-            # Fallback to get active account for user
-            account = PaperTradingAccount.objects.filter(
-                user=user,
-                is_active=True
-            ).first()
-            
-            if not account:
-                logger.warning(f"No active paper trading account for user {user.username}")
-                return JsonResponse({
-                    'success': False,
-                    'error': 'No active paper trading account found',
-                    'trades': []
-                })
+            return JsonResponse({
+                'success': True,
+                'trades': [],
+                'count': 0,
+                'timestamp': timezone.now().isoformat()
+            })
         
-        # Build base query
-        trades_query = PaperTrade.objects.filter(account=account)
-        
-        # Apply 'since' filter if provided
-        since = request.GET.get('since')
-        if since:
-            try:
-                # Parse the ISO timestamp
-                from django.utils.dateparse import parse_datetime
-                since_datetime = parse_datetime(since)
-                if since_datetime:
-                    # Make it timezone aware if it isn't already
-                    if timezone.is_naive(since_datetime):
-                        since_datetime = timezone.make_aware(since_datetime)
-                    trades_query = trades_query.filter(created_at__gt=since_datetime)
-                    logger.debug(f"Filtering trades since {since_datetime}")
-            except Exception as e:
-                logger.warning(f"Error parsing 'since' parameter: {e}")
-        
-        # Apply limit
+        # Get recent trades
         limit = min(int(request.GET.get('limit', 10)), 50)
+        trades = PaperTrade.objects.filter(
+            account=account
+        ).order_by('-created_at')[:limit]
         
-        # Order by most recent first
-        trades = trades_query.order_by('-created_at')[:limit]
-        
-        # Build response data with normalized uppercase values
+        # Build response
         trades_data = []
         for trade in trades:
-            try:
-                # Normalize status and trade_type to uppercase
-                trade_type = trade.trade_type.upper() if trade.trade_type else 'UNKNOWN'
-                status = trade.status.upper() if trade.status else 'PENDING'
-                
-                # Handle common variations
-                if status == 'COMPLETE':
-                    status = 'COMPLETED'
-                
-                trade_dict = {
-                    'trade_id': str(trade.trade_id),
-                    'trade_type': trade_type,  # Now uppercase
-                    'status': status,  # Now uppercase
-                    'token_symbol': trade.token_out_symbol or trade.token_in_symbol or 'N/A',
-                    'token_in_symbol': trade.token_in_symbol or 'N/A',
-                    'token_out_symbol': trade.token_out_symbol or 'N/A',
-                    'amount_in': float(trade.amount_in) if trade.amount_in else 0,
-                    'amount_in_usd': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
-                    'amount_out': float(trade.actual_amount_out) if trade.actual_amount_out else 0,
-                    'created_at': trade.created_at.isoformat() if trade.created_at else None,
-                    'executed_at': trade.executed_at.isoformat() if trade.executed_at else None,
-                }
-                trades_data.append(trade_dict)
-            except Exception as e:
-                logger.error(f"Error serializing trade {trade.trade_id}: {e}")
-                continue
+            trade_data = {
+                'trade_id': str(trade.trade_id),
+                'trade_type': trade.trade_type.upper() if trade.trade_type else 'UNKNOWN',
+                'token_symbol': trade.token_out_symbol if trade.trade_type == 'buy' else trade.token_in_symbol,
+                'amount_usd': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
+                'price': float(trade.execution_price_usd) if trade.execution_price_usd else 0,
+                'status': trade.status.upper() if trade.status else 'PENDING',
+                'created_at': trade.created_at.isoformat(),
+                'execution_time_ms': trade.execution_time_ms,
+            }
+            
+            # Add P&L if available
+            if hasattr(trade, 'pnl_usd') and trade.pnl_usd is not None:
+                trade_data['pnl_usd'] = float(trade.pnl_usd)
+                trade_data['pnl_percent'] = float(trade.pnl_percent) if hasattr(trade, 'pnl_percent') and trade.pnl_percent else 0
+            
+            trades_data.append(trade_data)
         
-        # Log for debugging
-        logger.info(f"Returning {len(trades_data)} trades for account {account.account_id}")
-        
-        response = {
+        return JsonResponse({
             'success': True,
             'trades': trades_data,
             'count': len(trades_data),
             'timestamp': timezone.now().isoformat()
-        }
-        
-        return JsonResponse(response)
+        })
         
     except Exception as e:
-        logger.error(f"Error in api_recent_trades: {e}", exc_info=True)
+        logger.error(f"Error in api_recent_trades: {str(e)}", exc_info=True)
         return JsonResponse({
             'success': False,
-            'error': str(e),
+            'error': 'Failed to fetch recent trades',
             'trades': []
         }, status=500)
 
 
 @require_http_methods(["GET"])
-@csrf_exempt
-def api_positions_open(request: HttpRequest) -> JsonResponse:
+def api_open_positions(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint for fetching open positions.
+    API endpoint to get current open positions.
     
+    Returns all open positions with current values and P&L calculations.
+    
+    Args:
+        request: Django HTTP request
+        
     Returns:
         JSON response with open positions data
     """
     try:
         from django.contrib.auth.models import User
         
-        # Get user
+        # Get user (demo or authenticated)
         if request.user.is_authenticated:
             user = request.user
         else:
@@ -1193,7 +743,9 @@ def api_positions_open(request: HttpRequest) -> JsonResponse:
                 'positions': [],
                 'summary': {
                     'total_positions': 0,
-                    'total_value_usd': 0
+                    'total_value_usd': 0,
+                    'total_unrealized_pnl_usd': 0,
+                    'total_unrealized_pnl_percent': 0
                 },
                 'timestamp': timezone.now().isoformat()
             })
@@ -1202,203 +754,470 @@ def api_positions_open(request: HttpRequest) -> JsonResponse:
         positions = PaperPosition.objects.filter(
             account=account,
             is_open=True
-        ).order_by('-unrealized_pnl_usd')
+        ).order_by('-current_value_usd')
         
         # Build response
         positions_data = []
         total_value = Decimal('0')
+        total_pnl = Decimal('0')
+        total_cost_basis = Decimal('0')
         
         for position in positions:
-            pos_data = {
+            # Calculate current metrics
+            current_value = position.current_value_usd or Decimal('0')
+            cost_basis = (position.average_entry_price_usd * position.quantity) if position.average_entry_price_usd else Decimal('0')
+            unrealized_pnl = position.unrealized_pnl_usd or Decimal('0')
+            unrealized_pnl_percent = position.unrealized_pnl_percent or Decimal('0')
+            
+            position_data = {
                 'position_id': str(position.position_id),
                 'token_symbol': position.token_symbol,
                 'token_address': position.token_address,
                 'quantity': float(position.quantity),
-                'average_entry_price_usd': float(position.average_entry_price_usd),
-                'current_value_usd': float(position.current_value_usd) if position.current_value_usd else 0,
-                'unrealized_pnl_usd': float(position.unrealized_pnl_usd),
-                'unrealized_pnl_percent': float(position.unrealized_pnl_percent),
-                'created_at': position.created_at.isoformat()
+                'average_entry_price_usd': float(position.average_entry_price_usd) if position.average_entry_price_usd else 0,
+                'current_price_usd': float(position.current_price_usd) if position.current_price_usd else 0,
+                'current_value_usd': float(current_value),
+                'cost_basis_usd': float(cost_basis),
+                'unrealized_pnl_usd': float(unrealized_pnl),
+                'unrealized_pnl_percent': float(unrealized_pnl_percent),
+                'opened_at': position.opened_at.isoformat() if position.opened_at else None,
+                'last_updated': position.last_updated.isoformat() if position.last_updated else None,
             }
-            positions_data.append(pos_data)
-            total_value += position.current_value_usd if position.current_value_usd else Decimal('0')
+            
+            positions_data.append(position_data)
+            total_value += current_value
+            total_pnl += unrealized_pnl
+            total_cost_basis += cost_basis
+        
+        # Calculate summary metrics
+        total_unrealized_pnl_percent = float(
+            (total_pnl / total_cost_basis * 100) if total_cost_basis > 0 else 0
+        )
+        
+        summary = {
+            'total_positions': len(positions_data),
+            'total_value_usd': float(total_value),
+            'total_cost_basis_usd': float(total_cost_basis),
+            'total_unrealized_pnl_usd': float(total_pnl),
+            'total_unrealized_pnl_percent': total_unrealized_pnl_percent
+        }
         
         return JsonResponse({
             'success': True,
             'positions': positions_data,
-            'summary': {
-                'total_positions': len(positions_data),
-                'total_value_usd': float(total_value)
-            },
+            'summary': summary,
             'timestamp': timezone.now().isoformat()
         })
         
     except Exception as e:
-        logger.error(f"Error in api_positions_open: {e}", exc_info=True)
+        logger.error(f"Error in api_open_positions: {str(e)}", exc_info=True)
         return JsonResponse({
             'success': False,
-            'error': str(e),
+            'error': 'Failed to fetch open positions',
             'positions': []
         }, status=500)
 
 
-@require_http_methods(["GET"])
-def api_metrics(request: HttpRequest) -> JsonResponse:
+@require_http_methods(["GET", "POST"])
+@csrf_exempt
+def api_configuration(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint for dashboard metrics.
+    API endpoint for strategy configuration management.
     
+    GET: Returns current configuration
+    POST: Updates configuration
+    
+    Args:
+        request: Django HTTP request
+        
     Returns:
-        JSON response with current metrics data
+        JSON response with configuration data or update status
     """
     try:
         from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
         
-        # Get user
-        if request.user.is_authenticated:
-            user = request.user
-        else:
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Demo user not configured'
-                }, status=404)
-        
-        # Get active account
         account = PaperTradingAccount.objects.filter(
-            user=user,
+            user=demo_user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({
-                'success': True,
-                'current_balance': 0,
-                'total_pnl': 0,
-                'win_rate': 0,
-                'trades_24h': 0,
-                'total_trades': 0
-            })
+            return JsonResponse({'error': 'No active account found'}, status=404)
         
-        # Calculate 24h metrics
-        yesterday = timezone.now() - timedelta(days=1)
-        trades_24h = PaperTrade.objects.filter(
-            account=account,
-            created_at__gte=yesterday
-        ).count()
-        
-        return JsonResponse({
-            'success': True,
-            'current_balance': float(account.current_balance_usd),
-            'total_pnl': float(account.total_pnl_usd),
-            'win_rate': float(account.win_rate),
-            'trades_24h': trades_24h,
-            'total_trades': account.total_trades,
-            'timestamp': timezone.now().isoformat()
-        })
-        
+        if request.method == 'GET':
+            # Get current configuration
+            config = PaperStrategyConfiguration.objects.filter(
+                account=account,
+                is_active=True
+            ).first()
+            
+            if config:
+                config_data = {
+                    'strategy_name': config.strategy_name,
+                    'is_active': config.is_active,
+                    'configuration': config.configuration,
+                    'created_at': config.created_at.isoformat(),
+                    'updated_at': config.updated_at.isoformat(),
+                }
+            else:
+                config_data = {
+                    'strategy_name': 'default',
+                    'is_active': False,
+                    'configuration': {},
+                    'message': 'No active configuration found'
+                }
+            
+            return JsonResponse(config_data)
+            
+        elif request.method == 'POST':
+            # Update configuration
+            try:
+                data = json.loads(request.body)
+                
+                config, created = PaperStrategyConfiguration.objects.update_or_create(
+                    account=account,
+                    strategy_name=data.get('strategy_name', 'default'),
+                    defaults={
+                        'is_active': data.get('is_active', True),
+                        'configuration': data.get('configuration', {})
+                    }
+                )
+                
+                return JsonResponse({
+                    'success': True,
+                    'message': f"Configuration {'created' if created else 'updated'}",
+                    'config_id': str(config.config_id)
+                })
+                
+            except json.JSONDecodeError:
+                return JsonResponse({'error': 'Invalid JSON'}, status=400)
+            except Exception as e:
+                logger.error(f"Error updating configuration: {e}", exc_info=True)
+                return JsonResponse({'error': str(e)}, status=500)
+                
     except Exception as e:
-        logger.error(f"Error in api_metrics: {e}", exc_info=True)
-        return JsonResponse({
-            'success': False,
-            'error': str(e)
-        }, status=500)
+        logger.error(f"Error in configuration API: {e}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
 
 
-# =============================================================================
-# UTILITY VIEWS
-# =============================================================================
-
-
-def reset_account(request: HttpRequest) -> HttpResponse:
+@require_http_methods(["GET"])
+@csrf_exempt
+def api_performance_metrics(request: HttpRequest) -> JsonResponse:
     """
-    Reset paper trading account to initial state.
+    API endpoint for performance metrics.
+    
+    Returns detailed performance metrics and statistics.
     
     Args:
         request: Django HTTP request
         
     Returns:
-        Redirect to dashboard
+        JSON response with performance data
     """
     try:
         from django.contrib.auth.models import User
         demo_user = User.objects.get(username='demo_user')
         
-        account = get_object_or_404(
-            PaperTradingAccount,
+        account = PaperTradingAccount.objects.filter(
             user=demo_user,
             is_active=True
+        ).first()
+        
+        if not account:
+            return JsonResponse({'error': 'No active account found'}, status=404)
+        
+        # Get latest metrics through session
+        # First get sessions for this account
+        sessions = PaperTradingSession.objects.filter(
+            account=account
+        ).values_list('session_id', flat=True)
+        
+        # Then get metrics for those sessions
+        metrics = PaperPerformanceMetrics.objects.filter(
+            session__in=sessions
+        ).order_by('-calculated_at').first()
+        
+        if metrics:
+            metrics_data = {
+                'sharpe_ratio': float(metrics.sharpe_ratio) if metrics.sharpe_ratio else 0,
+                'sortino_ratio': float(metrics.sortino_ratio) if hasattr(metrics, 'sortino_ratio') and metrics.sortino_ratio else 0,
+                'max_drawdown': float(metrics.max_drawdown_percent) if metrics.max_drawdown_percent else 0,
+                'win_rate': float(metrics.win_rate) if metrics.win_rate else 0,
+                'profit_factor': float(metrics.profit_factor) if metrics.profit_factor else 0,
+                'average_win': float(metrics.avg_win_usd) if metrics.avg_win_usd else 0,
+                'average_loss': float(metrics.avg_loss_usd) if metrics.avg_loss_usd else 0,
+                'best_trade': float(metrics.largest_win_usd) if metrics.largest_win_usd else 0,
+                'worst_trade': float(metrics.largest_loss_usd) if metrics.largest_loss_usd else 0,
+                'trades_count': metrics.total_trades,
+                'created_at': metrics.calculated_at.isoformat() if metrics.calculated_at else timezone.now().isoformat(),
+            }
+        else:
+            # Return default metrics if none exist
+            metrics_data = {
+                'sharpe_ratio': 0,
+                'sortino_ratio': 0,
+                'max_drawdown': 0,
+                'win_rate': float(account.win_rate) if account.win_rate else 0,
+                'profit_factor': 0,
+                'average_win': 0,
+                'average_loss': 0,
+                'best_trade': 0,
+                'worst_trade': 0,
+                'trades_count': account.total_trades,
+                'message': 'No performance metrics calculated yet'
+            }
+        
+        # Add account-level stats
+        metrics_data['account_stats'] = {
+            'total_pnl': float(account.total_pnl_usd),
+            'total_return': float(account.total_return_percent),
+            'current_balance': float(account.current_balance_usd),
+            'initial_balance': float(account.initial_balance_usd),
+            'total_trades': account.total_trades,
+            'successful_trades': account.successful_trades,
+            'failed_trades': account.failed_trades,
+            'win_rate': float(account.win_rate) if account.win_rate else 0,
+        }
+        
+        return JsonResponse(metrics_data)
+        
+    except Exception as e:
+        logger.error(f"Error in performance metrics API: {e}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+# =============================================================================
+# BOT CONTROL ENDPOINTS
+# =============================================================================
+
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def api_start_bot(request: HttpRequest) -> JsonResponse:
+    """
+    Start paper trading bot.
+    
+    Args:
+        request: Django HTTP request
+        
+    Returns:
+        JSON response with bot status
+    """
+    try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+        
+        account = PaperTradingAccount.objects.filter(
+            user=demo_user,
+            is_active=True
+        ).first()
+        
+        if not account:
+            return JsonResponse({'error': 'No active account found'}, status=404)
+        
+        # Create new trading session
+        session = PaperTradingSession.objects.create(
+            account=account,
+            is_active=True,
+            session_config=json.loads(request.body) if request.body else {}
         )
         
-        # Stop any active sessions first
+        # TODO: Actually start the bot process
+        # This would typically trigger a background task or service
+        
+        logger.info(f"Started paper trading session {session.session_id} for account {account.account_id}")
+        
+        return JsonResponse({
+            'success': True,
+            'session_id': str(session.session_id),
+            'message': 'Paper trading bot started',
+            'status': 'running'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting bot: {e}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def api_stop_bot(request: HttpRequest) -> JsonResponse:
+    """
+    Stop paper trading bot.
+    
+    Args:
+        request: Django HTTP request
+        
+    Returns:
+        JSON response with bot status
+    """
+    try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+        
+        account = PaperTradingAccount.objects.filter(
+            user=demo_user,
+            is_active=True
+        ).first()
+        
+        if not account:
+            return JsonResponse({'error': 'No active account found'}, status=404)
+        
+        # End active sessions
         active_sessions = PaperTradingSession.objects.filter(
             account=account,
-            status='ACTIVE'
+            is_active=True
         )
         
-        for session in active_sessions:
-            session.status = 'STOPPED'
-            session.end_time = timezone.now()
-            session.save()
+        sessions_ended = active_sessions.count()
+        active_sessions.update(
+            is_active=False,
+            ended_at=timezone.now()
+        )
         
-        # Reset account
-        account.reset_account()
+        # TODO: Actually stop the bot process
+        # This would typically stop background tasks or services
         
-        messages.success(request, 'Paper trading account has been reset successfully!')
-        logger.info(f"Reset paper trading account {account.account_id} for demo user")
+        logger.info(f"Stopped {sessions_ended} paper trading sessions for account {account.account_id}")
         
-        return redirect('paper_trading:dashboard')
+        return JsonResponse({
+            'success': True,
+            'sessions_ended': sessions_ended,
+            'message': 'Paper trading bot stopped',
+            'status': 'stopped'
+        })
         
     except Exception as e:
-        logger.error(f"Error resetting account: {e}", exc_info=True)
-        messages.error(request, f"Error resetting account: {str(e)}")
-        return redirect('paper_trading:dashboard')
+        logger.error(f"Error stopping bot: {e}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
 
 
-def delete_trade(request: HttpRequest, trade_id: str) -> JsonResponse:
+@require_http_methods(["GET"])
+@csrf_exempt
+def api_bot_status(request: HttpRequest) -> JsonResponse:
     """
-    Delete a specific paper trade.
+    Get paper trading bot status.
     
     Args:
         request: Django HTTP request
-        trade_id: UUID of the trade to delete
         
     Returns:
-        JSON response with deletion status
+        JSON response with bot status
     """
     try:
         from django.contrib.auth.models import User
         demo_user = User.objects.get(username='demo_user')
         
-        account = get_object_or_404(
-            PaperTradingAccount,
+        account = PaperTradingAccount.objects.filter(
             user=demo_user,
             is_active=True
-        )
+        ).first()
         
-        trade = get_object_or_404(
-            PaperTrade,
-            trade_id=trade_id,  # FIXED: Use trade_id
-            account=account
-        )
+        if not account:
+            return JsonResponse({'error': 'No active account found'}, status=404)
         
-        # Don't allow deletion of executed trades
-        if trade.status == 'COMPLETED':
-            return JsonResponse({
-                'success': False,
-                'error': 'Cannot delete completed trades'
-            }, status=400)
+        # Check for active session
+        active_session = PaperTradingSession.objects.filter(
+            account=account,
+            status="ACTIVE"
+        ).first()
         
-        trade.delete()
+        if active_session:
+            # Calculate session stats
+            session_trades = PaperTrade.objects.filter(
+                account=account,
+                created_at__gte=active_session.started_at
+            ).count()
+            
+            status_data = {
+                'status': 'running',
+                'session_id': str(active_session.session_id),
+                'started_at': active_session.started_at.isoformat(),
+                'duration_minutes': int((timezone.now() - active_session.started_at).total_seconds() / 60),
+                'trades_executed': session_trades,
+                'session_pnl': float(active_session.session_pnl_usd) if active_session.session_pnl_usd else 0,
+                'config': active_session.session_config,
+            }
+        else:
+            status_data = {
+                'status': 'stopped',
+                'message': 'No active trading session'
+            }
         
-        logger.info(f"Deleted trade {trade_id} for account {account.account_id}")
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Trade deleted successfully'
-        })
+        return JsonResponse(status_data)
         
     except Exception as e:
-        logger.error(f"Error deleting trade: {e}", exc_info=True)
+        logger.error(f"Error getting bot status: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+
+def _calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
+    """
+    Calculate detailed portfolio metrics.
+    
+    Args:
+        account: Paper trading account
+        
+    Returns:
+        Dictionary with calculated metrics
+    """
+    try:
+        # Get all trades for the account
+        all_trades = PaperTrade.objects.filter(account=account, status='completed')
+        
+        if not all_trades.exists():
+            return {
+                'total_trades': 0,
+                'win_rate': 0,
+                'profit_factor': 0,
+                'sharpe_ratio': 0,
+                'max_drawdown': 0,
+            }
+        
+        # Calculate basic metrics
+        total_trades = all_trades.count()
+        
+        # Winning/losing trades (you might need to add a pnl field to PaperTrade)
+        # For now, using a simple heuristic
+        winning_trades = 0
+        losing_trades = 0
+        total_profit = Decimal('0')
+        total_loss = Decimal('0')
+        
+        for trade in all_trades:
+            # This is simplified - you'd need actual P&L calculation
+            if hasattr(trade, 'pnl_usd'):
+                if trade.pnl_usd > 0:
+                    winning_trades += 1
+                    total_profit += trade.pnl_usd
+                elif trade.pnl_usd < 0:
+                    losing_trades += 1
+                    total_loss += abs(trade.pnl_usd)
+        
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+        profit_factor = (total_profit / total_loss) if total_loss > 0 else 0
+        
+        return {
+            'total_trades': total_trades,
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
+            'win_rate': float(win_rate),
+            'profit_factor': float(profit_factor),
+            'total_profit': float(total_profit),
+            'total_loss': float(total_loss),
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating portfolio metrics: {e}", exc_info=True)
+        return {
+            'total_trades': 0,
+            'win_rate': 0,
+            'profit_factor': 0,
+            'error': str(e)
+        }

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Error - Paper Trading{% endblock %}
+
+{% block content %}
+<div class="container py-5 text-center">
+    <div class="card card-glass mx-auto" style="max-width: 600px;">
+        <div class="card-body">
+            <h1 class="display-6 text-danger mb-3">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                Oops! Something went wrong
+            </h1>
+            <p class="lead text-muted mb-4">
+                {{ error|default:"An unexpected error occurred while loading the Paper Trading Dashboard." }}
+            </p>
+            <a href="{% url 'paper_trading:dashboard' %}" class="btn btn-primary">
+                <i class="bi bi-arrow-left me-2"></i>
+                Back to Dashboard
+            </a>
+            <a href="/" class="btn btn-outline-secondary ms-2">
+                <i class="bi bi-house me-2"></i>
+                Home
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
