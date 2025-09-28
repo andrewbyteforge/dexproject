@@ -607,725 +607,403 @@ window.paperTradingConfig = {
 </script>
 
 <!-- Paper Trading Dashboard JavaScript -->
-<!-- Paper Trading Dashboard JavaScript -->
 <script>
     // Track last update times
     let lastThoughtUpdate = new Date().toISOString();
-    let lastTradeUpdate = null;
+    let lastTradeUpdate = null; // Updated handling for trades
     let lastPositionUpdate = new Date().toISOString();
     let thoughtCount = 0;
     
-    // Debug mode flag
-    const DEBUG_MODE = true; // Set to false in production
-    
-    // Custom logger wrapper
-    const logger = {
-        debug: (msg, data) => {
-            if (DEBUG_MODE) {
-                console.log(`[DEBUG] ${new Date().toISOString()} - ${msg}`, data || '');
-            }
-        },
-        info: (msg, data) => {
-            console.info(`[INFO] ${new Date().toISOString()} - ${msg}`, data || '');
-        },
-        warn: (msg, data) => {
-            console.warn(`[WARN] ${new Date().toISOString()} - ${msg}`, data || '');
-        },
-        error: (msg, error) => {
-            console.error(`[ERROR] ${new Date().toISOString()} - ${msg}`, error || '');
-        }
-    };
-    
     // ========== AI THOUGHTS UPDATES ==========
     function updateAIThoughts() {
-        const url = `/paper-trading/api/ai-thoughts/?since=${lastThoughtUpdate}&limit=5`;
-        logger.debug('Fetching AI thoughts from:', url);
-        
-        fetch(url)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
+        fetch(`/paper-trading/api/ai-thoughts/?since=${lastThoughtUpdate}&limit=5`)
+            .then(response => response.json())
             .then(data => {
-                logger.debug('AI thoughts response:', data);
-                
                 if (data.thoughts && data.thoughts.length > 0) {
                     updateThoughtsDisplay(data.thoughts);
                     lastThoughtUpdate = new Date().toISOString();
-                    
-                    const aiStatus = document.getElementById('ai-status');
-                    if (aiStatus) {
-                        aiStatus.textContent = 'Live';
-                        aiStatus.className = 'badge bg-success';
-                    }
-                    
-                    logger.info(`Updated ${data.thoughts.length} AI thoughts`);
-                } else {
-                    logger.debug('No new AI thoughts to display');
+                    document.getElementById('ai-status').textContent = 'Live';
+                    document.getElementById('ai-status').className = 'badge bg-success';
                 }
             })
             .catch(error => {
-                logger.error('Error fetching AI thoughts:', error);
-                
-                const aiStatus = document.getElementById('ai-status');
-                if (aiStatus) {
-                    aiStatus.textContent = 'Error';
-                    aiStatus.className = 'badge bg-danger';
-                }
+                console.error('Error fetching AI thoughts:', error);
+                document.getElementById('ai-status').textContent = 'Error';
+                document.getElementById('ai-status').className = 'badge bg-danger';
             });
     }
     
     function updateThoughtsDisplay(newThoughts) {
-        try {
-            const container = document.getElementById('thought-log-container');
-            if (!container) {
-                logger.warn('Thought log container not found');
+        const container = document.getElementById('thought-log-container');
+        if (!container) return;
+        
+        const MAX_THOUGHTS = window.paperTradingConfig.maxThoughts;
+        
+        // Remove placeholder if exists
+        const placeholder = container.querySelector('.text-center');
+        if (placeholder && newThoughts.length > 0) {
+            placeholder.remove();
+        }
+        
+        // Add new thoughts
+        newThoughts.reverse().forEach(thought => {
+            if (document.querySelector(`[data-thought-id="${thought.id}"]`)) {
                 return;
             }
             
-            const MAX_THOUGHTS = window.paperTradingConfig?.maxThoughts || 3;
-            
-            // Remove placeholder if exists
-            const placeholder = container.querySelector('.text-center');
-            if (placeholder && newThoughts.length > 0) {
-                placeholder.remove();
-                logger.debug('Removed placeholder from thoughts container');
-            }
-            
-            // Add new thoughts
-            newThoughts.reverse().forEach(thought => {
-                try {
-                    if (document.querySelector(`[data-thought-id="${thought.id}"]`)) {
-                        logger.debug(`Thought ${thought.id} already exists, skipping`);
-                        return;
+            const thoughtElement = createThoughtElement(thought);
+            thoughtElement.classList.add('fade-in');
+            container.insertBefore(thoughtElement, container.firstChild);
+            thoughtCount++;
+        });
+        
+        // Remove excess thoughts
+        const thoughtItems = container.querySelectorAll('.thought-log-step:not(.text-center)');
+        if (thoughtItems.length > MAX_THOUGHTS) {
+            for (let i = MAX_THOUGHTS; i < thoughtItems.length; i++) {
+                const item = thoughtItems[i];
+                item.classList.add('fade-out');
+                setTimeout(() => {
+                    if (item.parentNode) {
+                        item.remove();
                     }
-                    
-                    const thoughtElement = createThoughtElement(thought);
-                    thoughtElement.classList.add('fade-in');
-                    container.insertBefore(thoughtElement, container.firstChild);
-                    thoughtCount++;
-                    
-                    logger.debug(`Added thought ${thought.id}`);
-                } catch (error) {
-                    logger.error(`Error adding thought ${thought.id}:`, error);
-                }
-            });
-            
-            // Remove excess thoughts
-            const thoughtItems = container.querySelectorAll('.thought-log-step:not(.text-center)');
-            if (thoughtItems.length > MAX_THOUGHTS) {
-                for (let i = MAX_THOUGHTS; i < thoughtItems.length; i++) {
-                    const item = thoughtItems[i];
-                    item.classList.add('fade-out');
-                    setTimeout(() => {
-                        if (item.parentNode) {
-                            item.remove();
-                        }
-                    }, 300);
-                }
-                logger.debug(`Removed ${thoughtItems.length - MAX_THOUGHTS} excess thoughts`);
+                }, 300);
             }
-            
-            updateThoughtCounter();
-            
-            if (window.paperTradingConfig?.autoScroll) {
-                scrollToNewest();
-            }
-        } catch (error) {
-            logger.error('Error in updateThoughtsDisplay:', error);
+        }
+        
+        updateThoughtCounter();
+        
+        if (window.paperTradingConfig.autoScroll) {
+            scrollToNewest();
         }
     }
     
     function createThoughtElement(thought) {
-        try {
-            const div = document.createElement('div');
-            div.className = 'thought-log-step';
-            div.setAttribute('data-thought-id', thought.id);
-            
-            const time = new Date(thought.timestamp).toLocaleTimeString();
-            const laneClass = thought.lane_used === 'FAST' ? 'fast-lane-badge' : 'smart-lane-badge';
-            const confidence = Math.round(thought.confidence_percent || 0);
-            
-            const reasoning = thought.primary_reasoning || 'Analyzing market conditions...';
-            const truncatedReasoning = reasoning.length > 150 ? reasoning.substring(0, 150) + '...' : reasoning;
-            
-            div.innerHTML = `
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <div>
-                        <strong>${thought.decision_type || 'UNKNOWN'}</strong>
-                        <span class="text-muted ms-2">${thought.token_symbol || 'N/A'}</span>
-                        <span class="lane-badge ${laneClass} ms-2">${thought.lane_used || 'N/A'}</span>
-                    </div>
-                    <small class="text-muted">${time}</small>
+        const div = document.createElement('div');
+        div.className = 'thought-log-step';
+        div.setAttribute('data-thought-id', thought.id);
+        
+        const time = new Date(thought.timestamp).toLocaleTimeString();
+        const laneClass = thought.lane_used === 'FAST' ? 'fast-lane-badge' : 'smart-lane-badge';
+        const confidence = Math.round(thought.confidence_percent || 0);
+        
+        const reasoning = thought.primary_reasoning || 'Analyzing market conditions...';
+        const truncatedReasoning = reasoning.length > 150 ? reasoning.substring(0, 150) + '...' : reasoning;
+        
+        div.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <strong>${thought.decision_type}</strong>
+                    <span class="text-muted ms-2">${thought.token_symbol}</span>
+                    <span class="lane-badge ${laneClass} ms-2">${thought.lane_used}</span>
                 </div>
-                <div class="d-flex align-items-center mb-2">
-                    <small class="me-2">Confidence:</small>
-                    <div class="confidence-bar flex-grow-1">
-                        <div class="confidence-fill" style="width: ${confidence}%"></div>
-                    </div>
-                    <small class="ms-2 fw-bold">${confidence}%</small>
+                <small class="text-muted">${time}</small>
+            </div>
+            <div class="d-flex align-items-center mb-2">
+                <small class="me-2">Confidence:</small>
+                <div class="confidence-bar flex-grow-1">
+                    <div class="confidence-fill" style="width: ${confidence}%"></div>
                 </div>
-                <div class="thought-summary">
-                    ${truncatedReasoning}
-                </div>
-            `;
-            
-            return div;
-        } catch (error) {
-            logger.error('Error creating thought element:', error);
-            // Return a minimal element on error
-            const div = document.createElement('div');
-            div.className = 'thought-log-step text-danger';
-            div.textContent = 'Error displaying thought';
-            return div;
-        }
+                <small class="ms-2 fw-bold">${confidence}%</small>
+            </div>
+            <div class="thought-summary">
+                ${truncatedReasoning}
+            </div>
+        `;
+        
+        return div;
     }
     
     function updateThoughtCounter() {
-        try {
-            const container = document.getElementById('thought-log-container');
-            if (!container) return;
-            
-            const thoughts = container.querySelectorAll('.thought-log-step:not(.text-center)');
-            const countBadge = document.getElementById('thought-count');
-            const counterText = document.getElementById('thought-counter-text');
-            
-            if (countBadge) {
-                countBadge.textContent = thoughts.length;
-            }
-            
-            if (counterText) {
-                const maxThoughts = window.paperTradingConfig?.maxThoughts || 3;
-                counterText.textContent = `Showing ${thoughts.length} latest thoughts (max ${maxThoughts})`;
-            }
-        } catch (error) {
-            logger.error('Error updating thought counter:', error);
+        const container = document.getElementById('thought-log-container');
+        const thoughts = container.querySelectorAll('.thought-log-step:not(.text-center)');
+        const countBadge = document.getElementById('thought-count');
+        const counterText = document.getElementById('thought-counter-text');
+        
+        if (countBadge) {
+            countBadge.textContent = thoughts.length;
+        }
+        
+        if (counterText) {
+            counterText.textContent = `Showing ${thoughts.length} latest thoughts (max ${window.paperTradingConfig.maxThoughts})`;
         }
     }
     
-    // ========== RECENT TRADES UPDATES ==========
+    // ========== RECENT TRADES UPDATES (UPDATED) ==========
     function updateRecentTrades(isInitial = false) {
         let url = '/paper-trading/api/trades/recent/?limit=10';
         if (lastTradeUpdate && !isInitial) {
-            url += `&since=${encodeURIComponent(lastTradeUpdate)}`;
+            url += `&since=${lastTradeUpdate}`;
         }
         
-        logger.debug(`Fetching recent trades from: ${url} (initial: ${isInitial})`);
-        
         fetch(url)
-            .then(response => {
-                logger.debug(`Trades response status: ${response.status}`);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
+            .then(response => response.json())
             .then(data => {
-                logger.debug('Trades data received:', data);
-                
                 if (data.success) {
-                    // Check if we have trades array
-                    if (data.trades && Array.isArray(data.trades)) {
-                        logger.info(`Processing ${data.trades.length} trades (initial: ${isInitial})`);
-                        
-                        if (isInitial || !lastTradeUpdate) {
-                            replaceAllTrades(data.trades);
-                        } else if (data.trades.length > 0) {
-                            updateTradesTable(data.trades);
-                        }
-                        
-                        // Update the timestamp for next poll
-                        lastTradeUpdate = new Date().toISOString();
-                        logger.debug(`Updated lastTradeUpdate to: ${lastTradeUpdate}`);
-                        
-                        // Flash indicator if not initial load and we have new trades
-                        if (!isInitial && data.trades.length > 0) {
-                            flashUpdateIndicator('trades-update-indicator');
-                        }
-                    } else {
-                        logger.warn('No trades array in response:', data);
-                        // Still replace with empty if no trades
-                        if (isInitial) {
-                            replaceAllTrades([]);
-                        }
+                    if (isInitial || !lastTradeUpdate) {
+                        replaceAllTrades(data.trades);
+                    } else if (data.trades && data.trades.length > 0) {
+                        updateTradesTable(data.trades);
                     }
-                } else {
-                    logger.error('API returned success: false', data.error || 'Unknown error');
                     
-                    // If the API returns an error but we're on initial load, show empty state
-                    if (isInitial) {
-                        replaceAllTrades([]);
-                        showToast('Unable to load trades. Please check if the bot is configured.', 'warning');
+                    lastTradeUpdate = new Date().toISOString();
+                    
+                    if (!isInitial && data.trades && data.trades.length > 0) {
+                        flashUpdateIndicator('trades-update-indicator');
                     }
                 }
             })
             .catch(error => {
-                logger.error('Error fetching recent trades:', error);
-                
-                // On initial load, show empty state even if there's an error
-                if (isInitial) {
-                    replaceAllTrades([]);
-                    showToast('Error loading trades. Please refresh the page.', 'danger');
-                }
+                console.error('Error fetching recent trades:', error);
             });
     }
     
     function replaceAllTrades(trades) {
-        try {
-            const tableBody = document.getElementById('recent-trades-tbody');
-            if (!tableBody) {
-                logger.error('Could not find recent-trades-tbody element');
-                return;
-            }
-            
-            logger.info(`Replacing all trades, count: ${trades.length}`);
-            
-            tableBody.innerHTML = '';
-            
-            if (!trades || trades.length === 0) {
-                tableBody.innerHTML = `
-                    <tr class="no-trades-message">
-                        <td colspan="5" class="text-center text-muted py-4">
-                            <i class="bi bi-graph-up fs-3 mb-2 d-block"></i>
-                            <p class="mb-0">No trades yet. Start the bot to begin paper trading!</p>
-                        </td>
-                    </tr>
-                `;
-                logger.debug('Displayed no trades message');
-                return;
-            }
-            
-            trades.forEach((trade, index) => {
-                try {
-                    const row = createTradeRow(trade);
-                    tableBody.appendChild(row);
-                    logger.debug(`Added trade row ${index + 1}/${trades.length}: ${trade.trade_id}`);
-                } catch (error) {
-                    logger.error(`Error creating trade row for trade ${trade.trade_id}:`, error);
-                }
-            });
-            
-            logger.info(`Successfully displayed ${trades.length} trades`);
-        } catch (error) {
-            logger.error('Error in replaceAllTrades:', error);
+        const tableBody = document.getElementById('recent-trades-tbody');
+        if (!tableBody) return;
+        
+        tableBody.innerHTML = '';
+        
+        if (trades.length === 0) {
+            tableBody.innerHTML = `
+                <tr class="no-trades-message">
+                    <td colspan="5" class="text-center text-muted py-4">
+                        <i class="bi bi-graph-up fs-3 mb-2 d-block"></i>
+                        <p class="mb-0">No trades yet. Start the bot to begin paper trading!</p>
+                    </td>
+                </tr>
+            `;
+            return;
         }
+        
+        trades.forEach(trade => {
+            const row = createTradeRow(trade);
+            tableBody.appendChild(row);
+        });
     }
     
     function updateTradesTable(newTrades) {
-        try {
-            const tableBody = document.getElementById('recent-trades-tbody');
-            if (!tableBody) {
-                logger.error('Could not find recent-trades-tbody element');
+        const tableBody = document.getElementById('recent-trades-tbody');
+        if (!tableBody) return;
+        
+        const noTradesMessage = tableBody.querySelector('.no-trades-message');
+        if (noTradesMessage) {
+            noTradesMessage.remove();
+        }
+        
+        newTrades.forEach(trade => {
+            if (document.querySelector(`[data-trade-id="${trade.trade_id}"]`)) {
                 return;
             }
             
-            logger.info(`Updating trades table with ${newTrades.length} new trades`);
-            
-            // Remove "no trades" message if it exists
-            const noTradesMessage = tableBody.querySelector('.no-trades-message');
-            if (noTradesMessage) {
-                noTradesMessage.remove();
-                logger.debug('Removed no trades message');
+            const row = createTradeRow(trade);
+            row.classList.add('new-trade');
+            tableBody.insertBefore(row, tableBody.firstChild);
+        });
+        
+        const allRows = tableBody.querySelectorAll('tr:not(.no-trades-message)');
+        if (allRows.length > 10) {
+            for (let i = 10; i < allRows.length; i++) {
+                allRows[i].remove();
             }
-            
-            // Add new trades
-            let addedCount = 0;
-            newTrades.forEach(trade => {
-                try {
-                    // Check if trade already exists
-                    const existingTrade = document.querySelector(`[data-trade-id="${trade.trade_id}"]`);
-                    if (existingTrade) {
-                        logger.debug(`Trade ${trade.trade_id} already exists, skipping`);
-                        return;
-                    }
-                    
-                    const row = createTradeRow(trade);
-                    row.classList.add('new-trade');
-                    tableBody.insertBefore(row, tableBody.firstChild);
-                    addedCount++;
-                    
-                    logger.debug(`Added new trade: ${trade.trade_id}`);
-                } catch (error) {
-                    logger.error(`Error adding trade ${trade.trade_id}:`, error);
-                }
-            });
-            
-            logger.info(`Added ${addedCount} new trades to table`);
-            
-            // Limit to 10 most recent trades
-            const allRows = tableBody.querySelectorAll('tr:not(.no-trades-message)');
-            if (allRows.length > 10) {
-                const removeCount = allRows.length - 10;
-                for (let i = 10; i < allRows.length; i++) {
-                    allRows[i].remove();
-                }
-                logger.debug(`Removed ${removeCount} old trades to maintain limit`);
-            }
-            
-            // Remove highlight after animation
-            setTimeout(() => {
-                const newTradeRows = tableBody.querySelectorAll('.new-trade');
-                newTradeRows.forEach(row => {
-                    row.classList.remove('new-trade');
-                });
-            }, 2000);
-        } catch (error) {
-            logger.error('Error in updateTradesTable:', error);
         }
+        
+        setTimeout(() => {
+            const newTradeRows = tableBody.querySelectorAll('.new-trade');
+            newTradeRows.forEach(row => {
+                row.classList.remove('new-trade');
+            });
+        }, 2000);
     }
     
     function createTradeRow(trade) {
-        try {
-            const tr = document.createElement('tr');
-            tr.setAttribute('data-trade-id', trade.trade_id || 'unknown');
-            tr.className = 'trade-row';
-            
-            // Format time with error handling
-            let time = 'N/A';
-            if (trade.created_at) {
-                try {
-                    const tradeDate = new Date(trade.created_at);
-                    if (!isNaN(tradeDate.getTime())) {
-                        time = tradeDate.toLocaleTimeString('en-US', { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                        });
-                    } else {
-                        logger.warn(`Invalid date for trade ${trade.trade_id}: ${trade.created_at}`);
-                    }
-                } catch (e) {
-                    logger.error(`Error formatting date for trade ${trade.trade_id}:`, e);
-                }
-            }
-            
-            // Safely get trade type with uppercase conversion
-            const tradeType = (trade.trade_type || 'UNKNOWN').toUpperCase();
-            const typeClass = tradeType === 'BUY' ? 'bg-success' : 
-                            tradeType === 'SELL' ? 'bg-danger' : 'bg-secondary';
-            
-            // Safely get status with uppercase conversion
-            const status = (trade.status || 'PENDING').toUpperCase();
-            let statusClass = 'bg-warning';  // Default
-            if (status === 'COMPLETED' || status === 'COMPLETE') {
-                statusClass = 'bg-success';
-            } else if (status === 'FAILED' || status === 'ERROR') {
-                statusClass = 'bg-danger';
-            }
-            
-            // Get token symbol - try multiple fields with fallback
-            const tokenSymbol = trade.token_out_symbol || 
-                              trade.token_symbol || 
-                              trade.token_in_symbol || 
-                              'N/A';
-            
-            // Format amount with error handling
-            let amount = '0.00';
-            try {
-                const amountValue = parseFloat(trade.amount_in_usd || 0);
-                if (!isNaN(amountValue)) {
-                    amount = amountValue.toFixed(2);
-                }
-            } catch (e) {
-                logger.error(`Error formatting amount for trade ${trade.trade_id}:`, e);
-            }
-            
-            tr.innerHTML = `
-                <td><small>${time}</small></td>
-                <td>
-                    <span class="badge ${typeClass}">
-                        ${tradeType}
-                    </span>
-                </td>
-                <td><small>${tokenSymbol}</small></td>
-                <td><small>$${amount}</small></td>
-                <td>
-                    <span class="badge ${statusClass}">
-                        ${status}
-                    </span>
-                </td>
-            `;
-            
-            logger.debug(`Created trade row: ${trade.trade_id} - ${tradeType} ${tokenSymbol} $${amount}`);
-            
-            return tr;
-        } catch (error) {
-            logger.error('Error creating trade row:', error);
-            
-            // Return a minimal error row
-            const tr = document.createElement('tr');
-            tr.className = 'trade-row';
-            tr.innerHTML = '<td colspan="5" class="text-center text-danger">Error displaying trade</td>';
-            return tr;
-        }
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-trade-id', trade.trade_id);
+        tr.className = 'trade-row';
+        
+        const time = new Date(trade.created_at).toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        
+        const typeClass = trade.trade_type === 'BUY' ? 'bg-success' : 'bg-danger';
+        const statusClass = trade.status === 'COMPLETED' ? 'bg-success' : 
+                           trade.status === 'FAILED' ? 'bg-danger' : 'bg-warning';
+        
+        tr.innerHTML = `
+            <td><small>${time}</small></td>
+            <td>
+                <span class="badge ${typeClass}">
+                    ${trade.trade_type}
+                </span>
+            </td>
+            <td><small>${trade.token_out_symbol || trade.token_symbol || 'N/A'}</small></td>
+            <td><small>$${parseFloat(trade.amount_in_usd || 0).toFixed(2)}</small></td>
+            <td>
+                <span class="badge ${statusClass}">
+                    ${trade.status || 'PENDING'}
+                </span>
+            </td>
+        `;
+        
+        return tr;
     }
     
     // ========== OPEN POSITIONS UPDATES ==========
     function updateOpenPositions() {
-        const url = '/paper-trading/api/positions/open/';
-        logger.debug('Fetching open positions from:', url);
-        
-        fetch(url)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
+        fetch('/paper-trading/api/positions/open/')
+            .then(response => response.json())
             .then(data => {
-                logger.debug('Positions data received:', data);
-                
                 if (data.success && data.positions) {
                     updatePositionsTable(data.positions);
                     lastPositionUpdate = new Date().toISOString();
                     flashUpdateIndicator('positions-update-indicator');
-                    
-                    logger.info(`Updated ${data.positions.length} positions`);
-                } else {
-                    logger.warn('No positions data in response');
                 }
             })
             .catch(error => {
-                logger.error('Error fetching open positions:', error);
+                console.error('Error fetching open positions:', error);
             });
     }
     
     function updatePositionsTable(positions) {
-        try {
-            const tableBody = document.getElementById('open-positions-tbody');
-            if (!tableBody) {
-                logger.error('Could not find open-positions-tbody element');
-                return;
-            }
-            
-            logger.info(`Updating positions table with ${positions.length} positions`);
-            
-            tableBody.innerHTML = '';
-            
-            if (!positions || positions.length === 0) {
-                tableBody.innerHTML = `
-                    <tr>
-                        <td colspan="4" class="text-center text-muted py-4">
-                            <i class="bi bi-briefcase fs-3 mb-2 d-block"></i>
-                            <p class="mb-0">No open positions</p>
-                        </td>
-                    </tr>
-                `;
-                logger.debug('Displayed no positions message');
-                return;
-            }
-            
-            positions.forEach((position, index) => {
-                try {
-                    const tr = createPositionRow(position);
-                    tableBody.appendChild(tr);
-                    logger.debug(`Added position row ${index + 1}/${positions.length}: ${position.position_id}`);
-                } catch (error) {
-                    logger.error(`Error creating position row for ${position.position_id}:`, error);
-                }
-            });
-            
-            logger.info(`Successfully displayed ${positions.length} positions`);
-        } catch (error) {
-            logger.error('Error in updatePositionsTable:', error);
+        const tableBody = document.getElementById('open-positions-tbody');
+        if (!tableBody) return;
+        
+        tableBody.innerHTML = '';
+        
+        if (positions.length === 0) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="4" class="text-center text-muted py-4">
+                        <i class="bi bi-briefcase fs-3 mb-2 d-block"></i>
+                        <p class="mb-0">No open positions</p>
+                    </td>
+                </tr>
+            `;
+            return;
         }
+        
+        positions.forEach(position => {
+            const tr = createPositionRow(position);
+            tableBody.appendChild(tr);
+        });
     }
     
     function createPositionRow(position) {
-        try {
-            const tr = document.createElement('tr');
-            tr.setAttribute('data-position-id', position.position_id || 'unknown');
-            
-            // Safely parse PnL values
-            let pnlValue = 0;
-            let pnlPercent = 0;
-            
-            try {
-                pnlValue = parseFloat(position.unrealized_pnl_usd || 0);
-                pnlPercent = parseFloat(position.unrealized_pnl_percent || 0);
-            } catch (e) {
-                logger.error(`Error parsing PnL for position ${position.position_id}:`, e);
-            }
-            
-            const pnlClass = pnlValue >= 0 ? 'text-success' : 'text-danger';
-            const pnlPrefix = pnlValue >= 0 ? '+' : '';
-            
-            // Safely parse other values
-            let quantity = '0.000000';
-            let currentValue = '0.00';
-            
-            try {
-                quantity = parseFloat(position.quantity || 0).toFixed(6);
-                currentValue = parseFloat(position.current_value_usd || 0).toFixed(2);
-            } catch (e) {
-                logger.error(`Error parsing values for position ${position.position_id}:`, e);
-            }
-            
-            tr.innerHTML = `
-                <td><small>${position.token_symbol || 'N/A'}</small></td>
-                <td><small>${quantity}</small></td>
-                <td><small>$${currentValue}</small></td>
-                <td>
-                    <small class="${pnlClass}">
-                        ${pnlPrefix}$${pnlValue.toFixed(2)}
-                        <br>(${pnlPercent.toFixed(1)}%)
-                    </small>
-                </td>
-            `;
-            
-            logger.debug(`Created position row: ${position.token_symbol} - ${quantity} units`);
-            
-            return tr;
-        } catch (error) {
-            logger.error('Error creating position row:', error);
-            
-            // Return a minimal error row
-            const tr = document.createElement('tr');
-            tr.innerHTML = '<td colspan="4" class="text-center text-danger">Error displaying position</td>';
-            return tr;
-        }
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-position-id', position.position_id);
+        
+        const pnlClass = position.unrealized_pnl_usd >= 0 ? 'text-success' : 'text-danger';
+        const pnlPrefix = position.unrealized_pnl_usd >= 0 ? '+' : '';
+        
+        tr.innerHTML = `
+            <td><small>${position.token_symbol}</small></td>
+            <td><small>${parseFloat(position.quantity).toFixed(6)}</small></td>
+            <td><small>$${parseFloat(position.current_value_usd).toFixed(2)}</small></td>
+            <td>
+                <small class="${pnlClass}">
+                    ${pnlPrefix}$${parseFloat(position.unrealized_pnl_usd).toFixed(2)}
+                    <br>(${parseFloat(position.unrealized_pnl_percent).toFixed(1)}%)
+                </small>
+            </td>
+        `;
+        
+        return tr;
     }
     
     // ========== DASHBOARD METRICS UPDATE ==========
     function updateDashboardMetrics() {
-        const url = '/paper-trading/api/metrics/';
-        logger.debug('Fetching dashboard metrics from:', url);
-        
-        fetch(url)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
+        fetch('/paper-trading/api/metrics/')
+            .then(response => response.json())
             .then(data => {
-                logger.debug('Metrics data received:', data);
-                
                 if (data.success) {
-                    try {
-                        const portfolioValue = document.getElementById('portfolio-value');
-                        if (portfolioValue && data.current_balance !== undefined) {
-                            portfolioValue.textContent = `$${parseFloat(data.current_balance).toFixed(2)}`;
-                        }
-                        
-                        const totalPnl = document.getElementById('total-pnl');
-                        if (totalPnl && data.total_pnl !== undefined) {
-                            const pnlValue = parseFloat(data.total_pnl);
-                            const prefix = pnlValue >= 0 ? '+' : '';
-                            totalPnl.innerHTML = `<span class="${pnlValue >= 0 ? 'text-success' : 'text-danger'}">${prefix}$${pnlValue.toFixed(2)}</span>`;
-                        }
-                        
-                        const winRate = document.getElementById('win-rate');
-                        if (winRate && data.win_rate !== undefined) {
-                            winRate.textContent = `${parseFloat(data.win_rate).toFixed(1)}%`;
-                        }
-                        
-                        if (data.trades_24h !== undefined) {
-                            const trades24h = document.getElementById('trades-24h');
-                            if (trades24h) trades24h.textContent = data.trades_24h;
-                        }
-                        
-                        if (data.total_trades !== undefined) {
-                            const totalTrades = document.getElementById('total-trades');
-                            if (totalTrades) totalTrades.textContent = data.total_trades;
-                        }
-                        
-                        logger.info('Successfully updated dashboard metrics');
-                    } catch (error) {
-                        logger.error('Error updating metric elements:', error);
+                    const portfolioValue = document.getElementById('portfolio-value');
+                    if (portfolioValue && data.current_balance) {
+                        portfolioValue.textContent = `$${parseFloat(data.current_balance).toFixed(2)}`;
                     }
-                } else {
-                    logger.warn('Metrics API returned success: false');
+                    
+                    const totalPnl = document.getElementById('total-pnl');
+                    if (totalPnl && data.total_pnl !== undefined) {
+                        const pnlValue = parseFloat(data.total_pnl);
+                        const prefix = pnlValue >= 0 ? '+' : '';
+                        totalPnl.innerHTML = `<span class="${pnlValue >= 0 ? 'text-success' : 'text-danger'}">${prefix}$${pnlValue.toFixed(2)}</span>`;
+                    }
+                    
+                    const winRate = document.getElementById('win-rate');
+                    if (winRate && data.win_rate !== undefined) {
+                        winRate.textContent = `${parseFloat(data.win_rate).toFixed(1)}%`;
+                    }
+                    
+                    if (data.trades_24h !== undefined) {
+                        const trades24h = document.getElementById('trades-24h');
+                        if (trades24h) trades24h.textContent = data.trades_24h;
+                    }
+                    
+                    if (data.total_trades !== undefined) {
+                        const totalTrades = document.getElementById('total-trades');
+                        if (totalTrades) totalTrades.textContent = data.total_trades;
+                    }
                 }
             })
             .catch(error => {
-                logger.error('Error fetching metrics:', error);
+                console.error('Error fetching metrics:', error);
             });
     }
     
     // ========== UI HELPER FUNCTIONS ==========
     function flashUpdateIndicator(indicatorId) {
-        try {
-            const indicator = document.getElementById(indicatorId);
-            if (indicator) {
-                indicator.classList.add('flash-update');
-                setTimeout(() => {
-                    indicator.classList.remove('flash-update');
-                }, 1000);
-                logger.debug(`Flashed indicator: ${indicatorId}`);
-            }
-        } catch (error) {
-            logger.error(`Error flashing indicator ${indicatorId}:`, error);
+        const indicator = document.getElementById(indicatorId);
+        if (indicator) {
+            indicator.classList.add('flash-update');
+            setTimeout(() => {
+                indicator.classList.remove('flash-update');
+            }, 1000);
         }
     }
     
     function scrollToNewest() {
-        try {
-            const container = document.getElementById('thought-log-container');
-            if (container) {
-                container.scrollTop = 0;
-                logger.debug('Scrolled to newest thoughts');
-            }
-        } catch (error) {
-            logger.error('Error scrolling to newest:', error);
+        const container = document.getElementById('thought-log-container');
+        if (container) {
+            container.scrollTop = 0;
         }
     }
     
     function toggleAutoScroll() {
-        try {
-            window.paperTradingConfig.autoScroll = !window.paperTradingConfig.autoScroll;
-            const icon = document.getElementById('auto-scroll-icon');
-            
-            if (icon) {
-                if (window.paperTradingConfig.autoScroll) {
-                    icon.classList.add('text-success');
-                    showToast('Auto-scroll enabled', 'info');
-                    logger.info('Auto-scroll enabled');
-                } else {
-                    icon.classList.remove('text-success');
-                    showToast('Auto-scroll disabled', 'info');
-                    logger.info('Auto-scroll disabled');
-                }
+        window.paperTradingConfig.autoScroll = !window.paperTradingConfig.autoScroll;
+        const icon = document.getElementById('auto-scroll-icon');
+        if (icon) {
+            if (window.paperTradingConfig.autoScroll) {
+                icon.classList.add('text-success');
+                showToast('Auto-scroll enabled', 'info');
+            } else {
+                icon.classList.remove('text-success');
+                showToast('Auto-scroll disabled', 'info');
             }
-        } catch (error) {
-            logger.error('Error toggling auto-scroll:', error);
         }
     }
     
     function clearThoughts() {
-        try {
-            if (confirm('Clear all AI thoughts from display?')) {
-                const container = document.getElementById('thought-log-container');
-                if (container) {
-                    const thoughts = container.querySelectorAll('.thought-log-step:not(.text-center)');
-                    
-                    logger.info(`Clearing ${thoughts.length} thoughts`);
-                    
-                    thoughts.forEach((thought, index) => {
-                        setTimeout(() => {
-                            thought.classList.add('fade-out');
-                            setTimeout(() => thought.remove(), 300);
-                        }, index * 50);
-                    });
-                    
+        if (confirm('Clear all AI thoughts from display?')) {
+            const container = document.getElementById('thought-log-container');
+            if (container) {
+                const thoughts = container.querySelectorAll('.thought-log-step:not(.text-center)');
+                thoughts.forEach((thought, index) => {
                     setTimeout(() => {
-                        thoughtCount = 0;
-                        updateThoughtCounter();
-                        logger.info('Thoughts cleared');
-                    }, thoughts.length * 50 + 300);
-                }
+                        thought.classList.add('fade-out');
+                        setTimeout(() => thought.remove(), 300);
+                    }, index * 50);
+                });
+                
+                setTimeout(() => {
+                    thoughtCount = 0;
+                    updateThoughtCounter();
+                }, thoughts.length * 50 + 300);
             }
-        } catch (error) {
-            logger.error('Error clearing thoughts:', error);
         }
     }
     
     // ========== BOT CONTROL FUNCTIONS ==========
     function startBot() {
-        logger.info('Starting bot...');
-        
         fetch('/paper-trading/api/bot/start/', {
             method: 'POST',
             headers: {
@@ -1333,31 +1011,22 @@ window.paperTradingConfig = {
                 'Content-Type': 'application/json'
             }
         })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
+        .then(response => response.json())
         .then(data => {
             if (data.success) {
-                logger.info('Bot started successfully');
                 showToast('Bot started successfully', 'success');
                 setTimeout(() => location.reload(), 1000);
             } else {
-                logger.error('Failed to start bot:', data.error);
-                showToast('Failed to start bot: ' + (data.error || 'Unknown error'), 'danger');
+                showToast('Failed to start bot: ' + data.error, 'danger');
             }
         })
         .catch(error => {
-            logger.error('Error starting bot:', error);
-            showToast('Error starting bot. Please try again.', 'danger');
+            console.error('Error starting bot:', error);
+            showToast('Error starting bot', 'danger');
         });
     }
 
     function stopBot() {
-        logger.info('Stopping bot...');
-        
         fetch('/paper-trading/api/bot/stop/', {
             method: 'POST',
             headers: {
@@ -1365,136 +1034,83 @@ window.paperTradingConfig = {
                 'Content-Type': 'application/json'
             }
         })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
+        .then(response => response.json())
         .then(data => {
             if (data.success) {
-                logger.info('Bot stopped successfully');
                 showToast('Bot stopped successfully', 'success');
                 setTimeout(() => location.reload(), 1000);
             } else {
-                logger.error('Failed to stop bot:', data.error);
-                showToast('Failed to stop bot: ' + (data.error || 'Unknown error'), 'danger');
+                showToast('Failed to stop bot: ' + data.error, 'danger');
             }
         })
         .catch(error => {
-            logger.error('Error stopping bot:', error);
-            showToast('Error stopping bot. Please try again.', 'danger');
+            console.error('Error stopping bot:', error);
+            showToast('Error stopping bot', 'danger');
         });
     }
     
     // ========== UTILITY FUNCTIONS ==========
     function showToast(message, type) {
-        try {
-            let toastContainer = document.getElementById('toast-container');
-            if (!toastContainer) {
-                toastContainer = document.createElement('div');
-                toastContainer.id = 'toast-container';
-                toastContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
-                document.body.appendChild(toastContainer);
-            }
-            
-            const toast = document.createElement('div');
-            toast.className = `alert alert-${type} alert-dismissible fade show`;
-            toast.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-            
-            toastContainer.appendChild(toast);
-            
-            setTimeout(() => {
-                if (toast.parentNode) {
-                    toast.remove();
-                }
-            }, 5000);
-            
-            logger.debug(`Toast shown: ${type} - ${message}`);
-        } catch (error) {
-            logger.error('Error showing toast:', error);
+        let toastContainer = document.getElementById('toast-container');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'toast-container';
+            toastContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
+            document.body.appendChild(toastContainer);
         }
+        
+        const toast = document.createElement('div');
+        toast.className = `alert alert-${type} alert-dismissible fade show`;
+        toast.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.remove();
+        }, 5000);
     }
 
     function getCookie(name) {
-        try {
-            let cookieValue = null;
-            if (document.cookie && document.cookie !== '') {
-                const cookies = document.cookie.split(';');
-                for (let i = 0; i < cookies.length; i++) {
-                    const cookie = cookies[i].trim();
-                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                        break;
-                    }
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
                 }
             }
-            return cookieValue;
-        } catch (error) {
-            logger.error(`Error getting cookie ${name}:`, error);
-            return null;
         }
+        return cookieValue;
     }
     
     // ========== INITIALIZATION ==========
     document.addEventListener('DOMContentLoaded', function() {
-        logger.info('Initializing Paper Trading Dashboard');
+        updateThoughtCounter();
         
-        try {
-            // Initialize thought counter
-            updateThoughtCounter();
-            
-            // Set up periodic updates for AI thoughts
-            setInterval(() => {
-                logger.debug('Running periodic AI thoughts update');
-                updateAIThoughts();
-            }, window.paperTradingConfig?.updateInterval || 5000);
-            
-            // Set up periodic updates for trades & positions
-            setInterval(() => {
-                logger.debug('Running periodic trades and positions update');
-                updateRecentTrades(false);
-                updateOpenPositions();
-            }, window.paperTradingConfig?.tradesUpdateInterval || 3000);
-            
-            // Set up periodic updates for metrics
-            setInterval(() => {
-                logger.debug('Running periodic metrics update');
-                updateDashboardMetrics();
-            }, 10000);
-            
-            // Initial loads with delay to avoid overwhelming the server
-            setTimeout(() => {
-                logger.info('Running initial data load');
-                updateAIThoughts();
-                updateRecentTrades(true);   // Initial load of trades
-                updateOpenPositions();
-                updateDashboardMetrics();
-            }, 1000);
-            
-            logger.info('Dashboard initialization complete');
-        } catch (error) {
-            logger.error('Error during dashboard initialization:', error);
-            showToast('Error initializing dashboard. Please refresh the page.', 'danger');
-        }
-    });
-    
-    // ========== ERROR HANDLING FOR UNHANDLED ERRORS ==========
-    window.addEventListener('error', function(event) {
-        logger.error('Unhandled error:', {
-            message: event.message,
-            filename: event.filename,
-            lineno: event.lineno,
-            colno: event.colno,
-            error: event.error
-        });
-    });
-    
-    window.addEventListener('unhandledrejection', function(event) {
-        logger.error('Unhandled promise rejection:', event.reason);
+        setInterval(updateAIThoughts, window.paperTradingConfig.updateInterval);
+        
+        // Trades & positions every 3s
+        setInterval(() => {
+            updateRecentTrades(false);
+            updateOpenPositions();
+        }, 3000);
+        
+        // Metrics every 10s
+        setInterval(updateDashboardMetrics, 10000);
+        
+        // Initial loads
+        // Initial loads
+        setTimeout(() => {
+            updateAIThoughts();
+            updateRecentTrades(true);   // Initial load of trades
+            updateOpenPositions();
+            updateDashboardMetrics();
+        }, 1000);
     });
 </script>
 
