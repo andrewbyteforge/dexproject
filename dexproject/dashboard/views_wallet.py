@@ -60,7 +60,7 @@ def run_async_in_view(coro):
 
 
 @require_http_methods(["GET"])
-@login_required
+
 def api_wallet_balances(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for wallet balance tracking with real-time ETH and ERC-20 token balances.

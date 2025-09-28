@@ -289,7 +289,6 @@ def metrics_stream(request: HttpRequest) -> StreamingHttpResponse:
 # =========================================================================
 
 @require_http_methods(["GET"])
-@login_required
 def api_engine_status(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for comprehensive engine status with Fast Lane and Smart Lane integration.
@@ -411,7 +410,6 @@ def api_engine_status(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
-@login_required
 def api_performance_metrics(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for detailed performance metrics from both lanes.
@@ -517,7 +515,6 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_set_trading_mode(request: HttpRequest) -> JsonResponse:
     """
     API endpoint to set trading mode (Fast Lane, Smart Lane, or Hybrid).
@@ -613,7 +610,6 @@ def api_set_trading_mode(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_smart_lane_analyze(request: HttpRequest) -> JsonResponse:
     """
     API endpoint to trigger Smart Lane analysis of a token.
@@ -704,7 +700,6 @@ def api_smart_lane_analyze(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
-@login_required
 def api_get_thought_log(request: HttpRequest, analysis_id: str) -> JsonResponse:
     """
     API endpoint to retrieve thought log for a specific analysis.
@@ -837,7 +832,6 @@ def health_check(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
-@login_required
 def engine_test(request: HttpRequest) -> JsonResponse:
     """
     Engine test endpoint for debugging and diagnostics.

@@ -17,7 +17,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     
     # Authentication URLs (ADD THIS)
-    path('accounts/', include('django.contrib.auth.urls')),
+    # path('accounts/', include('django.contrib.auth.urls')),
     
     # Dashboard app (main interface)
     path('dashboard/', include('dashboard.urls')),

@@ -70,7 +70,6 @@ def fast_lane_config(request: HttpRequest) -> HttpResponse:
 
 
 @require_http_methods(["GET"])
-@login_required
 def get_fast_lane_status(request: HttpRequest) -> JsonResponse:
     """
     Fast Lane status API endpoint.

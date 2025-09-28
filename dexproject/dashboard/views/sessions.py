@@ -29,7 +29,7 @@ from dashboard.engine_service import DashboardEngineService
 logger = logging.getLogger(__name__)
 
 
-@login_required
+
 @require_http_methods(["POST"])
 def start_session(request: HttpRequest) -> JsonResponse:
     """
@@ -184,7 +184,7 @@ def start_session(request: HttpRequest) -> JsonResponse:
         }, status=500)
 
 
-@login_required
+
 @require_http_methods(["POST"])
 def stop_session(request: HttpRequest) -> JsonResponse:
     """
@@ -292,7 +292,7 @@ def stop_session(request: HttpRequest) -> JsonResponse:
         }, status=500)
 
 
-@login_required
+
 @require_http_methods(["GET"])
 def get_session_status(request: HttpRequest) -> JsonResponse:
     """

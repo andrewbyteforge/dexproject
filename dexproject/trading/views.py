@@ -121,7 +121,6 @@ def get_user_wallet_address(request: HttpRequest) -> Optional[str]:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_execute_buy_order(request: HttpRequest) -> JsonResponse:
     """
     Execute a buy order for tokens using real DEX integration.
@@ -323,7 +322,6 @@ def api_execute_buy_order(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_execute_sell_order(request: HttpRequest) -> JsonResponse:
     """
     Execute a sell order for tokens using real DEX integration.
@@ -512,7 +510,6 @@ def api_execute_sell_order(request: HttpRequest) -> JsonResponse:
 # =============================================================================
 
 @require_GET
-@login_required
 def api_get_positions(request: HttpRequest) -> JsonResponse:
     """
     Get user's current trading positions with real-time P&L data.
@@ -639,7 +636,6 @@ def api_get_positions(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_close_position(request: HttpRequest) -> JsonResponse:
     """
     Close a trading position by selling all remaining tokens.
@@ -774,7 +770,7 @@ def api_close_position(request: HttpRequest) -> JsonResponse:
 # =============================================================================
 
 @require_GET
-@login_required
+
 def api_get_trade_history(request: HttpRequest) -> JsonResponse:
     """
     Get user's trading history with filtering and pagination.
@@ -934,7 +930,6 @@ def api_get_trade_history(request: HttpRequest) -> JsonResponse:
 
 
 @require_GET
-@login_required
 def api_get_portfolio_summary(request: HttpRequest) -> JsonResponse:
     """
     Get user's portfolio summary with real-time balances and P&L.
@@ -1051,7 +1046,6 @@ def api_get_portfolio_summary(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_start_trading_session(request: HttpRequest) -> JsonResponse:
     """
     Start a new trading session for the user.
@@ -1142,7 +1136,6 @@ def api_start_trading_session(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_stop_trading_session(request: HttpRequest) -> JsonResponse:
     """
     Stop the active trading session for the user.
@@ -1189,7 +1182,6 @@ def api_stop_trading_session(request: HttpRequest) -> JsonResponse:
 
 
 @require_GET
-@login_required
 def api_get_trading_session_status(request: HttpRequest) -> JsonResponse:
     """
     Get the current trading session status for the user.

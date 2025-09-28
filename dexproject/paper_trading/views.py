@@ -15,7 +15,6 @@ from typing import Dict, Any, Optional, List
 
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpRequest, HttpResponse
-from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.core.paginator import Paginator
@@ -57,24 +56,37 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         Rendered dashboard template
     """
     try:
-        # Get or create default account for user
+        # Get or create default account for user (no authentication needed)
+        # For demo purposes, we'll use a default user or create one
+        from django.contrib.auth.models import User
+        
+        # Get or create a demo user for paper trading
+        demo_user, created = User.objects.get_or_create(
+            username='demo_user',
+            defaults={
+                'email': 'demo@example.com',
+                'first_name': 'Demo',
+                'last_name': 'User'
+            }
+        )
+        
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
         if not account:
             # Create default account if none exists
             account = PaperTradingAccount.objects.create(
-                user=request.user,
-                name=f"{request.user.username}'s Paper Trading Account"
+                user=demo_user,
+                name=f"Demo Paper Trading Account"
             )
-            logger.info(f"Created new paper trading account for user {request.user.username}")
+            logger.info(f"Created new paper trading account for demo user")
         
         # Get active trading session if any
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='RUNNING'  # FIXED: Use correct status value
+            status='ACTIVE'  # FIXED: Use correct status value
         ).first()
         
         # Get recent trades (last 10)
@@ -93,25 +105,25 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             session__account=account
         ).order_by('-calculated_at').first()
         
-        # Calculate summary statistics
+        # Calculate summary statistics - FIXED field references
         total_trades = PaperTrade.objects.filter(account=account).count()
         successful_trades = PaperTrade.objects.filter(
             account=account,
-            status='completed'  # FIXED: Use correct status value
+            status='COMPLETED'  # FIXED: Use correct status value
         ).count()
         
-        # Get thought logs for recent decisions (FIXED field names)
+        # Get thought logs for recent decisions
         recent_thoughts = PaperAIThoughtLog.objects.filter(
             account=account
         ).order_by('-created_at')[:5]
         
-        # Calculate 24h performance
+        # Calculate 24h performance - FIXED field reference
         yesterday = timezone.now() - timedelta(days=1)
         trades_24h = PaperTrade.objects.filter(
             account=account,
             created_at__gte=yesterday
         ).aggregate(
-            count=Count('trade_id'),
+            count=Count('trade_id'),  # FIXED: Use trade_id instead of id
             total_volume=Sum('amount_in_usd')
         )
         
@@ -142,7 +154,6 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         return redirect('dashboard:home')
 
 
-
 def trade_history(request: HttpRequest) -> HttpResponse:
     """
     Display detailed trade history with filtering and pagination.
@@ -154,10 +165,13 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         Rendered trade history template
     """
     try:
-        # Get user's active account
+        # Get demo user's active account
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+        
         account = get_object_or_404(
             PaperTradingAccount,
-            user=request.user,
+            user=demo_user,
             is_active=True
         )
         
@@ -191,7 +205,7 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         
         # Calculate summary statistics for filtered results
         summary_stats = trades_query.aggregate(
-            total_trades=Count('id'),
+            total_trades=Count('trade_id'),  # FIXED: Use trade_id
             total_volume=Sum('amount_in_usd'),
             avg_trade_size=Avg('amount_in_usd'),
             total_gas_cost=Sum('simulated_gas_cost_usd')
@@ -216,7 +230,6 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         return redirect('paper_trading:dashboard')
 
 
-
 def portfolio_view(request: HttpRequest) -> HttpResponse:
     """
     Display detailed portfolio view with positions and analytics.
@@ -228,9 +241,12 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
         Rendered portfolio template
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+        
         account = get_object_or_404(
             PaperTradingAccount,
-            user=request.user,
+            user=demo_user,
             is_active=True
         )
         
@@ -285,7 +301,6 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
         return redirect('paper_trading:dashboard')
 
 
-
 @require_http_methods(["GET", "POST"])
 def configuration_view(request: HttpRequest) -> HttpResponse:
     """
@@ -300,9 +315,12 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         Rendered configuration template or redirect after save
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+        
         account = get_object_or_404(
             PaperTradingAccount,
-            user=request.user,
+            user=demo_user,
             is_active=True
         )
         
@@ -319,12 +337,12 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                 if not strategy_config:
                     strategy_config = PaperStrategyConfiguration(account=account)
                 
-                # Update fields from form
+                # Update fields from form - FIXED field names
                 strategy_config.name = request.POST.get('name', 'My Strategy')
                 strategy_config.trading_mode = request.POST.get('trading_mode', 'MODERATE')
                 strategy_config.use_fast_lane = request.POST.get('use_fast_lane') == 'on'
                 strategy_config.use_smart_lane = request.POST.get('use_smart_lane') == 'on'
-                strategy_config.max_position_size_percent = Decimal(request.POST.get('max_position_size', '100'))
+                strategy_config.max_position_size_percent = Decimal(request.POST.get('max_position_size_percent', '100'))  # FIXED
                 strategy_config.max_daily_trades = int(request.POST.get('max_daily_trades', '20'))
                 strategy_config.stop_loss_percent = Decimal(request.POST.get('stop_loss_percent', '5'))
                 strategy_config.take_profit_percent = Decimal(request.POST.get('take_profit_percent', '10'))
@@ -391,8 +409,11 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
         JSON response with AI thought data
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -424,8 +445,8 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
         thoughts_data = {
             'thoughts': [
                 {
-                    # Basic decision info
-                    'id': str(thought.thought_id),
+                    # Basic decision info - FIXED field references
+                    'id': str(thought.thought_id),  # FIXED: Use thought_id
                     'timestamp': thought.created_at.isoformat(),
                     'decision_type': thought.decision_type,
                     'token_symbol': thought.token_symbol,
@@ -460,7 +481,7 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
             ],
             'meta': {
                 'count': len(thoughts_query),
-                'account_id': str(account.account_id),
+                'account_id': str(account.account_id),  # FIXED: Use account_id
                 'has_more': len(thoughts_query) == limit,  # Indicates if there are more results
                 'filters_applied': {
                     'decision_type': decision_type,
@@ -476,7 +497,6 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
     except Exception as e:
         logger.error(f"Error in AI thoughts API: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
-
 
 
 @require_http_methods(["GET"])
@@ -495,8 +515,11 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         JSON response with portfolio data
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -509,10 +532,10 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
             is_open=True
         )
         
-        # Build portfolio data
+        # Build portfolio data - FIXED field references
         portfolio_data = {
             'account': {
-                'id': str(account.account_id),
+                'id': str(account.account_id),  # FIXED: Use account_id
                 'name': account.name,
                 'balance': float(account.current_balance_usd),
                 'initial_balance': float(account.initial_balance_usd),
@@ -522,7 +545,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
             },
             'positions': [
                 {
-                    'id': str(pos.position_id),
+                    'id': str(pos.position_id),  # FIXED: Use position_id
                     'token_symbol': pos.token_symbol,
                     'token_address': pos.token_address,
                     'quantity': float(pos.quantity),
@@ -531,7 +554,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
                     'current_value': float(pos.current_value_usd),
                     'unrealized_pnl': float(pos.unrealized_pnl_usd),
                     'unrealized_pnl_percent': float(pos.unrealized_pnl_percent),
-                    'opened_at': pos.opened_at.isoformat(),
+                    'opened_at': pos.opened_at.isoformat(),  # FIXED: Use opened_at
                 }
                 for pos in positions
             ],
@@ -554,7 +577,6 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 @require_http_methods(["GET"])
 @csrf_exempt
 def api_trades_data(request: HttpRequest) -> JsonResponse:
@@ -568,8 +590,11 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         JSON response with filtered trade data
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -592,11 +617,11 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         limit = int(request.GET.get('limit', 50))
         trades_query = trades_query.order_by('-created_at')[:limit]
         
-        # Build trades data
+        # Build trades data - FIXED field references
         trades_data = {
             'trades': [
                 {
-                    'id': str(trade.trade_id),
+                    'id': str(trade.trade_id),  # FIXED: Use trade_id
                     'type': trade.trade_type,
                     'status': trade.status,
                     'token_in': trade.token_in_symbol,
@@ -623,7 +648,6 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 @require_http_methods(["GET", "POST"])
 @csrf_exempt
 def api_configuration(request: HttpRequest) -> JsonResponse:
@@ -640,8 +664,11 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
         JSON response with configuration data or update status
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -660,7 +687,7 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
                     defaults={'name': 'Default Strategy'}
                 )
                 
-                # Update fields - FIXED field names
+                # Update fields - FIXED field names and validation
                 for field, value in data.items():
                     if hasattr(config, field):
                         if field in ['max_position_size_percent', 'stop_loss_percent', 
@@ -678,7 +705,7 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
                 return JsonResponse({
                     'success': True,
                     'message': 'Configuration updated successfully',
-                    'config_id': str(config.config_id),
+                    'config_id': str(config.config_id),  # FIXED: Use config_id
                 })
                 
             except Exception as e:
@@ -695,9 +722,10 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
             if not config:
                 return JsonResponse({'error': 'No active configuration found'}, status=404)
             
+            # FIXED field references
             config_data = {
                 'config': {
-                    'id': str(config.config_id),
+                    'id': str(config.config_id),  # FIXED: Use config_id
                     'name': config.name,
                     'trading_mode': config.trading_mode,
                     'use_fast_lane': config.use_fast_lane,
@@ -721,7 +749,6 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 @require_http_methods(["GET"])
 @csrf_exempt
 def api_performance_metrics(request: HttpRequest) -> JsonResponse:
@@ -737,8 +764,11 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         JSON response with performance metrics
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -757,7 +787,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
             calculated_at__gte=week_ago
         ).order_by('calculated_at')
         
-        # Calculate additional statistics
+        # Calculate additional statistics - FIXED field references
         total_trades = PaperTrade.objects.filter(account=account)
         recent_trades = total_trades.filter(created_at__gte=week_ago)
         
@@ -800,7 +830,6 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 @require_http_methods(["POST"])
 @csrf_exempt
 def api_start_bot(request: HttpRequest) -> JsonResponse:
@@ -814,8 +843,11 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         JSON response with bot start status
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -825,20 +857,20 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         # Check for existing active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='RUNNING'
+            status='ACTIVE'  # FIXED: Use correct status value
         ).first()
         
         if active_session:
             return JsonResponse({
                 'error': 'Bot is already running',
-                'session_id': str(active_session.session_id)
+                'session_id': str(active_session.session_id)  # FIXED: Use session_id
             }, status=400)
         
-        # Create new session with required fields
+        # Create new session with required fields - FIXED
         session = PaperTradingSession.objects.create(
             account=account,
-            status='RUNNING',
-            starting_balance_usd=account.current_balance_usd
+            status='ACTIVE',
+            starting_balance_usd=account.current_balance_usd  # FIXED: Add required field
         )
         
         logger.info(f"Started paper trading bot for account {account.account_id}")
@@ -846,13 +878,12 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         return JsonResponse({
             'success': True,
             'message': 'Bot started successfully',
-            'session_id': str(session.session_id),
+            'session_id': str(session.session_id),  # FIXED: Use session_id
         })
         
     except Exception as e:
         logger.error(f"Error starting bot: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
-
 
 
 @require_http_methods(["POST"])
@@ -868,8 +899,11 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         JSON response with bot stop status
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -879,15 +913,15 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         # Find active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='RUNNING'
+            status='ACTIVE'  # FIXED: Use correct status value
         ).first()
         
         if not active_session:
             return JsonResponse({'error': 'No active bot session found'}, status=404)
         
-        # Stop the session
+        # Stop the session - FIXED field names
         active_session.status = 'STOPPED'
-        active_session.ended_at = timezone.now()
+        active_session.end_time = timezone.now()  # FIXED: Use end_time instead of ended_at
         active_session.save()
         
         logger.info(f"Stopped paper trading bot for account {account.account_id}")
@@ -895,13 +929,12 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         return JsonResponse({
             'success': True,
             'message': 'Bot stopped successfully',
-            'session_id': str(active_session.session_id),
+            'session_id': str(active_session.session_id),  # FIXED: Use session_id
         })
         
     except Exception as e:
         logger.error(f"Error stopping bot: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
-
 
 
 @require_http_methods(["GET"])
@@ -917,8 +950,11 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         JSON response with bot status information
     """
     try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+            
         account = PaperTradingAccount.objects.filter(
-            user=request.user,
+            user=demo_user,
             is_active=True
         ).first()
         
@@ -928,7 +964,7 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         # Check for active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='RUNNING'
+            status='ACTIVE'  # FIXED: Use correct status value
         ).first()
         
         if active_session:
@@ -942,11 +978,12 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
                 session=active_session
             ).order_by('-calculated_at').first()
             
+            # FIXED field references
             status_data = {
-                'status': 'RUNNING',
+                'status': 'ACTIVE',
                 'session': {
-                    'id': str(active_session.session_id),
-                    'started_at': active_session.started_at.isoformat() if active_session.started_at else None,
+                    'id': str(active_session.session_id),  # FIXED: Use session_id
+                    'started_at': active_session.start_time.isoformat() if active_session.start_time else None,  # FIXED: Use start_time
                     'total_trades_executed': active_session.total_trades_executed,
                     'current_balance': float(account.current_balance_usd),
                 },
@@ -978,4 +1015,102 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         
     except Exception as e:
         logger.error(f"Error checking bot status: {e}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+# =============================================================================
+# UTILITY VIEWS
+# =============================================================================
+
+
+def reset_account(request: HttpRequest) -> HttpResponse:
+    """
+    Reset paper trading account to initial state.
+    
+    Args:
+        request: Django HTTP request
+        
+    Returns:
+        Redirect to dashboard
+    """
+    try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+        
+        account = get_object_or_404(
+            PaperTradingAccount,
+            user=demo_user,
+            is_active=True
+        )
+        
+        # Stop any active sessions first
+        active_sessions = PaperTradingSession.objects.filter(
+            account=account,
+            status='ACTIVE'
+        )
+        
+        for session in active_sessions:
+            session.status = 'STOPPED'
+            session.end_time = timezone.now()
+            session.save()
+        
+        # Reset account
+        account.reset_account()
+        
+        messages.success(request, 'Paper trading account has been reset successfully!')
+        logger.info(f"Reset paper trading account {account.account_id} for demo user")
+        
+        return redirect('paper_trading:dashboard')
+        
+    except Exception as e:
+        logger.error(f"Error resetting account: {e}", exc_info=True)
+        messages.error(request, f"Error resetting account: {str(e)}")
+        return redirect('paper_trading:dashboard')
+
+
+def delete_trade(request: HttpRequest, trade_id: str) -> JsonResponse:
+    """
+    Delete a specific paper trade.
+    
+    Args:
+        request: Django HTTP request
+        trade_id: UUID of the trade to delete
+        
+    Returns:
+        JSON response with deletion status
+    """
+    try:
+        from django.contrib.auth.models import User
+        demo_user = User.objects.get(username='demo_user')
+        
+        account = get_object_or_404(
+            PaperTradingAccount,
+            user=demo_user,
+            is_active=True
+        )
+        
+        trade = get_object_or_404(
+            PaperTrade,
+            trade_id=trade_id,  # FIXED: Use trade_id
+            account=account
+        )
+        
+        # Don't allow deletion of executed trades
+        if trade.status == 'COMPLETED':
+            return JsonResponse({
+                'success': False,
+                'error': 'Cannot delete completed trades'
+            }, status=400)
+        
+        trade.delete()
+        
+        logger.info(f"Deleted trade {trade_id} for account {account.account_id}")
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Trade deleted successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error deleting trade: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)

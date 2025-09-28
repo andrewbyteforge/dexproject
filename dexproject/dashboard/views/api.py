@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 @require_http_methods(["GET"])
-@login_required
 def api_engine_status(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for engine status with Fast Lane integration.
@@ -101,7 +100,6 @@ def api_engine_status(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
-@login_required
 def api_performance_metrics(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for performance metrics with Fast Lane integration.
@@ -323,7 +321,6 @@ def api_set_trading_mode(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
-@login_required
 def api_smart_lane_analysis(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for Smart Lane analysis results.
@@ -375,7 +372,6 @@ def api_smart_lane_analysis(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 @csrf_exempt
-@login_required
 def api_analyze_token(request: HttpRequest) -> JsonResponse:
     """
     API endpoint to trigger Smart Lane token analysis.

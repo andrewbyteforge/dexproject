@@ -25,7 +25,7 @@ from dashboard.engine_service import DashboardEngineService
 logger = logging.getLogger(__name__)
 
 
-@login_required
+
 def dashboard_settings(request: HttpRequest) -> HttpResponse:
     """
     Dashboard settings page for user preferences and system configuration.
@@ -104,7 +104,7 @@ def dashboard_settings(request: HttpRequest) -> HttpResponse:
         return render(request, 'dashboard/error.html', {'error': str(e)})
 
 
-@login_required
+
 def dashboard_analytics(request: HttpRequest) -> HttpResponse:
     """
     Dashboard analytics page showing detailed performance metrics and charts.

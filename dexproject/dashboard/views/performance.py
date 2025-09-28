@@ -26,7 +26,6 @@ from dashboard.engine_service import DashboardEngineService
 logger = logging.getLogger(__name__)
 
 
-@login_required
 @require_http_methods(["GET"])
 def get_performance_metrics(request: HttpRequest) -> JsonResponse:
     """
