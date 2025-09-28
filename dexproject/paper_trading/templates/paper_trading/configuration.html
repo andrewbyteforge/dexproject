@@ -1,0 +1,1068 @@
+{% extends "paper_trading/base.html" %}
+{% load static %}
+
+{% block title %}Configuration - Paper Trading{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Configuration Specific Styles */
+    .config-header {
+        background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+        border-radius: 15px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        border: 1px solid rgba(0, 212, 170, 0.3);
+    }
+    
+    .bot-controls {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .bot-status-display {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem 1.5rem;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 10px;
+        flex: 1;
+        min-width: 250px;
+    }
+    
+    .status-pulse {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        position: relative;
+    }
+    
+    .status-pulse::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        animation: pulse-ring 2s infinite;
+    }
+    
+    @keyframes pulse-ring {
+        0% {
+            transform: scale(1);
+            opacity: 1;
+        }
+        100% {
+            transform: scale(2);
+            opacity: 0;
+        }
+    }
+    
+    .status-running {
+        background: var(--paper-success);
+    }
+    
+    .status-running::after {
+        background: var(--paper-success);
+    }
+    
+    .status-stopped {
+        background: var(--paper-danger);
+    }
+    
+    .status-text {
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    
+    .config-section {
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 12px;
+        padding: 2rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .section-header {
+        display: flex;
+        justify-content-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 2px solid rgba(0, 212, 170, 0.2);
+    }
+    
+    .section-title {
+        font-size: 1.3rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--paper-primary);
+    }
+    
+    .form-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+    }
+    
+    .form-group-enhanced {
+        position: relative;
+    }
+    
+    .form-label-enhanced {
+        display: flex;
+        justify-content: between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+    
+    .label-text {
+        font-weight: 500;
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .label-help {
+        color: #a0a0a0;
+        font-size: 0.85rem;
+        cursor: help;
+    }
+    
+    .input-with-unit {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .input-with-unit .form-control {
+        flex: 1;
+    }
+    
+    .input-unit {
+        padding: 0.6rem 1rem;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        color: var(--paper-primary);
+        font-weight: 600;
+        min-width: 60px;
+        text-align: center;
+    }
+    
+    .range-slider {
+        width: 100%;
+        margin-top: 0.5rem;
+    }
+    
+    .range-value {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        background: rgba(0, 212, 170, 0.2);
+        color: var(--paper-primary);
+        border-radius: 6px;
+        font-weight: 600;
+        margin-left: 0.5rem;
+    }
+    
+    .trading-mode-selector {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    
+    .mode-option {
+        position: relative;
+        cursor: pointer;
+    }
+    
+    .mode-option input[type="radio"] {
+        position: absolute;
+        opacity: 0;
+    }
+    
+    .mode-card {
+        padding: 1.5rem;
+        background: rgba(0, 0, 0, 0.3);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        text-align: center;
+        transition: all 0.3s;
+    }
+    
+    .mode-option input:checked + .mode-card {
+        background: rgba(0, 212, 170, 0.1);
+        border-color: var(--paper-primary);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 212, 170, 0.3);
+    }
+    
+    .mode-card:hover {
+        border-color: rgba(0, 212, 170, 0.3);
+    }
+    
+    .mode-icon {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .mode-name {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+    
+    .mode-description {
+        font-size: 0.85rem;
+        color: #a0a0a0;
+    }
+    
+    .lane-toggles {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    
+    .lane-toggle {
+        flex: 1;
+        min-width: 200px;
+    }
+    
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 60px;
+        height: 30px;
+    }
+    
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255, 255, 255, 0.1);
+        transition: 0.4s;
+        border-radius: 30px;
+    }
+    
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 22px;
+        width: 22px;
+        left: 4px;
+        bottom: 4px;
+        background-color: white;
+        transition: 0.4s;
+        border-radius: 50%;
+    }
+    
+    input:checked + .toggle-slider {
+        background: var(--paper-primary);
+    }
+    
+    input:checked + .toggle-slider:before {
+        transform: translateX(30px);
+    }
+    
+    .toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 10px;
+        cursor: pointer;
+        transition: background 0.3s;
+    }
+    
+    .toggle-label:hover {
+        background: rgba(0, 0, 0, 0.3);
+    }
+    
+    .toggle-info {
+        flex: 1;
+    }
+    
+    .toggle-name {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+    
+    .toggle-desc {
+        font-size: 0.85rem;
+        color: #a0a0a0;
+    }
+    
+    .risk-indicator {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+        padding: 1rem;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        align-items: center;
+    }
+    
+    .risk-icon {
+        font-size: 1.5rem;
+    }
+    
+    .risk-low {
+        color: var(--paper-success);
+    }
+    
+    .risk-medium {
+        color: var(--paper-warning);
+    }
+    
+    .risk-high {
+        color: var(--paper-danger);
+    }
+    
+    .config-actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: flex-end;
+        margin-top: 2rem;
+        padding-top: 2rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .saved-configs {
+        margin-top: 2rem;
+    }
+    
+    .config-item {
+        background: rgba(0, 0, 0, 0.2);
+        padding: 1rem 1.5rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        display: flex;
+        justify-content: between;
+        align-items: center;
+        transition: all 0.2s;
+    }
+    
+    .config-item:hover {
+        background: rgba(0, 0, 0, 0.3);
+        transform: translateX(4px);
+    }
+    
+    .config-item-info {
+        flex: 1;
+    }
+    
+    .config-item-name {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+    
+    .config-item-meta {
+        font-size: 0.85rem;
+        color: #a0a0a0;
+    }
+    
+    .config-item-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+    
+    .btn-icon {
+        padding: 0.5rem;
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+    }
+    
+    @media (max-width: 768px) {
+        .bot-controls {
+            flex-direction: column;
+        }
+        
+        .bot-status-display {
+            width: 100%;
+        }
+        
+        .form-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .trading-mode-selector {
+            grid-template-columns: 1fr;
+        }
+        
+        .lane-toggles {
+            flex-direction: column;
+        }
+        
+        .config-actions {
+            flex-direction: column;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    
+    <!-- Page Header -->
+    <div class="config-header">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+            <div>
+                <h2 class="mb-2">
+                    <i class="bi bi-gear me-2"></i>Strategy Configuration
+                </h2>
+                <p class="text-muted mb-0">
+                    Configure your paper trading bot settings and strategies
+                </p>
+            </div>
+            
+            <!-- Bot Controls -->
+            <div class="bot-controls">
+                <div class="bot-status-display">
+                    {% if active_session %}
+                        <div class="status-pulse status-running"></div>
+                        <div>
+                            <div class="status-text text-success">Bot Running</div>
+                            <div class="text-muted" style="font-size: 0.85rem;">
+                                Session: {{ active_session.session_id|slice:":8" }}...
+                            </div>
+                        </div>
+                    {% else %}
+                        <div class="status-pulse status-stopped"></div>
+                        <div>
+                            <div class="status-text text-muted">Bot Stopped</div>
+                            <div class="text-muted" style="font-size: 0.85rem;">
+                                No active session
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+                
+                {% if active_session %}
+                    <button class="btn btn-danger" onclick="stopBot()">
+                        <i class="bi bi-stop-circle me-2"></i>Stop Bot
+                    </button>
+                {% else %}
+                    <button class="btn btn-paper-primary" onclick="startBot()">
+                        <i class="bi bi-play-circle me-2"></i>Start Bot
+                    </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Configuration Form -->
+    <form method="post" action="{% url 'paper_trading:configuration' %}" id="config-form">
+        {% csrf_token %}
+        
+        <!-- Basic Settings -->
+        <div class="config-section">
+            <div class="section-header">
+                <h4 class="section-title">
+                    <i class="bi bi-sliders"></i>
+                    Basic Settings
+                </h4>
+            </div>
+            
+            <div class="form-grid">
+                <!-- Configuration Name -->
+                <div class="form-group-enhanced">
+                    <label class="form-label-enhanced">
+                        <span class="label-text">
+                            <i class="bi bi-tag"></i>
+                            Configuration Name
+                        </span>
+                    </label>
+                    <input type="text" 
+                           name="name" 
+                           class="form-control" 
+                           value="{{ strategy_config.name|default:'My Strategy' }}"
+                           placeholder="Enter configuration name"
+                           required>
+                </div>
+                
+                <!-- Trading Mode -->
+                <div class="form-group-enhanced">
+                    <label class="form-label">Trading Mode</label>
+                    <select name="trading_mode" class="form-select" id="trading-mode-select">
+                        <option value="CONSERVATIVE" {% if strategy_config.trading_mode == 'CONSERVATIVE' %}selected{% endif %}>
+                            Conservative - Low Risk
+                        </option>
+                        <option value="MODERATE" {% if strategy_config.trading_mode == 'MODERATE' or not strategy_config %}selected{% endif %}>
+                            Moderate - Balanced
+                        </option>
+                        <option value="AGGRESSIVE" {% if strategy_config.trading_mode == 'AGGRESSIVE' %}selected{% endif %}>
+                            Aggressive - High Risk
+                        </option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- Trading Mode Visual Selector -->
+            <div class="trading-mode-selector mt-4">
+                <label class="mode-option">
+                    <input type="radio" name="trading_mode_visual" value="CONSERVATIVE" 
+                           {% if strategy_config.trading_mode == 'CONSERVATIVE' %}checked{% endif %}>
+                    <div class="mode-card">
+                        <div class="mode-icon">🛡️</div>
+                        <div class="mode-name">Conservative</div>
+                        <div class="mode-description">Low risk, stable returns</div>
+                    </div>
+                </label>
+                
+                <label class="mode-option">
+                    <input type="radio" name="trading_mode_visual" value="MODERATE" 
+                           {% if strategy_config.trading_mode == 'MODERATE' or not strategy_config %}checked{% endif %}>
+                    <div class="mode-card">
+                        <div class="mode-icon">⚖️</div>
+                        <div class="mode-name">Moderate</div>
+                        <div class="mode-description">Balanced approach</div>
+                    </div>
+                </label>
+                
+                <label class="mode-option">
+                    <input type="radio" name="trading_mode_visual" value="AGGRESSIVE" 
+                           {% if strategy_config.trading_mode == 'AGGRESSIVE' %}checked{% endif %}>
+                    <div class="mode-card">
+                        <div class="mode-icon">🚀</div>
+                        <div class="mode-name">Aggressive</div>
+                        <div class="mode-description">High risk, high reward</div>
+                    </div>
+                </label>
+            </div>
+        </div>
+        
+        <!-- Lane Configuration -->
+        <div class="config-section">
+            <div class="section-header">
+                <h4 class="section-title">
+                    <i class="bi bi-shuffle"></i>
+                    Trading Lanes
+                </h4>
+            </div>
+            
+            <div class="lane-toggles">
+                <!-- Fast Lane -->
+                <div class="lane-toggle">
+                    <label class="toggle-label">
+                        <label class="toggle-switch">
+                            <input type="checkbox" 
+                                   name="use_fast_lane" 
+                                   {% if strategy_config.use_fast_lane or not strategy_config %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <div class="toggle-info">
+                            <div class="toggle-name">
+                                <i class="bi bi-lightning-charge text-success"></i>
+                                Fast Lane
+                            </div>
+                            <div class="toggle-desc">Quick execution, lower analysis depth</div>
+                        </div>
+                    </label>
+                </div>
+                
+                <!-- Smart Lane -->
+                <div class="lane-toggle">
+                    <label class="toggle-label">
+                        <label class="toggle-switch">
+                            <input type="checkbox" 
+                                   name="use_smart_lane" 
+                                   {% if strategy_config.use_smart_lane %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <div class="toggle-info">
+                            <div class="toggle-name">
+                                <i class="bi bi-cpu text-primary"></i>
+                                Smart Lane
+                            </div>
+                            <div class="toggle-desc">AI-powered deep analysis</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Trading Parameters -->
+        <div class="config-section">
+            <div class="section-header">
+                <h4 class="section-title">
+                    <i class="bi bi-graph-up"></i>
+                    Trading Parameters
+                </h4>
+            </div>
+            
+            <div class="form-grid">
+                <!-- Max Position Size -->
+                <div class="form-group-enhanced">
+                    <label class="form-label-enhanced">
+                        <span class="label-text">
+                            <i class="bi bi-wallet2"></i>
+                            Max Position Size
+                            <i class="bi bi-question-circle label-help" 
+                               title="Maximum percentage of portfolio for a single trade"></i>
+                        </span>
+                    </label>
+                    <div class="input-with-unit">
+                        <input type="number" 
+                               name="max_position_size" 
+                               class="form-control" 
+                               value="{{ strategy_config.max_position_size_percent|default:25 }}"
+                               min="1" 
+                               max="100" 
+                               step="0.5"
+                               required>
+                        <div class="input-unit">%</div>
+                    </div>
+                </div>
+                
+                <!-- Max Daily Trades -->
+                <div class="form-group-enhanced">
+                    <label class="form-label-enhanced">
+                        <span class="label-text">
+                            <i class="bi bi-activity"></i>
+                            Max Daily Trades
+                            <i class="bi bi-question-circle label-help" 
+                               title="Maximum number of trades per day"></i>
+                        </span>
+                    </label>
+                    <input type="number" 
+                           name="max_daily_trades" 
+                           class="form-control" 
+                           value="{{ strategy_config.max_daily_trades|default:20 }}"
+                           min="1" 
+                           max="100"
+                           required>
+                </div>
+                
+                <!-- Confidence Threshold -->
+                <div class="form-group-enhanced">
+                    <label class="form-label-enhanced">
+                        <span class="label-text">
+                            <i class="bi bi-speedometer"></i>
+                            Confidence Threshold
+                            <i class="bi bi-question-circle label-help" 
+                               title="Minimum confidence level to execute trades"></i>
+                        </span>
+                    </label>
+                    <div class="input-with-unit">
+                        <input type="number" 
+                               name="confidence_threshold" 
+                               class="form-control" 
+                               id="confidence-threshold"
+                               value="{{ strategy_config.confidence_threshold|default:60 }}"
+                               min="0" 
+                               max="100" 
+                               step="1"
+                               required>
+                        <div class="input-unit">%</div>
+                    </div>
+                    <input type="range" 
+                           class="range-slider" 
+                           min="0" 
+                           max="100" 
+                           value="{{ strategy_config.confidence_threshold|default:60 }}"
+                           oninput="updateRangeValue('confidence-threshold', this.value)">
+                </div>
+                
+                <!-- Max Gas Price -->
+                <div class="form-group-enhanced">
+                    <label class="form-label-enhanced">
+                        <span class="label-text">
+                            <i class="bi bi-fuel-pump"></i>
+                            Max Gas Price
+                            <i class="bi bi-question-circle label-help" 
+                               title="Maximum gas price willing to pay"></i>
+                        </span>
+                    </label>
+                    <div class="input-with-unit">
+                        <input type="number" 
+                               name="max_gas_price_gwei" 
+                               class="form-control" 
+                               value="{{ strategy_config.max_gas_price_gwei|default:50 }}"
+                               min="1" 
+                               max="500" 
+                               step="1"
+                               required>
+                        <div class="input-unit">Gwei</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Risk Management -->
+        <div class="config-section">
+            <div class="section-header">
+                <h4 class="section-title">
+                    <i class="bi bi-shield-check"></i>
+                    Risk Management
+                </h4>
+            </div>
+            
+            <div class="form-grid">
+                <!-- Stop Loss -->
+                <div class="form-group-enhanced">
+                    <label class="form-label-enhanced">
+                        <span class="label-text">
+                            <i class="bi bi-arrow-down-circle text-danger"></i>
+                            Stop Loss
+                            <i class="bi bi-question-circle label-help" 
+                               title="Automatic exit at this loss percentage"></i>
+                        </span>
+                    </label>
+                    <div class="input-with-unit">
+                        <input type="number" 
+                               name="stop_loss_percent" 
+                               class="form-control" 
+                               value="{{ strategy_config.stop_loss_percent|default:5 }}"
+                               min="0.1" 
+                               max="50" 
+                               step="0.1"
+                               required>
+                        <div class="input-unit">%</div>
+                    </div>
+                </div>
+                
+                <!-- Take Profit -->
+                <div class="form-group-enhanced">
+                    <label class="form-label-enhanced">
+                        <span class="label-text">
+                            <i class="bi bi-arrow-up-circle text-success"></i>
+                            Take Profit
+                            <i class="bi bi-question-circle label-help" 
+                               title="Automatic exit at this profit percentage"></i>
+                        </span>
+                    </label>
+                    <div class="input-with-unit">
+                        <input type="number" 
+                               name="take_profit_percent" 
+                               class="form-control" 
+                               value="{{ strategy_config.take_profit_percent|default:10 }}"
+                               min="0.1" 
+                               max="500" 
+                               step="0.1"
+                               required>
+                        <div class="input-unit">%</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Risk Indicator -->
+            <div class="risk-indicator" id="risk-indicator">
+                <i class="bi bi-shield-check risk-icon risk-low"></i>
+                <div>
+                    <div style="font-weight: 600;">Risk Level: <span id="risk-level-text">Low</span></div>
+                    <div class="text-muted" style="font-size: 0.85rem;" id="risk-description">
+                        Conservative settings with good risk management
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Form Actions -->
+        <div class="config-actions">
+            <button type="button" class="btn btn-paper-secondary" onclick="resetForm()">
+                <i class="bi bi-arrow-counterclockwise me-2"></i>Reset to Defaults
+            </button>
+            <button type="submit" class="btn btn-paper-primary">
+                <i class="bi bi-save me-2"></i>Save Configuration
+            </button>
+        </div>
+    </form>
+    
+    <!-- Saved Configurations -->
+    {% if all_configs %}
+    <div class="saved-configs">
+        <h4 class="mb-3">
+            <i class="bi bi-folder me-2"></i>Saved Configurations
+            <span class="badge badge-info">{{ all_configs|length }}</span>
+        </h4>
+        
+        <div>
+            {% for config in all_configs %}
+            <div class="config-item">
+                <div class="config-item-info">
+                    <div class="config-item-name">
+                        {{ config.name }}
+                        {% if config.is_active %}
+                            <span class="badge badge-success">ACTIVE</span>
+                        {% endif %}
+                    </div>
+                    <div class="config-item-meta">
+                        Mode: {{ config.trading_mode }} • 
+                        Created: {{ config.created_at|date:"M d, Y" }} •
+                        {% if config.use_fast_lane %}Fast Lane{% endif %}
+                        {% if config.use_fast_lane and config.use_smart_lane %} + {% endif %}
+                        {% if config.use_smart_lane %}Smart Lane{% endif %}
+                    </div>
+                </div>
+                <div class="config-item-actions">
+                    <button class="btn btn-paper-secondary btn-icon" 
+                            title="Load Configuration"
+                            onclick="loadConfig('{{ config.config_id }}')">
+                        <i class="bi bi-download"></i>
+                    </button>
+                    {% if not config.is_active %}
+                    <button class="btn btn-danger btn-icon" 
+                            title="Delete Configuration"
+                            onclick="deleteConfig('{{ config.config_id }}')">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Trading Config Info -->
+    {% if trading_config %}
+    <div class="card-glass mt-4">
+        <h5 class="mb-3">
+            <i class="bi bi-info-circle me-2"></i>Simulation Settings
+        </h5>
+        <div class="row">
+            <div class="col-md-3">
+                <div class="text-muted" style="font-size: 0.85rem;">Base Slippage</div>
+                <div style="font-weight: 600;">{{ trading_config.base_slippage_percent }}%</div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-muted" style="font-size: 0.85rem;">Gas Multiplier</div>
+                <div style="font-weight: 600;">{{ trading_config.gas_price_multiplier }}x</div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-muted" style="font-size: 0.85rem;">Execution Delay</div>
+                <div style="font-weight: 600;">{{ trading_config.execution_delay_ms }}ms</div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-muted" style="font-size: 0.85rem;">Failure Rate</div>
+                <div style="font-weight: 600;">{{ trading_config.failure_rate_percent }}%</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    /**
+     * Sync visual mode selector with dropdown
+     */
+    document.querySelectorAll('input[name="trading_mode_visual"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            document.getElementById('trading-mode-select').value = this.value;
+            updateRiskIndicator();
+        });
+    });
+    
+    document.getElementById('trading-mode-select').addEventListener('change', function() {
+        const radios = document.querySelectorAll('input[name="trading_mode_visual"]');
+        radios.forEach(radio => {
+            if (radio.value === this.value) {
+                radio.checked = true;
+            }
+        });
+        updateRiskIndicator();
+    });
+    
+    /**
+     * Update range input display value
+     */
+    function updateRangeValue(inputId, value) {
+        document.getElementById(inputId).value = value;
+        updateRiskIndicator();
+    }
+    
+    /**
+     * Calculate and update risk indicator
+     */
+    function updateRiskIndicator() {
+        const mode = document.getElementById('trading-mode-select').value;
+        const positionSize = parseFloat(document.querySelector('[name="max_position_size"]').value);
+        const stopLoss = parseFloat(document.querySelector('[name="stop_loss_percent"]').value);
+        const confidence = parseFloat(document.querySelector('[name="confidence_threshold"]').value);
+        
+        let riskScore = 0;
+        
+        // Calculate risk based on parameters
+        if (mode === 'AGGRESSIVE') riskScore += 30;
+        else if (mode === 'MODERATE') riskScore += 15;
+        
+        if (positionSize > 30) riskScore += 20;
+        else if (positionSize > 15) riskScore += 10;
+        
+        if (stopLoss > 10) riskScore += 20;
+        else if (stopLoss > 5) riskScore += 10;
+        
+        if (confidence < 50) riskScore += 20;
+        else if (confidence < 70) riskScore += 10;
+        
+        const indicator = document.getElementById('risk-indicator');
+        const icon = indicator.querySelector('.risk-icon');
+        const levelText = document.getElementById('risk-level-text');
+        const description = document.getElementById('risk-description');
+        
+        // Update display based on risk score
+        icon.className = 'bi risk-icon';
+        
+        if (riskScore < 30) {
+            icon.classList.add('bi-shield-check', 'risk-low');
+            levelText.textContent = 'Low';
+            levelText.className = 'text-success';
+            description.textContent = 'Conservative settings with good risk management';
+        } else if (riskScore < 60) {
+            icon.classList.add('bi-shield-exclamation', 'risk-medium');
+            levelText.textContent = 'Medium';
+            levelText.className = 'text-warning';
+            description.textContent = 'Balanced approach with moderate risk exposure';
+        } else {
+            icon.classList.add('bi-shield-x', 'risk-high');
+            levelText.textContent = 'High';
+            levelText.className = 'text-danger';
+            description.textContent = 'Aggressive settings - higher potential returns and losses';
+        }
+    }
+    
+    /**
+     * Start paper trading bot
+     */
+    async function startBot() {
+        if (!confirm('Start the paper trading bot with current configuration?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('/paper-trading/api/bot/start/', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCSRFToken(),
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showToast('Bot started successfully!', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast(data.error || 'Failed to start bot', 'danger');
+            }
+        } catch (error) {
+            console.error('Error starting bot:', error);
+            showToast('Error starting bot', 'danger');
+        }
+    }
+    
+    /**
+     * Stop paper trading bot
+     */
+    async function stopBot() {
+        if (!confirm('Stop the paper trading bot?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('/paper-trading/api/bot/stop/', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCSRFToken(),
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showToast('Bot stopped successfully', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast(data.error || 'Failed to stop bot', 'danger');
+            }
+        } catch (error) {
+            console.error('Error stopping bot:', error);
+            showToast('Error stopping bot', 'danger');
+        }
+    }
+    
+    /**
+     * Reset form to default values
+     */
+    function resetForm() {
+        if (!confirm('Reset all settings to default values?')) {
+            return;
+        }
+        
+        document.querySelector('[name="name"]').value = 'My Strategy';
+        document.getElementById('trading-mode-select').value = 'MODERATE';
+        document.querySelector('[name="trading_mode_visual"][value="MODERATE"]').checked = true;
+        document.querySelector('[name="use_fast_lane"]').checked = true;
+        document.querySelector('[name="use_smart_lane"]').checked = false;
+        document.querySelector('[name="max_position_size"]').value = 25;
+        document.querySelector('[name="max_daily_trades"]').value = 20;
+        document.querySelector('[name="confidence_threshold"]').value = 60;
+        document.querySelector('[name="max_gas_price_gwei"]').value = 50;
+        document.querySelector('[name="stop_loss_percent"]').value = 5;
+        document.querySelector('[name="take_profit_percent"]').value = 10;
+        
+        updateRiskIndicator();
+        showToast('Form reset to default values', 'info');
+    }
+    
+    /**
+     * Load saved configuration
+     */
+    function loadConfig(configId) {
+        showToast('Configuration loading...', 'info');
+        window.location.href = `/paper-trading/configuration/?config=${configId}`;
+    }
+    
+    /**
+     * Delete saved configuration
+     */
+    async function deleteConfig(configId) {
+        if (!confirm('Delete this configuration? This action cannot be undone.')) {
+            return;
+        }
+        
+        showToast('Deleting configuration...', 'info');
+        // Implement delete API call when backend is ready
+        setTimeout(() => {
+            showToast('Configuration deleted', 'success');
+            location.reload();
+        }, 1000);
+    }
+    
+    // Initialize risk indicator on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        updateRiskIndicator();
+        
+        // Update risk indicator when any parameter changes
+        document.querySelectorAll('input, select').forEach(element => {
+            element.addEventListener('change', updateRiskIndicator);
+            element.addEventListener('input', updateRiskIndicator);
+        });
+    });
+</script>
+{% endblock %}

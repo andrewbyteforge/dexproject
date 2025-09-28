@@ -1,4 +1,3 @@
-import uuid
 """
 Enhanced Paper Trading Bot - PTphase2
 
@@ -17,6 +16,7 @@ Features:
 File: dexproject/paper_trading/bot/simple_trader.py
 """
 
+import uuid
 import os
 import sys
 import time
@@ -143,42 +143,48 @@ class EnhancedPaperTradingBot:
             return True
             
         except Exception as e:
-            logger.error(f"[ERROR] Initialization failed: {e}")
+            logger.error(f"[ERROR] Initialization failed: {e}", exc_info=True)
             return False
     
     def _load_positions(self):
         """Load existing open positions for the account."""
-        positions = PaperPosition.objects.filter(
-            account=self.account,
-            is_open=True
-        )
-        for position in positions:
-            self.positions[position.token_symbol] = position
-            logger.info(f"[POS] Loaded position: {position.token_symbol} - {position.quantity} tokens")
+        try:
+            positions = PaperPosition.objects.filter(
+                account=self.account,
+                is_open=True
+            )
+            for position in positions:
+                self.positions[position.token_symbol] = position
+                logger.info(f"[POS] Loaded position: {position.token_symbol} - {position.quantity} tokens")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to load positions: {e}", exc_info=True)
     
     def _initialize_price_history(self):
         """Initialize price history with simulated historical data."""
-        # Simulate some popular tokens
-        tokens = [
-            ("0x1234...WETH", "WETH", Decimal("2500.00")),
-            ("0x5678...USDC", "USDC", Decimal("1.00")),
-            ("0x9abc...PEPE", "PEPE", Decimal("0.000001")),
-            ("0xdef0...SHIB", "SHIB", Decimal("0.00001")),
-            ("0x1111...DOGE", "DOGE", Decimal("0.08")),
-        ]
-        
-        for address, symbol, base_price in tokens:
-            # Generate historical prices
-            history = []
-            price = base_price
-            for _ in range(10):
-                # Random walk
-                change = price * Decimal(random.uniform(-0.02, 0.02))
-                price = max(price + change, price * Decimal("0.5"))  # Prevent negative
-                history.append(price)
+        try:
+            # Simulate some popular tokens
+            tokens = [
+                ("0x1234...WETH", "WETH", Decimal("2500.00")),
+                ("0x5678...USDC", "USDC", Decimal("1.00")),
+                ("0x9abc...PEPE", "PEPE", Decimal("0.000001")),
+                ("0xdef0...SHIB", "SHIB", Decimal("0.00001")),
+                ("0x1111...DOGE", "DOGE", Decimal("0.08")),
+            ]
             
-            self.price_history[symbol] = history
-            logger.debug(f"[UP] Initialized price history for {symbol}")
+            for address, symbol, base_price in tokens:
+                # Generate historical prices
+                history = []
+                price = base_price
+                for _ in range(10):
+                    # Random walk
+                    change = price * Decimal(random.uniform(-0.02, 0.02))
+                    price = max(price + change, price * Decimal("0.5"))  # Prevent negative
+                    history.append(price)
+                
+                self.price_history[symbol] = history
+                logger.debug(f"[UP] Initialized price history for {symbol}")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to initialize price history: {e}", exc_info=True)
     
     def run(self):
         """
@@ -204,7 +210,10 @@ class EnhancedPaperTradingBot:
                 
                 # Analyze each token
                 for symbol in self.price_history.keys():
-                    self._process_token(symbol)
+                    try:
+                        self._process_token(symbol)
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to process {symbol}: {e}", exc_info=True)
                 
                 # Update session metrics
                 self._update_session_metrics()
@@ -217,7 +226,7 @@ class EnhancedPaperTradingBot:
                     time.sleep(self.tick_interval)
                     
         except Exception as e:
-            logger.error(f"[ERROR] Bot error: {e}")
+            logger.error(f"[ERROR] Bot error: {e}", exc_info=True)
             self.running = False
             
         finally:
@@ -225,37 +234,40 @@ class EnhancedPaperTradingBot:
     
     def _update_market_prices(self):
         """Simulate market price updates."""
-        for symbol, prices in self.price_history.items():
-            current_price = prices[-1] if prices else Decimal("1.0")
-            
-            # Determine trend continuation
-            if len(prices) >= 2:
-                trend = prices[-1] - prices[-2]
-                if random.random() < self.trend_probability and trend != 0:
-                    # Continue trend
-                    change_factor = abs(trend) / prices[-2] * Decimal(random.uniform(0.5, 1.5))
-                    change = current_price * change_factor * (1 if trend > 0 else -1)
+        try:
+            for symbol, prices in self.price_history.items():
+                current_price = prices[-1] if prices else Decimal("1.0")
+                
+                # Determine trend continuation
+                if len(prices) >= 2:
+                    trend = prices[-1] - prices[-2]
+                    if random.random() < self.trend_probability and trend != 0:
+                        # Continue trend
+                        change_factor = abs(trend) / prices[-2] * Decimal(random.uniform(0.5, 1.5))
+                        change = current_price * change_factor * (1 if trend > 0 else -1)
+                    else:
+                        # Random change
+                        change = current_price * Decimal(random.uniform(-0.03, 0.03))
                 else:
                     # Random change
                     change = current_price * Decimal(random.uniform(-0.03, 0.03))
-            else:
-                # Random change
-                change = current_price * Decimal(random.uniform(-0.03, 0.03))
-            
-            # Apply change with volatility
-            volatility_factor = Decimal(random.uniform(0.5, 1.5))
-            new_price = current_price + (change * volatility_factor)
-            new_price = max(new_price, current_price * Decimal("0.5"))  # Prevent crash
-            
-            # Update history
-            prices.append(new_price)
-            if len(prices) > self.max_history_length:
-                prices.pop(0)
-            
-            # Log significant changes
-            price_change_pct = ((new_price - current_price) / current_price * 100) if current_price > 0 else 0
-            if abs(price_change_pct) > 2:
-                logger.info(f"[PRICE] {symbol}: ${current_price:.6f} -> ${new_price:.6f} ({price_change_pct:+.2f}%)")
+                
+                # Apply change with volatility
+                volatility_factor = Decimal(random.uniform(0.5, 1.5))
+                new_price = current_price + (change * volatility_factor)
+                new_price = max(new_price, current_price * Decimal("0.5"))  # Prevent crash
+                
+                # Update history
+                prices.append(new_price)
+                if len(prices) > self.max_history_length:
+                    prices.pop(0)
+                
+                # Log significant changes
+                price_change_pct = ((new_price - current_price) / current_price * 100) if current_price > 0 else 0
+                if abs(price_change_pct) > 2:
+                    logger.info(f"[PRICE] {symbol}: ${current_price:.6f} -> ${new_price:.6f} ({price_change_pct:+.2f}%)")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to update market prices: {e}", exc_info=True)
     
     def _process_token(self, symbol: str):
         """
@@ -264,36 +276,40 @@ class EnhancedPaperTradingBot:
         Args:
             symbol: Token symbol to process
         """
-        # Check if we can trade (time restriction)
-        if self.last_trade_time:
-            time_since_trade = (datetime.now() - self.last_trade_time).total_seconds()
-            if time_since_trade < self.min_trade_interval:
+        try:
+            # Check if we can trade (time restriction)
+            if self.last_trade_time:
+                time_since_trade = (datetime.now() - self.last_trade_time).total_seconds()
+                if time_since_trade < self.min_trade_interval:
+                    return
+            
+            # Get token info
+            token_address = f"0x{symbol}..."  # Simulated address
+            prices = self.price_history.get(symbol, [])
+            
+            if not prices:
+                logger.warning(f"[WARN] No price history for {symbol}")
                 return
-        
-        # Get token info
-        token_address = f"0x{symbol}..."  # Simulated address
-        prices = self.price_history.get(symbol, [])
-        
-        if not prices:
-            return
-        
-        current_price = prices[-1]
-        
-        # Get AI decision
-        decision = self.ai_engine.generate_decision(
-            token_address=token_address,
-            token_symbol=symbol,
-            current_price=current_price,
-            price_history=prices[:-1]  # Don't include current price in history
-        )
-        
-        # Log the decision
-        logger.info(f"[THINK] AI Decision for {symbol}: {decision['action']} "
-                   f"({decision['signal'].value}, {decision['confidence_score']:.0f}% confidence)")
-        
-        # Execute trade if signaled
-        if decision['action'] in ['BUY', 'SELL']:
-            self._execute_trade(symbol, decision)
+            
+            current_price = prices[-1]
+            
+            # Get AI decision
+            decision = self.ai_engine.generate_decision(
+                token_address=token_address,
+                token_symbol=symbol,
+                current_price=current_price,
+                price_history=prices[:-1]  # Don't include current price in history
+            )
+            
+            # Log the decision
+            logger.info(f"[THINK] AI Decision for {symbol}: {decision['action']} "
+                       f"({decision['signal'].value}, {decision['confidence_score']:.0f}% confidence)")
+            
+            # Execute trade if signaled
+            if decision['action'] in ['BUY', 'SELL']:
+                self._execute_trade(symbol, decision)
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to process token {symbol}: {e}", exc_info=True)
     
     def _execute_trade(self, symbol: str, decision: Dict[str, Any]):
         """
@@ -307,21 +323,23 @@ class EnhancedPaperTradingBot:
         position_size_percent = decision['position_size_percent']
         current_price = decision['current_price']
         
-        # Calculate trade amount
-        portfolio_value = self.account.current_balance_usd
-        trade_value = portfolio_value * (position_size_percent / 100)
-        
-        # Check if we have enough balance
-        if action == 'BUY' and trade_value > self.account.current_balance_usd:
-            logger.warning(f"[WARN] Insufficient balance for {symbol} purchase")
-            return
-        
-        # Check if we have position to sell
-        if action == 'SELL' and symbol not in self.positions:
-            logger.warning(f"[WARN] No position to sell for {symbol}")
-            return
+        logger.debug(f"[TRADE] Attempting {action} for {symbol} at ${current_price}")
         
         try:
+            # Calculate trade amount
+            portfolio_value = self.account.current_balance_usd
+            trade_value = portfolio_value * (position_size_percent / 100)
+            
+            # Check if we have enough balance for BUY
+            if action == 'BUY' and trade_value > self.account.current_balance_usd:
+                logger.warning(f"[WARN] Insufficient balance for {symbol} purchase: need ${trade_value:.2f}, have ${self.account.current_balance_usd:.2f}")
+                return
+            
+            # Check if we have position to sell
+            if action == 'SELL' and symbol not in self.positions:
+                logger.warning(f"[WARN] No position to sell for {symbol}")
+                return
+            
             with transaction.atomic():
                 # Define token variables BEFORE using them
                 if action == 'BUY':
@@ -367,58 +385,13 @@ class EnhancedPaperTradingBot:
                     mock_tx_hash=f"0x{uuid.uuid4().hex[:64]}"
                 )
                 
-                # Update position
+                logger.debug(f"[TRADE] Trade record created: {trade.trade_id}")
+                
+                # Update position based on action
                 if action == 'BUY':
-                    # Create or update position
-                    if symbol in self.positions:
-                        position = self.positions[symbol]
-                        # Average the entry price
-                        total_value = (position.quantity * position.average_entry_price_usd) + trade_value
-                        position.quantity += amount_out
-                        position.average_entry_price_usd = total_value / position.quantity
-                        position.current_price_usd = current_price
-                        position.total_invested_usd += trade_value
-                        position.last_updated = timezone.now()
-                        position.save()
-                    else:
-                        position = PaperPosition.objects.create(
-                            account=self.account,
-                            token_address=decision['token_address'],
-                            token_symbol=symbol,
-                            quantity=amount_out,
-                            average_entry_price_usd=current_price,
-                            current_price_usd=current_price,
-                            total_invested_usd=trade_value,
-                            is_open=True
-                        )
-                        self.positions[symbol] = position
-                    
-                    # Update account balance
-                    self.account.current_balance_usd -= trade_value
-                    
+                    self._handle_buy_position(symbol, amount_out, current_price, trade_value, decision)
                 else:  # SELL
-                    position = self.positions[symbol]
-                    
-                    # Calculate P&L
-                    pnl = (current_price - position.average_entry_price_usd) * position.quantity
-                    pnl_percent = (pnl / position.total_invested_usd) * 100 if position.total_invested_usd > 0 else 0
-                    
-                    # Update position for closure
-                    position.current_price_usd = current_price
-                    position.realized_pnl_usd = pnl
-                    position.is_open = False
-                    position.closed_at = timezone.now()
-                    position.save()
-                    
-                    # Remove from active positions
-                    del self.positions[symbol]
-                    
-                    # Update account balance
-                    self.account.current_balance_usd += amount_out - Decimal("5.00")  # Minus gas
-                    
-                    # Track performance
-                    if pnl > 0:
-                        self.successful_trades += 1
+                    self._handle_sell_position(symbol, current_price, amount_out)
                 
                 # Save account changes
                 self.account.total_trades += 1
@@ -428,69 +401,196 @@ class EnhancedPaperTradingBot:
                 self.trades_executed += 1
                 self.last_trade_time = datetime.now()
                 
-                # Log trade execution
-                logger.info(f"[OK] {action} executed: {amount_out:.6f} {symbol} @ ${current_price:.6f}")
+                logger.info(f"[OK] {action} executed: {amount_out:.6f} {token_out} @ ${current_price:.6f}")
                 logger.info(f"[MONEY] Value: ${trade_value:.2f}, New balance: ${self.account.current_balance_usd:.2f}")
                 
-                if action == 'SELL':
-                    logger.info(f"[DATA] P&L: ${pnl:.2f} ({pnl_percent:.2f}%)")
-                
-                # Update AI performance metrics
-                if action == 'SELL':
-                    self.ai_engine.update_performance_metrics({
-                        'profitable': pnl > 0,
-                        'pnl': pnl
-                    })
-                
         except Exception as e:
-            logger.error(f"[ERROR] Trade execution failed: {e}")
+            logger.error(f"[ERROR] Trade execution failed: {e}", exc_info=True)
+    
+    def _handle_buy_position(self, symbol: str, amount_out: Decimal, current_price: Decimal, 
+                            trade_value: Decimal, decision: Dict[str, Any]):
+        """
+        Handle BUY trade - create or update position.
+        
+        Args:
+            symbol: Token symbol
+            amount_out: Amount of tokens purchased
+            current_price: Current token price
+            trade_value: USD value of trade
+            decision: AI decision dictionary
+        """
+        try:
+            if symbol in self.positions:
+                # Update existing position
+                position = self.positions[symbol]
+                
+                # Calculate new average entry price
+                total_value = (position.quantity * position.average_entry_price_usd) + trade_value
+                new_quantity = position.quantity + amount_out
+                new_avg_price = total_value / new_quantity
+                
+                position.quantity = new_quantity
+                position.average_entry_price_usd = new_avg_price
+                position.current_price_usd = current_price
+                position.total_invested_usd += trade_value
+                position.current_value_usd = new_quantity * current_price
+                position.unrealized_pnl_usd = (current_price - new_avg_price) * new_quantity
+                position.last_updated = timezone.now()
+                position.save(update_fields=[
+                    'current_price_usd',
+                    'current_value_usd', 
+                    'realized_pnl_usd',
+                    'unrealized_pnl_usd',
+                    'is_open',
+                    'closed_at'
+                ])
+                
+                logger.debug(f"[POS] Updated position for {symbol}: {new_quantity:.6f} @ ${new_avg_price:.6f}")
+            else:
+                # Create new position
+                position = PaperPosition.objects.create(
+                    account=self.account,
+                    token_address=decision['token_address'],
+                    token_symbol=symbol,
+                    quantity=amount_out,
+                    average_entry_price_usd=current_price,
+                    current_price_usd=current_price,
+                    total_invested_usd=trade_value,
+                    current_value_usd=amount_out * current_price,
+                    unrealized_pnl_usd=Decimal("0"),
+                    realized_pnl_usd=Decimal("0"),
+                    is_open=True
+                )
+                self.positions[symbol] = position
+                
+                logger.debug(f"[POS] Created new position for {symbol}: {amount_out:.6f} @ ${current_price:.6f}")
+            
+            # Update account balance (deduct trade value + gas)
+            self.account.current_balance_usd -= (trade_value + Decimal("5.00"))
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to handle buy position for {symbol}: {e}", exc_info=True)
+            raise
+    
+    def _handle_sell_position(self, symbol: str, current_price: Decimal, amount_out: Decimal):
+        """
+        Handle SELL trade - close position.
+        
+        Args:
+            symbol: Token symbol
+            current_price: Current token price
+            amount_out: USD value received from sale
+        """
+        try:
+            position = self.positions[symbol]
+            
+            # Calculate P&L
+            pnl = (current_price - position.average_entry_price_usd) * position.quantity
+            pnl_percent = (pnl / position.total_invested_usd) * 100 if position.total_invested_usd > 0 else 0
+            
+            logger.info(f"[DATA] P&L for {symbol}: ${pnl:.2f} ({pnl_percent:+.2f}%)")
+            
+            # WORKAROUND: Delete any old closed positions for this token first
+            # This prevents unique constraint violations
+
+            
+            # Now close the current position
+            PaperPosition.objects.filter(
+                account=self.account,
+                token_symbol=symbol,
+                is_open=True
+            ).update(
+                current_price_usd=current_price,
+                current_value_usd=position.quantity * current_price,
+                realized_pnl_usd=pnl,
+                unrealized_pnl_usd=Decimal("0"),
+                is_open=False,
+                closed_at=timezone.now()
+            )
+            
+            logger.debug(f"[POS] Closed position for {symbol}: P&L=${pnl:.2f}")
+            
+            # Remove from active positions
+            del self.positions[symbol]
+            
+            # Update account balance (add sale proceeds minus gas)
+            self.account.current_balance_usd += (amount_out - Decimal("5.00"))
+            
+            # Track performance
+            if pnl > 0:
+                self.successful_trades += 1
+                logger.info(f"[WIN] Profitable trade: +${pnl:.2f}")
+            else:
+                logger.info(f"[LOSS] Unprofitable trade: ${pnl:.2f}")
+            
+            # Update AI performance metrics
+            self.ai_engine.update_performance_metrics({
+                'profitable': pnl > 0,
+                'pnl': pnl
+            })
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to handle sell position for {symbol}: {e}", exc_info=True)
+            raise
+
+
+
+
 
     def _update_session_metrics(self):
         """Update trading session metrics."""
         try:
-            # Calculate total P&L
-            total_pnl = sum(
-                position.realized_pnl or 0
-                for position in PaperPosition.objects.filter(
-                    account=self.account,
-                    is_open=False
-                )
+            # Calculate total realized P&L from closed positions
+            closed_positions = PaperPosition.objects.filter(
+                account=self.account,
+                is_open=False
+            )
+            
+            total_realized_pnl = sum(
+                position.realized_pnl_usd or Decimal("0")  # FIXED: Use realized_pnl_usd
+                for position in closed_positions
             )
             
             # Update session
-            self.session.total_trades = self.trades_executed
-            self.session.profitable_trades = self.successful_trades
-            self.session.total_pnl = total_pnl
+            self.session.total_trades_executed = self.trades_executed
+            self.session.successful_trades = self.successful_trades
+            self.session.session_pnl_usd = total_realized_pnl
+            self.session.last_heartbeat = timezone.now()
             
-            if self.trades_executed > 0:
-                self.session.win_rate = (self.successful_trades / self.trades_executed) * 100
+            # Calculate failed trades
+            self.session.failed_trades = self.trades_executed - self.successful_trades
             
             self.session.save()
             
+            logger.debug(f"[METRICS] Session updated: {self.trades_executed} trades, ${total_realized_pnl:.2f} P&L")
+            
         except Exception as e:
-            logger.error(f"Failed to update session metrics: {e}")
+            logger.error(f"[ERROR] Failed to update session metrics: {e}", exc_info=True)
     
     def _display_status(self):
         """Display current bot status."""
-        logger.info(f"\n[DATA] Bot Status:")
-        logger.info(f"   Account Balance: ${self.account.current_balance_usd:.2f}")
-        logger.info(f"   Open Positions: {len(self.positions)}")
-        logger.info(f"   Trades Executed: {self.trades_executed}")
-        
-        if self.trades_executed > 0:
-            win_rate = (self.successful_trades / self.trades_executed) * 100
-            logger.info(f"   Win Rate: {win_rate:.1f}%")
-        
-        # Display positions
-        if self.positions:
-            logger.info(f"\n[POS] Open Positions:")
-            for symbol, position in self.positions.items():
-                current_price = self.price_history[symbol][-1]
-                unrealized_pnl = (current_price - position.average_entry_price_usd) * position.quantity
-                pnl_percent = (unrealized_pnl / (position.average_entry_price_usd * position.quantity)) * 100
-                
-                logger.info(f"   {symbol}: {position.quantity:.6f} @ ${position.average_entry_price_usd:.6f}")
-                logger.info(f"      Current: ${current_price:.6f}, P&L: ${unrealized_pnl:.2f} ({pnl_percent:+.2f}%)")
+        try:
+            logger.info(f"\n[DATA] Bot Status:")
+            logger.info(f"   Account Balance: ${self.account.current_balance_usd:.2f}")
+            logger.info(f"   Open Positions: {len(self.positions)}")
+            logger.info(f"   Trades Executed: {self.trades_executed}")
+            
+            if self.trades_executed > 0:
+                win_rate = (self.successful_trades / self.trades_executed) * 100
+                logger.info(f"   Win Rate: {win_rate:.1f}%")
+            
+            # Display positions
+            if self.positions:
+                logger.info(f"\n[POS] Open Positions:")
+                for symbol, position in self.positions.items():
+                    current_price = self.price_history[symbol][-1]
+                    unrealized_pnl = (current_price - position.average_entry_price_usd) * position.quantity
+                    pnl_percent = (unrealized_pnl / (position.average_entry_price_usd * position.quantity)) * 100
+                    
+                    logger.info(f"   {symbol}: {position.quantity:.6f} @ ${position.average_entry_price_usd:.6f}")
+                    logger.info(f"      Current: ${current_price:.6f}, P&L: ${unrealized_pnl:.2f} ({pnl_percent:+.2f}%)")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to display status: {e}", exc_info=True)
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
@@ -504,20 +604,26 @@ class EnhancedPaperTradingBot:
             if self.session:
                 self.session.status = 'STOPPED'
                 self.session.ended_at = timezone.now()
+                self.session.ending_balance_usd = self.account.current_balance_usd
                 self.session.save()
                 logger.info(f"[DATA] Session {self.session.session_id} ended")
             
-            # Close any open positions (mark as closed in session)
+            # Update final prices for open positions
             for symbol, position in self.positions.items():
-                current_price = self.price_history[symbol][-1]
-                position.current_price = current_price
-                position.save()
-                logger.info(f"[POS] Position {symbol} marked with final price ${current_price:.6f}")
+                try:
+                    current_price = self.price_history[symbol][-1]
+                    position.current_price_usd = current_price
+                    position.current_value_usd = position.quantity * current_price
+                    position.unrealized_pnl_usd = (current_price - position.average_entry_price_usd) * position.quantity
+                    position.save()
+                    logger.info(f"[POS] Position {symbol} marked with final price ${current_price:.6f}")
+                except Exception as e:
+                    logger.error(f"[ERROR] Failed to update final price for {symbol}: {e}")
             
             logger.info("[OK] Cleanup completed")
             
         except Exception as e:
-            logger.error(f"Cleanup error: {e}")
+            logger.error(f"[ERROR] Cleanup error: {e}", exc_info=True)
 
 
 def main():

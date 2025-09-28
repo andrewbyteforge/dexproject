@@ -190,7 +190,7 @@ def paper_position_saved(sender, instance: PaperPosition, created: bool, **kwarg
                 float(instance.take_profit_price) 
                 if instance.take_profit_price else None
             ),
-            'created_at': instance.created_at.isoformat(),
+            'opened_at': instance.opened_at.isoformat(),  # FIXED: was 'created_at'
             'closed_at': (
                 instance.closed_at.isoformat() 
                 if instance.closed_at else None
@@ -361,11 +361,15 @@ def paper_session_saved(sender, instance: PaperTradingSession, created: bool, **
         # Prepare session data
         session_data = {
             'session_id': str(instance.session_id),
-            'strategy_name': instance.strategy_name,
-            'start_time': instance.start_time.isoformat(),
-            'end_time': (
-                instance.end_time.isoformat() 
-                if instance.end_time else None
+            # FIXED: Get strategy_name from strategy_config relationship
+            'strategy_name': (
+                instance.strategy_config.name 
+                if instance.strategy_config else 'Unknown Strategy'
+            ),
+            'started_at': instance.started_at.isoformat(),  # Using correct field name
+            'ended_at': (
+                instance.ended_at.isoformat() 
+                if instance.ended_at else None
             ),
             'status': instance.status,
             'total_trades_executed': instance.total_trades_executed,
@@ -376,10 +380,7 @@ def paper_session_saved(sender, instance: PaperTradingSession, created: bool, **
                 float(instance.ending_balance_usd) 
                 if instance.ending_balance_usd else None
             ),
-            'total_pnl_usd': (
-                float(instance.total_pnl_usd) 
-                if instance.total_pnl_usd else None
-            ),
+            'session_pnl_usd': float(instance.session_pnl_usd),
             'notes': instance.notes,
         }
         
@@ -497,14 +498,15 @@ def paper_strategy_config_saved(sender, instance: PaperStrategyConfiguration, cr
             'trading_mode': instance.trading_mode,
             'use_fast_lane': instance.use_fast_lane,
             'use_smart_lane': instance.use_smart_lane,
-            'max_position_size': float(instance.max_position_size),
+            # FIXED: Changed from max_position_size to max_position_size_percent
+            'max_position_size_percent': float(instance.max_position_size_percent),
             'max_daily_trades': instance.max_daily_trades,
             'max_concurrent_positions': instance.max_concurrent_positions,
             'stop_loss_percent': float(instance.stop_loss_percent),
             'take_profit_percent': float(instance.take_profit_percent),
             'confidence_threshold': float(instance.confidence_threshold),
-            'risk_score_threshold': float(instance.risk_score_threshold),
-            'max_gas_price_gwei': float(instance.max_gas_price_gwei),
+            # 'risk_score_threshold': float(instance.risk_score_threshold),
+            # 'max_gas_price_gwei': float(instance.max_gas_price_gwei),
             'is_active': instance.is_active,
         }
         

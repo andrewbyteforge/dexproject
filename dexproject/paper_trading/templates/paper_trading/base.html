@@ -1,0 +1,520 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Paper Trading Dashboard{% endblock %} - DEX Trading Bot</title>
+    
+    <!-- CSRF Token -->
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    
+    <!-- Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    
+    <!-- Custom CSS - Reuse existing dashboard styles -->
+    <link rel="stylesheet" href="{% static 'css/home.css' %}">
+    <link rel="stylesheet" href="{% static 'css/analytics.css' %}">
+    
+    <!-- Paper Trading Specific Styles -->
+    <style>
+        :root {
+            --paper-primary: #00d4aa;
+            --paper-secondary: #3b82f6;
+            --paper-success: #10b981;
+            --paper-danger: #ef4444;
+            --paper-warning: #f59e0b;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            color: #ffffff;
+            min-height: 100vh;
+        }
+        
+        /* Paper Trading Header */
+        .paper-header {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(0, 212, 170, 0.2);
+        }
+        
+        .paper-logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--paper-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        /* Navigation Menu */
+        .paper-nav {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        
+        .paper-nav-link {
+            color: #ffffff;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.95rem;
+        }
+        
+        .paper-nav-link:hover {
+            background: rgba(0, 212, 170, 0.2);
+            color: var(--paper-primary);
+        }
+        
+        .paper-nav-link.active {
+            background: rgba(0, 212, 170, 0.3);
+            color: var(--paper-primary);
+            font-weight: 600;
+        }
+        
+        /* Card Glass Effect */
+        .card-glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        /* Stat Cards */
+        .stat-card {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 1.25rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.2s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(0, 212, 170, 0.3);
+        }
+        
+        .stat-label {
+            font-size: 0.85rem;
+            color: #a0a0a0;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: bold;
+            color: #ffffff;
+            margin-bottom: 0.25rem;
+        }
+        
+        .stat-change {
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        
+        .stat-change.positive {
+            color: var(--paper-success);
+        }
+        
+        .stat-change.negative {
+            color: var(--paper-danger);
+        }
+        
+        /* Status Indicators */
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+        
+        .status-active {
+            background: var(--paper-success);
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+            animation: pulse 2s infinite;
+        }
+        
+        .status-inactive {
+            background: var(--paper-danger);
+        }
+        
+        .status-warning {
+            background: var(--paper-warning);
+        }
+        
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
+        }
+        
+        /* Buttons */
+        .btn-paper-primary {
+            background: linear-gradient(135deg, var(--paper-primary), #00b894);
+            border: none;
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        
+        .btn-paper-primary:hover {
+            background: linear-gradient(135deg, #00b894, var(--paper-primary));
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 212, 170, 0.3);
+        }
+        
+        .btn-paper-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        
+        .btn-paper-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: var(--paper-primary);
+            color: var(--paper-primary);
+        }
+        
+        /* Tables */
+        .table-paper {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .table-paper thead {
+            background: rgba(0, 212, 170, 0.1);
+        }
+        
+        .table-paper th {
+            border: none;
+            padding: 1rem;
+            font-weight: 600;
+            color: var(--paper-primary);
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+        }
+        
+        .table-paper td {
+            border: none;
+            padding: 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .table-paper tbody tr {
+            transition: background 0.2s;
+        }
+        
+        .table-paper tbody tr:hover {
+            background: rgba(0, 212, 170, 0.05);
+        }
+        
+        /* Badges */
+        .badge-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--paper-success);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        
+        .badge-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--paper-danger);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--paper-warning);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        
+        .badge-info {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--paper-secondary);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        
+        /* Forms */
+        .form-control, .form-select {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            border-radius: 8px;
+            padding: 0.6rem 1rem;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            background: rgba(0, 0, 0, 0.4);
+            border-color: var(--paper-primary);
+            box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25);
+            color: white;
+        }
+        
+        .form-label {
+            color: #a0a0a0;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        /* Alerts */
+        .alert {
+            border-radius: 10px;
+            border: none;
+            backdrop-filter: blur(10px);
+        }
+        
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--paper-success);
+            border-left: 4px solid var(--paper-success);
+        }
+        
+        .alert-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--paper-danger);
+            border-left: 4px solid var(--paper-danger);
+        }
+        
+        .alert-warning {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--paper-warning);
+            border-left: 4px solid var(--paper-warning);
+        }
+        
+        .alert-info {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--paper-secondary);
+            border-left: 4px solid var(--paper-secondary);
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .paper-nav {
+                flex-direction: column;
+            }
+            
+            .stat-value {
+                font-size: 1.5rem;
+            }
+            
+            .card-glass {
+                padding: 1rem;
+            }
+        }
+    </style>
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Main Container -->
+    <div class="container-fluid px-3 px-md-4 py-3">
+        
+        <!-- Header -->
+        <header class="paper-header">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <!-- Logo -->
+                <div class="paper-logo">
+                    <i class="bi bi-file-earmark-play"></i>
+                    <span>Paper Trading</span>
+                    <span class="badge badge-info ms-2" style="font-size: 0.7rem;">SIMULATION</span>
+                </div>
+                
+                <!-- Navigation -->
+                <nav class="paper-nav">
+                    <a href="{% url 'paper_trading:dashboard' %}" class="paper-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+                        <i class="bi bi-speedometer2"></i>
+                        Dashboard
+                    </a>
+                    <a href="{% url 'paper_trading:portfolio' %}" class="paper-nav-link {% if request.resolver_match.url_name == 'portfolio' %}active{% endif %}">
+                        <i class="bi bi-briefcase"></i>
+                        Portfolio
+                    </a>
+                    <a href="{% url 'paper_trading:trades' %}" class="paper-nav-link {% if request.resolver_match.url_name == 'trades' %}active{% endif %}">
+                        <i class="bi bi-list-ul"></i>
+                        Trades
+                    </a>
+                    <a href="{% url 'paper_trading:configuration' %}" class="paper-nav-link {% if request.resolver_match.url_name == 'configuration' %}active{% endif %}">
+                        <i class="bi bi-gear"></i>
+                        Configuration
+                    </a>
+                    <a href="{% url 'dashboard:home' %}" class="paper-nav-link">
+                        <i class="bi bi-arrow-left"></i>
+                        Main Dashboard
+                    </a>
+                </nav>
+            </div>
+        </header>
+        
+        <!-- Messages/Alerts -->
+        {% if messages %}
+            <div class="alerts-container mb-3">
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                        <i class="bi {% if message.tags == 'success' %}bi-check-circle{% elif message.tags == 'danger' %}bi-exclamation-circle{% elif message.tags == 'warning' %}bi-exclamation-triangle{% else %}bi-info-circle{% endif %} me-2"></i>
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+        
+        <!-- Main Content -->
+        <main>
+            {% block content %}{% endblock %}
+        </main>
+        
+        <!-- Footer -->
+        <footer class="text-center text-muted mt-5 py-3" style="font-size: 0.85rem;">
+            <p class="mb-1">
+                <i class="bi bi-shield-check me-1"></i>
+                Paper Trading Mode - No Real Money at Risk
+            </p>
+            <p class="mb-0">
+                All trades are simulated for testing purposes only
+            </p>
+        </footer>
+    </div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Paper Trading Common JS -->
+    <script>
+        /**
+         * Get CSRF token for API requests
+         */
+        function getCSRFToken() {
+            const token = document.querySelector('[name=csrfmiddlewaretoken]')?.value ||
+                         document.querySelector('meta[name=csrf-token]')?.getAttribute('content');
+            return token;
+        }
+        
+        /**
+         * Format currency values
+         */
+        function formatCurrency(value, decimals = 2) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals
+            }).format(value);
+        }
+        
+        /**
+         * Format percentage values
+         */
+        function formatPercent(value, decimals = 2) {
+            return `${value >= 0 ? '+' : ''}${value.toFixed(decimals)}%`;
+        }
+        
+        /**
+         * Show toast notification
+         */
+        function showToast(message, type = 'info') {
+            const toastContainer = document.getElementById('toast-container') || createToastContainer();
+            
+            const toast = document.createElement('div');
+            toast.className = `toast align-items-center text-white bg-${type} border-0`;
+            toast.setAttribute('role', 'alert');
+            toast.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body">${message}</div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            `;
+            
+            toastContainer.appendChild(toast);
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            toast.addEventListener('hidden.bs.toast', () => toast.remove());
+        }
+        
+        /**
+         * Create toast container
+         */
+        function createToastContainer() {
+            const container = document.createElement('div');
+            container.id = 'toast-container';
+            container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+            container.style.zIndex = '1055';
+            document.body.appendChild(container);
+            return container;
+        }
+        
+        /**
+         * Update time displays (e.g., "2 minutes ago")
+         */
+        function updateRelativeTimes() {
+            document.querySelectorAll('[data-timestamp]').forEach(element => {
+                const timestamp = parseInt(element.getAttribute('data-timestamp'));
+                const now = Date.now();
+                const diff = now - timestamp;
+                
+                const minutes = Math.floor(diff / 60000);
+                const hours = Math.floor(diff / 3600000);
+                const days = Math.floor(diff / 86400000);
+                
+                let text = '';
+                if (days > 0) text = `${days}d ago`;
+                else if (hours > 0) text = `${hours}h ago`;
+                else if (minutes > 0) text = `${minutes}m ago`;
+                else text = 'Just now';
+                
+                element.textContent = text;
+            });
+        }
+        
+        // Update relative times every minute
+        setInterval(updateRelativeTimes, 60000);
+        updateRelativeTimes();
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

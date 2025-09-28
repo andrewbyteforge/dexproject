@@ -357,8 +357,12 @@ class PaperPosition(models.Model):
             models.Index(fields=['account', 'is_open']),
             models.Index(fields=['token_address']),
         ]
-        unique_together = [
-            ['account', 'token_address', 'is_open']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'token_address'],
+                condition=models.Q(is_open=True),
+                name='unique_open_position_per_token'
+            )
         ]
     
     def __str__(self):
