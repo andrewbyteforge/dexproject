@@ -8,8 +8,8 @@
 <style>
     /* Additional Paper Trading Specific Styles */
     .thought-log-container {
-        max-height: 350px !important; /* Reduced from 400px for better viewport management */
-        min-height: 200px; /* Ensure minimum height */
+        max-height: 350px !important;
+        min-height: 200px;
         overflow-y: auto;
         overflow-x: hidden;
         padding: 10px;
@@ -23,7 +23,7 @@
         background: rgba(255, 255, 255, 0.1);
         border-radius: 6px;
         border-left: 3px solid #17a2b8;
-        font-size: 0.85em; /* Slightly smaller font for more compact display */
+        font-size: 0.85em;
         line-height: 1.4;
         transition: all 0.3s ease-out;
         opacity: 1;
@@ -65,7 +65,7 @@
     }
     
     .lane-badge {
-        font-size: 0.65em; /* Smaller badge */
+        font-size: 0.65em;
         padding: 2px 6px;
         border-radius: 8px;
         font-weight: 600;
@@ -91,7 +91,7 @@
         background: linear-gradient(135deg, rgba(23, 162, 184, 0.1), rgba(111, 66, 193, 0.1));
         border: 1px solid rgba(255, 255, 255, 0.2);
         position: relative;
-        max-height: 500px; /* Limit card height */
+        max-height: 500px;
     }
     
     .scroll-controls {
@@ -110,7 +110,7 @@
         opacity: 1;
     }
     
-    /* Scrollbar styling for thought log */
+    /* Scrollbar styling */
     .thought-log-container::-webkit-scrollbar {
         width: 6px;
     }
@@ -151,10 +151,9 @@
         background: #dc3545;
     }
     
-    /* Compact thought display */
     .thought-summary {
         display: -webkit-box;
-        -webkit-line-clamp: 2; /* Limit to 2 lines */
+        -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -162,7 +161,6 @@
         color: rgba(255, 255, 255, 0.8);
     }
     
-    /* Thought counter badge */
     .thought-counter {
         position: absolute;
         bottom: 10px;
@@ -171,7 +169,48 @@
         color: rgba(255, 255, 255, 0.5);
     }
     
-    /* Auto-expand/collapse for mobile */
+    /* Trade and Position Updates Styling */
+    .trade-row {
+        transition: all 0.3s ease;
+    }
+    
+    .new-trade {
+        background-color: rgba(40, 167, 69, 0.1) !important;
+        animation: highlightFade 2s ease-out;
+    }
+    
+    @keyframes highlightFade {
+        0% {
+            background-color: rgba(40, 167, 69, 0.3);
+            transform: translateX(-10px);
+        }
+        100% {
+            background-color: rgba(40, 167, 69, 0.1);
+            transform: translateX(0);
+        }
+    }
+    
+    .update-indicator {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        background: #28a745;
+        border-radius: 50%;
+        margin-left: 5px;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    
+    .update-indicator.flash-update {
+        animation: flash 1s ease;
+    }
+    
+    @keyframes flash {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+    }
+    
+    /* Mobile Responsive */
     @media (max-width: 768px) {
         .thought-log-container {
             max-height: 250px !important;
@@ -218,10 +257,10 @@
             <div class="card card-glass metric-card">
                 <div class="card-body text-center">
                     <i class="bi bi-wallet2 text-primary fs-1 mb-3"></i>
-                    <h3 class="card-title mb-1">${{ current_balance|floatformat:2 }}</h3>
+                    <h3 class="card-title mb-1" id="portfolio-value">${{ current_balance|floatformat:2 }}</h3>
                     <p class="text-muted mb-2">Portfolio Value</p>
                     <div class="small">
-                        <span class="{% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        <span id="return-percent" class="{% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
                             {% if total_pnl >= 0 %}+{% endif %}{{ return_percent|floatformat:2 }}%
                         </span>
                         return
@@ -234,12 +273,14 @@
             <div class="card card-glass metric-card">
                 <div class="card-body text-center">
                     <i class="bi bi-graph-up {% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %} fs-1 mb-3"></i>
-                    <h3 class="card-title mb-1 {% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
-                        {% if total_pnl >= 0 %}+{% endif %}${{ total_pnl|floatformat:2 }}
+                    <h3 class="card-title mb-1" id="total-pnl">
+                        <span class="{% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            {% if total_pnl >= 0 %}+{% endif %}${{ total_pnl|floatformat:2 }}
+                        </span>
                     </h3>
                     <p class="text-muted mb-2">Total P&L</p>
                     <div class="small">
-                        Win Rate: <span class="text-info">{{ win_rate|floatformat:1 }}%</span>
+                        Win Rate: <span class="text-info" id="win-rate">{{ win_rate|floatformat:1 }}%</span>
                     </div>
                 </div>
             </div>
@@ -249,10 +290,10 @@
             <div class="card card-glass metric-card">
                 <div class="card-body text-center">
                     <i class="bi bi-activity text-warning fs-1 mb-3"></i>
-                    <h3 class="card-title mb-1">{{ trades_24h }}</h3>
+                    <h3 class="card-title mb-1" id="trades-24h">{{ trades_24h }}</h3>
                     <p class="text-muted mb-2">24h Trades</p>
                     <div class="small">
-                        Volume: <span class="text-info">${{ volume_24h|floatformat:2 }}</span>
+                        Volume: <span class="text-info" id="volume-24h">${{ volume_24h|floatformat:2 }}</span>
                     </div>
                 </div>
             </div>
@@ -262,10 +303,10 @@
             <div class="card card-glass metric-card">
                 <div class="card-body text-center">
                     <i class="bi bi-list-check text-info fs-1 mb-3"></i>
-                    <h3 class="card-title mb-1">{{ total_trades }}</h3>
+                    <h3 class="card-title mb-1" id="total-trades">{{ total_trades }}</h3>
                     <p class="text-muted mb-2">Total Trades</p>
                     <div class="small">
-                        <span class="text-success">{{ successful_trades }}</span>
+                        <span class="text-success" id="successful-trades">{{ successful_trades }}</span>
                         successful
                     </div>
                 </div>
@@ -354,7 +395,7 @@
                     </div>
                     <div class="thought-log-container" id="thought-log-container">
                         {% if recent_thoughts %}
-                            {% for thought in recent_thoughts|slice:":6" %}
+                            {% for thought in recent_thoughts|slice:":3" %}
                             <div class="thought-log-step" data-thought-id="{{ thought.thought_id }}">
                                 <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div>
@@ -401,6 +442,7 @@
                     <h5 class="card-title mb-0">
                         <i class="bi bi-clock-history me-2"></i>
                         Recent Trades
+                        <span id="trades-update-indicator" class="update-indicator"></span>
                     </h5>
                     <a href="/paper-trading/trades/" class="btn btn-sm btn-outline-light">
                         <i class="bi bi-list-ul me-1"></i>
@@ -408,21 +450,21 @@
                     </a>
                 </div>
                 <div class="card-body">
-                    {% if recent_trades %}
-                        <div class="table-responsive">
-                            <table class="table table-sm">
-                                <thead>
-                                    <tr>
-                                        <th>Time</th>
-                                        <th>Type</th>
-                                        <th>Token</th>
-                                        <th>Amount</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Type</th>
+                                    <th>Token</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-trades-tbody">
+                                {% if recent_trades %}
                                     {% for trade in recent_trades %}
-                                    <tr>
+                                    <tr data-trade-id="{{ trade.trade_id }}">
                                         <td><small>{{ trade.created_at|date:"H:i" }}</small></td>
                                         <td>
                                             <span class="badge {% if trade.trade_type == 'BUY' %}bg-success{% else %}bg-danger{% endif %}">
@@ -438,15 +480,17 @@
                                         </td>
                                     </tr>
                                     {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    {% else %}
-                        <div class="text-center text-muted py-4">
-                            <i class="bi bi-graph-up fs-1 mb-3 d-block"></i>
-                            <p>No trades yet. Start the bot to begin paper trading!</p>
-                        </div>
-                    {% endif %}
+                                {% else %}
+                                    <tr class="no-trades-message">
+                                        <td colspan="5" class="text-center text-muted py-4">
+                                            <i class="bi bi-graph-up fs-3 mb-2 d-block"></i>
+                                            <p class="mb-0">No trades yet. Start the bot to begin paper trading!</p>
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -457,6 +501,7 @@
                     <h5 class="card-title mb-0">
                         <i class="bi bi-briefcase me-2"></i>
                         Open Positions
+                        <span id="positions-update-indicator" class="update-indicator"></span>
                     </h5>
                     <a href="/paper-trading/portfolio/" class="btn btn-sm btn-outline-light">
                         <i class="bi bi-pie-chart me-1"></i>
@@ -464,20 +509,20 @@
                     </a>
                 </div>
                 <div class="card-body">
-                    {% if open_positions %}
-                        <div class="table-responsive">
-                            <table class="table table-sm">
-                                <thead>
-                                    <tr>
-                                        <th>Token</th>
-                                        <th>Quantity</th>
-                                        <th>Value</th>
-                                        <th>P&L</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Token</th>
+                                    <th>Quantity</th>
+                                    <th>Value</th>
+                                    <th>P&L</th>
+                                </tr>
+                            </thead>
+                            <tbody id="open-positions-tbody">
+                                {% if open_positions %}
                                     {% for position in open_positions %}
-                                    <tr>
+                                    <tr data-position-id="{{ position.position_id }}">
                                         <td><small>{{ position.token_symbol }}</small></td>
                                         <td><small>{{ position.quantity|floatformat:6 }}</small></td>
                                         <td><small>${{ position.current_value_usd|floatformat:2 }}</small></td>
@@ -489,15 +534,17 @@
                                         </td>
                                     </tr>
                                     {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    {% else %}
-                        <div class="text-center text-muted py-4">
-                            <i class="bi bi-briefcase fs-1 mb-3 d-block"></i>
-                            <p>No open positions. Bot will create positions when opportunities are found.</p>
-                        </div>
-                    {% endif %}
+                                {% else %}
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted py-4">
+                                            <i class="bi bi-briefcase fs-3 mb-2 d-block"></i>
+                                            <p class="mb-0">No open positions. Bot will create positions when opportunities are found.</p>
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -552,18 +599,22 @@
 <script>
 window.paperTradingConfig = {
     apiBaseUrl: '/paper-trading/api/',
-    updateInterval: 5000, // 5 seconds
-    maxThoughts: 3, // Reduced to 6 for better UX
+    updateInterval: 5000, // 5 seconds for AI thoughts
+    tradesUpdateInterval: 3000, // 3 seconds for trades/positions
+    maxThoughts: 3, // Limit displayed thoughts
     autoScroll: false // Auto-scroll disabled by default
 };
 </script>
 
 <!-- Paper Trading Dashboard JavaScript -->
 <script>
-    // Real-time AI Thoughts Updates
+    // Track last update times
     let lastThoughtUpdate = new Date().toISOString();
+    let lastTradeUpdate = null; // Updated handling for trades
+    let lastPositionUpdate = new Date().toISOString();
     let thoughtCount = 0;
     
+    // ========== AI THOUGHTS UPDATES ==========
     function updateAIThoughts() {
         fetch(`/paper-trading/api/ai-thoughts/?since=${lastThoughtUpdate}&limit=5`)
             .then(response => response.json())
@@ -582,22 +633,20 @@ window.paperTradingConfig = {
             });
     }
     
-    // Enhanced updateThoughtsDisplay with better management
     function updateThoughtsDisplay(newThoughts) {
         const container = document.getElementById('thought-log-container');
         if (!container) return;
         
         const MAX_THOUGHTS = window.paperTradingConfig.maxThoughts;
         
-        // Remove the placeholder if it exists
+        // Remove placeholder if exists
         const placeholder = container.querySelector('.text-center');
         if (placeholder && newThoughts.length > 0) {
             placeholder.remove();
         }
         
-        // Add new thoughts to the top with animation
+        // Add new thoughts
         newThoughts.reverse().forEach(thought => {
-            // Check if thought already exists
             if (document.querySelector(`[data-thought-id="${thought.id}"]`)) {
                 return;
             }
@@ -608,14 +657,12 @@ window.paperTradingConfig = {
             thoughtCount++;
         });
         
-        // Remove excess thoughts with fade effect
+        // Remove excess thoughts
         const thoughtItems = container.querySelectorAll('.thought-log-step:not(.text-center)');
         if (thoughtItems.length > MAX_THOUGHTS) {
             for (let i = MAX_THOUGHTS; i < thoughtItems.length; i++) {
                 const item = thoughtItems[i];
                 item.classList.add('fade-out');
-                
-                // Remove after animation completes
                 setTimeout(() => {
                     if (item.parentNode) {
                         item.remove();
@@ -624,10 +671,8 @@ window.paperTradingConfig = {
             }
         }
         
-        // Update counter
         updateThoughtCounter();
         
-        // Auto-scroll if enabled
         if (window.paperTradingConfig.autoScroll) {
             scrollToNewest();
         }
@@ -642,7 +687,6 @@ window.paperTradingConfig = {
         const laneClass = thought.lane_used === 'FAST' ? 'fast-lane-badge' : 'smart-lane-badge';
         const confidence = Math.round(thought.confidence_percent || 0);
         
-        // Truncate reasoning for display
         const reasoning = thought.primary_reasoning || 'Analyzing market conditions...';
         const truncatedReasoning = reasoning.length > 150 ? reasoning.substring(0, 150) + '...' : reasoning;
         
@@ -685,11 +729,242 @@ window.paperTradingConfig = {
         }
     }
     
-    // Scroll management functions
+    // ========== RECENT TRADES UPDATES (UPDATED) ==========
+    function updateRecentTrades(isInitial = false) {
+        let url = '/paper-trading/api/trades/recent/?limit=10';
+        if (lastTradeUpdate && !isInitial) {
+            url += `&since=${lastTradeUpdate}`;
+        }
+        
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (isInitial || !lastTradeUpdate) {
+                        replaceAllTrades(data.trades);
+                    } else if (data.trades && data.trades.length > 0) {
+                        updateTradesTable(data.trades);
+                    }
+                    
+                    lastTradeUpdate = new Date().toISOString();
+                    
+                    if (!isInitial && data.trades && data.trades.length > 0) {
+                        flashUpdateIndicator('trades-update-indicator');
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching recent trades:', error);
+            });
+    }
+    
+    function replaceAllTrades(trades) {
+        const tableBody = document.getElementById('recent-trades-tbody');
+        if (!tableBody) return;
+        
+        tableBody.innerHTML = '';
+        
+        if (trades.length === 0) {
+            tableBody.innerHTML = `
+                <tr class="no-trades-message">
+                    <td colspan="5" class="text-center text-muted py-4">
+                        <i class="bi bi-graph-up fs-3 mb-2 d-block"></i>
+                        <p class="mb-0">No trades yet. Start the bot to begin paper trading!</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        trades.forEach(trade => {
+            const row = createTradeRow(trade);
+            tableBody.appendChild(row);
+        });
+    }
+    
+    function updateTradesTable(newTrades) {
+        const tableBody = document.getElementById('recent-trades-tbody');
+        if (!tableBody) return;
+        
+        const noTradesMessage = tableBody.querySelector('.no-trades-message');
+        if (noTradesMessage) {
+            noTradesMessage.remove();
+        }
+        
+        newTrades.forEach(trade => {
+            if (document.querySelector(`[data-trade-id="${trade.trade_id}"]`)) {
+                return;
+            }
+            
+            const row = createTradeRow(trade);
+            row.classList.add('new-trade');
+            tableBody.insertBefore(row, tableBody.firstChild);
+        });
+        
+        const allRows = tableBody.querySelectorAll('tr:not(.no-trades-message)');
+        if (allRows.length > 10) {
+            for (let i = 10; i < allRows.length; i++) {
+                allRows[i].remove();
+            }
+        }
+        
+        setTimeout(() => {
+            const newTradeRows = tableBody.querySelectorAll('.new-trade');
+            newTradeRows.forEach(row => {
+                row.classList.remove('new-trade');
+            });
+        }, 2000);
+    }
+    
+    function createTradeRow(trade) {
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-trade-id', trade.trade_id);
+        tr.className = 'trade-row';
+        
+        const time = new Date(trade.created_at).toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        
+        const typeClass = trade.trade_type === 'BUY' ? 'bg-success' : 'bg-danger';
+        const statusClass = trade.status === 'COMPLETED' ? 'bg-success' : 
+                           trade.status === 'FAILED' ? 'bg-danger' : 'bg-warning';
+        
+        tr.innerHTML = `
+            <td><small>${time}</small></td>
+            <td>
+                <span class="badge ${typeClass}">
+                    ${trade.trade_type}
+                </span>
+            </td>
+            <td><small>${trade.token_out_symbol || trade.token_symbol || 'N/A'}</small></td>
+            <td><small>$${parseFloat(trade.amount_in_usd || 0).toFixed(2)}</small></td>
+            <td>
+                <span class="badge ${statusClass}">
+                    ${trade.status || 'PENDING'}
+                </span>
+            </td>
+        `;
+        
+        return tr;
+    }
+    
+    // ========== OPEN POSITIONS UPDATES ==========
+    function updateOpenPositions() {
+        fetch('/paper-trading/api/positions/open/')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.positions) {
+                    updatePositionsTable(data.positions);
+                    lastPositionUpdate = new Date().toISOString();
+                    flashUpdateIndicator('positions-update-indicator');
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching open positions:', error);
+            });
+    }
+    
+    function updatePositionsTable(positions) {
+        const tableBody = document.getElementById('open-positions-tbody');
+        if (!tableBody) return;
+        
+        tableBody.innerHTML = '';
+        
+        if (positions.length === 0) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="4" class="text-center text-muted py-4">
+                        <i class="bi bi-briefcase fs-3 mb-2 d-block"></i>
+                        <p class="mb-0">No open positions</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        positions.forEach(position => {
+            const tr = createPositionRow(position);
+            tableBody.appendChild(tr);
+        });
+    }
+    
+    function createPositionRow(position) {
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-position-id', position.position_id);
+        
+        const pnlClass = position.unrealized_pnl_usd >= 0 ? 'text-success' : 'text-danger';
+        const pnlPrefix = position.unrealized_pnl_usd >= 0 ? '+' : '';
+        
+        tr.innerHTML = `
+            <td><small>${position.token_symbol}</small></td>
+            <td><small>${parseFloat(position.quantity).toFixed(6)}</small></td>
+            <td><small>$${parseFloat(position.current_value_usd).toFixed(2)}</small></td>
+            <td>
+                <small class="${pnlClass}">
+                    ${pnlPrefix}$${parseFloat(position.unrealized_pnl_usd).toFixed(2)}
+                    <br>(${parseFloat(position.unrealized_pnl_percent).toFixed(1)}%)
+                </small>
+            </td>
+        `;
+        
+        return tr;
+    }
+    
+    // ========== DASHBOARD METRICS UPDATE ==========
+    function updateDashboardMetrics() {
+        fetch('/paper-trading/api/metrics/')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const portfolioValue = document.getElementById('portfolio-value');
+                    if (portfolioValue && data.current_balance) {
+                        portfolioValue.textContent = `$${parseFloat(data.current_balance).toFixed(2)}`;
+                    }
+                    
+                    const totalPnl = document.getElementById('total-pnl');
+                    if (totalPnl && data.total_pnl !== undefined) {
+                        const pnlValue = parseFloat(data.total_pnl);
+                        const prefix = pnlValue >= 0 ? '+' : '';
+                        totalPnl.innerHTML = `<span class="${pnlValue >= 0 ? 'text-success' : 'text-danger'}">${prefix}$${pnlValue.toFixed(2)}</span>`;
+                    }
+                    
+                    const winRate = document.getElementById('win-rate');
+                    if (winRate && data.win_rate !== undefined) {
+                        winRate.textContent = `${parseFloat(data.win_rate).toFixed(1)}%`;
+                    }
+                    
+                    if (data.trades_24h !== undefined) {
+                        const trades24h = document.getElementById('trades-24h');
+                        if (trades24h) trades24h.textContent = data.trades_24h;
+                    }
+                    
+                    if (data.total_trades !== undefined) {
+                        const totalTrades = document.getElementById('total-trades');
+                        if (totalTrades) totalTrades.textContent = data.total_trades;
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching metrics:', error);
+            });
+    }
+    
+    // ========== UI HELPER FUNCTIONS ==========
+    function flashUpdateIndicator(indicatorId) {
+        const indicator = document.getElementById(indicatorId);
+        if (indicator) {
+            indicator.classList.add('flash-update');
+            setTimeout(() => {
+                indicator.classList.remove('flash-update');
+            }, 1000);
+        }
+    }
+    
     function scrollToNewest() {
         const container = document.getElementById('thought-log-container');
         if (container) {
-            container.scrollTop = 0; // Scroll to top where newest thoughts are
+            container.scrollTop = 0;
         }
     }
     
@@ -707,12 +982,10 @@ window.paperTradingConfig = {
         }
     }
     
-    // Clear all thoughts function
     function clearThoughts() {
         if (confirm('Clear all AI thoughts from display?')) {
             const container = document.getElementById('thought-log-container');
             if (container) {
-                // Fade out all thoughts
                 const thoughts = container.querySelectorAll('.thought-log-step:not(.text-center)');
                 thoughts.forEach((thought, index) => {
                     setTimeout(() => {
@@ -721,7 +994,6 @@ window.paperTradingConfig = {
                     }, index * 50);
                 });
                 
-                // Reset counter after clearing
                 setTimeout(() => {
                     thoughtCount = 0;
                     updateThoughtCounter();
@@ -730,7 +1002,7 @@ window.paperTradingConfig = {
         }
     }
     
-    // Bot control functions
+    // ========== BOT CONTROL FUNCTIONS ==========
     function startBot() {
         fetch('/paper-trading/api/bot/start/', {
             method: 'POST',
@@ -776,10 +1048,9 @@ window.paperTradingConfig = {
             showToast('Error stopping bot', 'danger');
         });
     }
-
-    // Helper function to show toast notifications
+    
+    // ========== UTILITY FUNCTIONS ==========
     function showToast(message, type) {
-        // Create toast element if it doesn't exist
         let toastContainer = document.getElementById('toast-container');
         if (!toastContainer) {
             toastContainer = document.createElement('div');
@@ -797,13 +1068,11 @@ window.paperTradingConfig = {
         
         toastContainer.appendChild(toast);
         
-        // Auto-remove after 5 seconds
         setTimeout(() => {
             toast.remove();
         }, 5000);
     }
 
-    // Helper function to get CSRF token
     function getCookie(name) {
         let cookieValue = null;
         if (document.cookie && document.cookie !== '') {
@@ -819,16 +1088,29 @@ window.paperTradingConfig = {
         return cookieValue;
     }
     
-    // Start real-time updates when page loads
+    // ========== INITIALIZATION ==========
     document.addEventListener('DOMContentLoaded', function() {
-        // Initialize counter
         updateThoughtCounter();
         
-        // Update AI thoughts every 5 seconds
         setInterval(updateAIThoughts, window.paperTradingConfig.updateInterval);
         
-        // Initial update after 2 seconds
-        setTimeout(updateAIThoughts, 2000);
+        // Trades & positions every 3s
+        setInterval(() => {
+            updateRecentTrades(false);
+            updateOpenPositions();
+        }, 3000);
+        
+        // Metrics every 10s
+        setInterval(updateDashboardMetrics, 10000);
+        
+        // Initial loads
+        // Initial loads
+        setTimeout(() => {
+            updateAIThoughts();
+            updateRecentTrades(true);   // Initial load of trades
+            updateOpenPositions();
+            updateDashboardMetrics();
+        }, 1000);
     });
 </script>
 {% endblock %}

@@ -22,7 +22,12 @@ from django.db.models import Q, Sum, Avg, Count, F
 from django.utils import timezone
 from django.contrib import messages
 from django.core.cache import cache
-
+# Add to your existing imports if not already present:
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth.decorators import login_required
+from datetime import datetime
+from decimal import Decimal
 from .models import (
     PaperTradingAccount,
     PaperTrade,
@@ -1114,3 +1119,192 @@ def delete_trade(request: HttpRequest, trade_id: str) -> JsonResponse:
     except Exception as e:
         logger.error(f"Error deleting trade: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@require_http_methods(["GET"])
+def api_recent_trades(request):
+    """
+    API endpoint to get recent trades.
+    
+    Behavior:
+    - If 'since' parameter is provided: returns NEW trades after that timestamp
+    - If no 'since' parameter: returns the 10 most recent trades (initial load)
+    
+    Query Parameters:
+        since: ISO format timestamp to get trades after this time (optional)
+        limit: Maximum number of trades to return (default: 10, max: 50)
+    
+    Returns:
+        JSON response with recent trades data
+    """
+    try:
+        # Get the user's paper trading account
+        account = PaperTradingAccount.objects.filter(
+            user=request.user,
+            is_active=True
+        ).first()
+        
+        if not account:
+            return JsonResponse({
+                'success': False,
+                'error': 'No active paper trading account found'
+            })
+        
+        # Get parameters
+        since_param = request.GET.get('since', None)
+        limit = min(int(request.GET.get('limit', 10)), 50)  # Default 10, max 50
+        
+        # Build base query for trades
+        trades_query = PaperTrade.objects.filter(
+            account=account
+        ).select_related().order_by('-created_at')
+        
+        # If 'since' is provided, get only NEW trades after that timestamp
+        if since_param:
+            try:
+                # Parse ISO format timestamp
+                since_datetime = datetime.fromisoformat(
+                    since_param.replace('Z', '+00:00')
+                )
+                # Get trades created AFTER the since timestamp
+                trades_query = trades_query.filter(created_at__gt=since_datetime)
+                # For updates, we might get 0 trades if nothing new
+                trades = list(trades_query[:limit])
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Invalid since parameter: {since_param}, returning recent trades")
+                # If since parameter is invalid, just return recent trades
+                trades = list(trades_query[:limit])
+        else:
+            # No 'since' parameter - this is the initial load
+            # Always return the 10 most recent trades
+            trades = list(trades_query[:limit])
+        
+        # Serialize trades data
+        trades_data = []
+        for trade in trades:
+            trade_data = {
+                'trade_id': str(trade.trade_id),
+                'trade_type': trade.trade_type,
+                'token_symbol': trade.token_out_symbol or trade.token_in_symbol,
+                'token_out_symbol': trade.token_out_symbol,
+                'token_in_symbol': trade.token_in_symbol,
+                'amount_in': float(trade.amount_in) if trade.amount_in else 0,
+                'amount_out': float(trade.amount_out) if trade.amount_out else 0,
+                'amount_in_usd': float(trade.amount_in_usd),
+                'amount_out_usd': float(trade.amount_out_usd) if trade.amount_out_usd else 0,
+                'status': trade.status,
+                'created_at': trade.created_at.isoformat(),
+                'execution_time_ms': trade.execution_time_ms if hasattr(trade, 'execution_time_ms') else None,
+            }
+            
+            # Add P&L if available
+            if hasattr(trade, 'pnl_usd') and trade.pnl_usd is not None:
+                trade_data['pnl_usd'] = float(trade.pnl_usd)
+                trade_data['pnl_percent'] = float(trade.pnl_percent) if hasattr(trade, 'pnl_percent') and trade.pnl_percent else 0
+            
+            trades_data.append(trade_data)
+        
+        return JsonResponse({
+            'success': True,
+            'trades': trades_data,
+            'count': len(trades_data),
+            'timestamp': datetime.now().isoformat(),
+            'is_initial': since_param is None  # Flag to indicate if this is initial load
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in api_recent_trades: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': 'Failed to fetch recent trades'
+        }, status=500)
+
+
+
+
+
+
+@require_http_methods(["GET"])
+def api_open_positions(request):
+    """
+    API endpoint to get current open positions.
+    
+    Returns all open positions with current values and P&L calculations.
+    
+    Returns:
+        JSON response with open positions data
+    """
+    try:
+        # Get the user's paper trading account
+        account = PaperTradingAccount.objects.filter(
+            user=request.user,
+            is_active=True
+        ).first()
+        
+        if not account:
+            return JsonResponse({
+                'success': False,
+                'error': 'No active paper trading account found'
+            })
+        
+        # Get all open positions
+        positions = PaperPosition.objects.filter(
+            account=account,
+            is_open=True
+        ).order_by('-current_value_usd')
+        
+        # Serialize positions data
+        positions_data = []
+        total_value = Decimal('0')
+        total_pnl = Decimal('0')
+        
+        for position in positions:
+            # Calculate current metrics
+            current_value = position.current_value_usd or Decimal('0')
+            cost_basis = position.cost_basis_usd or Decimal('0')
+            unrealized_pnl = position.unrealized_pnl_usd or Decimal('0')
+            unrealized_pnl_percent = position.unrealized_pnl_percent or Decimal('0')
+            
+            position_data = {
+                'position_id': str(position.position_id),
+                'token_symbol': position.token_symbol,
+                'token_address': position.token_address,
+                'quantity': float(position.quantity),
+                'average_buy_price': float(position.average_buy_price),
+                'current_price': float(position.current_price) if position.current_price else 0,
+                'current_value_usd': float(current_value),
+                'cost_basis_usd': float(cost_basis),
+                'unrealized_pnl_usd': float(unrealized_pnl),
+                'unrealized_pnl_percent': float(unrealized_pnl_percent),
+                'position_opened_at': position.position_opened_at.isoformat() if position.position_opened_at else None,
+                'last_updated': position.updated_at.isoformat() if position.updated_at else None,
+            }
+            
+            positions_data.append(position_data)
+            total_value += current_value
+            total_pnl += unrealized_pnl
+        
+        # Calculate summary metrics
+        summary = {
+            'total_positions': len(positions_data),
+            'total_value_usd': float(total_value),
+            'total_unrealized_pnl_usd': float(total_pnl),
+            'total_unrealized_pnl_percent': float(
+                (total_pnl / (total_value - total_pnl) * 100) 
+                if (total_value - total_pnl) > 0 else 0
+            )
+        }
+        
+        return JsonResponse({
+            'success': True,
+            'positions': positions_data,
+            'summary': summary,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in api_open_positions: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': 'Failed to fetch open positions'
+        }, status=500)
