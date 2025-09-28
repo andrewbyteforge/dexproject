@@ -107,6 +107,9 @@ class EnhancedPaperTradingBot:
         self.trades_executed = 0
         self.successful_trades = 0
         
+        # Track last decision for each token (for performance metrics)
+        self.last_decisions = {}  # token_symbol -> decision dict
+        
         logger.info("[BOT] Enhanced Paper Trading Bot initialized")
     
     def initialize(self) -> bool:
@@ -301,6 +304,9 @@ class EnhancedPaperTradingBot:
                 price_history=prices[:-1]  # Don't include current price in history
             )
             
+            # Store decision for later use (when closing position)
+            self.last_decisions[symbol] = decision
+            
             # Log the decision
             logger.info(f"[THINK] AI Decision for {symbol}: {decision['action']} "
                        f"({decision['signal'].value}, {decision['confidence_score']:.0f}% confidence)")
@@ -322,6 +328,7 @@ class EnhancedPaperTradingBot:
         action = decision['action']
         position_size_percent = decision['position_size_percent']
         current_price = decision['current_price']
+        trade_start_time = datetime.now()
         
         logger.debug(f"[TRADE] Attempting {action} for {symbol} at ${current_price}")
         
@@ -391,7 +398,9 @@ class EnhancedPaperTradingBot:
                 if action == 'BUY':
                     self._handle_buy_position(symbol, amount_out, current_price, trade_value, decision)
                 else:  # SELL
-                    self._handle_sell_position(symbol, current_price, amount_out)
+                    # Calculate execution time
+                    execution_time_ms = int((datetime.now() - trade_start_time).total_seconds() * 1000)
+                    self._handle_sell_position(symbol, current_price, amount_out, decision, execution_time_ms)
                 
                 # Save account changes
                 self.account.total_trades += 1
@@ -472,14 +481,23 @@ class EnhancedPaperTradingBot:
             logger.error(f"[ERROR] Failed to handle buy position for {symbol}: {e}", exc_info=True)
             raise
     
-    def _handle_sell_position(self, symbol: str, current_price: Decimal, amount_out: Decimal):
+    def _handle_sell_position(
+        self, 
+        symbol: str, 
+        current_price: Decimal, 
+        amount_out: Decimal,
+        decision: Dict[str, Any],
+        execution_time_ms: int
+    ):
         """
-        Handle SELL trade - close position.
+        Handle SELL trade - close position and update performance metrics.
         
         Args:
             symbol: Token symbol
             current_price: Current token price
             amount_out: USD value received from sale
+            decision: AI decision dictionary that triggered the sell
+            execution_time_ms: Trade execution time in milliseconds
         """
         try:
             position = self.positions[symbol]
@@ -490,11 +508,7 @@ class EnhancedPaperTradingBot:
             
             logger.info(f"[DATA] P&L for {symbol}: ${pnl:.2f} ({pnl_percent:+.2f}%)")
             
-            # WORKAROUND: Delete any old closed positions for this token first
-            # This prevents unique constraint violations
-
-            
-            # Now close the current position
+            # Close the current position
             PaperPosition.objects.filter(
                 account=self.account,
                 token_symbol=symbol,
@@ -523,19 +537,17 @@ class EnhancedPaperTradingBot:
             else:
                 logger.info(f"[LOSS] Unprofitable trade: ${pnl:.2f}")
             
-            # Update AI performance metrics
+            # Update AI performance metrics with CORRECT field names
             self.ai_engine.update_performance_metrics({
                 'profitable': pnl > 0,
-                'pnl': pnl
+                'pnl_usd': pnl,  # ✅ FIXED: Correct field name
+                'lane_type': decision.get('lane_type', 'SMART'),  # Pass the lane that was used
+                'execution_time_ms': execution_time_ms  # Actual execution time
             })
             
         except Exception as e:
             logger.error(f"[ERROR] Failed to handle sell position for {symbol}: {e}", exc_info=True)
             raise
-
-
-
-
 
     def _update_session_metrics(self):
         """Update trading session metrics."""

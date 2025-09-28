@@ -1,8 +1,9 @@
+# In dexproject/urls.py - Add authentication URLs
+
 """
 URL configuration for dexproject project.
 
-Updated to include dashboard app URLs, paper trading URLs, and provide 
-proper routing for the complete trading platform.
+Updated to include dashboard app URLs, paper trading URLs, and authentication.
 
 File: dexproject/dexproject/urls.py
 """
@@ -15,13 +16,16 @@ urlpatterns = [
     # Admin interface
     path('admin/', admin.site.urls),
     
+    # Authentication URLs (ADD THIS)
+    path('accounts/', include('django.contrib.auth.urls')),
+    
     # Dashboard app (main interface)
     path('dashboard/', include('dashboard.urls')),
     
-    # Paper Trading app (NEW - PTphase1)
+    # Paper Trading app
     path('paper-trading/', include('paper_trading.urls')),
     
-    # API endpoints (future expansion)
+    # API endpoints
     path('api/trading/', include('trading.urls')),
     path('api/risk/', include('risk.urls')),
     path('api/wallet/', include('wallet.urls')),

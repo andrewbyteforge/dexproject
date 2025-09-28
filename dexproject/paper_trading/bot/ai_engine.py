@@ -79,6 +79,7 @@ class PaperTradingAIEngine:
         # Performance tracking
         self.decision_count = 0
         self.successful_decisions = 0
+        self.session_start_time = datetime.now()
         
         logger.info(f"[BOT] AI Engine initialized for session {session.session_id}")
     
@@ -485,62 +486,165 @@ class PaperTradingAIEngine:
         return "\n".join(reasoning_parts)
     
     def _log_thought(self, decision: Dict[str, Any]) -> None:
-        """Log the AI thought process to the database."""
+        """
+        Log the AI thought process to the database.
+        
+        Args:
+            decision: Complete decision dictionary with reasoning
+        """
         try:
-            # Simply log to console for now - model fields need fixing
-            logger.debug(f"[THOUGHT] Decision for {decision.get('token_symbol', '?')}: {decision.get('action', '?')} with {decision.get('confidence_score', 0):.0f}% confidence")
+            # Log to console for debugging
+            logger.debug(
+                f"[THOUGHT] Decision for {decision.get('token_symbol', '?')}: "
+                f"{decision.get('action', '?')} with {decision.get('confidence_score', 0):.0f}% confidence"
+            )
+            
+            # Note: PaperAIThoughtLog model creation disabled until model fields are verified
+            # This prevents database constraint errors during bot operation
+            
         except Exception as e:
-            logger.error(f"Failed to log thought: {e}")
+            logger.error(f"Failed to log thought: {e}", exc_info=True)
 
     def update_performance_metrics(self, trade_result: Dict[str, Any]) -> None:
         """
         Update performance metrics based on trade results.
         
+        This method tracks trading performance using the PaperPerformanceMetrics model.
+        It calculates win rates, P&L, and other key performance indicators.
+        
         Args:
-            trade_result: Dictionary containing trade outcome information
+            trade_result: Dictionary containing trade outcome information.
+                Expected keys:
+                - 'profitable': bool - Whether trade was profitable
+                - 'pnl_usd': Decimal - Profit/loss in USD
+                - 'lane_type': str - 'FAST' or 'SMART' lane
+                - 'execution_time_ms': int - Trade execution time
         """
         try:
-            # Get or create performance metrics
-            metrics, created = PaperPerformanceMetrics.objects.get_or_create(
-                session=self.session,
-                defaults={
-                    'total_decisions': 0,
-                    'successful_decisions': 0,
-                    'win_rate': Decimal("0"),
-                    'average_return': Decimal("0"),
-                    'sharpe_ratio': Decimal("0"),
-                    'max_drawdown': Decimal("0"),
-                    'total_pnl': Decimal("0"),
-                }
-            )
+            # Get the current time for period tracking
+            current_time = datetime.now()
             
-            # Update metrics
-            metrics.total_decisions += 1
-            if trade_result.get("profitable", False):
-                metrics.successful_decisions += 1
+            # Try to get existing metrics for this session, or create new one
+            metrics = PaperPerformanceMetrics.objects.filter(
+                session=self.session
+            ).order_by('-period_end').first()
+            
+            # If no metrics exist or current period is old, create new metrics record
+            if not metrics or (current_time - metrics.period_end) > timedelta(hours=24):
+                logger.info("[METRICS] Creating new performance metrics record")
+                metrics = PaperPerformanceMetrics.objects.create(
+                    session=self.session,
+                    period_start=self.session_start_time,
+                    period_end=current_time,
+                    # Trade statistics
+                    total_trades=0,
+                    winning_trades=0,
+                    losing_trades=0,
+                    win_rate=Decimal("0"),
+                    # Financial metrics
+                    total_pnl_usd=Decimal("0"),
+                    total_pnl_percent=Decimal("0"),
+                    avg_win_usd=Decimal("0"),
+                    avg_loss_usd=Decimal("0"),
+                    largest_win_usd=Decimal("0"),
+                    largest_loss_usd=Decimal("0"),
+                    # Risk metrics
+                    sharpe_ratio=None,
+                    max_drawdown_percent=Decimal("0"),
+                    profit_factor=None,
+                    # Execution metrics
+                    avg_execution_time_ms=0,
+                    total_gas_fees_usd=Decimal("0"),
+                    avg_slippage_percent=Decimal("0"),
+                    # Strategy metrics
+                    fast_lane_trades=0,
+                    smart_lane_trades=0,
+                    fast_lane_win_rate=Decimal("0"),
+                    smart_lane_win_rate=Decimal("0"),
+                )
+            
+            # Update trade count
+            metrics.total_trades += 1
+            
+            # Extract trade result data
+            pnl_usd = trade_result.get("pnl_usd", Decimal("0"))
+            is_profitable = trade_result.get("profitable", False)
+            lane_type = trade_result.get("lane_type", "SMART")
+            execution_time_ms = trade_result.get("execution_time_ms", 0)
+            
+            # Update winning/losing trades
+            if is_profitable:
+                metrics.winning_trades += 1
                 self.successful_decisions += 1
+                
+                # Update largest win
+                if pnl_usd > metrics.largest_win_usd:
+                    metrics.largest_win_usd = pnl_usd
+                
+                # Update average win (running average)
+                if metrics.winning_trades > 0:
+                    metrics.avg_win_usd = (
+                        (metrics.avg_win_usd * (metrics.winning_trades - 1) + pnl_usd) / 
+                        metrics.winning_trades
+                    )
+            else:
+                metrics.losing_trades += 1
+                
+                # Update largest loss
+                if abs(pnl_usd) > abs(metrics.largest_loss_usd):
+                    metrics.largest_loss_usd = pnl_usd
+                
+                # Update average loss (running average)
+                if metrics.losing_trades > 0:
+                    metrics.avg_loss_usd = (
+                        (metrics.avg_loss_usd * (metrics.losing_trades - 1) + pnl_usd) / 
+                        metrics.losing_trades
+                    )
             
             # Calculate win rate
-            if metrics.total_decisions > 0:
-                metrics.win_rate = (metrics.successful_decisions / metrics.total_decisions) * 100
+            if metrics.total_trades > 0:
+                metrics.win_rate = (Decimal(metrics.winning_trades) / Decimal(metrics.total_trades)) * 100
             
-            # Update P&L
-            pnl = trade_result.get("pnl", Decimal("0"))
-            metrics.total_pnl += pnl
+            # Update total P&L
+            metrics.total_pnl_usd += pnl_usd
             
-            # Simple average return calculation
-            if metrics.total_decisions > 0:
-                metrics.average_return = metrics.total_pnl / metrics.total_decisions
+            # Update execution time (running average)
+            if metrics.total_trades > 0:
+                metrics.avg_execution_time_ms = int(
+                    (metrics.avg_execution_time_ms * (metrics.total_trades - 1) + execution_time_ms) / 
+                    metrics.total_trades
+                )
             
+            # Update lane-specific metrics
+            if lane_type == "FAST":
+                metrics.fast_lane_trades += 1
+                if is_profitable and metrics.fast_lane_trades > 0:
+                    # Recalculate fast lane win rate
+                    fast_wins = int((metrics.fast_lane_win_rate * (metrics.fast_lane_trades - 1) / 100)) + 1
+                    metrics.fast_lane_win_rate = (Decimal(fast_wins) / Decimal(metrics.fast_lane_trades)) * 100
+            else:  # SMART lane
+                metrics.smart_lane_trades += 1
+                if is_profitable and metrics.smart_lane_trades > 0:
+                    # Recalculate smart lane win rate
+                    smart_wins = int((metrics.smart_lane_win_rate * (metrics.smart_lane_trades - 1) / 100)) + 1
+                    metrics.smart_lane_win_rate = (Decimal(smart_wins) / Decimal(metrics.smart_lane_trades)) * 100
+            
+            # Update period end to current time
+            metrics.period_end = current_time
+            
+            # Save updated metrics
             metrics.save()
             
+            # Log the performance update
             logger.info(
-                f"[DATA] Performance updated: Win rate {metrics.win_rate:.1f}%, "
-                f"Total P&L: ${metrics.total_pnl:.2f}"
+                f"📊 Performance updated: "
+                f"Win rate {metrics.win_rate:.1f}% ({metrics.winning_trades}W/{metrics.losing_trades}L), "
+                f"Total P&L: ${metrics.total_pnl_usd:.2f}, "
+                f"Trades: {metrics.total_trades}"
             )
             
         except Exception as e:
-            logger.error(f"Failed to update performance metrics: {e}")
+            logger.error(f"Failed to update performance metrics: {e}", exc_info=True)
 
 
 # Convenience function for creating AI engine
@@ -554,11 +658,10 @@ def create_ai_engine(session: PaperTradingSession) -> PaperTradingAIEngine:
     Returns:
         Configured AI engine instance
     """
-    # Get or create strategy configuration
-    
     # Get the account from the session
     account = session.account
     
+    # Get or create strategy configuration
     strategy_config, created = PaperStrategyConfiguration.objects.get_or_create(
         account=account,
         name=f"Strategy_{session.session_id}",

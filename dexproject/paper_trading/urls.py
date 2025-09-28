@@ -34,6 +34,9 @@ urlpatterns = [
     # RESTful API for data access and bot control
     # ==========================================================================
     
+    # AI Thoughts API - THE STAR FEATURE!
+    path('api/ai-thoughts/', views.api_ai_thoughts, name='api_ai_thoughts'),
+    
     # Portfolio data API
     path('api/portfolio/', views.api_portfolio_data, name='api_portfolio'),
     

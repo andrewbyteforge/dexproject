@@ -23,7 +23,6 @@ from django.db.models import Q, Sum, Avg, Count, F
 from django.utils import timezone
 from django.contrib import messages
 from django.core.cache import cache
-from paper_trading.models import PaperTradingAccount
 
 from .models import (
     PaperTradingAccount,
@@ -43,85 +42,107 @@ logger = logging.getLogger(__name__)
 # DASHBOARD VIEWS
 # =============================================================================
 
-# In paper_trading/views.py, use this minimal version that doesn't touch the database:
 
-@login_required
-def paper_trading_dashboard(request):
+def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
+    """
+    Main paper trading dashboard view.
+    
+    Displays portfolio summary, active positions, recent trades,
+    and performance metrics with AI thought logs.
+    
+    Args:
+        request: Django HTTP request
+        
+    Returns:
+        Rendered dashboard template
+    """
     try:
-        # Use the already imported PaperTradingAccount
+        # Get or create default account for user
         account = PaperTradingAccount.objects.filter(
             user=request.user,
             is_active=True
         ).first()
         
         if not account:
+            # Create default account if none exists
             account = PaperTradingAccount.objects.create(
                 user=request.user,
                 name=f"{request.user.username}'s Paper Trading Account"
             )
+            logger.info(f"Created new paper trading account for user {request.user.username}")
         
-        # Get other data
+        # Get active trading session if any
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='ACTIVE'
+            status='RUNNING'  # FIXED: Use correct status value
         ).first()
         
+        # Get recent trades (last 10)
         recent_trades = PaperTrade.objects.filter(
             account=account
         ).order_by('-created_at')[:10]
         
+        # Get open positions
         open_positions = PaperPosition.objects.filter(
             account=account,
             is_open=True
         ).order_by('-unrealized_pnl_usd')
         
-        # Calculate basic stats
+        # Get performance metrics (latest)
+        performance = PaperPerformanceMetrics.objects.filter(
+            session__account=account
+        ).order_by('-calculated_at').first()
+        
+        # Calculate summary statistics
         total_trades = PaperTrade.objects.filter(account=account).count()
+        successful_trades = PaperTrade.objects.filter(
+            account=account,
+            status='completed'  # FIXED: Use correct status value
+        ).count()
+        
+        # Get thought logs for recent decisions (FIXED field names)
+        recent_thoughts = PaperAIThoughtLog.objects.filter(
+            account=account
+        ).order_by('-created_at')[:5]
+        
+        # Calculate 24h performance
+        yesterday = timezone.now() - timedelta(days=1)
+        trades_24h = PaperTrade.objects.filter(
+            account=account,
+            created_at__gte=yesterday
+        ).aggregate(
+            count=Count('trade_id'),
+            total_volume=Sum('amount_in_usd')
+        )
         
         context = {
+            'page_title': 'Paper Trading Dashboard',
             'account': account,
             'active_session': active_session,
             'recent_trades': recent_trades,
             'open_positions': open_positions,
+            'performance': performance,
+            'recent_thoughts': recent_thoughts,
             'total_trades': total_trades,
+            'successful_trades': successful_trades,
+            'win_rate': (successful_trades / total_trades * 100) if total_trades > 0 else 0,
+            'trades_24h': trades_24h['count'] or 0,
+            'volume_24h': trades_24h['total_volume'] or 0,
             'current_balance': account.current_balance_usd,
             'initial_balance': account.initial_balance_usd,
             'total_pnl': account.total_pnl_usd,
             'return_percent': account.total_return_percent,
         }
         
-        # Try to render template, fallback to HTML if not found
-        try:
-            return render(request, 'paper_trading/dashboard.html', context)
-        except:
-            # Fallback HTML
-            return HttpResponse(f"""
-                <html>
-                <body style="padding: 20px;">
-                    <h1>Paper Trading Dashboard</h1>
-                    <p>Account: {account.name}</p>
-                    <p>Balance: ${account.current_balance_usd}</p>
-                    <p>Total Trades: {total_trades}</p>
-                    <p>Open Positions: {open_positions.count()}</p>
-                    <hr>
-                    <a href="/dashboard/">Back to Main Dashboard</a>
-                </body>
-                </html>
-            """)
-            
+        return render(request, 'paper_trading/dashboard.html', context)
+        
     except Exception as e:
-        return HttpResponse(f"Error: {str(e)}")
+        logger.error(f"Error loading paper trading dashboard: {e}", exc_info=True)
+        messages.error(request, f"Error loading dashboard: {str(e)}")
+        return redirect('dashboard:home')
 
 
 
-
-
-
-
-
-
-
-@login_required
 def trade_history(request: HttpRequest) -> HttpResponse:
     """
     Display detailed trade history with filtering and pagination.
@@ -195,7 +216,7 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         return redirect('paper_trading:dashboard')
 
 
-@login_required
+
 def portfolio_view(request: HttpRequest) -> HttpResponse:
     """
     Display detailed portfolio view with positions and analytics.
@@ -229,7 +250,7 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
             pos.current_value_usd for pos in open_positions
         )
         
-        total_invested = sum(pos.entry_price_usd * pos.quantity for pos in open_positions)
+        total_invested = sum(pos.average_entry_price_usd * pos.quantity for pos in open_positions)
         total_current_value = sum(pos.current_value_usd for pos in open_positions)
         unrealized_pnl = total_current_value - total_invested if total_invested > 0 else 0
         
@@ -264,7 +285,7 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
         return redirect('paper_trading:dashboard')
 
 
-@login_required
+
 @require_http_methods(["GET", "POST"])
 def configuration_view(request: HttpRequest) -> HttpResponse:
     """
@@ -303,12 +324,11 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                 strategy_config.trading_mode = request.POST.get('trading_mode', 'MODERATE')
                 strategy_config.use_fast_lane = request.POST.get('use_fast_lane') == 'on'
                 strategy_config.use_smart_lane = request.POST.get('use_smart_lane') == 'on'
-                strategy_config.max_position_size = Decimal(request.POST.get('max_position_size', '100'))
+                strategy_config.max_position_size_percent = Decimal(request.POST.get('max_position_size', '100'))
                 strategy_config.max_daily_trades = int(request.POST.get('max_daily_trades', '20'))
                 strategy_config.stop_loss_percent = Decimal(request.POST.get('stop_loss_percent', '5'))
                 strategy_config.take_profit_percent = Decimal(request.POST.get('take_profit_percent', '10'))
                 strategy_config.confidence_threshold = Decimal(request.POST.get('confidence_threshold', '60'))
-                strategy_config.max_gas_price_gwei = Decimal(request.POST.get('max_gas_price_gwei', '50'))
                 
                 # Save configuration
                 strategy_config.save()
@@ -351,7 +371,114 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
 # API ENDPOINTS
 # =============================================================================
 
-@login_required
+
+@require_http_methods(["GET"])
+@csrf_exempt
+def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for AI thought logs - THE STAR FEATURE!
+    
+    Returns recent AI decisions with full reasoning, confidence, and risk assessment.
+    Used for real-time dashboard updates to show bot's decision-making process.
+    
+    Args:
+        request: Django HTTP request with optional query parameters:
+            - limit: Number of thoughts to return (default: 10, max: 50)
+            - since: ISO timestamp to get thoughts after this time
+            - decision_type: Filter by decision type (BUY, SELL, HOLD, etc.)
+        
+    Returns:
+        JSON response with AI thought data
+    """
+    try:
+        account = PaperTradingAccount.objects.filter(
+            user=request.user,
+            is_active=True
+        ).first()
+        
+        if not account:
+            return JsonResponse({'error': 'No active account found'}, status=404)
+        
+        # Build query for thought logs
+        thoughts_query = PaperAIThoughtLog.objects.filter(account=account)
+        
+        # Apply filters
+        decision_type = request.GET.get('decision_type')
+        if decision_type:
+            thoughts_query = thoughts_query.filter(decision_type=decision_type)
+        
+        # Filter by time (for incremental updates)
+        since = request.GET.get('since')
+        if since:
+            try:
+                since_datetime = datetime.fromisoformat(since.replace('Z', '+00:00'))
+                thoughts_query = thoughts_query.filter(created_at__gt=since_datetime)
+            except ValueError:
+                logger.warning(f"Invalid 'since' timestamp: {since}")
+        
+        # Limit results
+        limit = min(int(request.GET.get('limit', 10)), 50)  # Cap at 50
+        thoughts_query = thoughts_query.order_by('-created_at')[:limit]
+        
+        # Build thoughts data with full AI transparency
+        thoughts_data = {
+            'thoughts': [
+                {
+                    # Basic decision info
+                    'id': str(thought.thought_id),
+                    'timestamp': thought.created_at.isoformat(),
+                    'decision_type': thought.decision_type,
+                    'token_symbol': thought.token_symbol,
+                    'token_address': thought.token_address,
+                    
+                    # Confidence and scoring
+                    'confidence_level': thought.confidence_level,
+                    'confidence_percent': float(thought.confidence_percent),
+                    'risk_score': float(thought.risk_score),
+                    'opportunity_score': float(thought.opportunity_score),
+                    
+                    # AI reasoning (the gold!)
+                    'primary_reasoning': thought.primary_reasoning,
+                    'key_factors': thought.key_factors,  # JSON field
+                    'positive_signals': thought.positive_signals,
+                    'negative_signals': thought.negative_signals,
+                    
+                    # Market context
+                    'market_data': thought.market_data,  # JSON field
+                    
+                    # Strategy info
+                    'lane_used': thought.lane_used,
+                    'strategy_name': thought.strategy_name,
+                    
+                    # Performance tracking
+                    'analysis_time_ms': thought.analysis_time_ms,
+                    
+                    # Related trade (if executed)
+                    'paper_trade_id': str(thought.paper_trade.trade_id) if thought.paper_trade else None,
+                }
+                for thought in thoughts_query
+            ],
+            'meta': {
+                'count': len(thoughts_query),
+                'account_id': str(account.account_id),
+                'has_more': len(thoughts_query) == limit,  # Indicates if there are more results
+                'filters_applied': {
+                    'decision_type': decision_type,
+                    'since': since,
+                    'limit': limit,
+                },
+            },
+            'timestamp': timezone.now().isoformat(),
+        }
+        
+        return JsonResponse(thoughts_data)
+        
+    except Exception as e:
+        logger.error(f"Error in AI thoughts API: {e}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+
 @require_http_methods(["GET"])
 @csrf_exempt
 def api_portfolio_data(request: HttpRequest) -> JsonResponse:
@@ -399,7 +526,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
                     'token_symbol': pos.token_symbol,
                     'token_address': pos.token_address,
                     'quantity': float(pos.quantity),
-                    'entry_price': float(pos.entry_price_usd),
+                    'entry_price': float(pos.average_entry_price_usd),
                     'current_price': float(pos.current_price_usd),
                     'current_value': float(pos.current_value_usd),
                     'unrealized_pnl': float(pos.unrealized_pnl_usd),
@@ -427,7 +554,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@login_required
+
 @require_http_methods(["GET"])
 @csrf_exempt
 def api_trades_data(request: HttpRequest) -> JsonResponse:
@@ -485,7 +612,7 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
                 }
                 for trade in trades_query
             ],
-            'count': trades_query.count(),
+            'count': len(trades_query),
             'timestamp': timezone.now().isoformat(),
         }
         
@@ -496,7 +623,7 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@login_required
+
 @require_http_methods(["GET", "POST"])
 @csrf_exempt
 def api_configuration(request: HttpRequest) -> JsonResponse:
@@ -533,12 +660,11 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
                     defaults={'name': 'Default Strategy'}
                 )
                 
-                # Update fields
+                # Update fields - FIXED field names
                 for field, value in data.items():
                     if hasattr(config, field):
-                        if field in ['max_position_size', 'stop_loss_percent', 
-                                   'take_profit_percent', 'confidence_threshold', 
-                                   'max_gas_price_gwei']:
+                        if field in ['max_position_size_percent', 'stop_loss_percent', 
+                                   'take_profit_percent', 'confidence_threshold']:
                             value = Decimal(str(value))
                         elif field in ['max_daily_trades']:
                             value = int(value)
@@ -576,12 +702,11 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
                     'trading_mode': config.trading_mode,
                     'use_fast_lane': config.use_fast_lane,
                     'use_smart_lane': config.use_smart_lane,
-                    'max_position_size': float(config.max_position_size),
+                    'max_position_size_percent': float(config.max_position_size_percent),
                     'max_daily_trades': config.max_daily_trades,
                     'stop_loss_percent': float(config.stop_loss_percent),
                     'take_profit_percent': float(config.take_profit_percent),
                     'confidence_threshold': float(config.confidence_threshold),
-                    'max_gas_price_gwei': float(config.max_gas_price_gwei),
                     'is_active': config.is_active,
                     'created_at': config.created_at.isoformat(),
                     'updated_at': config.updated_at.isoformat(),
@@ -596,7 +721,7 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@login_required
+
 @require_http_methods(["GET"])
 @csrf_exempt
 def api_performance_metrics(request: HttpRequest) -> JsonResponse:
@@ -623,9 +748,8 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         # Get latest performance metrics
         latest_metrics = PaperPerformanceMetrics.objects.filter(
             session__account=account
-        ).order_by('-date').first()
+        ).order_by('-calculated_at').first()
         
-        # Get historical metrics for chart (last 7 days)
         # Get historical metrics for chart (last 7 days)
         week_ago = timezone.now() - timedelta(days=7)
         historical_metrics = PaperPerformanceMetrics.objects.filter(
@@ -651,19 +775,17 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                     sum=Sum('amount_in_usd'))['sum'] or 0),
             },
             'latest_metrics': {
-                'date': latest_metrics.calculated_at.date().isoformat() if latest_metrics else None,
-                'daily_trades': latest_metrics.daily_trades if latest_metrics else 0,
-                'daily_volume': float(latest_metrics.daily_volume_usd) if latest_metrics else 0,
-                'daily_pnl': float(latest_metrics.daily_pnl_usd) if latest_metrics else 0,
+                'calculated_at': latest_metrics.calculated_at.isoformat() if latest_metrics else None,
+                'total_trades': latest_metrics.total_trades if latest_metrics else 0,
+                'total_pnl_usd': float(latest_metrics.total_pnl_usd) if latest_metrics else 0,
                 'win_rate': float(latest_metrics.win_rate) if latest_metrics else 0,
-                'sharpe_ratio': float(latest_metrics.sharpe_ratio) if latest_metrics else 0,
+                'sharpe_ratio': float(latest_metrics.sharpe_ratio) if latest_metrics and latest_metrics.sharpe_ratio else 0,
             } if latest_metrics else None,
             'historical': [
                 {
                     'date': m.calculated_at.date().isoformat(),
-                    'daily_pnl': float(m.daily_pnl_usd),
-                    'cumulative_pnl': float(m.cumulative_pnl_usd),
-                    'daily_trades': m.daily_trades,
+                    'total_pnl_usd': float(m.total_pnl_usd),
+                    'total_trades': m.total_trades,
                     'win_rate': float(m.win_rate),
                 }
                 for m in historical_metrics
@@ -678,7 +800,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@login_required
+
 @require_http_methods(["POST"])
 @csrf_exempt
 def api_start_bot(request: HttpRequest) -> JsonResponse:
@@ -703,7 +825,7 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         # Check for existing active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='ACTIVE'
+            status='RUNNING'
         ).first()
         
         if active_session:
@@ -712,18 +834,14 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
                 'session_id': str(active_session.session_id)
             }, status=400)
         
-        # Create new session
         # Create new session with required fields
         session = PaperTradingSession.objects.create(
             account=account,
-            status='ACTIVE',
-            starting_balance_usd=account.current_balance_usd  # Add the starting balance
+            status='RUNNING',
+            starting_balance_usd=account.current_balance_usd
         )
         
         logger.info(f"Started paper trading bot for account {account.account_id}")
-        
-        # Note: In production, you would actually start the bot process here
-        # For now, we just create the session
         
         return JsonResponse({
             'success': True,
@@ -736,7 +854,7 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@login_required
+
 @require_http_methods(["POST"])
 @csrf_exempt
 def api_stop_bot(request: HttpRequest) -> JsonResponse:
@@ -761,15 +879,15 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         # Find active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='ACTIVE'
+            status='RUNNING'
         ).first()
         
         if not active_session:
             return JsonResponse({'error': 'No active bot session found'}, status=404)
         
         # Stop the session
-        active_session.status = 'COMPLETED'
-        active_session.end_time = timezone.now()
+        active_session.status = 'STOPPED'
+        active_session.ended_at = timezone.now()
         active_session.save()
         
         logger.info(f"Stopped paper trading bot for account {account.account_id}")
@@ -785,12 +903,12 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@login_required
+
 @require_http_methods(["GET"])
 @csrf_exempt
 def api_bot_status(request: HttpRequest) -> JsonResponse:
     """
-    API endpoint to check bot status.
+    API endpoint to check bot status with recent AI thoughts.
     
     Args:
         request: Django HTTP request
@@ -810,44 +928,43 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         # Check for active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status='ACTIVE'
+            status='RUNNING'
         ).first()
         
         if active_session:
             # Get recent thought logs
-            # Get thought logs for recent decisions
             recent_thoughts = PaperAIThoughtLog.objects.filter(
                 account=account
-            ).order_by('-created_at')[:5]  # Also changed timestamp to created_at
+            ).order_by('-created_at')[:3]
             
             # Get today's metrics
-            # Get today's metrics
-            today_metrics = PaperPerformanceMetrics.objects.filter(
-                session=active_session,
-                calculated_at__date=timezone.now().date()
-            ).first()
+            latest_metrics = PaperPerformanceMetrics.objects.filter(
+                session=active_session
+            ).order_by('-calculated_at').first()
             
             status_data = {
                 'status': 'RUNNING',
                 'session': {
                     'id': str(active_session.session_id),
-                    'start_time': active_session.start_time.isoformat(),
-                    'trades_executed': active_session.trades_executed,
+                    'started_at': active_session.started_at.isoformat() if active_session.started_at else None,
+                    'total_trades_executed': active_session.total_trades_executed,
                     'current_balance': float(account.current_balance_usd),
                 },
                 'recent_thoughts': [
                     {
                         'timestamp': thought.created_at.isoformat(),
-                        'decision': thought.decision,
-                        'confidence': float(thought.confidence_score),
+                        'decision_type': thought.decision_type,
+                        'token_symbol': thought.token_symbol,
+                        'confidence_percent': float(thought.confidence_percent),
+                        'lane_used': thought.lane_used,
                     }
                     for thought in recent_thoughts
                 ],
-                'today_metrics': {
-                    'trades': today_metrics.daily_trades if today_metrics else 0,
-                    'volume': float(today_metrics.daily_volume_usd) if today_metrics else 0,
-                    'pnl': float(today_metrics.daily_pnl_usd) if today_metrics else 0,
-                },
+                'metrics': {
+                    'total_trades': latest_metrics.total_trades if latest_metrics else 0,
+                    'total_pnl_usd': float(latest_metrics.total_pnl_usd) if latest_metrics else 0,
+                    'win_rate': float(latest_metrics.win_rate) if latest_metrics else 0,
+                } if latest_metrics else None,
             }
         else:
             status_data = {
