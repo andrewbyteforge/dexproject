@@ -1,769 +1,627 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paper Trading Dashboard</title>
-    <style>
-        /* Modern Dashboard Styles */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: #333;
-            min-height: 100vh;
-        }
+{% extends 'base.html' %}
+{% load static %}
 
-        .dashboard-container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
+{% block title %}Paper Trading Dashboard - DEX Auto-Trading Bot{% endblock %}
 
-        .header {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
-        }
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/home.css' %}">
+<style>
+    /* Additional Paper Trading Specific Styles */
+    .thought-log-container {
+        max-height: 300px;
+        overflow-y: auto;
+        padding: 10px;
+    }
+    
+    .thought-log-step {
+        padding: 8px 12px;
+        margin-bottom: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        border-left: 3px solid #17a2b8;
+        font-size: 0.9em;
+        line-height: 1.4;
+    }
+    
+    .confidence-bar {
+        background: rgba(255, 255, 255, 0.2);
+        height: 4px;
+        border-radius: 2px;
+        overflow: hidden;
+        margin: 5px 0;
+    }
+    
+    .confidence-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #dc3545, #ffc107, #28a745);
+        border-radius: 2px;
+        transition: width 0.3s ease;
+    }
+    
+    .lane-badge {
+        font-size: 0.7em;
+        padding: 2px 6px;
+        border-radius: 8px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .fast-lane-badge {
+        background: #ff6b6b;
+        color: white;
+    }
+    
+    .smart-lane-badge {
+        background: #4ecdc4;
+        color: white;
+    }
+    
+    .bot-control-card {
+        background: linear-gradient(135deg, rgba(0, 123, 255, 0.1), rgba(40, 167, 69, 0.1));
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .ai-thoughts-card {
+        background: linear-gradient(135deg, rgba(23, 162, 184, 0.1), rgba(111, 66, 193, 0.1));
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    @keyframes pulse-dot {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 8px;
+    }
+    
+    .status-active {
+        background: #28a745;
+        animation: pulse-dot 2s infinite;
+    }
+    
+    .status-inactive {
+        background: #dc3545;
+    }
+</style>
+{% endblock %}
 
-        .header h1 {
-            margin: 0 0 10px 0;
-            color: #2c3e50;
-            font-size: 2.2em;
-            font-weight: 600;
-        }
-
-        .bot-status {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-top: 15px;
-        }
-
-        .status-indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: #e74c3c;
-            animation: pulse 2s infinite;
-        }
-
-        .status-active {
-            background: #27ae60;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .stat-card {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
-            transition: transform 0.2s ease;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-        }
-
-        .stat-label {
-            font-size: 0.9em;
-            color: #7f8c8d;
-            margin-bottom: 8px;
-            font-weight: 500;
-        }
-
-        .stat-value {
-            font-size: 1.8em;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-
-        .stat-change {
-            font-size: 0.85em;
-            font-weight: 500;
-        }
-
-        .positive { color: #27ae60; }
-        .negative { color: #e74c3c; }
-
-        .content-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-
-        /* AI Thought Log - The Star Feature! */
-        .ai-thoughts-section {
-            grid-column: 1 / -1;
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
-        }
-
-        .ai-thoughts-header {
-            display: flex;
-            justify-content: between;
-            align-items: center;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #ecf0f1;
-            padding-bottom: 15px;
-        }
-
-        .ai-thoughts-title {
-            font-size: 1.3em;
-            font-weight: 600;
-            color: #2c3e50;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .ai-status {
-            font-size: 0.9em;
-            padding: 5px 12px;
-            border-radius: 20px;
-            background: #3498db;
-            color: white;
-            font-weight: 500;
-        }
-
-        .thought-item {
-            background: #f8f9fa;
-            border-left: 4px solid #3498db;
-            padding: 15px;
-            margin-bottom: 15px;
-            border-radius: 8px;
-            transition: all 0.3s ease;
-        }
-
-        .thought-item:hover {
-            background: #e3f2fd;
-            box-shadow: 0 2px 10px rgba(52, 152, 219, 0.2);
-        }
-
-        .thought-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .thought-decision {
-            font-weight: 600;
-            font-size: 1.1em;
-        }
-
-        .thought-token {
-            color: #7f8c8d;
-            font-size: 0.9em;
-        }
-
-        .thought-time {
-            color: #95a5a6;
-            font-size: 0.85em;
-        }
-
-        .thought-confidence {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin: 8px 0;
-        }
-
-        .confidence-bar {
-            background: #ecf0f1;
-            height: 6px;
-            border-radius: 3px;
-            flex: 1;
-            overflow: hidden;
-        }
-
-        .confidence-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #e74c3c, #f39c12, #27ae60);
-            border-radius: 3px;
-            transition: width 0.3s ease;
-        }
-
-        .thought-reasoning {
-            color: #34495e;
-            line-height: 1.5;
-            margin-top: 10px;
-            font-size: 0.95em;
-        }
-
-        .lane-badge {
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.75em;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .fast-lane {
-            background: #ff6b6b;
-            color: white;
-        }
-
-        .smart-lane {
-            background: #4ecdc4;
-            color: white;
-        }
-
-        .panel {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
-        }
-
-        .panel-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #ecf0f1;
-            padding-bottom: 15px;
-        }
-
-        .panel-title {
-            font-size: 1.2em;
-            font-weight: 600;
-            color: #2c3e50;
-            margin: 0;
-        }
-
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .table th,
-        .table td {
-            padding: 12px 8px;
-            text-align: left;
-            border-bottom: 1px solid #ecf0f1;
-        }
-
-        .table th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #2c3e50;
-            font-size: 0.9em;
-        }
-
-        .table td {
-            font-size: 0.9em;
-        }
-
-        .badge {
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 0.75em;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .badge-success { background: #d4edda; color: #155724; }
-        .badge-danger { background: #f8d7da; color: #721c24; }
-        .badge-warning { background: #fff3cd; color: #856404; }
-
-        .btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 6px;
-            font-size: 0.9em;
-            font-weight: 500;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            transition: all 0.2s ease;
-        }
-
-        .btn-primary {
-            background: #3498db;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #2980b9;
-        }
-
-        .btn-success {
-            background: #27ae60;
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #229954;
-        }
-
-        .btn-danger {
-            background: #e74c3c;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c0392b;
-        }
-
-        .no-data {
-            text-align: center;
-            color: #7f8c8d;
-            padding: 40px;
-            font-style: italic;
-        }
-
-        /* Responsive Design */
-        @media (max-width: 768px) {
-            .content-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            body {
-                padding: 10px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="dashboard-container">
-        <!-- Header -->
-        <div class="header">
-            <h1>🤖 Paper Trading Dashboard</h1>
-            <p style="margin: 0; color: #7f8c8d;">Real-time AI-powered trading simulation</p>
-            
-            <div class="bot-status">
-                <div class="status-indicator {% if active_session %}status-active{% endif %}"></div>
+{% block content %}
+<div class="container-fluid main-content">
+    <!-- Dashboard Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <strong>Bot Status:</strong> 
-                    <span id="bot-status">{% if active_session %}RUNNING{% else %}STOPPED{% endif %}</span>
+                    <h1 class="h2 mb-2">
+                        <i class="bi bi-file-earmark-play me-2"></i>
+                        Paper Trading Dashboard
+                    </h1>
+                    <p class="text-muted mb-0">Risk-free AI trading simulation with real market data</p>
                 </div>
-                <div style="margin-left: auto;">
-                    {% if active_session %}
-                        <button class="btn btn-danger" onclick="stopBot()">Stop Bot</button>
-                    {% else %}
-                        <button class="btn btn-success" onclick="startBot()">Start Bot</button>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-
-        <!-- Stats Grid -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Portfolio Value</div>
-                <div class="stat-value">${{ current_balance|floatformat:2 }}</div>
-                <div class="stat-change {% if total_pnl >= 0 %}positive{% else %}negative{% endif %}">
-                    {% if total_pnl >= 0 %}+{% endif %}{{ return_percent|floatformat:2 }}%
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total P&L</div>
-                <div class="stat-value {% if total_pnl >= 0 %}positive{% else %}negative{% endif %}">
-                    {% if total_pnl >= 0 %}+{% endif %} ${{ total_pnl|floatformat:2 }}
-                </div>
-                <div class="stat-change">Win Rate: {{ win_rate|floatformat:1 }}%</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">24h Activity</div>
-                <div class="stat-value">{{ trades_24h }} trades</div>
-                <div class="stat-change">Volume: ${{ volume_24h|floatformat:2 }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total Trades</div>
-                <div class="stat-value">{{ total_trades }}</div>
-                <div class="stat-change positive">{{ successful_trades }} successful</div>
-            </div>
-        </div>
-
-        <!-- AI Thought Log Section - THE STAR FEATURE! -->
-        <div class="ai-thoughts-section">
-            <div class="ai-thoughts-header">
-                <div class="ai-thoughts-title">
-                    🧠 AI Decision Stream
-                    <span class="ai-status" id="ai-status">Live</span>
-                </div>
-                <div style="color: #7f8c8d; font-size: 0.9em;">
-                    Last updated: <span id="last-update">{{ recent_thoughts.0.created_at|date:"H:i:s"|default:"Never" }}</span>
-                </div>
-            </div>
-            
-            <div id="thoughts-container">
-                {% if recent_thoughts %}
-                    {% for thought in recent_thoughts %}
-                    <div class="thought-item" data-thought-id="{{ thought.thought_id }}">
-                        <div class="thought-header">
-                            <div>
-                                <span class="thought-decision">{{ thought.decision_type }}</span>
-                                <span class="thought-token">{{ thought.token_symbol }}</span>
-                                <span class="lane-badge {% if thought.lane_used == 'FAST' %}fast-lane{% else %}smart-lane{% endif %}">
-                                    {{ thought.lane_used }} Lane
-                                </span>
-                            </div>
-                            <div class="thought-time">
-                                {{ thought.created_at|date:"H:i:s" }}
-                            </div>
-                        </div>
-                        
-                        <div class="thought-confidence">
-                            <span style="font-size: 0.9em; color: #7f8c8d;">Confidence:</span>
-                            <div class="confidence-bar">
-                                <div class="confidence-fill" style="width: {{ thought.confidence_percent }}%"></div>
-                            </div>
-                            <span style="font-weight: 600; color: #2c3e50;">{{ thought.confidence_percent|floatformat:0 }}%</span>
-                        </div>
-                        
-                        <div class="thought-reasoning">
-                            {{ thought.primary_reasoning|default:"Analyzing market conditions..." }}
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="no-data">
-                        🤔 No AI decisions yet. Start the bot to see real-time decision-making!
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- AI Thought Log Section - Added to existing design -->
-        <div class="panel" style="margin-bottom: 20px;">
-            <div class="panel-header">
-                <h3 class="panel-title">🧠 AI Decision Stream</h3>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <span style="color: #7f8c8d; font-size: 0.9em;">
-                        Auto-refresh: <span id="last-update">{{ recent_thoughts.0.created_at|date:"H:i:s"|default:"Never" }}</span>
+                <div class="d-flex align-items-center">
+                    <span class="badge bg-info me-3">
+                        <i class="bi bi-shield-check me-1"></i>
+                        DEMO MODE
                     </span>
-                    <span class="badge badge-success" id="ai-status" style="background: #27ae60; color: white;">Live</span>
-                </div>
-            </div>
-            
-            <div id="thoughts-container" style="max-height: 400px; overflow-y: auto;">
-                {% if recent_thoughts %}
-                    {% for thought in recent_thoughts %}
-                    <div class="thought-item" data-thought-id="{{ thought.thought_id }}" style="background: #f8f9fa; border-left: 4px solid #3498db; padding: 15px; margin-bottom: 15px; border-radius: 8px; transition: all 0.3s ease;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                            <div>
-                                <span style="font-weight: 600; font-size: 1.1em; color: #2c3e50;">{{ thought.decision_type }}</span>
-                                <span style="color: #7f8c8d; font-size: 0.9em; margin-left: 10px;">{{ thought.token_symbol }}</span>
-                                <span class="badge" style="margin-left: 10px; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600; text-transform: uppercase; {% if thought.lane_used == 'FAST' %}background: #ff6b6b; color: white;{% else %}background: #4ecdc4; color: white;{% endif %}">
-                                    {{ thought.lane_used }} Lane
-                                </span>
-                            </div>
-                            <div style="color: #95a5a6; font-size: 0.85em;">
-                                {{ thought.created_at|date:"H:i:s" }}
-                            </div>
-                        </div>
-                        
-                        <div style="display: flex; align-items: center; gap: 10px; margin: 8px 0;">
-                            <span style="font-size: 0.9em; color: #7f8c8d;">Confidence:</span>
-                            <div style="background: #ecf0f1; height: 6px; border-radius: 3px; flex: 1; overflow: hidden;">
-                                <div style="height: 100%; background: linear-gradient(90deg, #e74c3c, #f39c12, #27ae60); border-radius: 3px; transition: width 0.3s ease; width: {{ thought.confidence_percent }}%;"></div>
-                            </div>
-                            <span style="font-weight: 600; color: #2c3e50;">{{ thought.confidence_percent|floatformat:0 }}%</span>
-                        </div>
-                        
-                        <div style="color: #34495e; line-height: 1.5; margin-top: 10px; font-size: 0.95em;">
-                            {{ thought.primary_reasoning|default:"Analyzing market conditions..." }}
-                        </div>
+                    <div class="d-flex align-items-center">
+                        <span class="me-2 small">Bot Status:</span>
+                        <span class="status-dot {% if active_session %}status-active{% else %}status-inactive{% endif %}"></span>
+                        <span class="small" id="bot-status-text">{% if active_session %}RUNNING{% else %}STOPPED{% endif %}</span>
                     </div>
-                    {% endfor %}
-                {% else %}
-                    <div style="text-align: center; color: #7f8c8d; padding: 40px; font-style: italic;">
-                        🤔 No AI decisions yet. Start the bot to see real-time decision-making!
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- Content Grid -->
-        <div class="content-grid">
-            <!-- Recent Trades Panel -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h3 class="panel-title">Recent Trades</h3>
-                    <a href="/paper-trading/trades/" class="btn btn-primary">View All</a>
                 </div>
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Type</th>
-                            <th>Token</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for trade in recent_trades %}
-                        <tr>
-                            <td>{{ trade.created_at|date:"H:i" }}</td>
-                            <td>
-                                <span class="badge {% if trade.trade_type == 'buy' %}badge-success{% else %}badge-danger{% endif %}">
-                                    {{ trade.trade_type|upper }}
-                                </span>
-                            </td>
-                            <td>{{ trade.token_out_symbol }}</td>
-                            <td>${{ trade.amount_in_usd|floatformat:2 }}</td>
-                            <td>
-                                <span class="badge {% if trade.status == 'completed' %}badge-success{% elif trade.status == 'failed' %}badge-danger{% else %}badge-warning{% endif %}">
-                                    {{ trade.status|upper }}
-                                </span>
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="5" class="no-data">
-                                No trades yet
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Open Positions Panel -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h3 class="panel-title">Open Positions</h3>
-                    <a href="/paper-trading/portfolio/" class="btn btn-primary">View Portfolio</a>
-                </div>
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Token</th>
-                            <th>Quantity</th>
-                            <th>Value</th>
-                            <th>P&L</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for position in open_positions %}
-                        <tr>
-                            <td>{{ position.token_symbol }}</td>
-                            <td>{{ position.quantity|floatformat:6 }}</td>
-                            <td>${{ position.current_value_usd|floatformat:2 }}</td>
-                            <td class="{% if position.unrealized_pnl_usd >= 0 %}positive{% else %}negative{% endif %}">
-                                {% if position.unrealized_pnl_usd >= 0 %}+{% endif %}${{ position.unrealized_pnl_usd|floatformat:2 }}
-                                ({{ position.unrealized_pnl_percent|floatformat:1 }}%)
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="4" class="no-data">
-                                No open positions
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
             </div>
         </div>
     </div>
 
-    <script>
-        // Real-time AI Thoughts Updates
-        let lastThoughtUpdate = new Date().toISOString();
-        
-        function updateAIThoughts() {
-            fetch(`/paper-trading/api/ai-thoughts/?since=${lastThoughtUpdate}&limit=5`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.thoughts && data.thoughts.length > 0) {
-                        updateThoughtsDisplay(data.thoughts);
-                        lastThoughtUpdate = new Date().toISOString();
-                        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
-                        document.getElementById('ai-status').textContent = 'Live';
-                        document.getElementById('ai-status').style.background = '#27ae60';
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching AI thoughts:', error);
-                    document.getElementById('ai-status').textContent = 'Error';
-                    document.getElementById('ai-status').style.background = '#e74c3c';
-                });
-        }
-        
-        function updateThoughtsDisplay(newThoughts) {
-            const container = document.getElementById('thoughts-container');
-            
-            // Add new thoughts to the top
-            newThoughts.reverse().forEach(thought => {
-                // Check if thought already exists
-                if (document.querySelector(`[data-thought-id="${thought.id}"]`)) {
-                    return;
-                }
-                
-                const thoughtElement = createThoughtElement(thought);
-                container.insertBefore(thoughtElement, container.firstChild);
-            });
-            
-            // Keep only the latest 10 thoughts
-            const thoughtItems = container.querySelectorAll('.thought-item');
-            if (thoughtItems.length > 10) {
-                for (let i = 10; i < thoughtItems.length; i++) {
-                    thoughtItems[i].remove();
-                }
-            }
-            
-            // Animate new thoughts
-            const newElements = container.querySelectorAll('.thought-item:not(.animated)');
-            newElements.forEach(el => {
-                el.classList.add('animated');
-                el.style.animation = 'slideIn 0.5s ease-out';
-            });
-        }
-        
-        function createThoughtElement(thought) {
-            const div = document.createElement('div');
-            div.className = 'thought-item';
-            div.setAttribute('data-thought-id', thought.id);
-            div.style.cssText = 'background: #f8f9fa; border-left: 4px solid #3498db; padding: 15px; margin-bottom: 15px; border-radius: 8px; transition: all 0.3s ease;';
-            
-            const time = new Date(thought.timestamp).toLocaleTimeString();
-            const laneClass = thought.lane_used === 'FAST' ? 'background: #ff6b6b; color: white;' : 'background: #4ecdc4; color: white;';
-            
-            div.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <div>
-                        <span style="font-weight: 600; font-size: 1.1em; color: #2c3e50;">${thought.decision_type}</span>
-                        <span style="color: #7f8c8d; font-size: 0.9em; margin-left: 10px;">${thought.token_symbol}</span>
-                        <span style="margin-left: 10px; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600; text-transform: uppercase; ${laneClass}">
-                            ${thought.lane_used} Lane
+    <!-- Key Metrics Row -->
+    <div class="row mb-4">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-wallet2 text-primary fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1">${{ current_balance|floatformat:2 }}</h3>
+                    <p class="text-muted mb-2">Portfolio Value</p>
+                    <div class="small">
+                        <span class="{% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            {% if total_pnl >= 0 %}+{% endif %}{{ return_percent|floatformat:2 }}%
                         </span>
+                        return
                     </div>
-                    <div style="color: #95a5a6; font-size: 0.85em;">${time}</div>
                 </div>
-                
-                <div style="display: flex; align-items: center; gap: 10px; margin: 8px 0;">
-                    <span style="font-size: 0.9em; color: #7f8c8d;">Confidence:</span>
-                    <div style="background: #ecf0f1; height: 6px; border-radius: 3px; flex: 1; overflow: hidden;">
-                        <div style="height: 100%; background: linear-gradient(90deg, #e74c3c, #f39c12, #27ae60); border-radius: 3px; transition: width 0.3s ease; width: ${thought.confidence_percent}%;"></div>
-                    </div>
-                    <span style="font-weight: 600; color: #2c3e50;">${Math.round(thought.confidence_percent)}%</span>
-                </div>
-                
-                <div style="color: #34495e; line-height: 1.5; margin-top: 10px; font-size: 0.95em;">
-                    ${thought.primary_reasoning || 'Analyzing market conditions...'}
-                </div>
-            `;
-            
-            return div;
-        }
+            </div>
+        </div>
         
-        // Bot control functions
-        function startBot() {
-            fetch('/paper-trading/api/bot/start/', {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': getCookie('csrftoken'),
-                    'Content-Type': 'application/json'
-                }
-            })
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-graph-up {% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %} fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1 {% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        {% if total_pnl >= 0 %}+{% endif %}${{ total_pnl|floatformat:2 }}
+                    </h3>
+                    <p class="text-muted mb-2">Total P&L</p>
+                    <div class="small">
+                        Win Rate: <span class="text-info">{{ win_rate|floatformat:1 }}%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-activity text-warning fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1">{{ trades_24h }}</h3>
+                    <p class="text-muted mb-2">24h Trades</p>
+                    <div class="small">
+                        Volume: <span class="text-info">${{ volume_24h|floatformat:2 }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-list-check text-info fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1">{{ total_trades }}</h3>
+                    <p class="text-muted mb-2">Total Trades</p>
+                    <div class="small">
+                        <span class="text-success">{{ successful_trades }}</span>
+                        successful
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bot Control Row -->
+    <div class="row mb-4">
+        <div class="col-lg-6 mb-3">
+            <div class="card card-glass bot-control-card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-robot me-2"></i>
+                        Bot Control Center
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">Automated paper trading with AI decision making</p>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <strong>Status:</strong>
+                            <span class="ms-2">
+                                <span class="status-dot {% if active_session %}status-active{% else %}status-inactive{% endif %}"></span>
+                                {% if active_session %}Running{% else %}Stopped{% endif %}
+                            </span>
+                            {% if active_session %}
+                                <div class="small text-muted mt-1">
+                                    Started: {{ active_session.start_time|date:"M d, H:i" }}
+                                </div>
+                            {% endif %}
+                        </div>
+                        {% if active_session %}
+                            <button class="btn btn-danger" onclick="stopBot()">
+                                <i class="bi bi-stop-fill me-2"></i>
+                                Stop Bot
+                            </button>
+                        {% else %}
+                            <button class="btn btn-success" onclick="startBot()">
+                                <i class="bi bi-play-fill me-2"></i>
+                                Start Bot
+                            </button>
+                        {% endif %}
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-2">
+                            <a href="/paper-trading/configuration/" class="btn btn-outline-warning w-100">
+                                <i class="bi bi-gear me-2"></i>
+                                Configure Strategy
+                            </a>
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <button class="btn btn-outline-info w-100" onclick="location.reload()">
+                                <i class="bi bi-arrow-clockwise me-2"></i>
+                                Refresh Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-3">
+            <div class="card card-glass ai-thoughts-card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-brain me-2"></i>
+                        AI Decision Stream
+                    </h5>
+                    <small class="text-muted">
+                        <span class="badge bg-success" id="ai-status">Live</span>
+                    </small>
+                </div>
+                <div class="card-body p-0">
+                    <div class="thought-log-container" id="thought-log-container">
+                        {% if recent_thoughts %}
+                            {% for thought in recent_thoughts %}
+                            <div class="thought-log-step" data-thought-id="{{ thought.thought_id }}">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <div>
+                                        <strong>{{ thought.decision_type }}</strong>
+                                        <span class="text-muted ms-2">{{ thought.token_symbol }}</span>
+                                        <span class="lane-badge {% if thought.lane_used == 'FAST' %}fast-lane-badge{% else %}smart-lane-badge{% endif %} ms-2">
+                                            {{ thought.lane_used }}
+                                        </span>
+                                    </div>
+                                    <small class="text-muted">{{ thought.created_at|date:"H:i:s" }}</small>
+                                </div>
+                                <div class="d-flex align-items-center mb-2">
+                                    <small class="me-2">Confidence:</small>
+                                    <div class="confidence-bar flex-grow-1">
+                                        <div class="confidence-fill" style="width: {{ thought.confidence_percent }}%"></div>
+                                    </div>
+                                    <small class="ms-2 fw-bold">{{ thought.confidence_percent|floatformat:0 }}%</small>
+                                </div>
+                                <div class="small">
+                                    {{ thought.primary_reasoning|default:"Analyzing market conditions..." }}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="thought-log-step text-muted text-center">
+                                <i class="bi bi-hourglass-split me-2"></i>
+                                No AI decisions yet. Start the bot to see real-time analysis!
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trading Data Row -->
+    <div class="row mb-4">
+        <div class="col-lg-6 mb-3">
+            <div class="card card-glass">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-clock-history me-2"></i>
+                        Recent Trades
+                    </h5>
+                    <a href="/paper-trading/trades/" class="btn btn-sm btn-outline-light">
+                        <i class="bi bi-list-ul me-1"></i>
+                        View All
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% if recent_trades %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Type</th>
+                                        <th>Token</th>
+                                        <th>Amount</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for trade in recent_trades %}
+                                    <tr>
+                                        <td><small>{{ trade.created_at|date:"H:i" }}</small></td>
+                                        <td>
+                                            <span class="badge {% if trade.trade_type == 'BUY' %}bg-success{% else %}bg-danger{% endif %}">
+                                                {{ trade.trade_type }}
+                                            </span>
+                                        </td>
+                                        <td><small>{{ trade.token_out_symbol }}</small></td>
+                                        <td><small>${{ trade.amount_in_usd|floatformat:2 }}</small></td>
+                                        <td>
+                                            <span class="badge {% if trade.status == 'COMPLETED' %}bg-success{% elif trade.status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
+                                                {{ trade.status }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center text-muted py-4">
+                            <i class="bi bi-graph-up fs-1 mb-3 d-block"></i>
+                            <p>No trades yet. Start the bot to begin paper trading!</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-3">
+            <div class="card card-glass">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-briefcase me-2"></i>
+                        Open Positions
+                    </h5>
+                    <a href="/paper-trading/portfolio/" class="btn btn-sm btn-outline-light">
+                        <i class="bi bi-pie-chart me-1"></i>
+                        Portfolio
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% if open_positions %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Token</th>
+                                        <th>Quantity</th>
+                                        <th>Value</th>
+                                        <th>P&L</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for position in open_positions %}
+                                    <tr>
+                                        <td><small>{{ position.token_symbol }}</small></td>
+                                        <td><small>{{ position.quantity|floatformat:6 }}</small></td>
+                                        <td><small>${{ position.current_value_usd|floatformat:2 }}</small></td>
+                                        <td>
+                                            <small class="{% if position.unrealized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                                {% if position.unrealized_pnl_usd >= 0 %}+{% endif %}${{ position.unrealized_pnl_usd|floatformat:2 }}
+                                                <br>({{ position.unrealized_pnl_percent|floatformat:1 }}%)
+                                            </small>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center text-muted py-4">
+                            <i class="bi bi-briefcase fs-1 mb-3 d-block"></i>
+                            <p>No open positions. Bot will create positions when opportunities are found.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Navigation Row -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-lightning me-2"></i>
+                        Quick Actions
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 mb-2">
+                            <a href="/paper-trading/trades/" class="btn btn-outline-primary w-100">
+                                <i class="bi bi-list-ul me-2"></i>
+                                Trade History
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <a href="/paper-trading/portfolio/" class="btn btn-outline-success w-100">
+                                <i class="bi bi-pie-chart me-2"></i>
+                                Portfolio View
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <a href="/paper-trading/configuration/" class="btn btn-outline-warning w-100">
+                                <i class="bi bi-gear me-2"></i>
+                                Strategy Config
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-2">
+                            <a href="/dashboard/" class="btn btn-outline-info w-100">
+                                <i class="bi bi-arrow-left me-2"></i>
+                                Main Dashboard
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Dashboard Configuration -->
+<script>
+window.paperTradingConfig = {
+    apiBaseUrl: '/paper-trading/api/',
+    updateInterval: 5000, // 5 seconds
+    maxThoughts: 10
+};
+</script>
+
+<!-- Paper Trading Dashboard JavaScript -->
+<script>
+    // Real-time AI Thoughts Updates
+    let lastThoughtUpdate = new Date().toISOString();
+    
+    function updateAIThoughts() {
+        fetch(`/paper-trading/api/ai-thoughts/?since=${lastThoughtUpdate}&limit=5`)
             .then(response => response.json())
             .then(data => {
-                if (data.success) {
-                    alert('Bot started successfully');
-                    location.reload();
-                } else {
-                    alert('Failed to start bot: ' + data.error);
+                if (data.thoughts && data.thoughts.length > 0) {
+                    updateThoughtsDisplay(data.thoughts);
+                    lastThoughtUpdate = new Date().toISOString();
+                    document.getElementById('ai-status').textContent = 'Live';
+                    document.getElementById('ai-status').className = 'badge bg-success';
                 }
             })
             .catch(error => {
-                console.error('Error starting bot:', error);
-                alert('Error starting bot');
+                console.error('Error fetching AI thoughts:', error);
+                document.getElementById('ai-status').textContent = 'Error';
+                document.getElementById('ai-status').className = 'badge bg-danger';
             });
-        }
-
-        function stopBot() {
-            fetch('/paper-trading/api/bot/stop/', {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': getCookie('csrftoken'),
-                    'Content-Type': 'application/json'
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Bot stopped successfully');
-                    location.reload();
-                } else {
-                    alert('Failed to stop bot: ' + data.error);
-                }
-            })
-            .catch(error => {
-                console.error('Error stopping bot:', error);
-                alert('Error stopping bot');
-            });
-        }
-
-        // Helper function to get CSRF token
-        function getCookie(name) {
-            let cookieValue = null;
-            if (document.cookie && document.cookie !== '') {
-                const cookies = document.cookie.split(';');
-                for (let i = 0; i < cookies.length; i++) {
-                    const cookie = cookies[i].trim();
-                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                        break;
-                    }
-                }
+    }
+    
+    function updateThoughtsDisplay(newThoughts) {
+        const container = document.getElementById('thought-log-container');
+        
+        // Add new thoughts to the top
+        newThoughts.reverse().forEach(thought => {
+            // Check if thought already exists
+            if (document.querySelector(`[data-thought-id="${thought.id}"]`)) {
+                return;
             }
-            return cookieValue;
-        }
-        
-        // Start real-time updates when page loads
-        document.addEventListener('DOMContentLoaded', function() {
-            // Update AI thoughts every 5 seconds
-            setInterval(updateAIThoughts, 5000);
             
-            // Initial update after 2 seconds
-            setTimeout(updateAIThoughts, 2000);
+            const thoughtElement = createThoughtElement(thought);
+            container.insertBefore(thoughtElement, container.firstChild);
         });
         
-        // Add slide-in animation
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes slideIn {
-                from {
-                    opacity: 0;
-                    transform: translateX(-20px);
-                }
-                to {
-                    opacity: 1;
-                    transform: translateX(0);
+        // Keep only the latest 10 thoughts
+        const thoughtItems = container.querySelectorAll('.thought-log-step');
+        if (thoughtItems.length > 10) {
+            for (let i = 10; i < thoughtItems.length; i++) {
+                thoughtItems[i].remove();
+            }
+        }
+    }
+    
+    function createThoughtElement(thought) {
+        const div = document.createElement('div');
+        div.className = 'thought-log-step';
+        div.setAttribute('data-thought-id', thought.id);
+        
+        const time = new Date(thought.timestamp).toLocaleTimeString();
+        const laneClass = thought.lane_used === 'FAST' ? 'fast-lane-badge' : 'smart-lane-badge';
+        
+        div.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <strong>${thought.decision_type}</strong>
+                    <span class="text-muted ms-2">${thought.token_symbol}</span>
+                    <span class="lane-badge ${laneClass} ms-2">${thought.lane_used}</span>
+                </div>
+                <small class="text-muted">${time}</small>
+            </div>
+            <div class="d-flex align-items-center mb-2">
+                <small class="me-2">Confidence:</small>
+                <div class="confidence-bar flex-grow-1">
+                    <div class="confidence-fill" style="width: ${thought.confidence_percent}%"></div>
+                </div>
+                <small class="ms-2 fw-bold">${Math.round(thought.confidence_percent)}%</small>
+            </div>
+            <div class="small">
+                ${thought.primary_reasoning || 'Analyzing market conditions...'}
+            </div>
+        `;
+        
+        return div;
+    }
+    
+    // Bot control functions
+    function startBot() {
+        fetch('/paper-trading/api/bot/start/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Bot started successfully', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast('Failed to start bot: ' + data.error, 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error starting bot:', error);
+            showToast('Error starting bot', 'danger');
+        });
+    }
+
+    function stopBot() {
+        fetch('/paper-trading/api/bot/stop/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Bot stopped successfully', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast('Failed to stop bot: ' + data.error, 'danger');
+            }
+        })
+        .catch(error => {
+            console.error('Error stopping bot:', error);
+            showToast('Error stopping bot', 'danger');
+        });
+    }
+
+    // Helper function to show toast notifications
+    function showToast(message, type) {
+        // Create toast element if it doesn't exist
+        let toastContainer = document.getElementById('toast-container');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'toast-container';
+            toastContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
+            document.body.appendChild(toastContainer);
+        }
+        
+        const toast = document.createElement('div');
+        toast.className = `alert alert-${type} alert-dismissible fade show`;
+        toast.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            toast.remove();
+        }, 5000);
+    }
+
+    // Helper function to get CSRF token
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
                 }
             }
-        `;
-        document.head.appendChild(style);
-    </script>
-</body>
-</html>
+        }
+        return cookieValue;
+    }
+    
+    // Start real-time updates when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        // Update AI thoughts every 5 seconds
+        setInterval(updateAIThoughts, window.paperTradingConfig.updateInterval);
+        
+        // Initial update after 2 seconds
+        setTimeout(updateAIThoughts, 2000);
+    });
+</script>
+{% endblock %}

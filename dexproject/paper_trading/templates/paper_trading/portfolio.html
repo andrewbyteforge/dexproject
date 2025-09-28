@@ -1,56 +1,43 @@
-{% extends "paper_trading/base.html" %}
+{% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Portfolio - Paper Trading{% endblock %}
+{% block title %}Portfolio - Paper Trading Dashboard{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/home.css' %}">
 <style>
     /* Portfolio Specific Styles */
-    .portfolio-summary {
-        background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
-        border-radius: 15px;
-        padding: 2rem;
-        margin-bottom: 2rem;
-        border: 1px solid rgba(0, 212, 170, 0.3);
+    .portfolio-summary-card {
+        background: linear-gradient(135deg, rgba(0, 123, 255, 0.1), rgba(40, 167, 69, 0.1));
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        backdrop-filter: blur(10px);
     }
     
     .portfolio-value-large {
-        font-size: 3rem;
+        font-size: 2.5rem;
         font-weight: bold;
-        color: var(--paper-primary);
         margin-bottom: 0.5rem;
-        text-shadow: 0 0 20px rgba(0, 212, 170, 0.3);
+        background: linear-gradient(45deg, #007bff, #28a745);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
     }
     
     .pnl-display {
-        font-size: 1.5rem;
+        font-size: 1.3rem;
         font-weight: 600;
         display: flex;
         align-items: center;
         gap: 0.5rem;
     }
     
-    .pnl-positive {
-        color: var(--paper-success);
-    }
-    
-    .pnl-negative {
-        color: var(--paper-danger);
-    }
-    
-    .allocation-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 1.5rem;
-        margin-bottom: 2rem;
-    }
-    
     .position-card {
-        background: rgba(0, 0, 0, 0.3);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
         border-radius: 12px;
         padding: 1.5rem;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        transition: all 0.3s;
+        transition: all 0.3s ease;
         position: relative;
         overflow: hidden;
     }
@@ -62,14 +49,14 @@
         left: 0;
         width: 4px;
         height: 100%;
-        background: var(--paper-primary);
+        background: linear-gradient(180deg, #007bff, #28a745);
         opacity: 0;
         transition: opacity 0.3s;
     }
     
     .position-card:hover {
         transform: translateY(-4px);
-        border-color: rgba(0, 212, 170, 0.3);
+        border-color: rgba(0, 123, 255, 0.3);
         box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
     }
     
@@ -82,29 +69,35 @@
         justify-content: space-between;
         align-items: center;
         margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .token-symbol {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
         font-weight: bold;
-        font-family: monospace;
+        font-family: 'Courier New', monospace;
+        color: #007bff;
     }
     
     .position-status {
         padding: 0.25rem 0.75rem;
-        border-radius: 12px;
+        border-radius: 20px;
         font-size: 0.75rem;
         font-weight: 600;
+        text-transform: uppercase;
     }
     
     .status-open {
-        background: rgba(16, 185, 129, 0.2);
-        color: var(--paper-success);
+        background: rgba(40, 167, 69, 0.2);
+        color: #28a745;
+        border: 1px solid rgba(40, 167, 69, 0.3);
     }
     
     .status-closed {
-        background: rgba(107, 114, 128, 0.2);
-        color: #6b7280;
+        background: rgba(108, 117, 125, 0.2);
+        color: #6c757d;
+        border: 1px solid rgba(108, 117, 125, 0.3);
     }
     
     .position-metrics {
@@ -117,13 +110,14 @@
     .metric {
         text-align: center;
         padding: 0.75rem;
-        background: rgba(255, 255, 255, 0.03);
+        background: rgba(255, 255, 255, 0.05);
         border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .metric-label {
         font-size: 0.75rem;
-        color: #a0a0a0;
+        color: #adb5bd;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 0.25rem;
@@ -132,39 +126,7 @@
     .metric-value {
         font-size: 1.1rem;
         font-weight: 600;
-    }
-    
-    .chart-container {
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    .chart-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 1.5rem;
-    }
-    
-    .chart-title {
-        font-size: 1.2rem;
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    .chart-controls {
-        display: flex;
-        gap: 0.5rem;
-    }
-    
-    .chart-controls button {
-        padding: 0.4rem 1rem;
-        font-size: 0.85rem;
+        color: #fff;
     }
     
     .distribution-item {
@@ -173,46 +135,47 @@
         align-items: center;
         padding: 0.75rem;
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.03);
+        background: rgba(255, 255, 255, 0.05);
         margin-bottom: 0.5rem;
-        transition: background 0.2s;
+        transition: all 0.2s;
+        border: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .distribution-item:hover {
-        background: rgba(0, 212, 170, 0.05);
+        background: rgba(0, 123, 255, 0.1);
+        border-color: rgba(0, 123, 255, 0.3);
     }
     
     .distribution-bar {
         height: 6px;
         border-radius: 3px;
-        background: linear-gradient(90deg, var(--paper-primary), var(--paper-secondary));
+        background: linear-gradient(90deg, #007bff, #28a745);
         margin-top: 0.5rem;
         transition: width 0.5s ease;
     }
     
-    .closed-positions-section {
-        margin-top: 2rem;
-    }
-    
-    .toggle-closed {
+    .closed-positions-toggle {
         cursor: pointer;
         user-select: none;
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.75rem 1rem;
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 10px;
+        padding: 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
         margin-bottom: 1rem;
-        transition: background 0.2s;
+        transition: all 0.2s;
+        border: 1px solid rgba(255, 255, 255, 0.1);
     }
     
-    .toggle-closed:hover {
-        background: rgba(0, 0, 0, 0.4);
+    .closed-positions-toggle:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
     }
     
     .toggle-icon {
         transition: transform 0.3s;
+        color: #007bff;
     }
     
     .toggle-icon.expanded {
@@ -221,106 +184,136 @@
     
     .closed-positions-list {
         display: none;
+        animation: slideDown 0.3s ease;
     }
     
     .closed-positions-list.show {
         display: block;
     }
     
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .chart-container {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+    }
+    
     @media (max-width: 768px) {
         .portfolio-value-large {
-            font-size: 2rem;
+            font-size: 1.8rem;
         }
         
         .pnl-display {
-            font-size: 1.2rem;
-        }
-        
-        .allocation-grid {
-            grid-template-columns: 1fr;
+            font-size: 1.1rem;
         }
         
         .position-metrics {
             grid-template-columns: 1fr;
-        }
-        
-        .chart-controls {
-            flex-wrap: wrap;
         }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
+<div class="container-fluid main-content">
     
-    <!-- Page Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h2 class="mb-1">
-                <i class="bi bi-briefcase me-2"></i>Portfolio
-            </h2>
-            <p class="text-muted mb-0">
-                Track your positions and performance
-            </p>
-        </div>
-        <div>
-            <a href="{% url 'paper_trading:trades' %}" class="btn btn-paper-secondary">
-                <i class="bi bi-list-ul me-2"></i>View Trades
-            </a>
+    <!-- Dashboard Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h2 mb-2">
+                        <i class="bi bi-briefcase me-2"></i>
+                        Portfolio Overview
+                    </h1>
+                    <p class="text-muted mb-0">Monitor your positions and track performance</p>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <a href="/paper-trading/trades/" class="btn btn-outline-info">
+                        <i class="bi bi-list-ul me-2"></i>Trade History
+                    </a>
+                    <a href="/paper-trading/" class="btn btn-outline-primary">
+                        <i class="bi bi-speedometer2 me-2"></i>Dashboard
+                    </a>
+                </div>
+            </div>
         </div>
     </div>
     
     <!-- Portfolio Summary -->
-    <div class="portfolio-summary">
-        <div class="row align-items-center">
-            <div class="col-md-6">
-                <div class="mb-2 text-muted">Total Portfolio Value</div>
-                <div class="portfolio-value-large">
-                    ${{ portfolio_value|floatformat:2 }}
-                </div>
-                <div class="pnl-display {% if unrealized_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">
-                    {% if unrealized_pnl >= 0 %}
-                        <i class="bi bi-arrow-up-circle"></i>
-                        +${{ unrealized_pnl|floatformat:2 }}
-                    {% else %}
-                        <i class="bi bi-arrow-down-circle"></i>
-                        ${{ unrealized_pnl|floatformat:2 }}
-                    {% endif %}
-                    <span style="font-size: 1rem; opacity: 0.8;">Unrealized P&L</span>
-                </div>
-            </div>
-            <div class="col-md-6">
-                <div class="row g-3">
-                    <div class="col-6">
-                        <div class="stat-card">
-                            <div class="stat-label">Cash Balance</div>
-                            <div class="stat-value" style="font-size: 1.5rem;">
-                                ${{ cash_balance|floatformat:2 }}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card card-glass portfolio-summary-card">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <div class="mb-2">
+                                <span class="text-muted">Total Portfolio Value</span>
+                            </div>
+                            <div class="portfolio-value-large">
+                                ${{ portfolio_value|floatformat:2 }}
+                            </div>
+                            <div class="pnl-display">
+                                {% if unrealized_pnl >= 0 %}
+                                    <i class="bi bi-arrow-up-circle text-success"></i>
+                                    <span class="text-success">+${{ unrealized_pnl|floatformat:2 }}</span>
+                                {% else %}
+                                    <i class="bi bi-arrow-down-circle text-danger"></i>
+                                    <span class="text-danger">${{ unrealized_pnl|floatformat:2 }}</span>
+                                {% endif %}
+                                <span class="text-muted ms-2" style="font-size: 1rem;">Unrealized P&L</span>
                             </div>
                         </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="stat-card">
-                            <div class="stat-label">Total Invested</div>
-                            <div class="stat-value" style="font-size: 1.5rem;">
-                                ${{ total_invested|floatformat:2 }}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="stat-card">
-                            <div class="stat-label">Open Positions</div>
-                            <div class="stat-value" style="font-size: 1.5rem;">
-                                {{ positions_count }}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="stat-card">
-                            <div class="stat-label">Return %</div>
-                            <div class="stat-value {% if unrealized_pnl >= 0 %}text-success{% else %}text-danger{% endif %}" style="font-size: 1.5rem;">
-                                {% widthratio unrealized_pnl total_invested 100 %}%
+                        <div class="col-md-6">
+                            <div class="row g-3">
+                                <div class="col-6">
+                                    <div class="card card-glass metric-card">
+                                        <div class="card-body text-center p-3">
+                                            <div class="text-muted small">Cash Balance</div>
+                                            <div class="h5 mb-0">${{ cash_balance|floatformat:2 }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="card card-glass metric-card">
+                                        <div class="card-body text-center p-3">
+                                            <div class="text-muted small">Total Invested</div>
+                                            <div class="h5 mb-0">${{ total_invested|floatformat:2 }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="card card-glass metric-card">
+                                        <div class="card-body text-center p-3">
+                                            <div class="text-muted small">Open Positions</div>
+                                            <div class="h5 mb-0">{{ positions_count }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="card card-glass metric-card">
+                                        <div class="card-body text-center p-3">
+                                            <div class="text-muted small">Return %</div>
+                                            <div class="h5 mb-0 {% if unrealized_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                                {% if total_invested > 0 %}
+                                                    {% widthratio unrealized_pnl total_invested 100 %}%
+                                                {% else %}
+                                                    0%
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -331,108 +324,134 @@
     
     <!-- Open Positions -->
     {% if open_positions %}
-        <div class="mb-4">
-            <h4 class="mb-3">
-                <i class="bi bi-folder-open me-2"></i>Open Positions
-                <span class="badge badge-success">{{ open_positions|length }}</span>
-            </h4>
-            
-            <div class="allocation-grid">
-                {% for position in open_positions %}
-                <div class="position-card">
-                    <div class="token-header">
-                        <div class="token-symbol">{{ position.token_symbol }}</div>
-                        <div class="position-status status-open">
-                            <i class="bi bi-circle-fill me-1"></i>OPEN
-                        </div>
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card card-glass">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-folder-open me-2"></i>Open Positions
+                            <span class="badge bg-success ms-2">{{ open_positions|length }}</span>
+                        </h5>
                     </div>
-                    
-                    <div class="mb-3">
-                        <div class="text-muted mb-1" style="font-size: 0.85rem;">Quantity</div>
-                        <div style="font-size: 1.3rem; font-weight: 600; font-family: monospace;">
-                            {{ position.quantity|floatformat:4 }}
-                        </div>
-                    </div>
-                    
-                    <div class="position-metrics">
-                        <div class="metric">
-                            <div class="metric-label">Entry Price</div>
-                            <div class="metric-value">${{ position.entry_price_usd|floatformat:4 }}</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">Current Price</div>
-                            <div class="metric-value">${{ position.current_price_usd|floatformat:4 }}</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">Current Value</div>
-                            <div class="metric-value">${{ position.current_value_usd|floatformat:2 }}</div>
-                        </div>
-                        <div class="metric">
-                            <div class="metric-label">P&L</div>
-                            <div class="metric-value {% if position.unrealized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}">
-                                {% if position.unrealized_pnl_usd >= 0 %}+{% endif %}${{ position.unrealized_pnl_usd|floatformat:2 }}
+                    <div class="card-body">
+                        <div class="row">
+                            {% for position in open_positions %}
+                            <div class="col-lg-6 col-xl-4 mb-3">
+                                <div class="position-card">
+                                    <div class="token-header">
+                                        <div class="token-symbol">{{ position.token_symbol }}</div>
+                                        <div class="position-status status-open">
+                                            <i class="bi bi-circle-fill me-1"></i>OPEN
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <div class="text-muted mb-1" style="font-size: 0.85rem;">Quantity</div>
+                                        <div style="font-size: 1.2rem; font-weight: 600; font-family: monospace;">
+                                            {{ position.quantity|floatformat:4 }}
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="position-metrics">
+                                        <div class="metric">
+                                            <div class="metric-label">Entry Price</div>
+                                            <div class="metric-value">${{ position.average_entry_price_usd|floatformat:4 }}</div>
+                                        </div>
+                                        <div class="metric">
+                                            <div class="metric-label">Current Price</div>
+                                            <div class="metric-value">${{ position.current_price_usd|floatformat:4 }}</div>
+                                        </div>
+                                        <div class="metric">
+                                            <div class="metric-label">Current Value</div>
+                                            <div class="metric-value">${{ position.current_value_usd|floatformat:2 }}</div>
+                                        </div>
+                                        <div class="metric">
+                                            <div class="metric-label">P&L</div>
+                                            <div class="metric-value {% if position.unrealized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                                {% if position.unrealized_pnl_usd >= 0 %}+{% endif %}${{ position.unrealized_pnl_usd|floatformat:2 }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mt-3 pt-3" style="border-top: 1px solid rgba(255, 255, 255, 0.1);">
+                                        <div class="d-flex justify-content-between text-muted" style="font-size: 0.85rem;">
+                                            <span>Opened: {{ position.opened_at|date:"M d, Y" }}</span>
+                                            <span>{{ position.opened_at|timesince }} ago</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <div class="mt-3 pt-3" style="border-top: 1px solid rgba(255, 255, 255, 0.1);">
-                        <div class="d-flex justify-content-between text-muted" style="font-size: 0.85rem;">
-                            <span>Opened: {{ position.opened_at|date:"M d, Y" }}</span>
-                            <span>{{ position.opened_at|timesince }} ago</span>
+                            {% endfor %}
                         </div>
                     </div>
                 </div>
-                {% endfor %}
             </div>
         </div>
     {% else %}
-        <div class="card-glass text-center py-5 mb-4">
-            <i class="bi bi-inbox" style="font-size: 3rem; opacity: 0.3; margin-bottom: 1rem;"></i>
-            <h4>No Open Positions</h4>
-            <p class="text-muted">
-                You don't have any open positions yet. Start trading to build your portfolio!
-            </p>
-            <a href="{% url 'paper_trading:configuration' %}" class="btn btn-paper-primary mt-3">
-                <i class="bi bi-gear me-2"></i>Configure Bot
-            </a>
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card card-glass">
+                    <div class="card-body text-center py-5">
+                        <i class="bi bi-inbox text-info" style="font-size: 3rem; margin-bottom: 1rem;"></i>
+                        <h4>No Open Positions</h4>
+                        <p class="text-muted">
+                            You don't have any open positions yet. Start the bot to begin trading!
+                        </p>
+                        <a href="/paper-trading/configuration/" class="btn btn-primary mt-3">
+                            <i class="bi bi-gear me-2"></i>Configure Strategy
+                        </a>
+                    </div>
+                </div>
+            </div>
         </div>
     {% endif %}
     
     <!-- Portfolio Distribution Chart -->
     {% if open_positions %}
-    <div class="chart-container">
-        <div class="chart-header">
-            <div class="chart-title">
-                <i class="bi bi-pie-chart"></i>
-                Portfolio Distribution
-            </div>
-        </div>
-        
-        <div class="row">
-            <div class="col-md-6">
-                <canvas id="distributionChart" width="400" height="400"></canvas>
-            </div>
-            <div class="col-md-6">
-                <div>
-                    {% for position in open_positions %}
-                    <div class="distribution-item">
-                        <div style="flex: 1;">
-                            <div class="d-flex justify-content-between mb-2">
-                                <span style="font-weight: 600;">{{ position.token_symbol }}</span>
-                                <span style="font-family: monospace;">
-                                    {% widthratio position.current_value_usd portfolio_value 100 %}%
-                                </span>
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card card-glass chart-container">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-pie-chart me-2"></i>
+                        Portfolio Distribution
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="d-flex justify-content-center">
+                                <canvas id="distributionChart" width="300" height="300"></canvas>
                             </div>
-                            <div class="distribution-bar" style="width: {% widthratio position.current_value_usd portfolio_value 100 %}%;"></div>
                         </div>
-                        <div class="ms-3 text-end">
-                            <div style="font-weight: 600;">${{ position.current_value_usd|floatformat:2 }}</div>
-                            <div class="text-muted" style="font-size: 0.85rem;">
-                                {{ position.quantity|floatformat:4 }}
+                        <div class="col-md-6">
+                            <div class="mt-3 mt-md-0">
+                                {% for position in open_positions %}
+                                <div class="distribution-item">
+                                    <div style="flex: 1;">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span style="font-weight: 600;">{{ position.token_symbol }}</span>
+                                            <span style="font-family: monospace;">
+                                                {% if portfolio_value > 0 %}
+                                                    {% widthratio position.current_value_usd portfolio_value 100 %}%
+                                                {% else %}
+                                                    0%
+                                                {% endif %}
+                                            </span>
+                                        </div>
+                                        <div class="distribution-bar" style="width: {% if portfolio_value > 0 %}{% widthratio position.current_value_usd portfolio_value 100 %}{% else %}0{% endif %}%;"></div>
+                                    </div>
+                                    <div class="ms-3 text-end">
+                                        <div style="font-weight: 600;">${{ position.current_value_usd|floatformat:2 }}</div>
+                                        <div class="text-muted" style="font-size: 0.85rem;">
+                                            {{ position.quantity|floatformat:4 }}
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
                             </div>
                         </div>
                     </div>
-                    {% endfor %}
                 </div>
             </div>
         </div>
@@ -441,90 +460,107 @@
     
     <!-- Closed Positions -->
     {% if closed_positions %}
-    <div class="closed-positions-section">
-        <div class="toggle-closed" onclick="toggleClosedPositions()">
-            <i class="bi bi-chevron-right toggle-icon" id="toggle-icon"></i>
-            <h5 class="mb-0">
-                <i class="bi bi-folder-x me-2"></i>Closed Positions
-                <span class="badge badge-info">{{ closed_positions|length }}</span>
-            </h5>
-        </div>
-        
-        <div class="closed-positions-list" id="closed-positions-list">
-            <div class="table-responsive">
-                <table class="table table-paper">
-                    <thead>
-                        <tr>
-                            <th>Token</th>
-                            <th>Quantity</th>
-                            <th>Entry Price</th>
-                            <th>Exit Price</th>
-                            <th>Realized P&L</th>
-                            <th>Opened</th>
-                            <th>Closed</th>
-                            <th>Duration</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for position in closed_positions %}
-                        <tr>
-                            <td>
-                                <strong>{{ position.token_symbol }}</strong>
-                            </td>
-                            <td>{{ position.quantity|floatformat:4 }}</td>
-                            <td>${{ position.entry_price_usd|floatformat:4 }}</td>
-                            <td>${{ position.current_price_usd|floatformat:4 }}</td>
-                            <td>
-                                <span class="{% if position.realized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}" style="font-weight: 600;">
-                                    {% if position.realized_pnl_usd >= 0 %}+{% endif %}${{ position.realized_pnl_usd|floatformat:2 }}
-                                </span>
-                            </td>
-                            <td>{{ position.opened_at|date:"M d, Y H:i" }}</td>
-                            <td>{{ position.closed_at|date:"M d, Y H:i" }}</td>
-                            <td>
-                                {% if position.closed_at and position.opened_at %}
-                                    {{ position.opened_at|timesince:position.closed_at }}
-                                {% else %}
-                                    —
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <div class="closed-positions-toggle" onclick="toggleClosedPositions()">
+                        <i class="bi bi-chevron-right toggle-icon" id="toggle-icon"></i>
+                        <h5 class="mb-0">
+                            <i class="bi bi-folder-x me-2"></i>Closed Positions
+                            <span class="badge bg-info ms-2">{{ closed_positions|length }}</span>
+                        </h5>
+                    </div>
+                    
+                    <div class="closed-positions-list" id="closed-positions-list">
+                        <div class="table-responsive">
+                            <table class="table table-dark table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Token</th>
+                                        <th>Quantity</th>
+                                        <th>Entry Price</th>
+                                        <th>Exit Price</th>
+                                        <th>Realized P&L</th>
+                                        <th>Opened</th>
+                                        <th>Closed</th>
+                                        <th>Duration</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for position in closed_positions %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ position.token_symbol }}</strong>
+                                        </td>
+                                        <td>{{ position.quantity|floatformat:4 }}</td>
+                                        <td>${{ position.average_entry_price_usd|floatformat:4 }}</td>
+                                        <td>${{ position.current_price_usd|floatformat:4 }}</td>
+                                        <td>
+                                            <span class="{% if position.realized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}" style="font-weight: 600;">
+                                                {% if position.realized_pnl_usd >= 0 %}+{% endif %}${{ position.realized_pnl_usd|floatformat:2 }}
+                                            </span>
+                                        </td>
+                                        <td>{{ position.opened_at|date:"M d, Y H:i" }}</td>
+                                        <td>{{ position.closed_at|date:"M d, Y H:i" }}</td>
+                                        <td>
+                                            {% if position.closed_at and position.opened_at %}
+                                                {{ position.opened_at|timesince:position.closed_at }}
+                                            {% else %}
+                                                —
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
     {% endif %}
     
     <!-- Account Summary -->
-    <div class="card-glass mt-4">
-        <div class="row align-items-center">
-            <div class="col-md-8">
-                <h6 class="mb-2">
-                    <i class="bi bi-person-circle me-2"></i>{{ account.name }}
-                </h6>
-                <div class="d-flex gap-4 flex-wrap">
-                    <div>
-                        <span class="text-muted">Initial Balance:</span>
-                        <strong class="ms-2">${{ account.initial_balance_usd|floatformat:2 }}</strong>
-                    </div>
-                    <div>
-                        <span class="text-muted">Total Trades:</span>
-                        <strong class="ms-2">{{ account.total_trades }}</strong>
-                    </div>
-                    <div>
-                        <span class="text-muted">Win Rate:</span>
-                        <strong class="ms-2 {% if account.win_rate >= 50 %}text-success{% else %}text-warning{% endif %}">
-                            {{ account.win_rate|floatformat:1 }}%
-                        </strong>
+    <div class="row">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h6 class="mb-2">
+                                <i class="bi bi-person-circle me-2"></i>{{ account.name }}
+                            </h6>
+                            <div class="d-flex gap-4 flex-wrap">
+                                <div>
+                                    <span class="text-muted">Initial Balance:</span>
+                                    <strong class="ms-2">${{ account.initial_balance_usd|floatformat:2 }}</strong>
+                                </div>
+                                <div>
+                                    <span class="text-muted">Total Trades:</span>
+                                    <strong class="ms-2">{{ account.total_trades }}</strong>
+                                </div>
+                                <div>
+                                    <span class="text-muted">Win Rate:</span>
+                                    <strong class="ms-2 {% if account.win_rate >= 50 %}text-success{% else %}text-warning{% endif %}">
+                                        {{ account.win_rate|floatformat:1 }}%
+                                    </strong>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                            <div class="d-flex gap-2 justify-content-md-end">
+                                <a href="/paper-trading/configuration/" class="btn btn-outline-warning">
+                                    <i class="bi bi-gear me-2"></i>Configure
+                                </a>
+                                <a href="/paper-trading/" class="btn btn-primary">
+                                    <i class="bi bi-speedometer2 me-2"></i>Dashboard
+                                </a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4 text-md-end mt-3 mt-md-0">
-                <a href="{% url 'paper_trading:dashboard' %}" class="btn btn-paper-primary">
-                    <i class="bi bi-speedometer2 me-2"></i>Dashboard
-                </a>
             </div>
         </div>
     </div>
@@ -533,6 +569,9 @@
 {% endblock %}
 
 {% block extra_js %}
+<!-- Chart.js for portfolio distribution -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+
 <script>
     /**
      * Initialize portfolio distribution chart
@@ -560,7 +599,7 @@
                     datasets: [{
                         data: values,
                         backgroundColor: colors,
-                        borderColor: 'rgba(0, 0, 0, 0.5)',
+                        borderColor: 'rgba(255, 255, 255, 0.2)',
                         borderWidth: 2
                     }]
                 },
@@ -573,9 +612,9 @@
                         },
                         tooltip: {
                             backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                            titleColor: '#00d4aa',
+                            titleColor: '#007bff',
                             bodyColor: '#ffffff',
-                            borderColor: '#00d4aa',
+                            borderColor: '#007bff',
                             borderWidth: 1,
                             padding: 12,
                             displayColors: true,
@@ -599,14 +638,14 @@
      */
     function generateColors(count) {
         const baseColors = [
-            '#00d4aa', // Primary
-            '#3b82f6', // Secondary
-            '#10b981', // Success
-            '#f59e0b', // Warning
-            '#ef4444', // Danger
-            '#8b5cf6', // Purple
-            '#ec4899', // Pink
-            '#14b8a6', // Teal
+            '#007bff', // Primary blue
+            '#28a745', // Success green
+            '#ffc107', // Warning yellow
+            '#dc3545', // Danger red
+            '#6f42c1', // Purple
+            '#e83e8c', // Pink
+            '#17a2b8', // Info cyan
+            '#fd7e14', // Orange
         ];
         
         const colors = [];
@@ -630,15 +669,34 @@
     }
     
     /**
-     * Format large numbers with K/M suffixes
+     * Show toast notification
      */
-    function formatLargeNumber(num) {
-        if (num >= 1000000) {
-            return (num / 1000000).toFixed(1) + 'M';
-        } else if (num >= 1000) {
-            return (num / 1000).toFixed(1) + 'K';
+    function showToast(message, type = 'info') {
+        // Create toast container if it doesn't exist
+        let toastContainer = document.getElementById('toast-container');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'toast-container';
+            toastContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
+            document.body.appendChild(toastContainer);
         }
-        return num.toFixed(2);
+        
+        const toast = document.createElement('div');
+        toast.className = `alert alert-${type} alert-dismissible fade show`;
+        toast.style.minWidth = '300px';
+        toast.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            if (toast.parentElement) {
+                toast.remove();
+            }
+        }, 5000);
     }
 </script>
 {% endblock %}

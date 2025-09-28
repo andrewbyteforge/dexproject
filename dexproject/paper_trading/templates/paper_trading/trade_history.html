@@ -1,17 +1,19 @@
-{% extends "paper_trading/base.html" %}
+{% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Trade History - Paper Trading{% endblock %}
+{% block title %}Trade History - Paper Trading Dashboard{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/home.css' %}">
 <style>
     /* Trade History Specific Styles */
     .filter-panel {
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
         padding: 1.5rem;
         margin-bottom: 1.5rem;
-        border: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .filter-row {
@@ -26,35 +28,87 @@
         min-width: 200px;
     }
     
-    .summary-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin-bottom: 1.5rem;
+    .filter-group label {
+        color: #adb5bd;
+        font-size: 0.9rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .form-control, .form-select {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #fff;
+        border-radius: 8px;
+    }
+    
+    .form-control:focus, .form-select:focus {
+        background: rgba(255, 255, 255, 0.15);
+        border-color: #007bff;
+        box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        color: #fff;
+    }
+    
+    .form-select option {
+        background: #2d3436;
+        color: #fff;
     }
     
     .trade-row {
-        transition: all 0.2s;
+        transition: all 0.2s ease;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .trade-row:hover {
-        background: rgba(0, 212, 170, 0.05);
+        background: rgba(0, 123, 255, 0.1);
         transform: translateX(2px);
     }
     
     .trade-type-buy {
-        color: var(--paper-success);
+        color: #28a745;
         font-weight: 600;
     }
     
     .trade-type-sell {
-        color: var(--paper-danger);
+        color: #dc3545;
         font-weight: 600;
     }
     
     .trade-type-swap {
-        color: var(--paper-secondary);
+        color: #17a2b8;
         font-weight: 600;
+    }
+    
+    .token-pair {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-family: 'Courier New', monospace;
+    }
+    
+    .token-arrow {
+        color: #6c757d;
+        font-size: 0.85rem;
+    }
+    
+    .gas-cost {
+        font-size: 0.85rem;
+        color: #6c757d;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    
+    .execution-time {
+        font-size: 0.85rem;
+        color: #6c757d;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    
+    .export-buttons {
+        display: flex;
+        gap: 0.5rem;
     }
     
     .pagination-container {
@@ -64,28 +118,30 @@
     }
     
     .pagination {
-        background: rgba(0, 0, 0, 0.3);
-        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
         padding: 0.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .page-link {
         background: transparent;
         border: none;
-        color: #ffffff;
+        color: #fff;
         padding: 0.5rem 1rem;
-        border-radius: 6px;
+        border-radius: 8px;
         margin: 0 0.2rem;
+        transition: all 0.2s;
     }
     
     .page-link:hover {
-        background: rgba(0, 212, 170, 0.2);
-        color: var(--paper-primary);
+        background: rgba(0, 123, 255, 0.2);
+        color: #007bff;
     }
     
     .page-item.active .page-link {
-        background: var(--paper-primary);
-        color: #000;
+        background: #007bff;
+        color: #fff;
         font-weight: 600;
     }
     
@@ -97,7 +153,7 @@
     .empty-state {
         text-align: center;
         padding: 4rem 2rem;
-        color: #a0a0a0;
+        color: #6c757d;
     }
     
     .empty-state i {
@@ -106,34 +162,25 @@
         opacity: 0.3;
     }
     
-    .token-pair {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-family: monospace;
+    .table-dark {
+        --bs-table-bg: transparent;
+        --bs-table-striped-bg: rgba(255, 255, 255, 0.05);
+        --bs-table-hover-bg: rgba(0, 123, 255, 0.1);
+        --bs-table-border-color: rgba(255, 255, 255, 0.1);
     }
     
-    .token-arrow {
-        color: #a0a0a0;
+    .table-dark th {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.2);
+        color: #adb5bd;
+        font-weight: 600;
+        text-transform: uppercase;
         font-size: 0.85rem;
+        letter-spacing: 0.5px;
     }
     
-    .gas-cost {
-        font-size: 0.85rem;
-        color: #a0a0a0;
-    }
-    
-    .execution-time {
-        font-size: 0.85rem;
-        color: #a0a0a0;
-        display: flex;
-        align-items: center;
-        gap: 0.25rem;
-    }
-    
-    .export-buttons {
-        display: flex;
-        gap: 0.5rem;
+    .summary-stats-row {
+        margin-bottom: 1.5rem;
     }
     
     @media (max-width: 768px) {
@@ -145,10 +192,6 @@
             width: 100%;
         }
         
-        .summary-grid {
-            grid-template-columns: 1fr;
-        }
-        
         .table-responsive {
             font-size: 0.85rem;
         }
@@ -156,354 +199,396 @@
         .export-buttons {
             flex-direction: column;
         }
+        
+        .token-pair {
+            flex-direction: column;
+            gap: 0.25rem;
+            align-items: flex-start;
+        }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
+<div class="container-fluid main-content">
     
-    <!-- Page Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h2 class="mb-1">
-                <i class="bi bi-list-ul me-2"></i>Trade History
-            </h2>
-            <p class="text-muted mb-0">
-                View and analyze your paper trading history
-            </p>
-        </div>
-        <div class="export-buttons">
-            <button class="btn btn-paper-secondary" onclick="exportToCSV()">
-                <i class="bi bi-file-earmark-spreadsheet me-2"></i>Export CSV
-            </button>
-            <button class="btn btn-paper-secondary" onclick="printReport()">
-                <i class="bi bi-printer me-2"></i>Print Report
-            </button>
+    <!-- Dashboard Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h2 mb-2">
+                        <i class="bi bi-list-ul me-2"></i>
+                        Trade History
+                    </h1>
+                    <p class="text-muted mb-0">View and analyze your paper trading history</p>
+                </div>
+                <div class="export-buttons">
+                    <button class="btn btn-outline-secondary" onclick="exportToCSV()">
+                        <i class="bi bi-file-earmark-spreadsheet me-2"></i>Export CSV
+                    </button>
+                    <button class="btn btn-outline-info" onclick="printReport()">
+                        <i class="bi bi-printer me-2"></i>Print Report
+                    </button>
+                    <a href="/paper-trading/" class="btn btn-outline-primary">
+                        <i class="bi bi-speedometer2 me-2"></i>Dashboard
+                    </a>
+                </div>
+            </div>
         </div>
     </div>
     
     <!-- Summary Statistics -->
-    <div class="summary-grid">
-        <div class="stat-card">
-            <div class="stat-label">Total Trades</div>
-            <div class="stat-value">{{ summary_stats.total_trades|default:0 }}</div>
-            <div class="stat-change">
-                <i class="bi bi-activity"></i>
-                All time
+    <div class="row mb-4 summary-stats-row">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-activity text-primary fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1">{{ summary_stats.total_trades|default:0 }}</h3>
+                    <p class="text-muted mb-2">Total Trades</p>
+                    <div class="small text-info">All time</div>
+                </div>
             </div>
         </div>
         
-        <div class="stat-card">
-            <div class="stat-label">Total Volume</div>
-            <div class="stat-value">${{ summary_stats.total_volume|default:0|floatformat:2 }}</div>
-            <div class="stat-change">
-                <i class="bi bi-currency-dollar"></i>
-                USD traded
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-currency-dollar text-success fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1">${{ summary_stats.total_volume|default:0|floatformat:2 }}</h3>
+                    <p class="text-muted mb-2">Total Volume</p>
+                    <div class="small text-info">USD traded</div>
+                </div>
             </div>
         </div>
         
-        <div class="stat-card">
-            <div class="stat-label">Average Trade Size</div>
-            <div class="stat-value">${{ summary_stats.avg_trade_size|default:0|floatformat:2 }}</div>
-            <div class="stat-change">
-                <i class="bi bi-graph-up"></i>
-                Per trade
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-graph-up text-warning fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1">${{ summary_stats.avg_trade_size|default:0|floatformat:2 }}</h3>
+                    <p class="text-muted mb-2">Average Trade Size</p>
+                    <div class="small text-info">Per trade</div>
+                </div>
             </div>
         </div>
         
-        <div class="stat-card">
-            <div class="stat-label">Total Gas Costs</div>
-            <div class="stat-value">${{ summary_stats.total_gas_cost|default:0|floatformat:2 }}</div>
-            <div class="stat-change negative">
-                <i class="bi bi-fuel-pump"></i>
-                Simulated fees
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-fuel-pump text-danger fs-1 mb-3"></i>
+                    <h3 class="card-title mb-1">${{ summary_stats.total_gas_cost|default:0|floatformat:2 }}</h3>
+                    <p class="text-muted mb-2">Total Gas Costs</p>
+                    <div class="small text-info">Simulated fees</div>
+                </div>
             </div>
         </div>
     </div>
     
     <!-- Filter Panel -->
-    <div class="filter-panel">
-        <h5 class="mb-3">
-            <i class="bi bi-funnel me-2"></i>Filters
-        </h5>
-        
-        <form method="get" action="{% url 'paper_trading:trades' %}" id="filter-form">
-            <div class="filter-row">
-                <!-- Status Filter -->
-                <div class="filter-group">
-                    <label for="status-filter" class="form-label">Status</label>
-                    <select name="status" id="status-filter" class="form-select">
-                        <option value="">All Statuses</option>
-                        <option value="COMPLETED" {% if status_filter == 'COMPLETED' %}selected{% endif %}>Completed</option>
-                        <option value="PENDING" {% if status_filter == 'PENDING' %}selected{% endif %}>Pending</option>
-                        <option value="FAILED" {% if status_filter == 'FAILED' %}selected{% endif %}>Failed</option>
-                    </select>
-                </div>
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="filter-panel">
+                <h5 class="mb-3">
+                    <i class="bi bi-funnel me-2"></i>Filters
+                </h5>
                 
-                <!-- Trade Type Filter -->
-                <div class="filter-group">
-                    <label for="type-filter" class="form-label">Trade Type</label>
-                    <select name="trade_type" id="type-filter" class="form-select">
-                        <option value="">All Types</option>
-                        <option value="BUY" {% if trade_type_filter == 'BUY' %}selected{% endif %}>Buy</option>
-                        <option value="SELL" {% if trade_type_filter == 'SELL' %}selected{% endif %}>Sell</option>
-                        <option value="SWAP" {% if trade_type_filter == 'SWAP' %}selected{% endif %}>Swap</option>
-                    </select>
-                </div>
-                
-                <!-- Date From -->
-                <div class="filter-group">
-                    <label for="date-from" class="form-label">From Date</label>
-                    <input type="date" name="date_from" id="date-from" class="form-control" value="{{ date_from }}">
-                </div>
-                
-                <!-- Date To -->
-                <div class="filter-group">
-                    <label for="date-to" class="form-label">To Date</label>
-                    <input type="date" name="date_to" id="date-to" class="form-control" value="{{ date_to }}">
-                </div>
-                
-                <!-- Filter Buttons -->
-                <div class="filter-group" style="display: flex; gap: 0.5rem; min-width: auto;">
-                    <button type="submit" class="btn btn-paper-primary">
-                        <i class="bi bi-search me-2"></i>Apply
-                    </button>
-                    <button type="button" class="btn btn-paper-secondary" onclick="clearFilters()">
-                        <i class="bi bi-x-circle me-2"></i>Clear
-                    </button>
-                </div>
+                <form method="get" action="{% url 'paper_trading:trades' %}" id="filter-form">
+                    <div class="filter-row">
+                        <!-- Status Filter -->
+                        <div class="filter-group">
+                            <label for="status-filter" class="form-label">Status</label>
+                            <select name="status" id="status-filter" class="form-select">
+                                <option value="">All Statuses</option>
+                                <option value="COMPLETED" {% if status_filter == 'COMPLETED' %}selected{% endif %}>Completed</option>
+                                <option value="PENDING" {% if status_filter == 'PENDING' %}selected{% endif %}>Pending</option>
+                                <option value="FAILED" {% if status_filter == 'FAILED' %}selected{% endif %}>Failed</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Trade Type Filter -->
+                        <div class="filter-group">
+                            <label for="type-filter" class="form-label">Trade Type</label>
+                            <select name="trade_type" id="type-filter" class="form-select">
+                                <option value="">All Types</option>
+                                <option value="BUY" {% if trade_type_filter == 'BUY' %}selected{% endif %}>Buy</option>
+                                <option value="SELL" {% if trade_type_filter == 'SELL' %}selected{% endif %}>Sell</option>
+                                <option value="SWAP" {% if trade_type_filter == 'SWAP' %}selected{% endif %}>Swap</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Date From -->
+                        <div class="filter-group">
+                            <label for="date-from" class="form-label">From Date</label>
+                            <input type="date" name="date_from" id="date-from" class="form-control" value="{{ date_from }}">
+                        </div>
+                        
+                        <!-- Date To -->
+                        <div class="filter-group">
+                            <label for="date-to" class="form-label">To Date</label>
+                            <input type="date" name="date_to" id="date-to" class="form-control" value="{{ date_to }}">
+                        </div>
+                        
+                        <!-- Filter Buttons -->
+                        <div class="filter-group" style="display: flex; gap: 0.5rem; min-width: auto;">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-search me-2"></i>Apply
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="clearFilters()">
+                                <i class="bi bi-x-circle me-2"></i>Clear
+                            </button>
+                        </div>
+                    </div>
+                </form>
             </div>
-        </form>
+        </div>
     </div>
     
     <!-- Trades Table -->
-    <div class="card-glass">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0">
-                <i class="bi bi-table me-2"></i>Trades
-                {% if trades.paginator.count %}
-                    <span class="badge badge-info">{{ trades.paginator.count }}</span>
-                {% endif %}
-            </h5>
-            <div class="text-muted" style="font-size: 0.9rem;">
-                {% if trades.has_other_pages %}
-                    Page {{ trades.number }} of {{ trades.paginator.num_pages }}
-                {% endif %}
-            </div>
-        </div>
-        
-        <div class="table-responsive">
-            {% if trades %}
-                <table class="table table-paper">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Type</th>
-                            <th>Token Pair</th>
-                            <th>Amount In</th>
-                            <th>Amount Out</th>
-                            <th>Gas Cost</th>
-                            <th>Slippage</th>
-                            <th>Status</th>
-                            <th>Execution</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for trade in trades %}
-                        <tr class="trade-row">
-                            <!-- Time -->
-                            <td>
-                                <div>{{ trade.created_at|date:"M d, Y" }}</div>
-                                <div class="text-muted" style="font-size: 0.85rem;">
-                                    {{ trade.created_at|date:"H:i:s" }}
-                                </div>
-                            </td>
-                            
-                            <!-- Type -->
-                            <td>
-                                <span class="trade-type-{{ trade.trade_type|lower }}">
-                                    {{ trade.trade_type }}
-                                </span>
-                            </td>
-                            
-                            <!-- Token Pair -->
-                            <td>
-                                <div class="token-pair">
-                                    <span>{{ trade.token_in_symbol }}</span>
-                                    <span class="token-arrow">→</span>
-                                    <span>{{ trade.token_out_symbol }}</span>
-                                </div>
-                            </td>
-                            
-                            <!-- Amount In -->
-                            <td>
-                                <div>{{ trade.amount_in|floatformat:4 }} {{ trade.token_in_symbol }}</div>
-                                <div class="text-muted" style="font-size: 0.85rem;">
-                                    ${{ trade.amount_in_usd|floatformat:2 }}
-                                </div>
-                            </td>
-                            
-                            <!-- Amount Out -->
-                            <td>
-                                {% if trade.actual_amount_out %}
-                                    <div>{{ trade.actual_amount_out|floatformat:4 }} {{ trade.token_out_symbol }}</div>
-                                {% elif trade.expected_amount_out %}
-                                    <div class="text-muted">
-                                        ~{{ trade.expected_amount_out|floatformat:4 }} {{ trade.token_out_symbol }}
-                                    </div>
-                                {% else %}
-                                    <span class="text-muted">—</span>
-                                {% endif %}
-                            </td>
-                            
-                            <!-- Gas Cost -->
-                            <td>
-                                <div class="gas-cost">
-                                    <i class="bi bi-fuel-pump me-1"></i>
-                                    ${{ trade.simulated_gas_cost_usd|default:0|floatformat:2 }}
-                                </div>
-                                {% if trade.simulated_gas_price_gwei %}
-                                    <div class="text-muted" style="font-size: 0.75rem;">
-                                        {{ trade.simulated_gas_price_gwei|floatformat:0 }} Gwei
-                                    </div>
-                                {% endif %}
-                            </td>
-                            
-                            <!-- Slippage -->
-                            <td>
-                                {% if trade.simulated_slippage_percent %}
-                                    <span class="{% if trade.simulated_slippage_percent > 1 %}text-warning{% endif %}">
-                                        {{ trade.simulated_slippage_percent|floatformat:2 }}%
-                                    </span>
-                                {% else %}
-                                    <span class="text-muted">—</span>
-                                {% endif %}
-                            </td>
-                            
-                            <!-- Status -->
-                            <td>
-                                {% if trade.status == 'COMPLETED' %}
-                                    <span class="badge badge-success">
-                                        <i class="bi bi-check-circle me-1"></i>Completed
-                                    </span>
-                                {% elif trade.status == 'PENDING' %}
-                                    <span class="badge badge-warning">
-                                        <i class="bi bi-clock me-1"></i>Pending
-                                    </span>
-                                {% elif trade.status == 'FAILED' %}
-                                    <span class="badge badge-danger">
-                                        <i class="bi bi-x-circle me-1"></i>Failed
-                                    </span>
-                                {% else %}
-                                    <span class="badge badge-info">{{ trade.status }}</span>
-                                {% endif %}
-                            </td>
-                            
-                            <!-- Execution Time -->
-                            <td>
-                                {% if trade.execution_time_ms %}
-                                    <div class="execution-time">
-                                        <i class="bi bi-stopwatch"></i>
-                                        {{ trade.execution_time_ms }}ms
-                                    </div>
-                                {% else %}
-                                    <span class="text-muted">—</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            {% else %}
-                <!-- Empty State -->
-                <div class="empty-state">
-                    <i class="bi bi-inbox"></i>
-                    <h4>No Trades Found</h4>
-                    <p>
-                        {% if status_filter or trade_type_filter or date_from or date_to %}
-                            No trades match your current filters. Try adjusting your search criteria.
-                        {% else %}
-                            You haven't executed any paper trades yet. Start the bot to begin trading!
-                        {% endif %}
-                    </p>
-                    {% if status_filter or trade_type_filter or date_from or date_to %}
-                        <button class="btn btn-paper-primary mt-3" onclick="clearFilters()">
-                            <i class="bi bi-x-circle me-2"></i>Clear Filters
-                        </button>
+    <div class="row">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-table me-2"></i>Trades
+                            {% if trades.paginator.count %}
+                                <span class="badge bg-info ms-2">{{ trades.paginator.count }}</span>
+                            {% endif %}
+                        </h5>
+                        <div class="text-muted" style="font-size: 0.9rem;">
+                            {% if trades.has_other_pages %}
+                                Page {{ trades.number }} of {{ trades.paginator.num_pages }}
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card-body">
+                    {% if trades %}
+                        <div class="table-responsive">
+                            <table class="table table-dark table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Type</th>
+                                        <th>Token Pair</th>
+                                        <th>Amount In</th>
+                                        <th>Amount Out</th>
+                                        <th>Gas Cost</th>
+                                        <th>Slippage</th>
+                                        <th>Status</th>
+                                        <th>Execution</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for trade in trades %}
+                                    <tr class="trade-row">
+                                        <!-- Time -->
+                                        <td>
+                                            <div>{{ trade.created_at|date:"M d, Y" }}</div>
+                                            <div class="text-muted" style="font-size: 0.85rem;">
+                                                {{ trade.created_at|date:"H:i:s" }}
+                                            </div>
+                                        </td>
+                                        
+                                        <!-- Type -->
+                                        <td>
+                                            <span class="trade-type-{{ trade.trade_type|lower }}">
+                                                {{ trade.trade_type }}
+                                            </span>
+                                        </td>
+                                        
+                                        <!-- Token Pair -->
+                                        <td>
+                                            <div class="token-pair">
+                                                <span>{{ trade.token_in_symbol }}</span>
+                                                <span class="token-arrow">→</span>
+                                                <span>{{ trade.token_out_symbol }}</span>
+                                            </div>
+                                        </td>
+                                        
+                                        <!-- Amount In -->
+                                        <td>
+                                            <div>{{ trade.amount_in|floatformat:4 }} {{ trade.token_in_symbol }}</div>
+                                            <div class="text-muted" style="font-size: 0.85rem;">
+                                                ${{ trade.amount_in_usd|floatformat:2 }}
+                                            </div>
+                                        </td>
+                                        
+                                        <!-- Amount Out -->
+                                        <td>
+                                            {% if trade.actual_amount_out %}
+                                                <div>{{ trade.actual_amount_out|floatformat:4 }} {{ trade.token_out_symbol }}</div>
+                                            {% elif trade.expected_amount_out %}
+                                                <div class="text-muted">
+                                                    ~{{ trade.expected_amount_out|floatformat:4 }} {{ trade.token_out_symbol }}
+                                                </div>
+                                            {% else %}
+                                                <span class="text-muted">—</span>
+                                            {% endif %}
+                                        </td>
+                                        
+                                        <!-- Gas Cost -->
+                                        <td>
+                                            <div class="gas-cost">
+                                                <i class="bi bi-fuel-pump"></i>
+                                                ${{ trade.simulated_gas_cost_usd|default:0|floatformat:2 }}
+                                            </div>
+                                            {% if trade.simulated_gas_price_gwei %}
+                                                <div class="text-muted" style="font-size: 0.75rem;">
+                                                    {{ trade.simulated_gas_price_gwei|floatformat:0 }} Gwei
+                                                </div>
+                                            {% endif %}
+                                        </td>
+                                        
+                                        <!-- Slippage -->
+                                        <td>
+                                            {% if trade.simulated_slippage_percent %}
+                                                <span class="{% if trade.simulated_slippage_percent > 1 %}text-warning{% endif %}">
+                                                    {{ trade.simulated_slippage_percent|floatformat:2 }}%
+                                                </span>
+                                            {% else %}
+                                                <span class="text-muted">—</span>
+                                            {% endif %}
+                                        </td>
+                                        
+                                        <!-- Status -->
+                                        <td>
+                                            {% if trade.status == 'COMPLETED' %}
+                                                <span class="badge bg-success">
+                                                    <i class="bi bi-check-circle me-1"></i>Completed
+                                                </span>
+                                            {% elif trade.status == 'PENDING' %}
+                                                <span class="badge bg-warning">
+                                                    <i class="bi bi-clock me-1"></i>Pending
+                                                </span>
+                                            {% elif trade.status == 'FAILED' %}
+                                                <span class="badge bg-danger">
+                                                    <i class="bi bi-x-circle me-1"></i>Failed
+                                                </span>
+                                            {% else %}
+                                                <span class="badge bg-info">{{ trade.status }}</span>
+                                            {% endif %}
+                                        </td>
+                                        
+                                        <!-- Execution Time -->
+                                        <td>
+                                            {% if trade.execution_time_ms %}
+                                                <div class="execution-time">
+                                                    <i class="bi bi-stopwatch"></i>
+                                                    {{ trade.execution_time_ms }}ms
+                                                </div>
+                                            {% else %}
+                                                <span class="text-muted">—</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
                     {% else %}
-                        <a href="{% url 'paper_trading:configuration' %}" class="btn btn-paper-primary mt-3">
-                            <i class="bi bi-gear me-2"></i>Configure Bot
-                        </a>
+                        <!-- Empty State -->
+                        <div class="empty-state">
+                            <i class="bi bi-inbox"></i>
+                            <h4>No Trades Found</h4>
+                            <p>
+                                {% if status_filter or trade_type_filter or date_from or date_to %}
+                                    No trades match your current filters. Try adjusting your search criteria.
+                                {% else %}
+                                    You haven't executed any paper trades yet. Start the bot to begin trading!
+                                {% endif %}
+                            </p>
+                            {% if status_filter or trade_type_filter or date_from or date_to %}
+                                <button class="btn btn-primary mt-3" onclick="clearFilters()">
+                                    <i class="bi bi-x-circle me-2"></i>Clear Filters
+                                </button>
+                            {% else %}
+                                <a href="/paper-trading/configuration/" class="btn btn-primary mt-3">
+                                    <i class="bi bi-gear me-2"></i>Configure Bot
+                                </a>
+                            {% endif %}
+                        </div>
                     {% endif %}
                 </div>
-            {% endif %}
-        </div>
-        
-        <!-- Pagination -->
-        {% if trades.has_other_pages %}
-            <div class="pagination-container">
-                <nav aria-label="Trade pagination">
-                    <ul class="pagination mb-0">
-                        <!-- Previous Page -->
-                        {% if trades.has_previous %}
-                            <li class="page-item">
-                                <a class="page-link" href="?page={{ trades.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
-                                    <i class="bi bi-chevron-left"></i>
-                                </a>
-                            </li>
-                        {% else %}
-                            <li class="page-item disabled">
-                                <span class="page-link"><i class="bi bi-chevron-left"></i></span>
-                            </li>
-                        {% endif %}
-                        
-                        <!-- Page Numbers -->
-                        {% for num in trades.paginator.page_range %}
-                            {% if trades.number == num %}
-                                <li class="page-item active">
-                                    <span class="page-link">{{ num }}</span>
-                                </li>
-                            {% elif num > trades.number|add:'-3' and num < trades.number|add:'3' %}
-                                <li class="page-item">
-                                    <a class="page-link" href="?page={{ num }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
-                                        {{ num }}
-                                    </a>
-                                </li>
-                            {% endif %}
-                        {% endfor %}
-                        
-                        <!-- Next Page -->
-                        {% if trades.has_next %}
-                            <li class="page-item">
-                                <a class="page-link" href="?page={{ trades.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
-                                    <i class="bi bi-chevron-right"></i>
-                                </a>
-                            </li>
-                        {% else %}
-                            <li class="page-item disabled">
-                                <span class="page-link"><i class="bi bi-chevron-right"></i></span>
-                            </li>
-                        {% endif %}
-                    </ul>
-                </nav>
+                
+                <!-- Pagination -->
+                {% if trades.has_other_pages %}
+                    <div class="card-footer">
+                        <div class="pagination-container">
+                            <nav aria-label="Trade pagination">
+                                <ul class="pagination mb-0">
+                                    <!-- Previous Page -->
+                                    {% if trades.has_previous %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?page={{ trades.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                                                <i class="bi bi-chevron-left"></i>
+                                            </a>
+                                        </li>
+                                    {% else %}
+                                        <li class="page-item disabled">
+                                            <span class="page-link"><i class="bi bi-chevron-left"></i></span>
+                                        </li>
+                                    {% endif %}
+                                    
+                                    <!-- Page Numbers -->
+                                    {% for num in trades.paginator.page_range %}
+                                        {% if trades.number == num %}
+                                            <li class="page-item active">
+                                                <span class="page-link">{{ num }}</span>
+                                            </li>
+                                        {% elif num > trades.number|add:'-3' and num < trades.number|add:'3' %}
+                                            <li class="page-item">
+                                                <a class="page-link" href="?page={{ num }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                                                    {{ num }}
+                                                </a>
+                                            </li>
+                                        {% endif %}
+                                    {% endfor %}
+                                    
+                                    <!-- Next Page -->
+                                    {% if trades.has_next %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?page={{ trades.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                                                <i class="bi bi-chevron-right"></i>
+                                            </a>
+                                        </li>
+                                    {% else %}
+                                        <li class="page-item disabled">
+                                            <span class="page-link"><i class="bi bi-chevron-right"></i></span>
+                                        </li>
+                                    {% endif %}
+                                </ul>
+                            </nav>
+                        </div>
+                    </div>
+                {% endif %}
             </div>
-        {% endif %}
+        </div>
     </div>
     
     <!-- Account Info -->
-    <div class="card-glass mt-3">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <h6 class="mb-1">Account: {{ account.name }}</h6>
-                <p class="text-muted mb-0" style="font-size: 0.85rem;">
-                    <i class="bi bi-wallet2 me-1"></i>
-                    Balance: ${{ account.current_balance_usd|floatformat:2 }}
-                </p>
-            </div>
-            <div class="text-end">
-                <div class="text-muted" style="font-size: 0.85rem;">Total Trades</div>
-                <div style="font-size: 1.5rem; font-weight: bold;">{{ account.total_trades }}</div>
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-1">
+                                <i class="bi bi-person-circle me-2"></i>{{ account.name }}
+                            </h6>
+                            <p class="text-muted mb-0" style="font-size: 0.9rem;">
+                                <i class="bi bi-wallet2 me-1"></i>
+                                Balance: ${{ account.current_balance_usd|floatformat:2 }}
+                            </p>
+                        </div>
+                        <div class="text-end">
+                            <div class="text-muted" style="font-size: 0.85rem;">Total Trades</div>
+                            <div style="font-size: 1.5rem; font-weight: bold;">{{ account.total_trades }}</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -547,19 +632,35 @@
             const cells = row.querySelectorAll('td');
             const rowData = [];
             
-            // Extract text from each cell
-            cells.forEach(cell => {
-                rowData.push(cell.textContent.trim().replace(/\s+/g, ' '));
+            // Extract text from each cell, cleaning up the data
+            cells.forEach((cell, index) => {
+                let text = cell.textContent.trim().replace(/\s+/g, ' ');
+                
+                // Special handling for certain columns
+                if (index === 0) { // Date/Time column
+                    text = text.replace(/\s+/g, ' ');
+                } else if (index === 2) { // Token pair column
+                    text = text.replace('→', ' -> ');
+                }
+                
+                rowData.push(text);
             });
             
             rows.push(rowData);
         });
         
         // Create CSV content
-        const csvContent = rows.map(row => row.join(',')).join('\n');
+        const csvContent = rows.map(row => 
+            row.map(field => 
+                // Escape fields that contain commas or quotes
+                typeof field === 'string' && (field.includes(',') || field.includes('"')) 
+                    ? `"${field.replace(/"/g, '""')}"` 
+                    : field
+            ).join(',')
+        ).join('\n');
         
         // Download file
-        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -580,15 +681,46 @@
     }
     
     /**
+     * Show toast notification
+     */
+    function showToast(message, type = 'info') {
+        // Create toast container if it doesn't exist
+        let toastContainer = document.getElementById('toast-container');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'toast-container';
+            toastContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
+            document.body.appendChild(toastContainer);
+        }
+        
+        const toast = document.createElement('div');
+        toast.className = `alert alert-${type} alert-dismissible fade show`;
+        toast.style.minWidth = '300px';
+        toast.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            if (toast.parentElement) {
+                toast.remove();
+            }
+        }, 5000);
+    }
+    
+    /**
      * Auto-submit form when filters change (optional convenience feature)
      */
     document.addEventListener('DOMContentLoaded', function() {
         const filterForm = document.getElementById('filter-form');
-        const filterSelects = filterForm.querySelectorAll('select');
         
         // Optional: Auto-submit on select change
         // Uncomment if you want instant filtering
         /*
+        const filterSelects = filterForm.querySelectorAll('select');
         filterSelects.forEach(select => {
             select.addEventListener('change', () => {
                 filterForm.submit();
