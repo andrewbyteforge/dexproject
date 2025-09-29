@@ -426,6 +426,11 @@
         gap: 0.5rem;
     }
     
+    .config-item-actions form {
+        display: inline-block;
+        margin: 0;
+    }
+    
     .btn-icon {
         padding: 0.5rem;
         width: 36px;
@@ -434,6 +439,45 @@
         align-items: center;
         justify-content: center;
         border-radius: 6px;
+    }
+    
+    .btn-icon:hover {
+        transform: scale(1.1);
+        box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+    }
+    
+    .btn-outline-danger.btn-icon:hover {
+        box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+    }
+    
+    /* Pagination Styles */
+    .pagination {
+        margin-bottom: 0;
+    }
+    
+    .pagination .page-link {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #fff;
+        transition: all 0.2s;
+    }
+    
+    .pagination .page-link:hover {
+        background: rgba(0, 123, 255, 0.2);
+        border-color: rgba(0, 123, 255, 0.3);
+        color: #fff;
+    }
+    
+    .pagination .page-item.active .page-link {
+        background: rgba(0, 123, 255, 0.3);
+        border-color: rgba(0, 123, 255, 0.5);
+        color: #fff;
+    }
+    
+    .pagination .page-item.disabled .page-link {
+        background: rgba(255, 255, 255, 0.02);
+        border-color: rgba(255, 255, 255, 0.05);
+        color: rgba(255, 255, 255, 0.3);
     }
     
     @media (max-width: 768px) {
@@ -459,6 +503,23 @@
         
         .config-actions {
             flex-direction: column;
+        }
+        
+        .config-item {
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .config-item-actions {
+            justify-content: flex-start;
+        }
+        
+        .pagination {
+            font-size: 0.875rem;
+        }
+        
+        .pagination .page-link {
+            padding: 0.25rem 0.5rem;
         }
     }
 </style>
@@ -830,6 +891,9 @@
                     <button type="button" class="btn btn-outline-secondary" onclick="resetForm()">
                         <i class="bi bi-arrow-counterclockwise me-2"></i>Reset to Defaults
                     </button>
+                    <button type="button" class="btn btn-outline-primary" onclick="saveAsNew()">
+                        <i class="bi bi-plus-circle me-2"></i>Save as New
+                    </button>
                     <button type="submit" class="btn btn-primary">
                         <i class="bi bi-save me-2"></i>Save Configuration
                     </button>
@@ -838,86 +902,112 @@
         </div>
     </form>
     
-    <!-- Saved Configurations -->
+    <!-- Saved Configurations Section with Pagination -->
     {% if all_configs %}
     <div class="row mb-4">
         <div class="col-12">
             <div class="card card-glass">
-                <div class="card-header">
+                <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="card-title mb-0">
                         <i class="bi bi-folder me-2"></i>Saved Configurations
-                        <span class="badge bg-info ms-2">{{ all_configs|length }}</span>
+                        <span class="badge bg-info ms-2">{{ total_configs }}</span>
                     </h5>
+                    {% if all_configs.has_other_pages %}
+                    <small class="text-muted">
+                        Page {{ all_configs.number }} of {{ all_configs.paginator.num_pages }}
+                    </small>
+                    {% endif %}
                 </div>
                 <div class="card-body">
-                    {% for config in all_configs %}
+                    <!-- Configuration items -->
+                    {% for cfg in all_configs %}
                     <div class="config-item">
                         <div class="config-item-info">
                             <div class="config-item-name">
-                                {{ config.name }}
-                                {% if config.is_active %}
+                                {{ cfg.name }}
+                                {% if cfg.is_active %}
                                     <span class="badge bg-success ms-2">ACTIVE</span>
                                 {% endif %}
                             </div>
                             <div class="config-item-meta">
-                                Mode: {{ config.trading_mode }} • 
-                                Created: {{ config.created_at|date:"M d, Y" }} •
-                                {% if config.use_fast_lane %}Fast Lane{% endif %}
-                                {% if config.use_fast_lane and config.use_smart_lane %} + {% endif %}
-                                {% if config.use_smart_lane %}Smart Lane{% endif %}
+                                Mode: {{ cfg.trading_mode }} • 
+                                Created: {{ cfg.created_at|date:"M d, Y H:i" }} •
+                                Updated: {{ cfg.updated_at|date:"M d, Y H:i" }} •
+                                {% if cfg.use_fast_lane %}Fast Lane{% endif %}
+                                {% if cfg.use_fast_lane and cfg.use_smart_lane %} + {% endif %}
+                                {% if cfg.use_smart_lane %}Smart Lane{% endif %}
                             </div>
                         </div>
                         <div class="config-item-actions">
-                            <button class="btn btn-outline-secondary btn-icon" 
-                                    title="Load Configuration"
-                                    onclick="loadConfig('{{ config.config_id }}')">
-                                <i class="bi bi-download"></i>
-                            </button>
-                            {% if not config.is_active %}
-                            <button class="btn btn-outline-danger btn-icon" 
-                                    title="Delete Configuration"
-                                    onclick="deleteConfig('{{ config.config_id }}')">
-                                <i class="bi bi-trash"></i>
-                            </button>
+                            {% if not cfg.is_active %}
+                            <a href="?load_config={{ cfg.config_id }}" 
+                               class="btn btn-outline-primary btn-icon" 
+                               title="Load & Activate Configuration">
+                                <i class="bi bi-play-circle"></i>
+                            </a>
+                            {% endif %}
+                            
+                            {% if not cfg.is_active and total_configs > 1 %}
+                            <form method="post" style="display: inline;" 
+                                  onsubmit="return confirm('Delete configuration &quot;{{ cfg.name }}&quot;? This cannot be undone.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="config_id" value="{{ cfg.config_id }}">
+                                <button type="submit" 
+                                        class="btn btn-outline-danger btn-icon" 
+                                        title="Delete Configuration">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
                             {% endif %}
                         </div>
                     </div>
                     {% endfor %}
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-    
-    <!-- Trading Config Info -->
-    {% if trading_config %}
-    <div class="row">
-        <div class="col-12">
-            <div class="card card-glass">
-                <div class="card-header">
-                    <h5 class="card-title mb-0">
-                        <i class="bi bi-info-circle me-2"></i>Simulation Settings
-                    </h5>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-3 mb-3">
-                            <div class="text-muted" style="font-size: 0.85rem;">Base Slippage</div>
-                            <div style="font-weight: 600;">{{ trading_config.base_slippage_percent }}%</div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="text-muted" style="font-size: 0.85rem;">Gas Multiplier</div>
-                            <div style="font-weight: 600;">{{ trading_config.gas_price_multiplier }}x</div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="text-muted" style="font-size: 0.85rem;">Execution Delay</div>
-                            <div style="font-weight: 600;">{{ trading_config.execution_delay_ms }}ms</div>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <div class="text-muted" style="font-size: 0.85rem;">Failure Rate</div>
-                            <div style="font-weight: 600;">{{ trading_config.failure_rate_percent }}%</div>
-                        </div>
-                    </div>
+                    
+                    <!-- Pagination controls -->
+                    {% if all_configs.has_other_pages %}
+                    <nav aria-label="Configuration pagination" class="mt-4">
+                        <ul class="pagination justify-content-center">
+                            {% if all_configs.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page=1" aria-label="First">
+                                    <span aria-hidden="true">&laquo;&laquo;</span>
+                                </a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ all_configs.previous_page_number }}" aria-label="Previous">
+                                    <span aria-hidden="true">&laquo;</span>
+                                </a>
+                            </li>
+                            {% endif %}
+                            
+                            {% for num in all_configs.paginator.page_range %}
+                                {% if all_configs.number == num %}
+                                <li class="page-item active">
+                                    <span class="page-link">{{ num }}</span>
+                                </li>
+                                {% elif num > all_configs.number|add:'-3' and num < all_configs.number|add:'3' %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                                </li>
+                                {% endif %}
+                            {% endfor %}
+                            
+                            {% if all_configs.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ all_configs.next_page_number }}" aria-label="Next">
+                                    <span aria-hidden="true">&raquo;</span>
+                                </a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ all_configs.paginator.num_pages }}" aria-label="Last">
+                                    <span aria-hidden="true">&raquo;&raquo;</span>
+                                </a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -1008,6 +1098,27 @@
     }
     
     /**
+     * Save configuration as new
+     */
+    function saveAsNew() {
+        // Add a hidden field to indicate saving as new
+        const form = document.getElementById('config-form');
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'save_as_new';
+        input.value = 'true';
+        form.appendChild(input);
+        
+        // Update the name field to avoid duplicates
+        const nameField = document.querySelector('[name="name"]');
+        if (nameField.value && !nameField.value.endsWith(' (Copy)')) {
+            nameField.value = nameField.value + ' (Copy)';
+        }
+        
+        form.submit();
+    }
+    
+    /**
      * Start paper trading bot
      */
     async function startBot() {
@@ -1090,30 +1201,6 @@
         
         updateRiskIndicator();
         showToast('Form reset to default values', 'info');
-    }
-    
-    /**
-     * Load saved configuration
-     */
-    function loadConfig(configId) {
-        showToast('Configuration loading...', 'info');
-        window.location.href = `/paper-trading/configuration/?config=${configId}`;
-    }
-    
-    /**
-     * Delete saved configuration
-     */
-    async function deleteConfig(configId) {
-        if (!confirm('Delete this configuration? This action cannot be undone.')) {
-            return;
-        }
-        
-        showToast('Deleting configuration...', 'info');
-        // Implement delete API call when backend is ready
-        setTimeout(() => {
-            showToast('Configuration deleted', 'success');
-            location.reload();
-        }, 1000);
     }
     
     /**
