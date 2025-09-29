@@ -1,10 +1,10 @@
 /**
  * Smart Lane Analysis JavaScript
  * 
- * Extracted from smart_lane_analysis.html template
  * Provides interactive functionality for AI-powered token analysis
+ * with proper thought log fetching and comprehensive error handling
  * 
- * File: dashboard/static/dashboard/js/smart_lane_analysis.js
+ * File: dexproject/static/js/smart_lane_analysis.js
  */
 
 'use strict';
@@ -14,6 +14,10 @@
 // ============================================================================
 
 const SmartLaneAnalysis = {
+    // Polling interval reference
+    thoughtLogInterval: null,
+    thoughtLogPollCount: 0,
+    maxPollAttempts: 15, // Poll for max 30 seconds (15 * 2 seconds)
 
     /**
      * Initialize the Smart Lane Analysis page
@@ -115,6 +119,7 @@ const SmartLaneAnalysis = {
 
 /**
  * Start Smart Lane analysis process
+ * FIXED: Using correct endpoint and properly handling the response
  */
 SmartLaneAnalysis.startAnalysis = async function () {
     const form = document.getElementById('analysis-form');
@@ -128,24 +133,28 @@ SmartLaneAnalysis.startAnalysis = async function () {
 
     const analysisData = {
         token_address: formData.get('token_address'),
-        analysis_depth: formData.get('analysis_depth'),
-        position_size: parseFloat(formData.get('position_size')),
-        analyzers: {
-            honeypot_detection: document.getElementById('honeypot_check')?.checked || false,
-            liquidity_analysis: document.getElementById('liquidity_check')?.checked || false,
-            social_sentiment: document.getElementById('social_check')?.checked || false,
-            technical_analysis: document.getElementById('technical_check')?.checked || false,
-            contract_security: document.getElementById('contract_check')?.checked || false,
-            market_structure: document.getElementById('market_check')?.checked || false
+        config: {
+            analysis_depth: formData.get('analysis_depth') || 'COMPREHENSIVE',
+            position_size: parseFloat(formData.get('position_size')) || 0.1,
+            analyzers: {
+                honeypot_detection: document.getElementById('honeypot_check')?.checked !== false,
+                liquidity_analysis: document.getElementById('liquidity_check')?.checked !== false,
+                social_sentiment: document.getElementById('social_check')?.checked !== false,
+                technical_analysis: document.getElementById('technical_check')?.checked !== false,
+                contract_security: document.getElementById('contract_check')?.checked !== false,
+                market_structure: document.getElementById('market_check')?.checked !== false
+            }
         }
     };
+
+    console.log('Starting analysis with data:', analysisData);
 
     try {
         // Show loading state
         this.showLoadingState();
 
-        // Start analysis
-        const response = await fetch('/api/smart-lane/analyze/', {
+        // FIXED: Use correct API endpoint
+        const response = await fetch('/dashboard/api/smart-lane/analyze/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -154,15 +163,36 @@ SmartLaneAnalysis.startAnalysis = async function () {
             body: JSON.stringify(analysisData)
         });
 
+        console.log('Analysis response status:', response.status);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+
         const result = await response.json();
+        console.log('Analysis result:', result);
 
         if (result.success) {
-            // Show results
-            this.displayAnalysisResults(result.analysis);
+            const analysis = result.analysis;
 
-            // Monitor analysis progress if needed
-            if (result.analysis.status === 'IN_PROGRESS') {
-                this.monitorAnalysisProgress(result.analysis.analysis_id);
+            // Display initial results
+            this.displayAnalysisResults(analysis);
+
+            // CRITICAL FIX: Start polling for thought log updates
+            if (analysis.analysis_id || analysis.thought_log_id) {
+                const thoughtLogId = analysis.thought_log_id || analysis.analysis_id;
+                console.log('Starting thought log polling for analysis:', thoughtLogId);
+
+                // Start polling for thought log updates
+                this.startThoughtLogPolling(thoughtLogId);
+            } else {
+                console.warn('No analysis_id or thought_log_id in response');
+            }
+
+            // Monitor analysis progress if still in progress
+            if (analysis.status === 'IN_PROGRESS') {
+                this.monitorAnalysisProgress(analysis.analysis_id);
             }
         } else {
             throw new Error(result.error || 'Analysis failed');
@@ -176,9 +206,158 @@ SmartLaneAnalysis.startAnalysis = async function () {
 };
 
 /**
+ * Start polling for thought log updates
+ * NEW FUNCTION: Polls for thought log updates every 2 seconds
+ */
+SmartLaneAnalysis.startThoughtLogPolling = function (analysisId) {
+    if (!analysisId) {
+        console.warn('No analysis ID provided for thought log polling');
+        return;
+    }
+
+    // Reset poll count
+    this.thoughtLogPollCount = 0;
+
+    // Clear any existing interval
+    this.stopThoughtLogPolling();
+
+    console.log('Starting thought log polling for analysis:', analysisId);
+
+    // Initial fetch
+    this.fetchThoughtLog(analysisId);
+
+    // Set up polling interval (every 2 seconds)
+    this.thoughtLogInterval = setInterval(() => {
+        this.thoughtLogPollCount++;
+
+        // Check if we've reached max poll attempts
+        if (this.thoughtLogPollCount >= this.maxPollAttempts) {
+            console.log('Max poll attempts reached, stopping thought log polling');
+            this.stopThoughtLogPolling();
+            return;
+        }
+
+        console.log(`Polling thought log (attempt ${this.thoughtLogPollCount}/${this.maxPollAttempts})`);
+        this.fetchThoughtLog(analysisId);
+    }, 2000);
+
+    // Also stop polling after 30 seconds as a safety measure
+    setTimeout(() => {
+        if (this.thoughtLogInterval) {
+            console.log('Timeout reached, stopping thought log polling');
+            this.stopThoughtLogPolling();
+        }
+    }, 30000);
+};
+
+/**
+ * Stop polling for thought log updates
+ * NEW FUNCTION: Cleans up the polling interval
+ */
+SmartLaneAnalysis.stopThoughtLogPolling = function () {
+    if (this.thoughtLogInterval) {
+        console.log('Stopping thought log polling');
+        clearInterval(this.thoughtLogInterval);
+        this.thoughtLogInterval = null;
+        this.thoughtLogPollCount = 0;
+    }
+};
+
+/**
+ * Fetch thought log for a specific analysis
+ * ENHANCED: Now supports being called multiple times for polling
+ */
+SmartLaneAnalysis.fetchThoughtLog = async function (analysisId) {
+    if (!analysisId) {
+        console.warn('No analysis ID provided for thought log fetch');
+        return;
+    }
+
+    console.log('Fetching thought log for analysis:', analysisId);
+
+    const url = `/dashboard/api/smart-lane/thought-log/${analysisId}/`;
+
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': this.getCsrfToken()
+            }
+        });
+
+        console.log('Thought log response status:', response.status);
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch thought log: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('Thought log response data:', data);
+
+        if (data.success && data.thought_log) {
+            // Update the thought log display with actual data
+            this.updateThoughtLog(data.thought_log);
+            console.log('Thought log updated successfully');
+
+            // Check if thought log looks complete and stop polling if so
+            if (this.isThoughtLogComplete(data.thought_log)) {
+                console.log('Thought log appears complete, stopping polling');
+                this.stopThoughtLogPolling();
+            }
+        } else {
+            console.warn('No thought log data received:', data);
+            // Show placeholder if no data
+            this.updateThoughtLog([]);
+        }
+
+    } catch (error) {
+        console.error('Error fetching thought log:', error);
+        // Show error state in UI
+        const container = document.getElementById('thought-log');
+        if (container) {
+            container.innerHTML = `
+                <div class="text-center py-4 text-danger">
+                    <i class="bi bi-exclamation-triangle display-4 d-block mb-3"></i>
+                    <p>Failed to load AI reasoning</p>
+                    <small>${error.message}</small>
+                </div>
+            `;
+        }
+    }
+};
+
+/**
+ * Check if thought log appears to be complete
+ * NEW FUNCTION: Determines if we should stop polling
+ */
+SmartLaneAnalysis.isThoughtLogComplete = function (thoughtLog) {
+    if (!thoughtLog || !Array.isArray(thoughtLog)) {
+        return false;
+    }
+
+    // Check if we have a final decision step
+    const hasFinalDecision = thoughtLog.some(thought => {
+        const category = (thought.category || '').toLowerCase();
+        const content = (thought.thought || thought.reasoning || '').toLowerCase();
+        return category.includes('final') ||
+            category.includes('decision') ||
+            content.includes('final decision') ||
+            content.includes('recommendation');
+    });
+
+    // If we have more than 5 steps and a final decision, consider it complete
+    return thoughtLog.length > 5 && hasFinalDecision;
+};
+
+/**
  * Show loading state with progress simulation
+ * ENHANCED: Added loading state for thought log and cleanup on unmount
  */
 SmartLaneAnalysis.showLoadingState = function () {
+    // Stop any existing polling when starting new analysis
+    this.stopThoughtLogPolling();
+
     const initialState = document.getElementById('initial-state');
     const analysisResults = document.getElementById('analysis-results');
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -186,6 +365,19 @@ SmartLaneAnalysis.showLoadingState = function () {
     if (initialState) initialState.style.display = 'none';
     if (analysisResults) analysisResults.style.display = 'block';
     if (loadingOverlay) loadingOverlay.style.display = 'flex';
+
+    // Reset thought log to loading state
+    const thoughtLogContainer = document.getElementById('thought-log');
+    if (thoughtLogContainer) {
+        thoughtLogContainer.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p>Generating AI reasoning...</p>
+            </div>
+        `;
+    }
 
     // Disable form
     const analyzeBtn = document.getElementById('analyze-btn');
@@ -200,6 +392,7 @@ SmartLaneAnalysis.showLoadingState = function () {
 
 /**
  * Hide loading state and restore form
+ * ENHANCED: Stops polling when hiding loading state
  */
 SmartLaneAnalysis.hideLoadingState = function () {
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -213,6 +406,9 @@ SmartLaneAnalysis.hideLoadingState = function () {
         analyzeBtn.disabled = false;
         analyzeBtn.innerHTML = '<i class="bi bi-cpu me-2"></i>Start Analysis';
     }
+
+    // Stop polling if analysis is complete or failed
+    this.stopThoughtLogPolling();
 };
 
 /**
@@ -251,29 +447,51 @@ SmartLaneAnalysis.simulateLoadingProgress = function () {
 
 /**
  * Display analysis results in the UI
+ * FIXED: No longer expects thought_log in initial response
  */
 SmartLaneAnalysis.displayAnalysisResults = function (analysis) {
+    console.log('Displaying analysis results:', analysis);
+
     this.hideLoadingState();
 
     // Update recommendation summary
     this.updateRecommendationSummary(analysis);
 
-    // Update token info
-    this.updateTokenInfo(analysis.token_data);
+    // Update token info if available
+    if (analysis.token_data) {
+        this.updateTokenInfo(analysis.token_data);
+    }
 
     // Show trading panel if recommendation is actionable
     if (analysis.recommendation && analysis.recommendation !== 'HOLD') {
         this.updateTradingPanel(analysis);
     }
 
-    // Update analyzer results
-    this.updateAnalyzerResults(analysis.analyzer_results);
+    // Update analyzer results if available
+    if (analysis.analyzer_results) {
+        this.updateAnalyzerResults(analysis.analyzer_results);
+    } else if (analysis.result && analysis.result.analyzer_results) {
+        this.updateAnalyzerResults(analysis.result.analyzer_results);
+    }
 
-    // Update thought log
-    this.updateThoughtLog(analysis.thought_log);
+    // Note: Thought log will be fetched separately
+    // Show loading state for thought log until it arrives
+    const thoughtLogContainer = document.getElementById('thought-log');
+    if (thoughtLogContainer && !analysis.thought_log) {
+        thoughtLogContainer.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary mb-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="small">Retrieving AI reasoning...</p>
+            </div>
+        `;
+    }
 
-    // Update detailed analysis
-    this.updateDetailedAnalysis(analysis.detailed_data);
+    // Update detailed analysis if available
+    if (analysis.detailed_data) {
+        this.updateDetailedAnalysis(analysis.detailed_data);
+    }
 
     // Trigger custom event for trading manager
     document.dispatchEvent(new CustomEvent('analysis:complete', {
@@ -504,13 +722,20 @@ SmartLaneAnalysis.updateAnalyzerResults = function (analyzerResults) {
 
 /**
  * Update thought log display
+ * ENHANCED: Better formatting and error handling
  */
 SmartLaneAnalysis.updateThoughtLog = function (thoughtLog) {
     const container = document.getElementById('thought-log');
 
-    if (!container) return;
+    if (!container) {
+        console.warn('Thought log container not found');
+        return;
+    }
 
-    if (!thoughtLog || thoughtLog.length === 0) {
+    console.log('Updating thought log with data:', thoughtLog);
+
+    // Handle empty or invalid thought log
+    if (!thoughtLog || (Array.isArray(thoughtLog) && thoughtLog.length === 0)) {
         container.innerHTML = `
             <div class="text-center py-4 text-muted">
                 <i class="bi bi-brain display-4 d-block mb-3"></i>
@@ -520,22 +745,53 @@ SmartLaneAnalysis.updateThoughtLog = function (thoughtLog) {
         return;
     }
 
-    const thoughtsHtml = thoughtLog.map((thought, index) => `
-        <div class="mb-3 pb-3 ${index < thoughtLog.length - 1 ? 'border-bottom border-secondary' : ''}">
-            <div class="d-flex align-items-start">
-                <i class="bi bi-lightbulb text-warning me-2 mt-1"></i>
-                <div class="flex-grow-1">
-                    <small class="text-muted">Step ${index + 1}</small>
-                    <p class="mb-1">${thought.reasoning || thought}</p>
-                    ${thought.confidence ? `
-                        <small class="text-info">Confidence: ${thought.confidence}%</small>
-                    ` : ''}
+    // Convert thought log to array if it's not already
+    const thoughts = Array.isArray(thoughtLog) ? thoughtLog : [thoughtLog];
+
+    const thoughtsHtml = thoughts.map((thought, index) => {
+        // Handle different thought log formats
+        let stepNumber = thought.step || (index + 1);
+        let category = thought.category || '';
+        let reasoning = thought.thought || thought.reasoning || thought.content || thought;
+        let confidence = thought.confidence || thought.confidence_level || null;
+        let timestamp = thought.timestamp || '';
+
+        // Format the thought entry
+        return `
+            <div class="mb-3 pb-3 ${index < thoughts.length - 1 ? 'border-bottom border-secondary' : ''}">
+                <div class="d-flex align-items-start">
+                    <i class="bi bi-lightbulb text-warning me-2 mt-1"></i>
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-start mb-1">
+                            <small class="text-muted">
+                                Step ${stepNumber}
+                                ${category ? `- ${category}` : ''}
+                            </small>
+                            ${timestamp ? `<small class="text-muted">${new Date(timestamp).toLocaleTimeString()}</small>` : ''}
+                        </div>
+                        <p class="mb-1">${reasoning}</p>
+                        ${confidence !== null ? `
+                            <div class="d-flex align-items-center">
+                                <small class="text-info me-2">Confidence:</small>
+                                <div class="progress" style="width: 100px; height: 10px;">
+                                    <div class="progress-bar bg-info" role="progressbar" 
+                                         style="width: ${confidence}%"
+                                         aria-valuenow="${confidence}" 
+                                         aria-valuemin="0" 
+                                         aria-valuemax="100">
+                                    </div>
+                                </div>
+                                <small class="text-info ms-2">${confidence}%</small>
+                            </div>
+                        ` : ''}
+                    </div>
                 </div>
             </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 
     container.innerHTML = thoughtsHtml;
+    console.log('Thought log updated successfully');
 };
 
 /**
@@ -703,8 +959,12 @@ SmartLaneAnalysis.showManualTradeModal = function () {
 
 /**
  * Reset analysis state
+ * ENHANCED: Stops polling when resetting
  */
 SmartLaneAnalysis.resetAnalysis = function () {
+    // Stop any ongoing polling
+    this.stopThoughtLogPolling();
+
     // Hide results
     const analysisResults = document.getElementById('analysis-results');
     const initialState = document.getElementById('initial-state');
@@ -735,11 +995,15 @@ SmartLaneAnalysis.resetAnalysis = function () {
 SmartLaneAnalysis.monitorAnalysisProgress = function (analysisId) {
     const checkProgress = async () => {
         try {
-            const response = await fetch(`/api/smart-lane/analysis/${analysisId}/status/`);
+            const response = await fetch(`/dashboard/api/smart-lane/analysis/${analysisId}/status/`);
             const result = await response.json();
 
             if (result.status === 'COMPLETED') {
                 this.displayAnalysisResults(result.analysis);
+                // Start polling for thought log after completion
+                if (result.analysis.analysis_id) {
+                    this.startThoughtLogPolling(result.analysis.analysis_id);
+                }
             } else if (result.status === 'FAILED') {
                 this.hideLoadingState();
                 this.showNotification('Analysis failed: ' + (result.error || 'Unknown error'), 'error');
@@ -758,11 +1022,30 @@ SmartLaneAnalysis.monitorAnalysisProgress = function (analysisId) {
 };
 
 /**
- * Get CSRF token from meta tag
+ * Get CSRF token from meta tag or cookies
+ * ENHANCED: Better CSRF token retrieval
  */
 SmartLaneAnalysis.getCsrfToken = function () {
+    // First try meta tag
     const token = document.querySelector('meta[name="csrf-token"]');
-    return token ? token.getAttribute('content') : '';
+    if (token) {
+        return token.getAttribute('content');
+    }
+
+    // Then try cookie
+    const name = 'csrftoken';
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue || '';
 };
 
 /**
@@ -800,4 +1083,11 @@ window.smartLaneAnalysis = SmartLaneAnalysis;
  */
 document.addEventListener('DOMContentLoaded', function () {
     SmartLaneAnalysis.init();
+});
+
+// Clean up on page unload to prevent memory leaks
+window.addEventListener('beforeunload', function () {
+    if (SmartLaneAnalysis.thoughtLogInterval) {
+        SmartLaneAnalysis.stopThoughtLogPolling();
+    }
 });
