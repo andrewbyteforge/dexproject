@@ -204,3 +204,47 @@ htmlcov/
 
 # Profiling data
 *.prof
+
+
+# Static files collected by Django
+/static/
+/staticfiles/
+/collected_static/
+
+# But keep your source static files
+!/dexproject/static/
+!/dashboard/static/
+!/paper_trading/static/
+!/*/static/
+
+# Database files
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+db.sqlite3
+/db/
+dexproject/db/
+
+# Collected static files
+/static/
+/staticfiles/
+staticfiles/
+
+# Python
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/

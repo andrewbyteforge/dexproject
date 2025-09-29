@@ -4,7 +4,7 @@ Paper Trading URL Configuration
 Complete URL routing for paper trading dashboard and API endpoints.
 Imports from both views.py (dashboard views) and api_views.py (API endpoints).
 
-File: dexproject/paper_trading/urls.py
+File Path: dexproject/paper_trading/urls.py
 """
 
 from django.urls import path
@@ -29,6 +29,10 @@ urlpatterns = [
     
     # Strategy configuration management
     path('configuration/', views.configuration_view, name='configuration'),
+    
+    # NEW: Analytics dashboard page - comprehensive performance analysis
+    # GET: /paper-trading/analytics/
+    path('analytics/', views.paper_trading_analytics_view, name='analytics'),
     
     # ==========================================================================
     # DATA API ENDPOINTS (from api_views.py)
@@ -62,6 +66,21 @@ urlpatterns = [
     # Performance metrics API - Detailed statistics
     # GET: /paper-trading/api/performance/
     path('api/performance/', api_views.api_performance_metrics, name='api_performance'),
+    
+    # ==========================================================================
+    # ANALYTICS API ENDPOINTS (from views.py)
+    # Analytics-specific data and export APIs
+    # ==========================================================================
+    
+    # NEW: Analytics data API - Real-time analytics updates
+    # GET: /paper-trading/api/analytics/data/
+    # Returns JSON with latest analytics metrics for chart updates
+    path('api/analytics/data/', views.paper_trading_api_analytics_data, name='api_analytics_data'),
+    
+    # NEW: Analytics export API - Export analytics to CSV
+    # GET: /paper-trading/api/analytics/export/
+    # Downloads analytics data as CSV file
+    path('api/analytics/export/', views.paper_trading_api_analytics_export, name='api_analytics_export'),
     
     # ==========================================================================
     # CONFIGURATION API (from api_views.py)

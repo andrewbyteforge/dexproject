@@ -1,0 +1,684 @@
+/**
+ * Configuration Panel CSS Styles
+ * 
+ * Professional styling for Fast Lane and Smart Lane configuration forms
+ * Extracted from configuration_panel.html template for better maintainability
+ * 
+ * File: dexproject/static/css/configuration_panel.css
+ */
+
+/* ============================================================================
+   MAIN CONFIGURATION PANEL
+   ============================================================================ */
+
+.config-panel {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-radius: 15px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    border: 1px solid rgba(0, 212, 170, 0.2);
+}
+
+/* ============================================================================
+   BRAND ACCENT COLORS
+   ============================================================================ */
+
+.fast-lane-accent {
+    color: #00d4aa !important;
+}
+
+.smart-lane-accent {
+    color: #1f6feb !important;
+}
+
+/* ============================================================================
+   MODE HEADER STYLING
+   ============================================================================ */
+
+.mode-header {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 12px;
+    border: 2px solid;
+    transition: all 0.3s ease;
+}
+
+.mode-header.fast-lane {
+    border-color: #00d4aa;
+}
+
+.mode-header.smart-lane {
+    border-color: #1f6feb;
+}
+
+.mode-header:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================================================
+   CONFIGURATION FORM STYLING
+   ============================================================================ */
+
+.config-form {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    padding: 2rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.form-section {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border-left: 4px solid;
+    transition: all 0.3s ease;
+}
+
+.form-section:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.form-section.fast-lane {
+    border-left-color: #00d4aa;
+}
+
+.form-section.smart-lane {
+    border-left-color: #1f6feb;
+}
+
+.form-section.general {
+    border-left-color: #6c757d;
+}
+
+/* ============================================================================
+   FORM CONTROLS AND INPUTS
+   ============================================================================ */
+
+.form-control {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+.form-control:focus {
+    background: rgba(0, 0, 0, 0.4) !important;
+    border-color: #00d4aa !important;
+    box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25) !important;
+    color: white !important;
+    transform: translateY(-1px);
+}
+
+.form-control:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.form-select {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+    transition: all 0.3s ease;
+}
+
+.form-select:focus {
+    background: rgba(0, 0, 0, 0.4) !important;
+    border-color: #00d4aa !important;
+    box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25) !important;
+    color: white !important;
+}
+
+.form-check-input {
+    background-color: rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.3);
+    transition: all 0.3s ease;
+}
+
+.form-check-input:checked {
+    background-color: #00d4aa;
+    border-color: #00d4aa;
+}
+
+.form-check-input:focus {
+    border-color: #00d4aa;
+    box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25);
+}
+
+/* ============================================================================
+   FORM SWITCHES
+   ============================================================================ */
+
+.form-switch .form-check-input {
+    background-color: rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.form-switch .form-check-input:checked {
+    background-color: #00d4aa;
+    border-color: #00d4aa;
+}
+
+.form-switch .form-check-input:focus {
+    border-color: #00d4aa;
+    box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25);
+}
+
+/* ============================================================================
+   INPUT GROUP STYLING
+   ============================================================================ */
+
+.input-group-text {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #adb5bd;
+    transition: all 0.3s ease;
+}
+
+.input-group .form-control:focus+.input-group-text,
+.input-group .form-control:focus~.input-group-text {
+    border-color: #00d4aa;
+    background: rgba(0, 212, 170, 0.1);
+}
+
+/* ============================================================================
+   BUTTONS AND ACTIONS
+   ============================================================================ */
+
+.btn-save-config {
+    background: linear-gradient(135deg, #00d4aa, #00b894);
+    border: none;
+    color: white;
+    padding: 0.75rem 2rem;
+    border-radius: 25px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-save-config:hover {
+    background: linear-gradient(135deg, #00b894, #00d4aa);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 212, 170, 0.3);
+    color: white;
+}
+
+.btn-save-config:active {
+    transform: translateY(0);
+}
+
+/* ============================================================================
+   EXISTING CONFIGURATIONS SECTION
+   ============================================================================ */
+
+.existing-configs {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.config-card-mini {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    transition: all 0.3s ease;
+}
+
+.config-card-mini:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: #00d4aa;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================================================
+   RISK LEVEL INDICATORS
+   ============================================================================ */
+
+.risk-level-indicators {
+    display: flex;
+    justify-content: space-between;
+    margin: 1rem 0;
+    gap: 0.5rem;
+}
+
+.risk-indicator {
+    flex: 1;
+    text-align: center;
+    padding: 0.75rem 0.5rem;
+    border-radius: 20px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.risk-indicator:hover {
+    transform: scale(1.02);
+}
+
+.risk-low {
+    background: rgba(40, 167, 69, 0.2);
+    color: #28a745;
+    border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.risk-medium {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+    border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.risk-high {
+    background: rgba(220, 53, 69, 0.2);
+    color: #dc3545;
+    border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+/* ============================================================================
+   WALLET STATUS SECTION
+   ============================================================================ */
+
+.wallet-status {
+    background: rgba(0, 212, 170, 0.1);
+    border: 1px solid rgba(0, 212, 170, 0.3);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    transition: all 0.3s ease;
+}
+
+.wallet-status:hover {
+    background: rgba(0, 212, 170, 0.15);
+    border-color: rgba(0, 212, 170, 0.4);
+}
+
+/* ============================================================================
+   HELP TEXT AND LABELS
+   ============================================================================ */
+
+.help-text {
+    font-size: 0.875rem;
+    color: #adb5bd;
+    margin-top: 0.25rem;
+    font-style: italic;
+}
+
+.section-title {
+    color: #ffffff;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    font-size: 1.1rem;
+}
+
+.section-title i {
+    margin-right: 0.5rem;
+    font-size: 1.2rem;
+}
+
+.tooltip-custom {
+    cursor: help;
+    text-decoration: underline dotted;
+    text-decoration-color: rgba(255, 255, 255, 0.5);
+}
+
+.tooltip-custom:hover {
+    text-decoration-color: #00d4aa;
+}
+
+/* ============================================================================
+   FORM LABELS
+   ============================================================================ */
+
+.form-label {
+    color: #ffffff;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+.form-label::after {
+    content: "";
+    margin-left: 0.25rem;
+}
+
+.form-label[for*="required"]::after,
+label:has(+ input[required])::after {
+    content: " *";
+    color: #ff6b6b;
+}
+
+/* ============================================================================
+   ALERT STYLING
+   ============================================================================ */
+
+.alert-success {
+    background: rgba(40, 167, 69, 0.2);
+    border: 1px solid rgba(40, 167, 69, 0.3);
+    color: #d4edda;
+    border-radius: 8px;
+}
+
+.alert-info {
+    background: rgba(13, 202, 240, 0.2);
+    border: 1px solid rgba(13, 202, 240, 0.3);
+    color: #d1ecf1;
+    border-radius: 8px;
+}
+
+.alert-warning {
+    background: rgba(255, 193, 7, 0.2);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    color: #fff3cd;
+    border-radius: 8px;
+}
+
+/* ============================================================================
+   CARD STYLING
+   ============================================================================ */
+
+.card.bg-dark {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 12px;
+}
+
+.card-header.bg-success {
+    background: linear-gradient(135deg, #28a745, #20c997) !important;
+    border-radius: 12px 12px 0 0;
+}
+
+.card-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.card-body {
+    color: #ffffff;
+}
+
+/* ============================================================================
+   BREADCRUMB STYLING
+   ============================================================================ */
+
+.breadcrumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+}
+
+.breadcrumb-item a {
+    color: #00d4aa;
+    text-decoration: none;
+}
+
+.breadcrumb-item a:hover {
+    color: #00b894;
+    text-decoration: underline;
+}
+
+.breadcrumb-item.active {
+    color: #adb5bd;
+}
+
+/* ============================================================================
+   BADGE STYLING
+   ============================================================================ */
+
+.badge.bg-success {
+    background-color: #00d4aa !important;
+}
+
+.badge.bg-secondary {
+    background-color: #6c757d !important;
+}
+
+.badge.bg-warning {
+    background-color: #ffc107 !important;
+    color: #000 !important;
+}
+
+/* ============================================================================
+   RESPONSIVE DESIGN
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .config-panel {
+        padding: 1.5rem;
+    }
+
+    .config-form {
+        padding: 1.5rem;
+    }
+
+    .form-section {
+        padding: 1rem;
+    }
+
+    .mode-header {
+        padding: 1rem;
+    }
+
+    .risk-level-indicators {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .risk-indicator {
+        padding: 0.5rem;
+        font-size: 0.8rem;
+    }
+
+    .section-title {
+        font-size: 1rem;
+    }
+
+    .btn-save-config {
+        padding: 0.6rem 1.5rem;
+        font-size: 0.9rem;
+    }
+}
+
+@media (max-width: 576px) {
+    .config-panel {
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .existing-configs {
+        padding: 1rem;
+    }
+
+    .config-card-mini {
+        padding: 0.75rem;
+    }
+
+    .wallet-status {
+        padding: 0.75rem;
+    }
+
+    .form-section {
+        margin-bottom: 1rem;
+    }
+}
+
+/* ============================================================================
+   ANIMATION CLASSES
+   ============================================================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        max-height: 0;
+        padding: 0;
+    }
+
+    to {
+        opacity: 1;
+        max-height: 200px;
+        padding: 1rem;
+    }
+}
+
+.slide-down {
+    animation: slideDown 0.4s ease-out;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+.pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* ============================================================================
+   LOADING AND DISABLED STATES
+   ============================================================================ */
+
+.form-control:disabled,
+.form-select:disabled {
+    background: rgba(0, 0, 0, 0.1) !important;
+    color: #6c757d !important;
+    opacity: 0.7;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.loading-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #00d4aa;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+
+.text-fast-lane {
+    color: #00d4aa !important;
+}
+
+.text-smart-lane {
+    color: #1f6feb !important;
+}
+
+.border-fast-lane {
+    border-color: #00d4aa !important;
+}
+
+.border-smart-lane {
+    border-color: #1f6feb !important;
+}
+
+.bg-fast-lane {
+    background-color: #00d4aa !important;
+}
+
+.bg-smart-lane {
+    background-color: #1f6feb !important;
+}
+
+/* ============================================================================
+   HOVER EFFECTS AND TRANSITIONS
+   ============================================================================ */
+
+.form-section,
+.config-card-mini,
+.wallet-status,
+.risk-indicator,
+.btn,
+.form-control,
+.form-select {
+    transition: all 0.3s ease;
+}
+
+.form-check-label {
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.form-check-label:hover {
+    color: #00d4aa;
+}
+
+/* ============================================================================
+   FOCUS MANAGEMENT
+   ============================================================================ */
+
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus,
+.btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25);
+}
+
+/* ============================================================================
+   PRINT STYLES
+   ============================================================================ */
+
+@media print {
+    .config-panel {
+        background: white !important;
+        color: black !important;
+        border: 1px solid #ccc !important;
+    }
+
+    .form-section {
+        background: #f8f9fa !important;
+        border-left-color: #000 !important;
+    }
+
+    .btn {
+        display: none !important;
+    }
+
+    .help-text {
+        color: #666 !important;
+    }
+}

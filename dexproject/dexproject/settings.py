@@ -591,7 +591,7 @@ if PRODUCTION_MODE or not DEBUG:
     
     # CSRF protection
     CSRF_COOKIE_SECURE = False  # Set to True if using HTTPS
-    CSRF_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = False
     CSRF_COOKIE_SAMESITE = 'Strict'
 
 # =============================================================================

@@ -1,0 +1,474 @@
+/**
+ * Analytics Page CSS Styles
+ * 
+ * Professional styling for trading analytics, portfolio breakdown,
+ * and performance metrics visualization
+ * 
+ * File: dexproject/static/css/analytics.css
+ */
+
+/* ============================================================================
+   PORTFOLIO CARDS AND METRICS
+   ============================================================================ */
+
+.portfolio-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 212, 170, 0.2);
+    border-radius: 12px;
+    transition: all 0.3s ease;
+}
+
+.portfolio-card:hover {
+    border-color: rgba(0, 212, 170, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 212, 170, 0.1);
+}
+
+.metric-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+.card-glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================================
+   PROFIT & LOSS STYLING
+   ============================================================================ */
+
+.pnl-positive {
+    color: #00d4aa;
+}
+
+.pnl-negative {
+    color: #ff6b6b;
+}
+
+.pnl-neutral {
+    color: #74b9ff;
+}
+
+/* ============================================================================
+   TRADING ACTIVITY ROWS
+   ============================================================================ */
+
+.trade-row {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    border-left: 3px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.trade-row:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.trade-buy {
+    border-left-color: #00d4aa;
+}
+
+.trade-sell {
+    border-left-color: #ff6b6b;
+}
+
+/* ============================================================================
+   POSITION ITEMS
+   ============================================================================ */
+
+.position-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: all 0.3s ease;
+}
+
+.position-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(0, 212, 170, 0.3);
+}
+
+/* ============================================================================
+   METRIC TYPOGRAPHY
+   ============================================================================ */
+
+.metric-large {
+    font-size: 2.5rem;
+    font-weight: 700;
+    background: linear-gradient(45deg, #00d4aa, #00b894);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.metric-medium {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+/* ============================================================================
+   TRADING CONTROLS
+   ============================================================================ */
+
+.trading-controls {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-trade {
+    background: linear-gradient(45deg, #00d4aa, #00b894);
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    color: white;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+}
+
+.btn-trade:hover {
+    background: linear-gradient(45deg, #00b894, #00a085);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 212, 170, 0.3);
+    color: white;
+}
+
+.btn-trade.btn-sell {
+    background: linear-gradient(45deg, #ff6b6b, #e55555);
+}
+
+.btn-trade.btn-sell:hover {
+    background: linear-gradient(45deg, #e55555, #cc4444);
+    color: white;
+}
+
+.btn-fast-lane {
+    background: linear-gradient(45deg, #00d4aa, #00b894);
+    border: none;
+    color: white;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-fast-lane:hover {
+    background: linear-gradient(45deg, #00b894, #00a085);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 212, 170, 0.3);
+    color: white;
+}
+
+.btn-outline-light:hover {
+    color: #000;
+}
+
+/* ============================================================================
+   NO DATA PLACEHOLDERS
+   ============================================================================ */
+
+.no-data-placeholder {
+    text-align: center;
+    padding: 40px 20px;
+    color: #999;
+}
+
+.no-data-placeholder .display-1 {
+    opacity: 0.5;
+}
+
+.no-data-placeholder h5 {
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.no-data-placeholder p {
+    margin-bottom: 0;
+}
+
+/* ============================================================================
+   CHART CONTAINERS
+   ============================================================================ */
+
+.chart-container {
+    position: relative;
+    height: 300px;
+    margin: 20px 0;
+}
+
+.chart-container canvas {
+    border-radius: 8px;
+}
+
+/* ============================================================================
+   TRADING MODAL STYLING
+   ============================================================================ */
+
+.modal-content.bg-dark {
+    background-color: #1a1a2e !important;
+    border: 1px solid rgba(0, 212, 170, 0.2);
+}
+
+.modal-header.border-secondary {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.modal-footer.border-secondary {
+    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.form-control.bg-secondary {
+    background-color: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+}
+
+.form-control.bg-secondary:focus {
+    background-color: rgba(0, 0, 0, 0.4) !important;
+    border-color: #00d4aa !important;
+    box-shadow: 0 0 0 0.2rem rgba(0, 212, 170, 0.25) !important;
+    color: white !important;
+}
+
+.input-group-text.bg-secondary {
+    background-color: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: white !important;
+}
+
+.alert-warning {
+    background-color: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    color: #ffc107;
+}
+
+/* ============================================================================
+   DASHED BORDERS AND DECORATIVE ELEMENTS
+   ============================================================================ */
+
+.border-dashed {
+    border: 2px dashed rgba(0, 212, 170, 0.3) !important;
+}
+
+/* ============================================================================
+   BRAND ACCENT COLORS
+   ============================================================================ */
+
+.fast-lane-accent {
+    color: #00d4aa !important;
+}
+
+.smart-lane-accent {
+    color: #3b82f6 !important;
+}
+
+/* ============================================================================
+   STATUS BADGES AND INDICATORS
+   ============================================================================ */
+
+.badge.bg-success {
+    background-color: #00d4aa !important;
+}
+
+.badge.bg-danger {
+    background-color: #ff6b6b !important;
+}
+
+.badge.bg-warning {
+    background-color: #f59e0b !important;
+    color: #000 !important;
+}
+
+.badge.bg-info {
+    background-color: #3b82f6 !important;
+}
+
+.badge.bg-secondary {
+    background-color: #6c757d !important;
+}
+
+/* ============================================================================
+   RESPONSIVE DESIGN
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .chart-container {
+        height: 200px;
+        margin: 10px 0;
+    }
+
+    .portfolio-card {
+        margin-bottom: 1rem;
+    }
+
+    .metric-large {
+        font-size: 2rem;
+    }
+
+    .metric-medium {
+        font-size: 1.25rem;
+    }
+
+    .trading-controls {
+        padding: 15px;
+    }
+
+    .trade-row {
+        padding: 10px 12px;
+    }
+
+    .position-item {
+        padding: 12px;
+    }
+}
+
+@media (max-width: 576px) {
+    .metric-large {
+        font-size: 1.75rem;
+    }
+
+    .portfolio-card .card-body {
+        padding: 1rem;
+    }
+
+    .no-data-placeholder {
+        padding: 30px 15px;
+    }
+
+    .btn-trade {
+        font-size: 0.8rem;
+        padding: 6px 12px;
+    }
+}
+
+/* ============================================================================
+   ANIMATION CLASSES
+   ============================================================================ */
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in-up {
+    animation: fadeInUp 0.5s ease-in-out;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+.pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* ============================================================================
+   HOVER EFFECTS AND TRANSITIONS
+   ============================================================================ */
+
+.position-item,
+.trade-row,
+.portfolio-card,
+.trading-controls {
+    transition: all 0.3s ease;
+}
+
+.btn-trade,
+.btn-fast-lane,
+.btn-outline-light {
+    transition: all 0.3s ease;
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+
+.text-fast-lane {
+    color: #00d4aa !important;
+}
+
+.text-smart-lane {
+    color: #3b82f6 !important;
+}
+
+.bg-fast-lane {
+    background-color: #00d4aa !important;
+}
+
+.bg-smart-lane {
+    background-color: #3b82f6 !important;
+}
+
+.border-fast-lane {
+    border-color: #00d4aa !important;
+}
+
+.border-smart-lane {
+    border-color: #3b82f6 !important;
+}
+
+/* ============================================================================
+   LOADING STATES
+   ============================================================================ */
+
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #00d4aa;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.btn-loading {
+    position: relative;
+    pointer-events: none;
+}
+
+.btn-loading::after {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    top: 50%;
+    left: 50%;
+    margin-left: -8px;
+    margin-top: -8px;
+    border: 2px solid transparent;
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
