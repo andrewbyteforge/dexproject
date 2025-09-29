@@ -32,7 +32,7 @@ urlpatterns = [
     
     # NEW: Analytics dashboard page - comprehensive performance analysis
     # GET: /paper-trading/analytics/
-    path('analytics/', views.paper_trading_analytics_view, name='analytics'),
+    path('analytics/', views.analytics_view, name='analytics'),  # FIXED: Changed from paper_trading_analytics_view to analytics_view
     
     # ==========================================================================
     # DATA API ENDPOINTS (from api_views.py)
@@ -75,12 +75,12 @@ urlpatterns = [
     # NEW: Analytics data API - Real-time analytics updates
     # GET: /paper-trading/api/analytics/data/
     # Returns JSON with latest analytics metrics for chart updates
-    path('api/analytics/data/', views.paper_trading_api_analytics_data, name='api_analytics_data'),
+    path('api/analytics/data/', views.api_analytics_data, name='api_analytics_data'),  # FIXED: Removed paper_trading_ prefix
     
     # NEW: Analytics export API - Export analytics to CSV
     # GET: /paper-trading/api/analytics/export/
     # Downloads analytics data as CSV file
-    path('api/analytics/export/', views.paper_trading_api_analytics_export, name='api_analytics_export'),
+    path('api/analytics/export/', views.api_analytics_export, name='api_analytics_export'),  # FIXED: Removed paper_trading_ prefix
     
     # ==========================================================================
     # CONFIGURATION API (from api_views.py)

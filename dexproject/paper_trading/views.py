@@ -511,9 +511,8 @@ def get_or_create_demo_account() -> PaperTradingAccount:
 
 
 
-
 # File Path: dexproject/paper_trading/views.py
-# ADD THIS FUNCTION TO YOUR EXISTING views.py FILE
+# ADD THESE FUNCTIONS TO YOUR EXISTING views.py FILE
 
 import json
 import logging
@@ -538,270 +537,205 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
-@require_http_methods(["GET"])
-def paper_trading_analytics_view(request: HttpRequest) -> HttpResponse:
+# REPLACE the analytics_view function in your views.py with this version
+# This version works WITHOUT the pnl_usd field
+# File Path: dexproject/paper_trading/views.py
+
+def analytics_view(request: HttpRequest) -> HttpResponse:
     """
-    Analytics dashboard for paper trading performance.
+    Analytics view for paper trading performance analysis.
     
-    Displays comprehensive trading analytics including:
-    - Performance charts and graphs
-    - Win/loss analysis
-    - Token performance breakdown
-    - Trading patterns and insights
+    Displays detailed analytics including:
+    - Performance metrics over time
+    - Trade distribution and success rates
+    - Token performance analysis
+    - Risk metrics and analysis
     
     Args:
-        request: HTTP request object
+        request: Django HTTP request
         
     Returns:
-        Rendered analytics template with performance data
+        Rendered analytics template
     """
     try:
-        # Get demo user account
+        # Get demo user's active account
         from django.contrib.auth.models import User
-        demo_user, _ = User.objects.get_or_create(username='demo_user')
         
-        # Get or create paper trading account
-        account, created = PaperTradingAccount.objects.get_or_create(
+        # Try to get the demo user - if it doesn't exist, redirect
+        try:
+            demo_user = User.objects.get(username='demo_user')
+        except User.DoesNotExist:
+            messages.warning(request, "Demo user not found. Please set up the demo account first.")
+            return redirect('paper_trading:dashboard')
+        
+        # Get the active account
+        account = PaperTradingAccount.objects.filter(
             user=demo_user,
-            is_active=True,
-            defaults={'name': 'Demo Paper Account'}
-        )
+            is_active=True
+        ).first()
         
-        # Time periods for analysis
-        now = timezone.now()
-        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        week_ago = now - timedelta(days=7)
-        month_ago = now - timedelta(days=30)
+        if not account:
+            messages.info(request, "No active paper trading account found.")
+            return redirect('paper_trading:dashboard')
         
-        # ====================
-        # Basic Metrics
-        # ====================
+        # Date range for analytics (default to last 30 days)
+        end_date = timezone.now()
+        start_date = end_date - timedelta(days=30)
         
-        # Get all trades
+        # Get date range from request if provided
+        date_from = request.GET.get('date_from')
+        if date_from:
+            try:
+                start_date = timezone.make_aware(
+                    datetime.strptime(date_from, '%Y-%m-%d')
+                )
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid date_from format: {date_from}")
+        
+        date_to = request.GET.get('date_to')
+        if date_to:
+            try:
+                end_date = timezone.make_aware(
+                    datetime.strptime(date_to, '%Y-%m-%d')
+                )
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid date_to format: {date_to}")
+        
+        # Get all trades with proper error handling for decimal fields
         all_trades = PaperTrade.objects.filter(
             account=account,
-            status='COMPLETED'
-        ).order_by('created_at')
+            created_at__gte=start_date,
+            created_at__lte=end_date
+        ).exclude(
+            # Exclude trades with NULL or invalid decimal values
+            Q(amount_in_usd__isnull=True) |
+            Q(simulated_gas_cost_usd__isnull=True) |
+            Q(simulated_slippage_percent__isnull=True)
+        )
         
-        # Calculate win rate
-        profitable_trades = all_trades.filter(pnl_usd__gt=0).count()
-        total_completed_trades = all_trades.count()
-        win_rate = (profitable_trades / total_completed_trades * 100) if total_completed_trades > 0 else 0
+        # Calculate metrics with error handling
+        total_trades = all_trades.count()
+        completed_trades = all_trades.filter(status='COMPLETED').count()
+        failed_trades = all_trades.filter(status='FAILED').count()
+        pending_trades = all_trades.filter(status='PENDING').count()
         
-        # Calculate average trade metrics
-        avg_profit = all_trades.filter(pnl_usd__gt=0).aggregate(
-            avg=Avg('pnl_usd')
-        )['avg'] or Decimal('0')
+        # Calculate volume and fees with NULL handling
+        trade_metrics = all_trades.aggregate(
+            total_volume=Sum('amount_in_usd', default=Decimal('0')),
+            total_gas=Sum('simulated_gas_cost_usd', default=Decimal('0')),
+            avg_trade_size=Avg('amount_in_usd', default=Decimal('0')),
+            avg_slippage=Avg('simulated_slippage_percent', default=Decimal('0'))
+        )
         
-        avg_loss = all_trades.filter(pnl_usd__lt=0).aggregate(
-            avg=Avg('pnl_usd')
-        )['avg'] or Decimal('0')
+        # Get performance metrics
+        latest_metrics = PaperPerformanceMetrics.objects.filter(
+            session__account=account
+        ).order_by('-calculated_at').first()
         
-        # Profit factor
-        total_profit = all_trades.filter(pnl_usd__gt=0).aggregate(
-            total=Sum('pnl_usd')
-        )['total'] or Decimal('0')
+        # Get token distribution
+        token_stats = {}
+        try:
+            # Group trades by token with error handling
+            for trade in all_trades:
+                # Skip trades with invalid data
+                if not trade.token_out_symbol or trade.amount_in_usd is None:
+                    continue
+                    
+                symbol = trade.token_out_symbol
+                if symbol not in token_stats:
+                    token_stats[symbol] = {
+                        'count': 0,
+                        'volume': Decimal('0'),
+                        'success': 0,
+                        'failed': 0
+                    }
+                
+                token_stats[symbol]['count'] += 1
+                # Safe addition with NULL check
+                if trade.amount_in_usd:
+                    token_stats[symbol]['volume'] += trade.amount_in_usd
+                
+                if trade.status == 'COMPLETED':
+                    token_stats[symbol]['success'] += 1
+                elif trade.status == 'FAILED':
+                    token_stats[symbol]['failed'] += 1
+        except Exception as e:
+            logger.error(f"Error calculating token stats: {e}")
+            token_stats = {}
         
-        total_loss = abs(all_trades.filter(pnl_usd__lt=0).aggregate(
-            total=Sum('pnl_usd')
-        )['total'] or Decimal('0'))
-        
-        profit_factor = (total_profit / total_loss) if total_loss > 0 else total_profit
-        
-        # ====================
-        # Performance Over Time
-        # ====================
-        
-        # Daily P&L for last 30 days
-        daily_pnl = []
-        cumulative_pnl = Decimal('0')
-        
-        for i in range(30):
-            day = today - timedelta(days=29-i)
-            next_day = day + timedelta(days=1)
-            
-            day_trades = all_trades.filter(
-                created_at__gte=day,
-                created_at__lt=next_day
+        # Get daily performance data
+        daily_performance = []
+        current_date = start_date.date()
+        while current_date <= end_date.date():
+            day_start = timezone.make_aware(
+                datetime.combine(current_date, datetime.min.time())
+            )
+            day_end = timezone.make_aware(
+                datetime.combine(current_date, datetime.max.time())
             )
             
-            day_pnl = day_trades.aggregate(
-                total=Sum('pnl_usd')
-            )['total'] or Decimal('0')
+            # Get trades for this day with error handling
+            day_trades = all_trades.filter(
+                created_at__gte=day_start,
+                created_at__lte=day_end
+            )
             
-            cumulative_pnl += day_pnl
+            # Calculate daily metrics with NULL handling
+            day_metrics = day_trades.aggregate(
+                count=Count('trade_id'),
+                volume=Sum('amount_in_usd', default=Decimal('0')),
+                gas_cost=Sum('simulated_gas_cost_usd', default=Decimal('0'))
+            )
             
-            daily_pnl.append({
-                'date': day.strftime('%Y-%m-%d'),
-                'pnl': float(day_pnl),
-                'cumulative': float(cumulative_pnl)
+            daily_performance.append({
+                'date': current_date.isoformat(),
+                'trades': day_metrics['count'] or 0,
+                'volume': float(day_metrics['volume'] or 0),
+                'gas_cost': float(day_metrics['gas_cost'] or 0)
             })
-        
-        # ====================
-        # Token Performance
-        # ====================
-        
-        # Get performance by token
-        token_performance = {}
-        
-        for trade in all_trades:
-            token = trade.token_out_symbol
-            if token not in token_performance:
-                token_performance[token] = {
-                    'trades': 0,
-                    'wins': 0,
-                    'total_pnl': Decimal('0'),
-                    'total_volume': Decimal('0')
-                }
             
-            token_performance[token]['trades'] += 1
-            token_performance[token]['total_volume'] += trade.amount_in_usd
-            token_performance[token]['total_pnl'] += trade.pnl_usd or Decimal('0')
-            if trade.pnl_usd and trade.pnl_usd > 0:
-                token_performance[token]['wins'] += 1
+            current_date += timedelta(days=1)
         
-        # Calculate win rate and format for display
-        token_stats = []
-        for token, stats in token_performance.items():
-            win_rate = (stats['wins'] / stats['trades'] * 100) if stats['trades'] > 0 else 0
-            token_stats.append({
-                'symbol': token,
-                'trades': stats['trades'],
-                'win_rate': win_rate,
-                'total_pnl': float(stats['total_pnl']),
-                'avg_pnl': float(stats['total_pnl'] / stats['trades']) if stats['trades'] > 0 else 0,
-                'volume': float(stats['total_volume'])
-            })
-        
-        # Sort by total P&L
-        token_stats.sort(key=lambda x: x['total_pnl'], reverse=True)
-        top_performers = token_stats[:5]
-        worst_performers = token_stats[-5:] if len(token_stats) > 5 else []
-        
-        # ====================
-        # Trading Patterns
-        # ====================
-        
-        # Hourly distribution
-        hourly_distribution = {}
-        for hour in range(24):
-            hour_trades = all_trades.filter(created_at__hour=hour)
-            hourly_distribution[hour] = {
-                'count': hour_trades.count(),
-                'avg_pnl': float(hour_trades.aggregate(
-                    avg=Avg('pnl_usd')
-                )['avg'] or 0)
-            }
-        
-        # Best trading hours
-        best_hours = sorted(
-            hourly_distribution.items(),
-            key=lambda x: x[1]['avg_pnl'],
-            reverse=True
-        )[:3]
-        
-        # ====================
-        # Recent Performance
-        # ====================
-        
-        # Today's performance
-        today_trades = all_trades.filter(created_at__gte=today)
-        today_pnl = today_trades.aggregate(
-            total=Sum('pnl_usd')
-        )['total'] or Decimal('0')
-        
-        # Week performance
-        week_trades = all_trades.filter(created_at__gte=week_ago)
-        week_pnl = week_trades.aggregate(
-            total=Sum('pnl_usd')
-        )['total'] or Decimal('0')
-        
-        # Month performance
-        month_trades = all_trades.filter(created_at__gte=month_ago)
-        month_pnl = month_trades.aggregate(
-            total=Sum('pnl_usd')
-        )['total'] or Decimal('0')
-        
-        # ====================
-        # Risk Metrics
-        # ====================
-        
-        # Maximum drawdown calculation
-        balance_history = [10000]  # Starting balance
-        running_balance = Decimal('10000')
-        peak_balance = Decimal('10000')
-        max_drawdown = Decimal('0')
-        
-        for trade in all_trades:
-            running_balance += trade.pnl_usd or Decimal('0')
-            balance_history.append(float(running_balance))
-            
-            if running_balance > peak_balance:
-                peak_balance = running_balance
-            
-            drawdown = ((peak_balance - running_balance) / peak_balance * 100) if peak_balance > 0 else 0
-            if drawdown > max_drawdown:
-                max_drawdown = drawdown
-        
-        # Sharpe Ratio (simplified)
-        returns = []
-        for trade in all_trades:
-            if trade.amount_in_usd > 0:
-                return_pct = (trade.pnl_usd / trade.amount_in_usd * 100)
-                returns.append(float(return_pct))
-        
-        if returns:
-            avg_return = sum(returns) / len(returns)
-            variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
-            std_dev = variance ** 0.5
-            sharpe_ratio = (avg_return / std_dev) if std_dev > 0 else 0
-        else:
-            sharpe_ratio = 0
-        
-        # ====================
-        # Prepare Context
-        # ====================
-        
+        # Prepare context
         context = {
-            'page_title': 'Trading Analytics',
-            
-            # Account info
+            'page_title': 'Paper Trading Analytics',
             'account': account,
-            'total_trades': total_completed_trades,
+            'date_from': start_date.date(),
+            'date_to': end_date.date(),
+            
+            # Trade statistics
+            'total_trades': total_trades,
+            'completed_trades': completed_trades,
+            'failed_trades': failed_trades,
+            'pending_trades': pending_trades,
+            'success_rate': (completed_trades / total_trades * 100) if total_trades > 0 else 0,
+            
+            # Financial metrics
+            'total_volume': float(trade_metrics['total_volume'] or 0),
+            'total_gas_cost': float(trade_metrics['total_gas'] or 0),
+            'avg_trade_size': float(trade_metrics['avg_trade_size'] or 0),
+            'avg_slippage': float(trade_metrics['avg_slippage'] or 0),
             
             # Performance metrics
-            'win_rate': win_rate,
-            'profit_factor': profit_factor,
-            'avg_profit': avg_profit,
-            'avg_loss': avg_loss,
-            'max_drawdown': max_drawdown,
-            'sharpe_ratio': sharpe_ratio,
+            'latest_metrics': latest_metrics,
+            'account_pnl': float(account.total_pnl_usd or 0),
+            'account_return': float(account.total_return_percent or 0),
             
-            # Time-based performance
-            'today_pnl': today_pnl,
-            'today_trades': today_trades.count(),
-            'week_pnl': week_pnl,
-            'week_trades': week_trades.count(),
-            'month_pnl': month_pnl,
-            'month_trades': month_trades.count(),
+            # Token distribution
+            'token_stats': dict(sorted(
+                token_stats.items(),
+                key=lambda x: x[1]['volume'],
+                reverse=True
+            )[:10]),  # Top 10 tokens by volume
             
-            # Charts data (JSON for JavaScript)
-            'daily_pnl_data': json.dumps(daily_pnl),
-            'hourly_distribution': json.dumps(hourly_distribution),
-            
-            # Token performance
-            'top_performers': top_performers,
-            'worst_performers': worst_performers,
-            'token_stats': json.dumps(token_stats[:10]),  # Top 10 for chart
-            
-            # Trading patterns
-            'best_hours': best_hours,
-            
-            # For chart rendering
-            'has_data': total_completed_trades > 0,
+            # Chart data
+            'daily_performance': json.dumps(daily_performance),
+            'chart_labels': json.dumps([d['date'] for d in daily_performance]),
+            'chart_volumes': json.dumps([d['volume'] for d in daily_performance]),
+            'chart_trades': json.dumps([d['trades'] for d in daily_performance]),
         }
         
-        return render(request, 'paper_trading/paper_trading_analytics.html', context)
+        return render(request, 'paper_trading/analytics.html', context)
         
     except Exception as e:
         logger.error(f"Error loading analytics: {e}", exc_info=True)
@@ -809,8 +743,17 @@ def paper_trading_analytics_view(request: HttpRequest) -> HttpResponse:
         return redirect('paper_trading:dashboard')
 
 
+
+
+
+
+
+
+
+
+
 @require_http_methods(["GET"])
-def paper_trading_api_analytics_data(request: HttpRequest) -> JsonResponse:
+def api_analytics_data(request: HttpRequest) -> JsonResponse:
     """
     API endpoint to fetch analytics data for real-time updates.
     
@@ -850,7 +793,7 @@ def paper_trading_api_analytics_data(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
-def paper_trading_api_analytics_export(request: HttpRequest) -> HttpResponse:
+def api_analytics_export(request: HttpRequest) -> HttpResponse:
     """
     Export analytics data to CSV format.
     """
@@ -890,5 +833,3 @@ def paper_trading_api_analytics_export(request: HttpRequest) -> HttpResponse:
     except Exception as e:
         logger.error(f"Error exporting analytics: {e}")
         return JsonResponse({'error': str(e)}, status=500)
-
-
