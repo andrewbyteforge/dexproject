@@ -140,7 +140,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
             is_open=True
         )
         
-        # Build portfolio data
+        # Build portfolio data - FIXED: Calculate unrealized_pnl_percent
         portfolio_data = {
             'account': {
                 'id': str(account.account_id),
@@ -151,32 +151,45 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
                 'return_percent': float(account.total_return_percent),
                 'win_rate': float(account.win_rate),
             },
-            'positions': [
-                {
-                    'id': str(pos.position_id),
-                    'token_symbol': pos.token_symbol,
-                    'token_address': pos.token_address,
-                    'quantity': float(pos.quantity),
-                    'entry_price': float(pos.average_entry_price_usd),
-                    'current_price': float(pos.current_price_usd),
-                    'current_value': float(pos.current_value_usd),
-                    'unrealized_pnl': float(pos.unrealized_pnl_usd),
-                    'unrealized_pnl_percent': float(pos.unrealized_pnl_percent),
-                    'opened_at': pos.opened_at.isoformat(),
-                }
-                for pos in positions
-            ],
+            'positions': [],
             'summary': {
-                'total_value': float(account.current_balance_usd + 
-                                   sum(p.current_value_usd for p in positions)),
+                'total_value': float(account.current_balance_usd),
                 'positions_count': positions.count(),
-                'cash_percentage': float((account.current_balance_usd / 
-                                        (account.current_balance_usd + 
-                                         sum(p.current_value_usd for p in positions)) * 100)
-                                       if positions.exists() else 100),
+                'cash_percentage': 100.0,
             },
             'timestamp': timezone.now().isoformat(),
         }
+        
+        # Process positions with calculated fields
+        total_position_value = Decimal('0')
+        for pos in positions:
+            # FIXED: Calculate unrealized_pnl_percent dynamically
+            if pos.total_invested_usd and pos.total_invested_usd > 0:
+                unrealized_pnl_percent = (pos.unrealized_pnl_usd / pos.total_invested_usd) * 100
+            else:
+                unrealized_pnl_percent = Decimal('0')
+            
+            position_dict = {
+                'id': str(pos.position_id),
+                'token_symbol': pos.token_symbol,
+                'token_address': pos.token_address,
+                'quantity': float(pos.quantity),
+                'entry_price': float(pos.average_entry_price_usd) if pos.average_entry_price_usd else 0,
+                'current_price': float(pos.current_price_usd) if pos.current_price_usd else 0,
+                'current_value': float(pos.current_value_usd) if pos.current_value_usd else 0,
+                'unrealized_pnl': float(pos.unrealized_pnl_usd),
+                'unrealized_pnl_percent': float(unrealized_pnl_percent),  # Calculated value
+                'opened_at': pos.opened_at.isoformat(),
+            }
+            portfolio_data['positions'].append(position_dict)
+            total_position_value += pos.current_value_usd or Decimal('0')
+        
+        # Update summary
+        total_value = account.current_balance_usd + total_position_value
+        portfolio_data['summary']['total_value'] = float(total_value)
+        portfolio_data['summary']['cash_percentage'] = float(
+            (account.current_balance_usd / total_value * 100) if total_value > 0 else 100
+        )
         
         return JsonResponse(portfolio_data)
         
@@ -316,7 +329,7 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
         limit = min(int(request.GET.get('limit', 10)), 50)
         trades = trades_query.order_by('-created_at')[:limit]
         
-        # Build response data
+        # Build response data - FIXED: Removed execution_price_usd
         trades_data = []
         for trade in trades:
             trade_data = {
@@ -327,13 +340,14 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
                 'token_in_symbol': trade.token_in_symbol,
                 'amount_in_usd': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
                 'amount_usd': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
-                'price': float(trade.execution_price_usd) if trade.execution_price_usd else 0,
+                # FIXED: Use amount_in_usd instead of execution_price_usd
+                'price': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
                 'status': trade.status.upper() if trade.status else 'PENDING',
                 'created_at': trade.created_at.isoformat(),
                 'execution_time_ms': trade.execution_time_ms,
             }
             
-            # Add P&L if available
+            # Add P&L if available (these fields might not exist)
             if hasattr(trade, 'pnl_usd') and trade.pnl_usd is not None:
                 trade_data['pnl_usd'] = float(trade.pnl_usd)
                 trade_data['pnl_percent'] = float(trade.pnl_percent) if hasattr(trade, 'pnl_percent') and trade.pnl_percent else 0
@@ -407,18 +421,23 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             is_open=True
         ).order_by('-current_value_usd')
         
-        # Build response data
+        # Build response data - FIXED: Calculate unrealized_pnl_percent
         positions_data = []
         total_value = Decimal('0')
         total_pnl = Decimal('0')
-        total_cost_basis = Decimal('0')
+        total_invested = Decimal('0')
         
         for position in positions:
-            # Calculate current metrics
+            # Get current values with safe defaults
             current_value = position.current_value_usd or Decimal('0')
-            cost_basis = (position.average_entry_price_usd * position.quantity) if position.average_entry_price_usd else Decimal('0')
+            invested = position.total_invested_usd or Decimal('0')
             unrealized_pnl = position.unrealized_pnl_usd or Decimal('0')
-            unrealized_pnl_percent = position.unrealized_pnl_percent or Decimal('0')
+            
+            # FIXED: Calculate unrealized_pnl_percent dynamically
+            if invested and invested > 0:
+                unrealized_pnl_percent = (unrealized_pnl / invested) * 100
+            else:
+                unrealized_pnl_percent = Decimal('0')
             
             position_data = {
                 'position_id': str(position.position_id),
@@ -428,9 +447,10 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
                 'average_entry_price_usd': float(position.average_entry_price_usd) if position.average_entry_price_usd else 0,
                 'current_price_usd': float(position.current_price_usd) if position.current_price_usd else 0,
                 'current_value_usd': float(current_value),
-                'cost_basis_usd': float(cost_basis),
+                'cost_basis_usd': float(invested),
+                'total_invested_usd': float(invested),
                 'unrealized_pnl_usd': float(unrealized_pnl),
-                'unrealized_pnl_percent': float(unrealized_pnl_percent),
+                'unrealized_pnl_percent': float(unrealized_pnl_percent),  # Calculated value
                 'opened_at': position.opened_at.isoformat() if position.opened_at else None,
                 'last_updated': position.last_updated.isoformat() if position.last_updated else None,
             }
@@ -438,17 +458,17 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             positions_data.append(position_data)
             total_value += current_value
             total_pnl += unrealized_pnl
-            total_cost_basis += cost_basis
+            total_invested += invested
         
         # Calculate summary metrics
         total_unrealized_pnl_percent = float(
-            (total_pnl / total_cost_basis * 100) if total_cost_basis > 0 else 0
+            (total_pnl / total_invested * 100) if total_invested > 0 else 0
         )
         
         summary = {
             'total_positions': len(positions_data),
             'total_value_usd': float(total_value),
-            'total_cost_basis_usd': float(total_cost_basis),
+            'total_cost_basis_usd': float(total_invested),
             'total_unrealized_pnl_usd': float(total_pnl),
             'total_unrealized_pnl_percent': total_unrealized_pnl_percent
         }
@@ -589,9 +609,20 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
             
             if config:
                 config_data = {
-                    'strategy_name': config.strategy_name,
+                    'strategy_name': config.name,
                     'is_active': config.is_active,
-                    'configuration': config.configuration,
+                    'trading_mode': config.trading_mode,
+                    'use_fast_lane': config.use_fast_lane,
+                    'use_smart_lane': config.use_smart_lane,
+                    'fast_lane_threshold_usd': float(config.fast_lane_threshold_usd),
+                    'max_position_size_percent': float(config.max_position_size_percent),
+                    'stop_loss_percent': float(config.stop_loss_percent),
+                    'take_profit_percent': float(config.take_profit_percent),
+                    'max_daily_trades': config.max_daily_trades,
+                    'max_concurrent_positions': config.max_concurrent_positions,
+                    'min_liquidity_usd': float(config.min_liquidity_usd),
+                    'max_slippage_percent': float(config.max_slippage_percent),
+                    'confidence_threshold': float(config.confidence_threshold),
                     'created_at': config.created_at.isoformat(),
                     'updated_at': config.updated_at.isoformat(),
                 }
@@ -599,7 +630,7 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
                 config_data = {
                     'strategy_name': 'default',
                     'is_active': False,
-                    'configuration': {},
+                    'trading_mode': 'MODERATE',
                     'message': 'No active configuration found'
                 }
             
@@ -612,10 +643,24 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
                 
                 config, created = PaperStrategyConfiguration.objects.update_or_create(
                     account=account,
-                    strategy_name=data.get('strategy_name', 'default'),
+                    name=data.get('strategy_name', 'default'),
                     defaults={
                         'is_active': data.get('is_active', True),
-                        'configuration': data.get('configuration', {})
+                        'trading_mode': data.get('trading_mode', 'MODERATE'),
+                        'use_fast_lane': data.get('use_fast_lane', True),
+                        'use_smart_lane': data.get('use_smart_lane', False),
+                        'fast_lane_threshold_usd': Decimal(str(data.get('fast_lane_threshold_usd', 100))),
+                        'max_position_size_percent': Decimal(str(data.get('max_position_size_percent', 5.0))),
+                        'stop_loss_percent': Decimal(str(data.get('stop_loss_percent', 5.0))),
+                        'take_profit_percent': Decimal(str(data.get('take_profit_percent', 10.0))),
+                        'max_daily_trades': data.get('max_daily_trades', 20),
+                        'max_concurrent_positions': data.get('max_concurrent_positions', 5),
+                        'min_liquidity_usd': Decimal(str(data.get('min_liquidity_usd', 10000))),
+                        'max_slippage_percent': Decimal(str(data.get('max_slippage_percent', 1.0))),
+                        'confidence_threshold': Decimal(str(data.get('confidence_threshold', 60))),
+                        'allowed_tokens': data.get('allowed_tokens', []),
+                        'blocked_tokens': data.get('blocked_tokens', []),
+                        'custom_parameters': data.get('custom_parameters', {}),
                     }
                 )
                 
@@ -660,35 +705,57 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         if not account:
             return JsonResponse({'error': 'No active account found'}, status=404)
         
-        # Get latest metrics through session
-        sessions = PaperTradingSession.objects.filter(
-            account=account
-        ).values_list('session_id', flat=True)
+        # Get active sessions
+        active_sessions = PaperTradingSession.objects.filter(
+            account=account,
+            status__in=['STARTING', 'RUNNING', 'PAUSED']
+        )
         
-        # Get metrics for those sessions
-        metrics = PaperPerformanceMetrics.objects.filter(
-            session__in=sessions
-        ).order_by('-calculated_at').first()
+        # Get latest metrics
+        latest_metrics = None
+        if active_sessions.exists():
+            latest_metrics = PaperPerformanceMetrics.objects.filter(
+                session__in=active_sessions
+            ).order_by('-calculated_at').first()
         
-        if metrics:
+        if not latest_metrics:
+            # Try to get any metrics for this account
+            all_sessions = PaperTradingSession.objects.filter(account=account)
+            if all_sessions.exists():
+                latest_metrics = PaperPerformanceMetrics.objects.filter(
+                    session__in=all_sessions
+                ).order_by('-calculated_at').first()
+        
+        if latest_metrics:
             metrics_data = {
-                'sharpe_ratio': float(metrics.sharpe_ratio) if metrics.sharpe_ratio else 0,
-                'sortino_ratio': float(metrics.sortino_ratio) if hasattr(metrics, 'sortino_ratio') and metrics.sortino_ratio else 0,
-                'max_drawdown': float(metrics.max_drawdown_percent) if metrics.max_drawdown_percent else 0,
-                'win_rate': float(metrics.win_rate) if metrics.win_rate else 0,
-                'profit_factor': float(metrics.profit_factor) if metrics.profit_factor else 0,
-                'average_win': float(metrics.avg_win_usd) if metrics.avg_win_usd else 0,
-                'average_loss': float(metrics.avg_loss_usd) if metrics.avg_loss_usd else 0,
-                'best_trade': float(metrics.largest_win_usd) if metrics.largest_win_usd else 0,
-                'worst_trade': float(metrics.largest_loss_usd) if metrics.largest_loss_usd else 0,
-                'trades_count': metrics.total_trades,
-                'created_at': metrics.calculated_at.isoformat() if metrics.calculated_at else timezone.now().isoformat(),
+                'sharpe_ratio': float(latest_metrics.sharpe_ratio) if latest_metrics.sharpe_ratio else 0,
+                'max_drawdown': float(latest_metrics.max_drawdown_percent) if latest_metrics.max_drawdown_percent else 0,
+                'win_rate': float(latest_metrics.win_rate) if latest_metrics.win_rate else 0,
+                'profit_factor': float(latest_metrics.profit_factor) if latest_metrics.profit_factor else 0,
+                'average_win': float(latest_metrics.avg_win_usd) if latest_metrics.avg_win_usd else 0,
+                'average_loss': float(latest_metrics.avg_loss_usd) if latest_metrics.avg_loss_usd else 0,
+                'best_trade': float(latest_metrics.largest_win_usd) if latest_metrics.largest_win_usd else 0,
+                'worst_trade': float(latest_metrics.largest_loss_usd) if latest_metrics.largest_loss_usd else 0,
+                'total_trades': latest_metrics.total_trades,
+                'winning_trades': latest_metrics.winning_trades,
+                'losing_trades': latest_metrics.losing_trades,
+                'total_pnl_usd': float(latest_metrics.total_pnl_usd),
+                'total_pnl_percent': float(latest_metrics.total_pnl_percent),
+                'avg_execution_time_ms': latest_metrics.avg_execution_time_ms,
+                'total_gas_fees_usd': float(latest_metrics.total_gas_fees_usd),
+                'avg_slippage_percent': float(latest_metrics.avg_slippage_percent),
+                'fast_lane_trades': latest_metrics.fast_lane_trades,
+                'smart_lane_trades': latest_metrics.smart_lane_trades,
+                'fast_lane_win_rate': float(latest_metrics.fast_lane_win_rate),
+                'smart_lane_win_rate': float(latest_metrics.smart_lane_win_rate),
+                'period_start': latest_metrics.period_start.isoformat(),
+                'period_end': latest_metrics.period_end.isoformat(),
+                'calculated_at': latest_metrics.calculated_at.isoformat(),
             }
         else:
             # Return default metrics if none exist
             metrics_data = {
                 'sharpe_ratio': 0,
-                'sortino_ratio': 0,
                 'max_drawdown': 0,
                 'win_rate': float(account.win_rate) if account.win_rate else 0,
                 'profit_factor': 0,
@@ -696,7 +763,11 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                 'average_loss': 0,
                 'best_trade': 0,
                 'worst_trade': 0,
-                'trades_count': account.total_trades,
+                'total_trades': account.total_trades,
+                'winning_trades': account.successful_trades,
+                'losing_trades': account.failed_trades,
+                'total_pnl_usd': float(account.total_pnl_usd),
+                'total_pnl_percent': float(account.total_return_percent),
                 'message': 'No performance metrics calculated yet'
             }
         
@@ -750,7 +821,7 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         # Check if there's already an active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status="ACTIVE"
+            status__in=['STARTING', 'RUNNING', 'PAUSED']
         ).first()
         
         if active_session:
@@ -760,12 +831,33 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
                 'session_id': str(active_session.session_id)
             }, status=400)
         
+        # Get active strategy configuration
+        strategy_config = PaperStrategyConfiguration.objects.filter(
+            account=account,
+            is_active=True
+        ).first()
+        
+        # Parse request body for session config
+        session_config = {}
+        if request.body:
+            try:
+                session_config = json.loads(request.body)
+            except json.JSONDecodeError:
+                pass
+        
         # Create new trading session
         session = PaperTradingSession.objects.create(
             account=account,
-            status="ACTIVE",
-            session_config=json.loads(request.body) if request.body else {}
+            strategy_config=strategy_config,
+            status='STARTING',
+            name=session_config.get('name', f'Session {timezone.now().strftime("%Y%m%d_%H%M%S")}'),
+            starting_balance_usd=account.current_balance_usd,
+            config_snapshot=session_config
         )
+        
+        # Update session status to RUNNING
+        session.status = 'RUNNING'
+        session.save()
         
         # TODO: Actually start the bot process
         # This would typically trigger a background task or service
@@ -813,10 +905,10 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         if not account:
             return JsonResponse({'error': 'No active account found'}, status=404)
         
-        # End active sessions
+        # Find active sessions
         active_sessions = PaperTradingSession.objects.filter(
             account=account,
-            status="ACTIVE"
+            status__in=['STARTING', 'RUNNING', 'PAUSED']
         )
         
         sessions_ended = active_sessions.count()
@@ -830,8 +922,10 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         
         # Update session status
         for session in active_sessions:
-            session.status = "COMPLETED"
+            session.status = 'STOPPED'
             session.ended_at = timezone.now()
+            session.ending_balance_usd = account.current_balance_usd
+            session.session_pnl_usd = account.current_balance_usd - session.starting_balance_usd
             session.save()
         
         # TODO: Actually stop the bot process
@@ -883,30 +977,72 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         # Check for active session
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status="ACTIVE"
-        ).first()
+            status__in=['STARTING', 'RUNNING', 'PAUSED']
+        ).order_by('-started_at').first()
         
         if active_session:
             # Calculate session stats
+            session_duration = timezone.now() - active_session.started_at
+            
+            # Get trades during this session
             session_trades = PaperTrade.objects.filter(
                 account=account,
                 created_at__gte=active_session.started_at
-            ).count()
+            )
+            
+            # Get recent AI thoughts
+            recent_thoughts = PaperAIThoughtLog.objects.filter(
+                account=account,
+                created_at__gte=active_session.started_at
+            ).order_by('-created_at')[:5]
             
             status_data = {
                 'status': 'running',
                 'session_id': str(active_session.session_id),
+                'session_name': active_session.name,
                 'started_at': active_session.started_at.isoformat(),
-                'duration_minutes': int((timezone.now() - active_session.started_at).total_seconds() / 60),
-                'trades_executed': session_trades,
+                'duration_minutes': int(session_duration.total_seconds() / 60),
+                'duration_seconds': int(session_duration.total_seconds()),
+                'trades_executed': session_trades.count(),
+                'successful_trades': session_trades.filter(status='completed').count(),
+                'failed_trades': session_trades.filter(status='failed').count(),
                 'session_pnl': float(active_session.session_pnl_usd) if active_session.session_pnl_usd else 0,
-                'config': active_session.session_config,
+                'starting_balance': float(active_session.starting_balance_usd),
+                'current_balance': float(account.current_balance_usd),
+                'last_heartbeat': active_session.last_heartbeat.isoformat() if active_session.last_heartbeat else None,
+                'recent_thoughts': [
+                    {
+                        'thought_id': str(thought.thought_id),
+                        'decision_type': thought.decision_type,
+                        'token_symbol': thought.token_symbol,
+                        'confidence_percent': float(thought.confidence_percent),
+                        'created_at': thought.created_at.isoformat()
+                    }
+                    for thought in recent_thoughts
+                ],
+                'config': active_session.config_snapshot if active_session.config_snapshot else {},
             }
         else:
+            # No active session
             status_data = {
                 'status': 'stopped',
-                'message': 'No active trading session'
+                'message': 'No active trading session',
+                'last_session': None
             }
+            
+            # Get last session if exists
+            last_session = PaperTradingSession.objects.filter(
+                account=account
+            ).order_by('-ended_at').first()
+            
+            if last_session and last_session.ended_at:
+                status_data['last_session'] = {
+                    'session_id': str(last_session.session_id),
+                    'ended_at': last_session.ended_at.isoformat(),
+                    'duration_minutes': int((last_session.ended_at - last_session.started_at).total_seconds() / 60),
+                    'total_trades': last_session.total_trades_executed,
+                    'session_pnl': float(last_session.session_pnl_usd) if last_session.session_pnl_usd else 0,
+                }
         
         return JsonResponse(status_data)
         
