@@ -85,8 +85,8 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
             'thoughts': [
                 {
                     'id': str(thought.thought_id),
-                    'category': thought.thought_category,
-                    'content': thought.thought_content,
+                    # 'category': thought.thought_category,
+                    # 'content': thought.thought_content,
                     'metadata': thought.metadata or {},
                     'created_at': thought.created_at.isoformat(),
                     'importance': thought.importance_score,

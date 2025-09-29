@@ -37,6 +37,9 @@ from paper_trading.models import (
     PaperPerformanceMetrics
 )
 
+# Import the WebSocket service
+from paper_trading.services.websocket_service import websocket_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -436,10 +439,10 @@ class PaperTradingAIEngine:
         )
         decision["reasoning"] = reasoning
         
-        # Step 7: Log the thought process
+        # Step 7: Log the thought process AND send WebSocket notification
         self._log_thought(decision)
         
-        # Step 8: Send WebSocket notification for AI decision
+        # Step 8: Send additional WebSocket notification for AI decision
         self.send_websocket_update('ai_decision', {
             'token_symbol': token_symbol,
             'signal': signal.value,
@@ -489,7 +492,7 @@ class PaperTradingAIEngine:
         action = decision["action"]
         position_size = decision["position_size_percent"]
         
-        # Build comprehensive reasoning (removed emoji to avoid encoding issues)
+        # Build comprehensive reasoning
         reasoning_parts = [
             f"[DATA] Market Analysis: {market_analysis['market_condition'].value.upper()} conditions detected.",
             f"Price changed {market_analysis['price_change_percent']:.2f}% with {market_analysis['volatility']:.2f}% volatility.",
@@ -532,33 +535,51 @@ class PaperTradingAIEngine:
     
     def _log_thought(self, decision: Dict[str, Any]) -> None:
         """
-        Log the AI thought process to the database.
+        Log AI thought process to database and send WebSocket notification.
+        
+        FIXED: Now properly sends WebSocket updates for real-time dashboard display.
+        This method creates a database record of the AI's decision-making process
+        and immediately notifies connected clients via WebSocket for live updates.
         
         Args:
-            decision: Complete decision dictionary with reasoning
+            decision: Complete decision dictionary with all analysis data
         """
         try:
-            # Log to console for debugging
-            logger.debug(
-                f"[THOUGHT] Decision for {decision.get('token_symbol', '?')}: "
-                f"{decision.get('action', '?')} with {decision.get('confidence_score', 0):.0f}% confidence"
-            )
+            # Extract key information from the decision
+            token_symbol = decision.get("token_symbol", "Unknown")
+            signal = decision.get("signal", TradingSignal.HOLD)
+            lane_type = decision.get("lane_type", "SMART")
+            confidence = decision.get("market_analysis", {}).get("confidence_score", 50)
+            risk_score = decision.get("risk_assessment", {}).get("risk_score", 50)
+            
+            # Determine decision type based on signal
+            if signal in [TradingSignal.STRONG_BUY, TradingSignal.BUY]:
+                decision_type = "BUY"
+            elif signal in [TradingSignal.STRONG_SELL, TradingSignal.SELL]:
+                decision_type = "SELL"
+            elif signal == TradingSignal.HOLD:
+                decision_type = "HOLD"
+            else:
+                decision_type = "ANALYSIS"
             
             # Create thought log in database
+            # Note: Using only fields that exist in PaperAIThoughtLog model
             thought_log = PaperAIThoughtLog.objects.create(
                 account=self.session.account,
-                decision_type=decision.get('action', 'HOLD'),
-                token_address=decision.get('token_address', ''),
-                token_symbol=decision.get('token_symbol', ''),
-                confidence_level=self._get_confidence_level(decision.get('confidence_score', 50)),
-                confidence_percent=decision.get('confidence_score', 50),
-                risk_score=decision.get('risk_assessment', {}).get('risk_score', 0),
-                opportunity_score=decision.get('market_analysis', {}).get('momentum', 0),
-                primary_reasoning=decision.get('reasoning', '')[:1000],  # Limit to 1000 chars
+                # session field removed - doesn't exist in model
+                token_symbol=token_symbol,
+                token_address=decision.get("token_address", ""),
+                decision_type=decision_type,
+                confidence_percent=Decimal(str(confidence)),
+                confidence_level=self._get_confidence_level(Decimal(str(confidence))),
+                risk_score=Decimal(str(risk_score)),
+                opportunity_score=decision.get("market_analysis", {}).get("momentum", 0),
+                primary_reasoning=decision.get("reasoning", "No reasoning provided")[:1000],
+                # detailed_reasoning field removed - doesn't exist in model
                 key_factors=[
-                    f"Lane: {decision.get('lane_type', 'UNKNOWN')}",
-                    f"Signal: {decision.get('signal', TradingSignal.HOLD).value}",
-                    f"Position Size: {decision.get('position_size_percent', 0):.1f}%"
+                    f"Lane: {lane_type}",
+                    f"Signal: {signal.value}",
+                    f"Position: {decision.get('position_size_percent', 0):.1f}%"
                 ],
                 positive_signals=self._extract_positive_signals(decision),
                 negative_signals=self._extract_negative_signals(decision),
@@ -570,12 +591,16 @@ class PaperTradingAIEngine:
                     'trend': decision.get('market_analysis', {}).get('trend', 'neutral'),
                 },
                 strategy_name=self.strategy_config.name,
-                lane_used=decision.get('lane_type', 'SMART'),
+                lane_used=lane_type,
                 analysis_time_ms=int(decision.get('processing_time_ms', 0))
             )
             
-            # Send WebSocket notification for thought log
-            self.send_websocket_update('thought_log_created', {
+            # CRITICAL FIX: Send WebSocket notification for real-time updates
+            # Get the user_id from the account
+            user_id = self.session.account.user_id if hasattr(self.session.account, 'user_id') else self.session.account.id
+            
+            # Prepare thought data for WebSocket
+            thought_data = {
                 'thought_id': str(thought_log.thought_id),
                 'token_symbol': thought_log.token_symbol,
                 'decision_type': thought_log.decision_type,
@@ -583,11 +608,19 @@ class PaperTradingAIEngine:
                 'risk_score': float(thought_log.risk_score),
                 'lane_used': thought_log.lane_used,
                 'reasoning': thought_log.primary_reasoning[:200],
+                'positive_signals': thought_log.positive_signals,
+                'negative_signals': thought_log.negative_signals,
                 'created_at': thought_log.created_at.isoformat()
-            })
+            }
+            
+            # Send via WebSocket service
+            websocket_service.send_thought_log_created(user_id, thought_data)
+            
+            # Also send via channel layer for backward compatibility
+            self.send_websocket_update('thought_log_created', thought_data)
             
             logger.info(
-                f"[THOUGHT] Logged decision for {thought_log.token_symbol}: "
+                f"[THOUGHT] Logged and broadcasted decision for {thought_log.token_symbol}: "
                 f"{thought_log.decision_type} ({thought_log.confidence_percent:.0f}% confidence)"
             )
             
@@ -696,7 +729,6 @@ class PaperTradingAIEngine:
             ).order_by('-period_end').first()
             
             # If no metrics exist or current period is old, create new metrics record
-            # Fix: Ensure both datetimes are timezone-aware
             if not metrics or (current_time - metrics.period_end) > timedelta(hours=24):
                 logger.info("[METRICS] Creating new performance metrics record")
                 metrics = PaperPerformanceMetrics.objects.create(
@@ -813,7 +845,7 @@ class PaperTradingAIEngine:
                 'smart_lane_win_rate': float(metrics.smart_lane_win_rate),
             })
             
-            # Log the performance update (without emoji to avoid encoding issues)
+            # Log the performance update
             logger.info(
                 f"[METRICS] Performance updated: "
                 f"Win rate {metrics.win_rate:.1f}% ({metrics.winning_trades}W/{metrics.losing_trades}L), "

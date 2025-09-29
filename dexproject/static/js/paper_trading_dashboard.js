@@ -2,6 +2,8 @@
  * Paper Trading Dashboard JavaScript
  * Location: dexproject/static/js/paper_trading_dashboard.js
  * Description: Main JavaScript functionality for the paper trading dashboard
+ * 
+ * UPDATED: Added WebSocket support for real-time AI Decision Stream
  */
 
 // ========================================
@@ -10,29 +12,338 @@
 window.paperTradingDashboard = {
     config: {
         apiBaseUrl: '/paper-trading/api/',
-        updateInterval: 5000,      // 5 seconds for AI thoughts
+        wsUrl: null,  // Will be set dynamically
+        updateInterval: 5000,      // 5 seconds for AI thoughts (fallback)
         tradesUpdateInterval: 3000, // 3 seconds for trades/positions
         metricsUpdateInterval: 10000, // 10 seconds for metrics
         maxThoughts: 3,            // Limit displayed thoughts
-        autoScroll: false          // Auto-scroll disabled by default
+        autoScroll: false,         // Auto-scroll disabled by default
+        useWebSocket: true,        // Enable WebSocket for real-time updates
+        reconnectDelay: 1000,      // Initial WebSocket reconnect delay
+        maxReconnectDelay: 30000, // Maximum reconnect delay
+        reconnectAttempts: 0,      // Track reconnection attempts
+        maxReconnectAttempts: 10   // Maximum reconnection attempts
     },
     state: {
         lastThoughtUpdate: new Date().toISOString(),
         lastTradeUpdate: null,
         lastPositionUpdate: new Date().toISOString(),
         thoughtCount: 0,
-        updateIntervals: []
+        updateIntervals: [],
+        websocket: null,
+        wsConnected: false
     }
 };
 
 // ========================================
-// AI Thoughts Management
+// WebSocket Management
 // ========================================
 
 /**
- * Fetch and update AI thoughts from the API
+ * Initialize WebSocket connection for real-time updates
+ */
+function initializeWebSocket() {
+    const { config, state } = window.paperTradingDashboard;
+
+    if (!config.useWebSocket) {
+        console.log('WebSocket disabled, using polling instead');
+        return;
+    }
+
+    // Determine WebSocket URL
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/paper-trading/`;
+    config.wsUrl = wsUrl;
+
+    console.log('Connecting to WebSocket:', wsUrl);
+
+    try {
+        state.websocket = new WebSocket(wsUrl);
+
+        state.websocket.onopen = handleWebSocketOpen;
+        state.websocket.onmessage = handleWebSocketMessage;
+        state.websocket.onclose = handleWebSocketClose;
+        state.websocket.onerror = handleWebSocketError;
+
+    } catch (error) {
+        console.error('Failed to create WebSocket connection:', error);
+        fallbackToPolling();
+    }
+}
+
+/**
+ * Handle WebSocket connection open
+ */
+function handleWebSocketOpen(event) {
+    const { config, state } = window.paperTradingDashboard;
+
+    console.log('WebSocket connected successfully');
+    state.wsConnected = true;
+    config.reconnectAttempts = 0;
+    config.reconnectDelay = 1000;
+
+    // Update UI to show WebSocket connection
+    updateAIStatusIndicator('Live (WS)', 'success');
+    showToast('Real-time updates connected', 'success');
+
+    // Send initial subscription message if needed
+    if (state.websocket.readyState === WebSocket.OPEN) {
+        state.websocket.send(JSON.stringify({
+            type: 'subscribe',
+            channel: 'ai_decisions'
+        }));
+    }
+}
+
+/**
+ * Handle incoming WebSocket messages
+ */
+function handleWebSocketMessage(event) {
+    try {
+        const message = JSON.parse(event.data);
+        console.log('WebSocket message received:', message.type);
+
+        switch (message.type) {
+            case 'thought_log_created':
+                handleThoughtLogCreated(message.data);
+                break;
+
+            case 'ai_decision':
+            case 'ai_decision_update':
+                handleAIDecisionUpdate(message.data);
+                break;
+
+            case 'trade_update':
+                handleTradeUpdate(message.data);
+                break;
+
+            case 'portfolio_update':
+                handlePortfolioUpdate(message.data);
+                break;
+
+            case 'performance_update':
+                handlePerformanceUpdate(message.data);
+                break;
+
+            case 'bot_status_update':
+                handleBotStatusUpdate(message.data);
+                break;
+
+            case 'connection_confirmed':
+                console.log('WebSocket connection confirmed by server');
+                break;
+
+            default:
+                console.log('Unknown message type:', message.type);
+        }
+
+    } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+    }
+}
+
+/**
+ * Handle WebSocket connection close
+ */
+function handleWebSocketClose(event) {
+    const { config, state } = window.paperTradingDashboard;
+
+    console.log('WebSocket disconnected:', event.code, event.reason);
+    state.wsConnected = false;
+    state.websocket = null;
+
+    updateAIStatusIndicator('Reconnecting...', 'warning');
+
+    // Attempt to reconnect with exponential backoff
+    if (config.reconnectAttempts < config.maxReconnectAttempts) {
+        config.reconnectAttempts++;
+
+        console.log(`Attempting to reconnect (${config.reconnectAttempts}/${config.maxReconnectAttempts})...`);
+
+        setTimeout(() => {
+            initializeWebSocket();
+        }, config.reconnectDelay);
+
+        // Exponential backoff
+        config.reconnectDelay = Math.min(
+            config.reconnectDelay * 2,
+            config.maxReconnectDelay
+        );
+    } else {
+        console.error('Max reconnection attempts reached, falling back to polling');
+        fallbackToPolling();
+    }
+}
+
+/**
+ * Handle WebSocket errors
+ */
+function handleWebSocketError(error) {
+    console.error('WebSocket error:', error);
+    updateAIStatusIndicator('Connection Error', 'danger');
+}
+
+/**
+ * Fallback to polling mode if WebSocket fails
+ */
+function fallbackToPolling() {
+    const { config, state } = window.paperTradingDashboard;
+
+    console.log('Falling back to polling mode');
+    config.useWebSocket = false;
+    state.wsConnected = false;
+
+    updateAIStatusIndicator('Live (Polling)', 'info');
+    showToast('Using polling mode for updates', 'info');
+
+    // Ensure polling intervals are set up
+    if (state.updateIntervals.length === 0) {
+        setupPollingIntervals();
+    }
+}
+
+// ========================================
+// WebSocket Message Handlers
+// ========================================
+
+/**
+ * Handle new thought log creation from WebSocket
+ */
+function handleThoughtLogCreated(data) {
+    console.log('New thought log received:', data);
+
+    // Create thought object compatible with existing display function
+    const thought = {
+        id: data.thought_id,
+        timestamp: data.created_at || new Date().toISOString(),
+        decision_type: data.decision_type,
+        token_symbol: data.token_symbol,
+        lane_used: data.lane_used || 'SMART',
+        confidence_percent: data.confidence || 50,
+        primary_reasoning: data.reasoning || data.action || 'Analyzing...',
+        positive_signals: data.positive_signals || [],
+        negative_signals: data.negative_signals || [],
+        risk_score: data.risk_score || 0
+    };
+
+    // Update display with new thought
+    updateThoughtsDisplay([thought]);
+
+    // Flash the AI status to show activity
+    flashAIStatus();
+
+    // Update thought counter
+    window.paperTradingDashboard.state.thoughtCount++;
+    updateThoughtCounter();
+}
+
+/**
+ * Handle AI decision update from WebSocket
+ */
+function handleAIDecisionUpdate(data) {
+    console.log('AI decision update received:', data);
+
+    // Create a thought from the AI decision
+    const thought = {
+        id: `decision_${Date.now()}`,
+        timestamp: data.timestamp || new Date().toISOString(),
+        decision_type: data.action || 'ANALYSIS',
+        token_symbol: data.token_symbol,
+        lane_used: data.lane_type || 'SMART',
+        confidence_percent: data.confidence || 50,
+        primary_reasoning: data.reasoning || 'Processing decision...'
+    };
+
+    updateThoughtsDisplay([thought]);
+}
+
+/**
+ * Handle trade update from WebSocket
+ */
+function handleTradeUpdate(data) {
+    console.log('Trade update received:', data);
+
+    // Update trades table with new trade
+    if (data) {
+        updateTradesTable([data]);
+        flashUpdateIndicator('trades-update-indicator');
+    }
+}
+
+/**
+ * Handle portfolio update from WebSocket
+ */
+function handlePortfolioUpdate(data) {
+    console.log('Portfolio update received:', data);
+
+    // Update positions if data contains positions
+    if (data.positions) {
+        updatePositionsTable(data.positions);
+        flashUpdateIndicator('positions-update-indicator');
+    }
+
+    // Update portfolio value if provided
+    if (data.total_value !== undefined) {
+        updateElementText('portfolio-value', `$${parseFloat(data.total_value).toFixed(2)}`);
+    }
+}
+
+/**
+ * Handle performance update from WebSocket
+ */
+function handlePerformanceUpdate(data) {
+    console.log('Performance update received:', data);
+
+    // Update performance metrics
+    updateMetricElements(data);
+}
+
+/**
+ * Handle bot status update from WebSocket
+ */
+function handleBotStatusUpdate(data) {
+    console.log('Bot status update received:', data);
+
+    // Update bot status indicator
+    const statusDot = document.querySelector('.status-dot');
+    const statusText = document.getElementById('bot-status-text');
+
+    if (data.status === 'RUNNING') {
+        if (statusDot) statusDot.className = 'status-dot status-active';
+        if (statusText) statusText.textContent = 'RUNNING';
+    } else {
+        if (statusDot) statusDot.className = 'status-dot status-inactive';
+        if (statusText) statusText.textContent = 'STOPPED';
+    }
+}
+
+/**
+ * Flash AI status indicator to show activity
+ */
+function flashAIStatus() {
+    const statusElement = document.getElementById('ai-status');
+    if (statusElement) {
+        statusElement.style.transition = 'opacity 0.2s';
+        statusElement.style.opacity = '0.5';
+        setTimeout(() => {
+            statusElement.style.opacity = '1';
+        }, 200);
+    }
+}
+
+// ========================================
+// AI Thoughts Management (Original + Enhanced)
+// ========================================
+
+/**
+ * Fetch and update AI thoughts from the API (fallback for when WebSocket is down)
  */
 function updateAIThoughts() {
+    // Skip if WebSocket is connected and working
+    if (window.paperTradingDashboard.state.wsConnected) {
+        return;
+    }
+
     const { lastThoughtUpdate } = window.paperTradingDashboard.state;
 
     fetch(`/paper-trading/api/ai-thoughts/?since=${lastThoughtUpdate}&limit=5`)
@@ -41,7 +352,7 @@ function updateAIThoughts() {
             if (data.thoughts && data.thoughts.length > 0) {
                 updateThoughtsDisplay(data.thoughts);
                 window.paperTradingDashboard.state.lastThoughtUpdate = new Date().toISOString();
-                updateAIStatusIndicator('Live', 'success');
+                updateAIStatusIndicator('Live (Polling)', 'success');
             }
         })
         .catch(error => {
@@ -116,9 +427,14 @@ function createThoughtElement(thought) {
     const truncatedReasoning = reasoning.length > 150 ?
         reasoning.substring(0, 150) + '...' : reasoning;
 
+    // Add visual indicator for decision type
+    const decisionIcon = getDecisionIcon(thought.decision_type);
+    const decisionColor = getDecisionColor(thought.decision_type);
+
     div.innerHTML = `
         <div class="d-flex justify-content-between align-items-start mb-2">
             <div>
+                <span style="color: ${decisionColor}">${decisionIcon}</span>
                 <strong>${thought.decision_type}</strong>
                 <span class="text-muted ms-2">${thought.token_symbol}</span>
                 <span class="lane-badge ${laneClass} ms-2">${thought.lane_used}</span>
@@ -128,16 +444,57 @@ function createThoughtElement(thought) {
         <div class="d-flex align-items-center mb-2">
             <small class="me-2">Confidence:</small>
             <div class="confidence-bar flex-grow-1">
-                <div class="confidence-fill" style="width: ${confidence}%"></div>
+                <div class="confidence-fill" style="width: ${confidence}%; background: ${getConfidenceColor(confidence)}"></div>
             </div>
             <small class="ms-2 fw-bold">${confidence}%</small>
         </div>
         <div class="thought-summary">
             ${truncatedReasoning}
         </div>
+        ${thought.risk_score ? `
+        <div class="mt-2">
+            <small class="text-muted">Risk Score: ${Math.round(thought.risk_score)}%</small>
+        </div>
+        ` : ''}
     `;
 
     return div;
+}
+
+/**
+ * Get icon for decision type
+ */
+function getDecisionIcon(decisionType) {
+    const icons = {
+        'BUY': '▲',
+        'SELL': '▼',
+        'HOLD': '■',
+        'ANALYSIS': '◆'
+    };
+    return icons[decisionType] || '●';
+}
+
+/**
+ * Get color for decision type
+ */
+function getDecisionColor(decisionType) {
+    const colors = {
+        'BUY': '#28a745',
+        'SELL': '#dc3545',
+        'HOLD': '#ffc107',
+        'ANALYSIS': '#17a2b8'
+    };
+    return colors[decisionType] || '#6c757d';
+}
+
+/**
+ * Get color based on confidence level
+ */
+function getConfidenceColor(confidence) {
+    if (confidence >= 80) return '#28a745';
+    if (confidence >= 60) return '#17a2b8';
+    if (confidence >= 40) return '#ffc107';
+    return '#dc3545';
 }
 
 /**
@@ -292,7 +649,7 @@ function updateTradesTable(newTrades) {
  */
 function createTradeRow(trade) {
     const tr = document.createElement('tr');
-    tr.setAttribute('data-trade-id', trade.trade_id);
+    tr.setAttribute('data-trade-id', trade.trade_id || trade.id);
     tr.className = 'trade-row';
 
     const time = new Date(trade.created_at).toLocaleTimeString('en-US', {
@@ -312,7 +669,7 @@ function createTradeRow(trade) {
             </span>
         </td>
         <td><small>${trade.token_out_symbol || trade.token_symbol || 'N/A'}</small></td>
-        <td><small>$${parseFloat(trade.amount_in_usd || 0).toFixed(2)}</small></td>
+        <td><small>$${parseFloat(trade.amount_in_usd || trade.amount_usd || 0).toFixed(2)}</small></td>
         <td>
             <span class="badge ${statusClass}">
                 ${trade.status || 'PENDING'}
@@ -642,11 +999,16 @@ function showToast(message, type) {
     if (!toastContainer) {
         toastContainer = document.createElement('div');
         toastContainer.id = 'toast-container';
+        toastContainer.style.position = 'fixed';
+        toastContainer.style.top = '20px';
+        toastContainer.style.right = '20px';
+        toastContainer.style.zIndex = '9999';
         document.body.appendChild(toastContainer);
     }
 
     const toast = document.createElement('div');
     toast.className = `alert alert-${type} alert-dismissible fade show`;
+    toast.style.minWidth = '250px';
     toast.innerHTML = `
         ${message}
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -684,16 +1046,21 @@ function getCookie(name) {
 // ========================================
 
 /**
- * Initialize the dashboard
+ * Set up polling intervals for fallback mode
  */
-function initializeDashboard() {
+function setupPollingIntervals() {
     const { config, state } = window.paperTradingDashboard;
 
-    // Initialize thought counter
-    updateThoughtCounter();
+    // Clear any existing intervals
+    state.updateIntervals.forEach(interval => clearInterval(interval));
+    state.updateIntervals = [];
 
-    // Set up periodic updates for AI thoughts
-    const thoughtInterval = setInterval(updateAIThoughts, config.updateInterval);
+    // Set up periodic updates for AI thoughts (only if WebSocket is not connected)
+    const thoughtInterval = setInterval(() => {
+        if (!state.wsConnected) {
+            updateAIThoughts();
+        }
+    }, config.updateInterval);
     state.updateIntervals.push(thoughtInterval);
 
     // Set up periodic updates for trades & positions
@@ -706,23 +1073,58 @@ function initializeDashboard() {
     // Set up periodic updates for metrics
     const metricsInterval = setInterval(updateDashboardMetrics, config.metricsUpdateInterval);
     state.updateIntervals.push(metricsInterval);
+}
+
+/**
+ * Initialize the dashboard
+ */
+function initializeDashboard() {
+    const { config, state } = window.paperTradingDashboard;
+
+    console.log('Initializing Paper Trading Dashboard');
+
+    // Initialize thought counter
+    updateThoughtCounter();
+
+    // Try to establish WebSocket connection first
+    if (config.useWebSocket) {
+        initializeWebSocket();
+    }
+
+    // Set up polling intervals as fallback
+    setupPollingIntervals();
 
     // Initial data loads with slight delay
     setTimeout(() => {
-        updateAIThoughts();
+        // Only fetch AI thoughts if WebSocket is not connected
+        if (!state.wsConnected) {
+            updateAIThoughts();
+        }
         updateRecentTrades(true);
         updateOpenPositions();
         updateDashboardMetrics();
     }, 1000);
+
+    console.log('Dashboard initialization complete');
 }
 
 /**
- * Clean up intervals on page unload
+ * Clean up on page unload
  */
 function cleanupDashboard() {
     const { state } = window.paperTradingDashboard;
+
+    // Clear all intervals
     state.updateIntervals.forEach(interval => clearInterval(interval));
     state.updateIntervals = [];
+
+    // Close WebSocket connection if exists
+    if (state.websocket) {
+        state.websocket.close();
+        state.websocket = null;
+    }
+
+    console.log('Dashboard cleanup complete');
 }
 
 // Initialize on DOM ready

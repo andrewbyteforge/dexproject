@@ -3,8 +3,9 @@ ASGI config for dexproject project.
 
 Enhanced to support Server-Sent Events (SSE) for real-time dashboard updates
 and WebSocket connections for paper trading real-time updates.
-
 Configured for production deployment with Daphne/Uvicorn workers.
+
+FIXED: Added AllowedHostsOriginValidator and proper WebSocket configuration
 
 File: dexproject/asgi.py
 """
@@ -14,6 +15,7 @@ from django.core.asgi import get_asgi_application
 from django.urls import re_path
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
+from channels.security.websocket import AllowedHostsOriginValidator
 
 # Set Django settings module
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'dexproject.settings')
@@ -53,8 +55,10 @@ application = ProtocolTypeRouter({
     # HTTP requests (including SSE)
     "http": django_asgi_app,
     
-    # WebSocket connections
-    "websocket": AuthMiddlewareStack(
-        URLRouter(websocket_urlpatterns)
+    # WebSocket connections with proper validation
+    "websocket": AllowedHostsOriginValidator(
+        AuthMiddlewareStack(
+            URLRouter(websocket_urlpatterns)
+        )
     ),
 })
