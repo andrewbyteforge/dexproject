@@ -1,9 +1,11 @@
 """
-AI Decision Engine for Paper Trading - PTphase2
+AI Decision Engine for Paper Trading - PTphase2 UPDATED
 
 This module provides rule-based logic that mimics AI decision-making for the paper trading bot.
 It analyzes market conditions, determines Fast vs Smart Lane trading, and generates detailed
 thought logs for each decision.
+
+UPDATED: Fixed WebSocket integration to use the centralized service properly
 
 Features:
 - Market trend analysis (simulated)
@@ -27,8 +29,6 @@ from enum import Enum
 
 # Django imports for timezone-aware datetime
 from django.utils import timezone
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 
 from paper_trading.models import (
     PaperAIThoughtLog,
@@ -37,7 +37,7 @@ from paper_trading.models import (
     PaperPerformanceMetrics
 )
 
-# Import the WebSocket service
+# Import the centralized WebSocket service
 from paper_trading.services.websocket_service import websocket_service
 
 
@@ -92,33 +92,36 @@ class PaperTradingAIEngine:
         self.successful_decisions = 0
         self.session_start_time = timezone.now()  # Use timezone-aware datetime
         
-        # Initialize channel layer for WebSocket notifications
-        self.channel_layer = get_channel_layer()
+        # Store account_id for WebSocket notifications
+        self.account_id = str(session.account.account_id)
         
         logger.info(f"[BOT] AI Engine initialized for session {session.session_id}")
     
     def send_websocket_update(self, message_type: str, data: Dict[str, Any]) -> None:
         """
-        Send WebSocket update to connected clients.
+        Send WebSocket update to connected clients using centralized service.
+        
+        UPDATED: Now uses the centralized websocket_service instead of direct channel_layer
         
         Args:
             message_type: Type of message (e.g., 'ai_decision', 'performance_update')
             data: Data to send
         """
         try:
-            if self.channel_layer:
-                room_group_name = f"paper_trading_{self.session.account.account_id}"
-                
-                async_to_sync(self.channel_layer.group_send)(
-                    room_group_name,
-                    {
-                        'type': message_type,
-                        'data': data
-                    }
-                )
+            # Use the centralized WebSocket service
+            success = websocket_service.send_update(
+                account_id=self.account_id,
+                message_type=message_type,
+                data=data
+            )
+            
+            if success:
                 logger.debug(f"Sent WebSocket update: {message_type}")
+            else:
+                logger.warning(f"Failed to send WebSocket update: {message_type}")
+                
         except Exception as e:
-            logger.error(f"Failed to send WebSocket update: {e}")
+            logger.error(f"Error sending WebSocket update: {e}", exc_info=True)
     
     def analyze_market(self, current_price: Decimal, price_history: List[Decimal]) -> Dict[str, Any]:
         """
@@ -537,9 +540,7 @@ class PaperTradingAIEngine:
         """
         Log AI thought process to database and send WebSocket notification.
         
-        FIXED: Now properly sends WebSocket updates for real-time dashboard display.
-        This method creates a database record of the AI's decision-making process
-        and immediately notifies connected clients via WebSocket for live updates.
+        FIXED: Now properly uses the centralized WebSocket service with correct account_id
         
         Args:
             decision: Complete decision dictionary with all analysis data
@@ -563,10 +564,8 @@ class PaperTradingAIEngine:
                 decision_type = "ANALYSIS"
             
             # Create thought log in database
-            # Note: Using only fields that exist in PaperAIThoughtLog model
             thought_log = PaperAIThoughtLog.objects.create(
                 account=self.session.account,
-                # session field removed - doesn't exist in model
                 token_symbol=token_symbol,
                 token_address=decision.get("token_address", ""),
                 decision_type=decision_type,
@@ -575,7 +574,6 @@ class PaperTradingAIEngine:
                 risk_score=Decimal(str(risk_score)),
                 opportunity_score=decision.get("market_analysis", {}).get("momentum", 0),
                 primary_reasoning=decision.get("reasoning", "No reasoning provided")[:1000],
-                # detailed_reasoning field removed - doesn't exist in model
                 key_factors=[
                     f"Lane: {lane_type}",
                     f"Signal: {signal.value}",
@@ -595,16 +593,13 @@ class PaperTradingAIEngine:
                 analysis_time_ms=int(decision.get('processing_time_ms', 0))
             )
             
-            # CRITICAL FIX: Send WebSocket notification for real-time updates
-            # Get the user_id from the account
-            user_id = self.session.account.user_id if hasattr(self.session.account, 'user_id') else self.session.account.id
-            
             # Prepare thought data for WebSocket
             thought_data = {
                 'thought_id': str(thought_log.thought_id),
                 'token_symbol': thought_log.token_symbol,
                 'decision_type': thought_log.decision_type,
                 'confidence': float(thought_log.confidence_percent),
+                'confidence_score': float(thought_log.confidence_percent),  # Added for compatibility
                 'risk_score': float(thought_log.risk_score),
                 'lane_used': thought_log.lane_used,
                 'reasoning': thought_log.primary_reasoning[:200],
@@ -613,10 +608,13 @@ class PaperTradingAIEngine:
                 'created_at': thought_log.created_at.isoformat()
             }
             
-            # Send via WebSocket service
-            websocket_service.send_thought_log_created(user_id, thought_data)
+            # Send via centralized WebSocket service using account_id
+            websocket_service.send_thought_log(
+                account_id=self.account_id,
+                thought_data=thought_data
+            )
             
-            # Also send via channel layer for backward compatibility
+            # Also send generic thought update
             self.send_websocket_update('thought_log_created', thought_data)
             
             logger.info(
@@ -708,8 +706,7 @@ class PaperTradingAIEngine:
         """
         Update performance metrics based on trade results.
         
-        This method tracks trading performance using the PaperPerformanceMetrics model.
-        It calculates win rates, P&L, and other key performance indicators.
+        UPDATED: Fixed WebSocket notification to use centralized service
         
         Args:
             trade_result: Dictionary containing trade outcome information.
@@ -733,29 +730,24 @@ class PaperTradingAIEngine:
                 logger.info("[METRICS] Creating new performance metrics record")
                 metrics = PaperPerformanceMetrics.objects.create(
                     session=self.session,
-                    period_start=self.session_start_time,  # Already timezone-aware
+                    period_start=self.session_start_time,
                     period_end=current_time,
-                    # Trade statistics
                     total_trades=0,
                     winning_trades=0,
                     losing_trades=0,
                     win_rate=Decimal("0"),
-                    # Financial metrics
                     total_pnl_usd=Decimal("0"),
                     total_pnl_percent=Decimal("0"),
                     avg_win_usd=Decimal("0"),
                     avg_loss_usd=Decimal("0"),
                     largest_win_usd=Decimal("0"),
                     largest_loss_usd=Decimal("0"),
-                    # Risk metrics
                     sharpe_ratio=None,
                     max_drawdown_percent=Decimal("0"),
                     profit_factor=None,
-                    # Execution metrics
                     avg_execution_time_ms=0,
                     total_gas_fees_usd=Decimal("0"),
                     avg_slippage_percent=Decimal("0"),
-                    # Strategy metrics
                     fast_lane_trades=0,
                     smart_lane_trades=0,
                     fast_lane_win_rate=Decimal("0"),
@@ -834,8 +826,8 @@ class PaperTradingAIEngine:
             # Save updated metrics
             metrics.save()
             
-            # Send WebSocket notification for performance update
-            self.send_websocket_update('performance_update', {
+            # Send WebSocket notification using centralized service
+            performance_data = {
                 'win_rate': float(metrics.win_rate),
                 'total_pnl': float(metrics.total_pnl_usd),
                 'total_trades': metrics.total_trades,
@@ -843,7 +835,16 @@ class PaperTradingAIEngine:
                 'losing_trades': metrics.losing_trades,
                 'fast_lane_win_rate': float(metrics.fast_lane_win_rate),
                 'smart_lane_win_rate': float(metrics.smart_lane_win_rate),
-            })
+            }
+            
+            # Use centralized service with account_id
+            websocket_service.send_performance_update(
+                account_id=self.account_id,
+                performance_data=performance_data
+            )
+            
+            # Also send via generic update
+            self.send_websocket_update('performance_update', performance_data)
             
             # Log the performance update
             logger.info(

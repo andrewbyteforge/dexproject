@@ -4,6 +4,8 @@ Paper Trading Django Signals
 Automatically broadcast updates to connected WebSocket clients when
 database models change. This enables real-time dashboard updates.
 
+UPDATED: Now uses centralized websocket_service instead of direct channel_layer calls
+
 File: dexproject/paper_trading/signals.py
 """
 
@@ -13,8 +15,6 @@ from decimal import Decimal
 
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 
 from .models import (
     PaperTradingAccount,
@@ -26,53 +26,10 @@ from .models import (
     PaperPerformanceMetrics
 )
 
+# Import the centralized WebSocket service
+from .services.websocket_service import websocket_service
+
 logger = logging.getLogger(__name__)
-
-
-def get_room_group_name(account_id: str) -> str:
-    """
-    Generate room group name for a paper trading account.
-    
-    Args:
-        account_id: Account UUID string
-        
-    Returns:
-        Room group name for channel layer
-    """
-    return f"paper_trading_{account_id}"
-
-
-def broadcast_to_account(account_id: str, message_type: str, data: Dict[str, Any]) -> None:
-    """
-    Broadcast a message to all WebSocket connections for an account.
-    
-    Args:
-        account_id: Account UUID string
-        message_type: Type of message (e.g., 'trade_executed')
-        data: Message payload
-    """
-    try:
-        channel_layer = get_channel_layer()
-        
-        if channel_layer is None:
-            logger.warning("Channel layer not available for broadcasting")
-            return
-        
-        room_group_name = get_room_group_name(account_id)
-        
-        # Send message to room group
-        async_to_sync(channel_layer.group_send)(
-            room_group_name,
-            {
-                'type': message_type,
-                'data': data
-            }
-        )
-        
-        logger.debug(f"Broadcast {message_type} to {room_group_name}")
-        
-    except Exception as e:
-        logger.error(f"Error broadcasting to account {account_id}: {e}", exc_info=True)
 
 
 # =============================================================================
@@ -127,17 +84,19 @@ def paper_trade_saved(sender, instance: PaperTrade, created: bool, **kwargs) -> 
             'error_message': instance.error_message if instance.status == 'failed' else None,
         }
         
-        # Broadcast to connected clients
-        broadcast_to_account(
+        # Use centralized WebSocket service
+        success = websocket_service.send_trade_update(
             account_id=account_id,
-            message_type='trade_executed',
-            data=trade_data
+            trade_data=trade_data
         )
         
-        logger.info(
-            f"Broadcast trade execution: trade_id={instance.trade_id}, "
-            f"type={instance.trade_type}, status={instance.status}"
-        )
+        if success:
+            logger.info(
+                f"Broadcast trade execution: trade_id={instance.trade_id}, "
+                f"type={instance.trade_type}, status={instance.status}"
+            )
+        else:
+            logger.warning(f"Failed to broadcast trade {instance.trade_id}")
         
     except Exception as e:
         logger.error(f"Error in paper_trade_saved signal: {e}", exc_info=True)
@@ -190,27 +149,24 @@ def paper_position_saved(sender, instance: PaperPosition, created: bool, **kwarg
                 float(instance.take_profit_price) 
                 if instance.take_profit_price else None
             ),
-            'opened_at': instance.opened_at.isoformat(),  # FIXED: was 'created_at'
+            'opened_at': instance.opened_at.isoformat(),
             'closed_at': (
                 instance.closed_at.isoformat() 
                 if instance.closed_at else None
             ),
         }
         
-        # Determine message type based on position state
-        if not instance.is_open and instance.closed_at:
-            message_type = 'position_closed'
-            logger.info(f"Broadcast position closure: position_id={instance.position_id}")
-        else:
-            message_type = 'position_updated'
-            logger.debug(f"Broadcast position update: position_id={instance.position_id}")
-        
-        # Broadcast to connected clients
-        broadcast_to_account(
+        # Use centralized WebSocket service
+        success = websocket_service.send_position_update(
             account_id=account_id,
-            message_type=message_type,
-            data=position_data
+            position_data=position_data
         )
+        
+        if success:
+            if not instance.is_open and instance.closed_at:
+                logger.info(f"Broadcast position closure: position_id={instance.position_id}")
+            else:
+                logger.debug(f"Broadcast position update: position_id={instance.position_id}")
         
     except Exception as e:
         logger.error(f"Error in paper_position_saved signal: {e}", exc_info=True)
@@ -260,14 +216,15 @@ def paper_account_saved(sender, instance: PaperTradingAccount, created: bool, **
             'reset_count': instance.reset_count,
         }
         
-        # Broadcast to connected clients
-        broadcast_to_account(
+        # Use centralized WebSocket service with generic update
+        success = websocket_service.send_update(
             account_id=account_id,
             message_type='account_updated',
             data=account_data
         )
         
-        logger.debug(f"Broadcast account update: account_id={account_id}")
+        if success:
+            logger.debug(f"Broadcast account update: account_id={account_id}")
         
     except Exception as e:
         logger.error(f"Error in paper_account_saved signal: {e}", exc_info=True)
@@ -305,9 +262,11 @@ def paper_thought_log_created(sender, instance: PaperAIThoughtLog, created: bool
             'token_symbol': instance.token_symbol,
             'confidence_level': instance.confidence_level,
             'confidence_percent': float(instance.confidence_percent),
+            'confidence_score': float(instance.confidence_percent),  # For compatibility
             'risk_score': float(instance.risk_score),
             'opportunity_score': float(instance.opportunity_score),
             'primary_reasoning': instance.primary_reasoning,
+            'reasoning': instance.primary_reasoning,  # For compatibility
             'key_factors': instance.key_factors,
             'positive_signals': instance.positive_signals,
             'negative_signals': instance.negative_signals,
@@ -322,17 +281,17 @@ def paper_thought_log_created(sender, instance: PaperAIThoughtLog, created: bool
             ),
         }
         
-        # Broadcast to connected clients
-        broadcast_to_account(
+        # Use centralized WebSocket service
+        success = websocket_service.send_thought_log(
             account_id=account_id,
-            message_type='thought_log_created',
-            data=thought_data
+            thought_data=thought_data
         )
         
-        logger.info(
-            f"Broadcast thought log: decision={instance.decision_type}, "
-            f"token={instance.token_symbol}, confidence={instance.confidence_percent:.1f}%"
-        )
+        if success:
+            logger.info(
+                f"Broadcast thought log: decision={instance.decision_type}, "
+                f"token={instance.token_symbol}, confidence={instance.confidence_percent:.1f}%"
+            )
         
     except Exception as e:
         logger.error(f"Error in paper_thought_log_created signal: {e}", exc_info=True)
@@ -361,12 +320,11 @@ def paper_session_saved(sender, instance: PaperTradingSession, created: bool, **
         # Prepare session data
         session_data = {
             'session_id': str(instance.session_id),
-            # FIXED: Get strategy_name from strategy_config relationship
             'strategy_name': (
                 instance.strategy_config.name 
                 if instance.strategy_config else 'Unknown Strategy'
             ),
-            'started_at': instance.started_at.isoformat(),  # Using correct field name
+            'started_at': instance.started_at.isoformat(),
             'ended_at': (
                 instance.ended_at.isoformat() 
                 if instance.ended_at else None
@@ -387,20 +345,23 @@ def paper_session_saved(sender, instance: PaperTradingSession, created: bool, **
         # Determine message type based on session status
         if created:
             message_type = 'session_started'
-            logger.info(f"Broadcast session start: session_id={instance.session_id}")
+            log_message = f"Broadcast session start: session_id={instance.session_id}"
         elif instance.status in ['STOPPED', 'COMPLETED']:
             message_type = 'session_stopped'
-            logger.info(f"Broadcast session stop: session_id={instance.session_id}")
+            log_message = f"Broadcast session stop: session_id={instance.session_id}"
         else:
-            # Session updated but still active
-            return
+            # Session updated but still active - send generic update
+            message_type = 'session_update'
+            log_message = f"Broadcast session update: session_id={instance.session_id}"
         
-        # Broadcast to connected clients
-        broadcast_to_account(
+        # Use centralized WebSocket service
+        success = websocket_service.send_session_update(
             account_id=account_id,
-            message_type=message_type,
-            data=session_data
+            session_data=session_data
         )
+        
+        if success:
+            logger.info(log_message)
         
     except Exception as e:
         logger.error(f"Error in paper_session_saved signal: {e}", exc_info=True)
@@ -438,6 +399,7 @@ def paper_metrics_saved(sender, instance: PaperPerformanceMetrics, created: bool
             'losing_trades': instance.losing_trades,
             'win_rate': float(instance.win_rate),
             'total_pnl_usd': float(instance.total_pnl_usd),
+            'total_pnl': float(instance.total_pnl_usd),  # Alias for compatibility
             'total_pnl_percent': float(instance.total_pnl_percent),
             'avg_win_usd': float(instance.avg_win_usd),
             'avg_loss_usd': float(instance.avg_loss_usd),
@@ -452,16 +414,24 @@ def paper_metrics_saved(sender, instance: PaperPerformanceMetrics, created: bool
                 float(instance.profit_factor) 
                 if instance.profit_factor else None
             ),
+            'fast_lane_win_rate': (
+                float(instance.fast_lane_win_rate) 
+                if hasattr(instance, 'fast_lane_win_rate') else None
+            ),
+            'smart_lane_win_rate': (
+                float(instance.smart_lane_win_rate) 
+                if hasattr(instance, 'smart_lane_win_rate') else None
+            ),
         }
         
-        # Broadcast to connected clients
-        broadcast_to_account(
+        # Use centralized WebSocket service
+        success = websocket_service.send_performance_update(
             account_id=account_id,
-            message_type='metrics_updated',
-            data=metrics_data
+            performance_data=metrics_data
         )
         
-        logger.debug(f"Broadcast metrics update: session_id={instance.session.session_id}")
+        if success:
+            logger.debug(f"Broadcast metrics update: session_id={instance.session.session_id}")
         
     except Exception as e:
         logger.error(f"Error in paper_metrics_saved signal: {e}", exc_info=True)
@@ -498,26 +468,28 @@ def paper_strategy_config_saved(sender, instance: PaperStrategyConfiguration, cr
             'trading_mode': instance.trading_mode,
             'use_fast_lane': instance.use_fast_lane,
             'use_smart_lane': instance.use_smart_lane,
-            # FIXED: Changed from max_position_size to max_position_size_percent
             'max_position_size_percent': float(instance.max_position_size_percent),
             'max_daily_trades': instance.max_daily_trades,
             'max_concurrent_positions': instance.max_concurrent_positions,
             'stop_loss_percent': float(instance.stop_loss_percent),
             'take_profit_percent': float(instance.take_profit_percent),
             'confidence_threshold': float(instance.confidence_threshold),
-            # 'risk_score_threshold': float(instance.risk_score_threshold),
-            # 'max_gas_price_gwei': float(instance.max_gas_price_gwei),
             'is_active': instance.is_active,
+            'intel_level': (
+                instance.intel_level 
+                if hasattr(instance, 'intel_level') else None
+            ),
         }
         
-        # Broadcast to connected clients
-        broadcast_to_account(
+        # Use centralized WebSocket service with generic update
+        success = websocket_service.send_update(
             account_id=account_id,
             message_type='strategy_config_updated',
             data=config_data
         )
         
-        logger.info(f"Broadcast strategy config update: config_id={instance.config_id}")
+        if success:
+            logger.info(f"Broadcast strategy config update: config_id={instance.config_id}")
         
     except Exception as e:
         logger.error(f"Error in paper_strategy_config_saved signal: {e}", exc_info=True)
@@ -527,4 +499,4 @@ def paper_strategy_config_saved(sender, instance: PaperStrategyConfiguration, cr
 # SIGNAL REGISTRATION INFO
 # =============================================================================
 
-logger.info("Paper trading signals registered successfully")
+logger.info("Paper trading signals registered successfully - using centralized WebSocket service")
