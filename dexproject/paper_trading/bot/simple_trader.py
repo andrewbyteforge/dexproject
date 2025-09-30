@@ -1,22 +1,21 @@
 """
-Enhanced Paper Trading Bot - PTphase2
+Enhanced Paper Trading Bot with Intel Slider System
 
-This module implements an intelligent paper trading bot that uses the AI decision engine
-to analyze markets and execute trades. It integrates thought logging, Fast/Smart lane
-strategies, and comprehensive performance tracking.
+This is the main paper trading bot that integrates the Intel Slider (1-10) system
+for intelligent decision making. It replaces multiple bot implementations with
+a single, unified system.
 
-Features:
-- AI-driven decision making
-- Fast Lane and Smart Lane trading strategies
-- Detailed thought logging for every decision
-- Real-time performance metrics
-- Graceful shutdown handling
-- Configurable trading parameters
+Key Features:
+- Intel Slider system (1-10 intelligence levels)
+- Modular market analyzers
+- Comprehensive thought logging
+- WebSocket real-time updates
+- Performance tracking
+- Clean separation of concerns
 
 File: dexproject/paper_trading/bot/simple_trader.py
 """
 
-import uuid
 import os
 import sys
 import time
@@ -24,9 +23,13 @@ import signal
 import logging
 from decimal import Decimal
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import random
+import uuid
 
+# ============================================================================
+# DJANGO SETUP
+# ============================================================================
 # Add project root to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -37,7 +40,11 @@ django.setup()
 
 from django.utils import timezone
 from django.db import transaction
+from asgiref.sync import async_to_sync
 
+# ============================================================================
+# MODEL IMPORTS
+# ============================================================================
 from paper_trading.models import (
     PaperTradingAccount,
     PaperTrade,
@@ -48,15 +55,32 @@ from paper_trading.models import (
     PaperPerformanceMetrics
 )
 
-# Import the AI engine
-from paper_trading.bot.ai_engine import (
-    create_ai_engine,
-    PaperTradingAIEngine,
-    TradingSignal
+# ============================================================================
+# INTELLIGENCE SYSTEM IMPORTS
+# ============================================================================
+from paper_trading.intelligence.intel_slider import IntelSliderEngine
+from paper_trading.intelligence.base import (
+    IntelligenceLevel,
+    MarketContext,
+    TradingDecision
 )
 
+# ============================================================================
+# SERVICE IMPORTS
+# ============================================================================
+from paper_trading.services.websocket_service import WebSocketNotificationService
 
-# Configure logging
+# ============================================================================
+# LEGACY AI ENGINE IMPORT (for backward compatibility during transition)
+# ============================================================================
+from paper_trading.bot.ai_engine import (
+    TradingSignal as LegacyTradingSignal,
+    MarketCondition
+)
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -70,78 +94,176 @@ logger = logging.getLogger(__name__)
 
 class EnhancedPaperTradingBot:
     """
-    Enhanced paper trading bot with AI-driven decision making.
+    Unified Paper Trading Bot with Intel Slider System.
     
-    This bot uses the AI engine to analyze markets, make intelligent trading decisions,
-    and maintain detailed logs of its reasoning process.
+    This bot consolidates all trading logic into a single implementation
+    with configurable intelligence levels (1-10) that control:
+    - Risk tolerance
+    - Trading frequency
+    - Gas strategies
+    - MEV protection
+    - Decision confidence thresholds
     """
     
-    def __init__(self, account_id: int):
+    def __init__(self, account_id: int, intel_level: int = 5):
         """
         Initialize the enhanced paper trading bot.
         
         Args:
             account_id: ID of the paper trading account to use
+            intel_level: Intelligence level (1-10) controlling bot behavior
+                1-3: Ultra cautious
+                4-6: Balanced
+                7-9: Aggressive
+                10: Fully autonomous with ML
         """
+        # ====================================================================
+        # CORE CONFIGURATION
+        # ====================================================================
         self.account_id = account_id
+        self.intel_level = intel_level
         self.account = None
         self.session = None
-        self.ai_engine = None
         self.running = False
+        
+        # ====================================================================
+        # INTELLIGENCE SYSTEM
+        # ====================================================================
+        self.intelligence_engine = None  # Will be initialized in initialize()
+        self.websocket_service = WebSocketNotificationService()
+        
+        # ====================================================================
+        # POSITION TRACKING
+        # ====================================================================
         self.positions = {}  # token_symbol -> PaperPosition
         
-        # Trading parameters
-        self.tick_interval = 5  # seconds between market checks
-        self.min_trade_interval = 10  # minimum seconds between trades
+        # ====================================================================
+        # TRADING PARAMETERS (adjusted by intel level)
+        # ====================================================================
+        self.tick_interval = self._calculate_tick_interval()  # Seconds between checks
+        self.min_trade_interval = 10  # Minimum seconds between trades
         self.last_trade_time = None
         
-        # Market simulation parameters
+        # ====================================================================
+        # MARKET SIMULATION PARAMETERS
+        # ====================================================================
         self.price_volatility = Decimal("0.05")  # 5% max price change per tick
         self.trend_probability = 0.6  # 60% chance to continue trend
         
-        # Price tracking
+        # ====================================================================
+        # PRICE TRACKING
+        # ====================================================================
         self.price_history = {}  # token_symbol -> List[Decimal]
         self.max_history_length = 20
         
-        # Performance tracking
+        # ====================================================================
+        # PERFORMANCE METRICS
+        # ====================================================================
         self.trades_executed = 0
         self.successful_trades = 0
+        self.failed_trades = 0
+        self.total_pnl = Decimal('0')
         
-        # Track last decision for each token (for performance metrics)
-        self.last_decisions = {}  # token_symbol -> decision dict
+        # ====================================================================
+        # DECISION TRACKING
+        # ====================================================================
+        self.last_decisions = {}  # token_symbol -> TradingDecision
         
-        logger.info("[BOT] Enhanced Paper Trading Bot initialized")
+        logger.info(f"[BOT] Enhanced Paper Trading Bot initialized with Intel Level {intel_level}")
+    
+    def _calculate_tick_interval(self) -> int:
+        """
+        Calculate tick interval based on intelligence level.
+        
+        Higher intelligence levels check markets more frequently.
+        
+        Returns:
+            Seconds between market checks
+        """
+        if self.intel_level <= 3:
+            return 30  # Cautious: Check every 30 seconds
+        elif self.intel_level <= 6:
+            return 15  # Balanced: Check every 15 seconds
+        elif self.intel_level <= 9:
+            return 5   # Aggressive: Check every 5 seconds
+        else:
+            return 3   # Autonomous: Check every 3 seconds
     
     def initialize(self) -> bool:
         """
         Initialize bot components and create trading session.
         
+        This method:
+        1. Loads the trading account
+        2. Creates a new trading session
+        3. Initializes the intelligence engine
+        4. Loads existing positions
+        5. Sets up price tracking
+        
         Returns:
             True if initialization successful, False otherwise
         """
         try:
-            # Load account
+            # ================================================================
+            # LOAD ACCOUNT
+            # ================================================================
             self.account = PaperTradingAccount.objects.get(pk=self.account_id)
             logger.info(f"[DATA] Loaded account: {self.account.name}")
             
-            # Create new trading session
+            # ================================================================
+            # CREATE TRADING SESSION
+            # ================================================================
             self.session = PaperTradingSession.objects.create(
                 account=self.account,
-                name=f"AI_Bot_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                name=f"Intel_{self.intel_level}_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                 status='RUNNING',
-                starting_balance_usd=self.account.current_balance_usd
+                starting_balance_usd=self.account.current_balance_usd,
+                session_type='ENHANCED_BOT',
+                intel_level=self.intel_level  # Store intel level with session
             )
-            logger.info(f"[GAME] Created trading session: {self.session.session_id}")
+            logger.info(f"[SESSION] Created trading session: {self.session.session_id}")
             
-            # Initialize AI engine
-            self.ai_engine = create_ai_engine(self.session)
-            logger.info("[AI] AI Engine initialized")
+            # ================================================================
+            # INITIALIZE INTELLIGENCE ENGINE
+            # ================================================================
+            self.intelligence_engine = IntelSliderEngine(
+                intel_level=self.intel_level,
+                account_id=str(self.account.account_id)
+            )
+            logger.info(f"[INTEL] Intelligence Engine initialized at Level {self.intel_level}")
             
-            # Load existing positions
+            # ================================================================
+            # GET OR CREATE STRATEGY CONFIGURATION
+            # ================================================================
+            self._setup_strategy_configuration()
+            
+            # ================================================================
+            # LOAD EXISTING POSITIONS
+            # ================================================================
             self._load_positions()
             
-            # Initialize price history with simulated data
+            # ================================================================
+            # INITIALIZE PRICE HISTORY
+            # ================================================================
             self._initialize_price_history()
+            
+            # ================================================================
+            # SEND INITIALIZATION NOTIFICATION
+            # ================================================================
+            self._send_bot_status_update('initialized')
+            
+            # ================================================================
+            # LOG INITIAL THOUGHT
+            # ================================================================
+            self._log_thought(
+                action="STARTUP",
+                reasoning=f"Bot initialized with Intel Level {self.intel_level}. "
+                         f"Strategy: {self.intelligence_engine.config.name}. "
+                         f"Risk tolerance: {self.intelligence_engine.config.risk_tolerance}%. "
+                         f"Starting balance: ${self.account.current_balance_usd:.2f}",
+                confidence=100,
+                decision_type="SYSTEM"
+            )
             
             return True
             
@@ -149,488 +271,629 @@ class EnhancedPaperTradingBot:
             logger.error(f"[ERROR] Initialization failed: {e}", exc_info=True)
             return False
     
+    def _setup_strategy_configuration(self):
+        """
+        Set up strategy configuration based on intel level.
+        
+        Creates or updates the strategy configuration to match
+        the selected intelligence level settings.
+        """
+        config = self.intelligence_engine.config
+        
+        self.strategy_config, created = PaperStrategyConfiguration.objects.update_or_create(
+            account=self.account,
+            name=f"Intel_Level_{self.intel_level}",
+            defaults={
+                'is_active': True,
+                'trading_mode': self._get_trading_mode(),
+                'use_fast_lane': self.intel_level >= 7,  # Fast lane for aggressive
+                'use_smart_lane': True,  # Always available
+                'max_position_size_percent': config.max_position_percent,
+                'stop_loss_percent': Decimal('5'),
+                'take_profit_percent': Decimal('10'),
+                'max_daily_trades': self._get_max_daily_trades(),
+                'confidence_threshold': config.min_confidence_required,
+                'intel_level': self.intel_level,
+                'metadata': {
+                    'risk_tolerance': float(config.risk_tolerance),
+                    'gas_aggressiveness': config.gas_aggressiveness,
+                    'use_mev_protection': config.use_mev_protection
+                }
+            }
+        )
+        
+        if created:
+            logger.info(f"[CONFIG] Created new strategy: {self.strategy_config.name}")
+        else:
+            logger.info(f"[CONFIG] Updated strategy: {self.strategy_config.name}")
+    
+    def _get_trading_mode(self) -> str:
+        """Get trading mode based on intel level."""
+        if self.intel_level <= 3:
+            return 'CONSERVATIVE'
+        elif self.intel_level <= 6:
+            return 'MODERATE'
+        else:
+            return 'AGGRESSIVE'
+    
+    def _get_max_daily_trades(self) -> int:
+        """Get max daily trades based on intel level."""
+        if self.intel_level <= 3:
+            return 10
+        elif self.intel_level <= 6:
+            return 25
+        elif self.intel_level <= 9:
+            return 50
+        else:
+            return 100  # Autonomous
+    
     def _load_positions(self):
-        """Load existing open positions for the account."""
-        try:
-            positions = PaperPosition.objects.filter(
-                account=self.account,
-                is_open=True
-            )
-            for position in positions:
-                self.positions[position.token_symbol] = position
-                logger.info(f"[POS] Loaded position: {position.token_symbol} - {position.quantity} tokens")
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to load positions: {e}", exc_info=True)
+        """
+        Load existing open positions for the account.
+        
+        Populates the positions dictionary with current open positions.
+        """
+        open_positions = PaperPosition.objects.filter(
+            account=self.account,
+            is_open=True
+        )
+        
+        for position in open_positions:
+            self.positions[position.token_symbol] = position
+            logger.info(f"[POSITION] Loaded: {position.token_symbol} - {position.quantity} @ ${position.average_entry_price_usd}")
     
     def _initialize_price_history(self):
-        """Initialize price history with simulated historical data."""
-        try:
-            # Simulate some popular tokens
-            tokens = [
-                ("0x1234...WETH", "WETH", Decimal("2500.00")),
-                ("0x5678...USDC", "USDC", Decimal("1.00")),
-                ("0x9abc...PEPE", "PEPE", Decimal("0.000001")),
-                ("0xdef0...SHIB", "SHIB", Decimal("0.00001")),
-                ("0x1111...DOGE", "DOGE", Decimal("0.08")),
-            ]
+        """
+        Initialize price history with simulated data.
+        
+        Creates initial price data for tokens we'll be trading.
+        """
+        # Simulated tokens for paper trading
+        tokens = ['TEST1', 'TEST2', 'TEST3']
+        
+        for token in tokens:
+            # Generate random starting price between $10 and $1000
+            base_price = Decimal(str(random.uniform(10, 1000)))
             
-            for address, symbol, base_price in tokens:
-                # Generate historical prices
-                history = []
-                price = base_price
-                for _ in range(10):
-                    # Random walk
-                    change = price * Decimal(random.uniform(-0.02, 0.02))
-                    price = max(price + change, price * Decimal("0.5"))  # Prevent negative
-                    history.append(price)
-                
-                self.price_history[symbol] = history
-                logger.debug(f"[UP] Initialized price history for {symbol}")
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to initialize price history: {e}", exc_info=True)
+            # Create price history with some variance
+            self.price_history[token] = []
+            for i in range(10):
+                variance = Decimal(str(random.uniform(-0.05, 0.05)))
+                price = base_price * (Decimal('1') + variance)
+                self.price_history[token].append(price)
+            
+            logger.info(f"[PRICE] Initialized {token} at ${self.price_history[token][-1]:.2f}")
     
     def run(self):
         """
-        Main bot loop - analyze markets and execute trades.
+        Main bot execution loop.
+        
+        Runs continuously until stopped, checking markets and making
+        trading decisions based on the intelligence level.
         """
-        logger.info("[START] Starting enhanced paper trading bot...")
+        logger.info("[START] Bot starting main execution loop...")
+        
+        # ====================================================================
+        # SETUP SIGNAL HANDLERS
+        # ====================================================================
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        
         self.running = True
-        
-        # Setup signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        tick_count = 0
         
         try:
             while self.running:
-                tick_count += 1
-                logger.info(f"\n{'='*60}")
-                logger.info(f"[TICK] Market Tick #{tick_count} - {datetime.now().strftime('%H:%M:%S')}")
+                # ============================================================
+                # MARKET ANALYSIS TICK
+                # ============================================================
+                self._tick()
                 
-                # Update market prices
-                self._update_market_prices()
+                # ============================================================
+                # SLEEP BETWEEN TICKS
+                # ============================================================
+                time.sleep(self.tick_interval)
                 
-                # Analyze each token
-                for symbol in self.price_history.keys():
-                    try:
-                        self._process_token(symbol)
-                    except Exception as e:
-                        logger.error(f"[ERROR] Failed to process {symbol}: {e}", exc_info=True)
-                
-                # Update session metrics
-                self._update_session_metrics()
-                
-                # Display current status
-                self._display_status()
-                
-                # Wait for next tick
-                if self.running:
-                    time.sleep(self.tick_interval)
-                    
         except Exception as e:
-            logger.error(f"[ERROR] Bot error: {e}", exc_info=True)
-            self.running = False
-            
+            logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
         finally:
+            # ============================================================
+            # CLEANUP ON EXIT
+            # ============================================================
             self._cleanup()
     
-    def _update_market_prices(self):
-        """Simulate market price updates."""
-        try:
-            for symbol, prices in self.price_history.items():
-                current_price = prices[-1] if prices else Decimal("1.0")
-                
-                # Determine trend continuation
-                if len(prices) >= 2:
-                    trend = prices[-1] - prices[-2]
-                    if random.random() < self.trend_probability and trend != 0:
-                        # Continue trend
-                        change_factor = abs(trend) / prices[-2] * Decimal(random.uniform(0.5, 1.5))
-                        change = current_price * change_factor * (1 if trend > 0 else -1)
-                    else:
-                        # Random change
-                        change = current_price * Decimal(random.uniform(-0.03, 0.03))
-                else:
-                    # Random change
-                    change = current_price * Decimal(random.uniform(-0.03, 0.03))
-                
-                # Apply change with volatility
-                volatility_factor = Decimal(random.uniform(0.5, 1.5))
-                new_price = current_price + (change * volatility_factor)
-                new_price = max(new_price, current_price * Decimal("0.5"))  # Prevent crash
-                
-                # Update history
-                prices.append(new_price)
-                if len(prices) > self.max_history_length:
-                    prices.pop(0)
-                
-                # Log significant changes
-                price_change_pct = ((new_price - current_price) / current_price * 100) if current_price > 0 else 0
-                if abs(price_change_pct) > 2:
-                    logger.info(f"[PRICE] {symbol}: ${current_price:.6f} -> ${new_price:.6f} ({price_change_pct:+.2f}%)")
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to update market prices: {e}", exc_info=True)
-    
-    def _process_token(self, symbol: str):
+    def _tick(self):
         """
-        Process a single token - analyze and potentially trade.
+        Single market analysis tick.
+        
+        This method:
+        1. Updates market prices
+        2. Analyzes each token
+        3. Makes trading decisions
+        4. Executes trades
+        5. Updates performance metrics
+        """
+        try:
+            # ================================================================
+            # UPDATE SIMULATED PRICES
+            # ================================================================
+            self._update_prices()
+            
+            # ================================================================
+            # ANALYZE EACH TOKEN
+            # ================================================================
+            for token_symbol in self.price_history.keys():
+                self._analyze_and_trade(token_symbol)
+            
+            # ================================================================
+            # UPDATE PERFORMANCE METRICS
+            # ================================================================
+            self._update_performance_metrics()
+            
+            # ================================================================
+            # SEND STATUS UPDATE
+            # ================================================================
+            if self.trades_executed % 5 == 0:  # Every 5 trades
+                self._send_bot_status_update('running')
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Tick error: {e}", exc_info=True)
+    
+    async def _analyze_and_trade(self, token_symbol: str):
+        """
+        Analyze a token and make trading decision.
+        
+        Uses the intelligence engine to analyze market conditions
+        and decide whether to trade.
         
         Args:
-            symbol: Token symbol to process
+            token_symbol: Symbol of token to analyze
         """
         try:
-            # Check if we can trade (time restriction)
-            if self.last_trade_time:
-                time_since_trade = (datetime.now() - self.last_trade_time).total_seconds()
-                if time_since_trade < self.min_trade_interval:
-                    return
+            current_price = self.price_history[token_symbol][-1]
             
-            # Get token info
-            token_address = f"0x{symbol}..."  # Simulated address
-            prices = self.price_history.get(symbol, [])
+            # ================================================================
+            # PREPARE TOKEN DATA
+            # ================================================================
+            token_data = {
+                'address': '0x' + 'a' * 40,  # Simulated address
+                'symbol': token_symbol,
+                'liquidity_usd': Decimal('500000'),  # Simulated liquidity
+                'volume_24h': Decimal('100000')  # Simulated volume
+            }
             
-            if not prices:
-                logger.warning(f"[WARN] No price history for {symbol}")
-                return
-            
-            current_price = prices[-1]
-            
-            # Get AI decision
-            decision = self.ai_engine.generate_decision(
-                token_address=token_address,
-                token_symbol=symbol,
-                current_price=current_price,
-                price_history=prices[:-1]  # Don't include current price in history
+            # ================================================================
+            # ANALYZE MARKET USING INTELLIGENCE ENGINE
+            # ================================================================
+            market_context = await self.intelligence_engine.analyze_market(
+                token_address=token_data['address'],
+                trade_size_usd=self.account.current_balance_usd * Decimal('0.1'),
+                liquidity_usd=token_data['liquidity_usd'],
+                volume_24h=token_data['volume_24h'],
+                recent_failures=self.failed_trades,
+                success_rate_1h=self._calculate_recent_success_rate()
             )
             
-            # Store decision for later use (when closing position)
-            self.last_decisions[symbol] = decision
+            # ================================================================
+            # MAKE TRADING DECISION
+            # ================================================================
+            existing_positions = [
+                {
+                    'token_symbol': pos.token_symbol,
+                    'quantity': float(pos.quantity),
+                    'invested_usd': float(pos.total_invested_usd)
+                }
+                for pos in self.positions.values()
+            ]
             
-            # Log the decision
-            logger.info(f"[THINK] AI Decision for {symbol}: {decision['action']} "
-                       f"({decision['signal'].value}, {decision['confidence_score']:.0f}% confidence)")
+            decision = await self.intelligence_engine.make_decision(
+                market_context=market_context,
+                account_balance=self.account.current_balance_usd,
+                existing_positions=existing_positions,
+                token_address=token_data['address'],
+                token_symbol=token_symbol
+            )
             
-            # Execute trade if signaled
-            if decision['action'] in ['BUY', 'SELL']:
-                self._execute_trade(symbol, decision)
+            # ================================================================
+            # LOG THOUGHT PROCESS
+            # ================================================================
+            thought_log = self.intelligence_engine.generate_thought_log(decision)
+            self._log_thought(
+                action=decision.action,
+                reasoning=thought_log,
+                confidence=float(decision.overall_confidence),
+                decision_type="TRADE_DECISION",
+                metadata={
+                    'token': token_symbol,
+                    'intel_level': self.intel_level,
+                    'risk_score': float(decision.risk_score),
+                    'opportunity_score': float(decision.opportunity_score)
+                }
+            )
+            
+            # ================================================================
+            # EXECUTE TRADE IF DECIDED
+            # ================================================================
+            if decision.action in ['BUY', 'SELL']:
+                # Check minimum trade interval
+                if self._can_trade():
+                    self._execute_trade(decision, token_symbol, current_price)
+            
+            # Store decision for tracking
+            self.last_decisions[token_symbol] = decision
+            
         except Exception as e:
-            logger.error(f"[ERROR] Failed to process token {symbol}: {e}", exc_info=True)
+            logger.error(f"[ERROR] Failed to analyze {token_symbol}: {e}", exc_info=True)
     
-    def _execute_trade(self, symbol: str, decision: Dict[str, Any]):
+    def _execute_trade(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
         """
-        Execute a paper trade based on AI decision.
+        Execute a paper trade based on the decision.
         
         Args:
-            symbol: Token symbol
-            decision: AI decision dictionary
+            decision: Trading decision from intelligence engine
+            token_symbol: Token to trade
+            current_price: Current token price
         """
-        action = decision['action']
-        position_size_percent = decision['position_size_percent']
-        current_price = decision['current_price']
-        trade_start_time = datetime.now()
-        
-        logger.debug(f"[TRADE] Attempting {action} for {symbol} at ${current_price}")
-        
         try:
-            # Calculate trade amount
-            portfolio_value = self.account.current_balance_usd
-            trade_value = portfolio_value * (position_size_percent / 100)
+            # ================================================================
+            # CREATE TRADE RECORD
+            # ================================================================
+            trade = PaperTrade.objects.create(
+                account=self.account,
+                session=self.session,
+                trade_type=decision.action,
+                token_in_address='0x' + '0' * 40 if decision.action == 'BUY' else decision.token_address,
+                token_in_symbol='USDC' if decision.action == 'BUY' else token_symbol,
+                token_out_address=decision.token_address if decision.action == 'BUY' else '0x' + '0' * 40,
+                token_out_symbol=token_symbol if decision.action == 'BUY' else 'USDC',
+                amount_in=decision.position_size_usd,
+                amount_out=decision.position_size_usd / current_price if decision.action == 'BUY' else decision.position_size_usd,
+                amount_in_usd=decision.position_size_usd,
+                amount_out_usd=decision.position_size_usd,
+                strategy_name=f"INTEL_{self.intel_level}",
+                strategy_lane=decision.execution_mode,
+                gas_price_gwei=decision.max_gas_price_gwei,
+                mev_protection_used=decision.use_private_relay,
+                slippage_percent=Decimal('1'),  # Simulated
+                status='SUCCESS',  # Simulated success
+                execution_time_ms=int(decision.processing_time_ms),
+                metadata={
+                    'intel_level': self.intel_level,
+                    'confidence': float(decision.overall_confidence),
+                    'risk_score': float(decision.risk_score)
+                }
+            )
             
-            # Check if we have enough balance for BUY
-            if action == 'BUY' and trade_value > self.account.current_balance_usd:
-                logger.warning(f"[WARN] Insufficient balance for {symbol} purchase: need ${trade_value:.2f}, have ${self.account.current_balance_usd:.2f}")
-                return
+            # ================================================================
+            # UPDATE POSITION
+            # ================================================================
+            if decision.action == 'BUY':
+                self._open_or_add_position(token_symbol, decision, current_price)
+            else:
+                self._close_or_reduce_position(token_symbol, decision, current_price)
             
-            # Check if we have position to sell
-            if action == 'SELL' and symbol not in self.positions:
-                logger.warning(f"[WARN] No position to sell for {symbol}")
-                return
+            # ================================================================
+            # UPDATE METRICS
+            # ================================================================
+            self.trades_executed += 1
+            self.successful_trades += 1  # Simulated success
+            self.last_trade_time = datetime.now()
             
-            with transaction.atomic():
-                # Define token variables BEFORE using them
-                if action == 'BUY':
-                    # Buy trade - USD to token
-                    token_in = 'USDC'
-                    token_in_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
-                    token_out = symbol
-                    token_out_address = decision['token_address']
-                    amount_in_usd = trade_value
-                    amount_out = trade_value / current_price
-                    amount_in = trade_value
-                else:
-                    # Sell trade - token to USD
-                    position = self.positions[symbol]
-                    token_in = symbol
-                    token_in_address = decision['token_address']
-                    token_out = 'USDC'
-                    token_out_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
-                    amount_in = position.quantity
-                    amount_out = position.quantity * current_price
-                    amount_in_usd = amount_out
-                
-                # Create the trade record
-                trade = PaperTrade.objects.create(
-                    account=self.account,
-                    trade_type=action.lower(),  # 'buy' or 'sell'
-                    token_in_address=token_in_address,
-                    token_in_symbol=token_in,
-                    token_out_address=token_out_address,
-                    token_out_symbol=token_out,
-                    amount_in=amount_in,
-                    amount_in_usd=amount_in_usd,
-                    expected_amount_out=amount_out,
-                    actual_amount_out=amount_out * Decimal("0.995"),  # 0.5% slippage
-                    simulated_gas_price_gwei=Decimal("30"),
-                    simulated_gas_used=150000,
-                    simulated_gas_cost_usd=Decimal("5.00"),
-                    simulated_slippage_percent=Decimal("0.5"),
-                    status='completed',
-                    executed_at=timezone.now(),
-                    execution_time_ms=500,
-                    strategy_name=decision['lane_type'],
-                    mock_tx_hash=f"0x{uuid.uuid4().hex[:64]}"
-                )
-                
-                logger.debug(f"[TRADE] Trade record created: {trade.trade_id}")
-                
-                # Update position based on action
-                if action == 'BUY':
-                    self._handle_buy_position(symbol, amount_out, current_price, trade_value, decision)
-                else:  # SELL
-                    # Calculate execution time
-                    execution_time_ms = int((datetime.now() - trade_start_time).total_seconds() * 1000)
-                    self._handle_sell_position(symbol, current_price, amount_out, decision, execution_time_ms)
-                
-                # Save account changes
-                self.account.total_trades += 1
-                self.account.save()
-                
-                # Update metrics
-                self.trades_executed += 1
-                self.last_trade_time = datetime.now()
-                
-                logger.info(f"[OK] {action} executed: {amount_out:.6f} {token_out} @ ${current_price:.6f}")
-                logger.info(f"[MONEY] Value: ${trade_value:.2f}, New balance: ${self.account.current_balance_usd:.2f}")
-                
+            # ================================================================
+            # SEND WEBSOCKET NOTIFICATION
+            # ================================================================
+            self._send_trade_notification(trade, decision)
+            
+            logger.info(
+                f"[TRADE] Executed: {decision.action} {token_symbol} "
+                f"Size: ${decision.position_size_usd:.2f} "
+                f"Intel: {self.intel_level} "
+                f"Confidence: {decision.overall_confidence:.1f}%"
+            )
+            
         except Exception as e:
             logger.error(f"[ERROR] Trade execution failed: {e}", exc_info=True)
+            self.failed_trades += 1
     
-    def _handle_buy_position(self, symbol: str, amount_out: Decimal, current_price: Decimal, 
-                            trade_value: Decimal, decision: Dict[str, Any]):
-        """
-        Handle BUY trade - create or update position.
+    def _can_trade(self) -> bool:
+        """Check if enough time has passed since last trade."""
+        if not self.last_trade_time:
+            return True
         
-        Args:
-            symbol: Token symbol
-            amount_out: Amount of tokens purchased
-            current_price: Current token price
-            trade_value: USD value of trade
-            decision: AI decision dictionary
-        """
-        try:
-            if symbol in self.positions:
-                # Update existing position
-                position = self.positions[symbol]
-                
-                # Calculate new average entry price
-                total_value = (position.quantity * position.average_entry_price_usd) + trade_value
-                new_quantity = position.quantity + amount_out
-                new_avg_price = total_value / new_quantity
-                
-                position.quantity = new_quantity
-                position.average_entry_price_usd = new_avg_price
-                position.current_price_usd = current_price
-                position.total_invested_usd += trade_value
-                position.current_value_usd = new_quantity * current_price
-                position.unrealized_pnl_usd = (current_price - new_avg_price) * new_quantity
-                position.last_updated = timezone.now()
-                position.save(update_fields=[
-                    'current_price_usd',
-                    'current_value_usd', 
-                    'realized_pnl_usd',
-                    'unrealized_pnl_usd',
-                    'is_open',
-                    'closed_at'
-                ])
-                
-                logger.debug(f"[POS] Updated position for {symbol}: {new_quantity:.6f} @ ${new_avg_price:.6f}")
-            else:
-                # Create new position
-                position = PaperPosition.objects.create(
-                    account=self.account,
-                    token_address=decision['token_address'],
-                    token_symbol=symbol,
-                    quantity=amount_out,
-                    average_entry_price_usd=current_price,
-                    current_price_usd=current_price,
-                    total_invested_usd=trade_value,
-                    current_value_usd=amount_out * current_price,
-                    unrealized_pnl_usd=Decimal("0"),
-                    realized_pnl_usd=Decimal("0"),
-                    is_open=True
-                )
-                self.positions[symbol] = position
-                
-                logger.debug(f"[POS] Created new position for {symbol}: {amount_out:.6f} @ ${current_price:.6f}")
-            
-            # Update account balance (deduct trade value + gas)
-            self.account.current_balance_usd -= (trade_value + Decimal("5.00"))
-            
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to handle buy position for {symbol}: {e}", exc_info=True)
-            raise
+        time_since_last = (datetime.now() - self.last_trade_time).seconds
+        return time_since_last >= self.min_trade_interval
     
-    def _handle_sell_position(
-        self, 
-        symbol: str, 
-        current_price: Decimal, 
-        amount_out: Decimal,
-        decision: Dict[str, Any],
-        execution_time_ms: int
-    ):
-        """
-        Handle SELL trade - close position and update performance metrics.
+    def _open_or_add_position(self, token_symbol: str, decision: TradingDecision, price: Decimal):
+        """Open new position or add to existing."""
+        quantity = decision.position_size_usd / price
         
-        Args:
-            symbol: Token symbol
-            current_price: Current token price
-            amount_out: USD value received from sale
-            decision: AI decision dictionary that triggered the sell
-            execution_time_ms: Trade execution time in milliseconds
-        """
-        try:
-            position = self.positions[symbol]
-            
-            # Calculate P&L
-            pnl = (current_price - position.average_entry_price_usd) * position.quantity
-            pnl_percent = (pnl / position.total_invested_usd) * 100 if position.total_invested_usd > 0 else 0
-            
-            logger.info(f"[DATA] P&L for {symbol}: ${pnl:.2f} ({pnl_percent:+.2f}%)")
-            
-            # Close the current position
-            PaperPosition.objects.filter(
+        if token_symbol in self.positions:
+            # Add to existing position
+            position = self.positions[token_symbol]
+            position.quantity += quantity
+            position.total_invested_usd += decision.position_size_usd
+            position.average_entry_price_usd = position.total_invested_usd / position.quantity
+            position.save()
+        else:
+            # Create new position
+            position = PaperPosition.objects.create(
                 account=self.account,
-                token_symbol=symbol,
+                token_address=decision.token_address,
+                token_symbol=token_symbol,
+                quantity=quantity,
+                entry_price_usd=price,
+                average_entry_price_usd=price,
+                total_invested_usd=decision.position_size_usd,
+                current_price_usd=price,
+                current_value_usd=decision.position_size_usd,
                 is_open=True
-            ).update(
-                current_price_usd=current_price,
-                current_value_usd=position.quantity * current_price,
-                realized_pnl_usd=pnl,
-                unrealized_pnl_usd=Decimal("0"),
-                is_open=False,
-                closed_at=timezone.now()
             )
+            self.positions[token_symbol] = position
+    
+    def _close_or_reduce_position(self, token_symbol: str, decision: TradingDecision, price: Decimal):
+        """Close or reduce existing position."""
+        if token_symbol not in self.positions:
+            logger.warning(f"[POSITION] No position to sell for {token_symbol}")
+            return
+        
+        position = self.positions[token_symbol]
+        
+        # Calculate P&L
+        exit_value = position.quantity * price
+        pnl = exit_value - position.total_invested_usd
+        
+        # Update position
+        position.realized_pnl_usd = pnl
+        position.is_open = False
+        position.closed_at = timezone.now()
+        position.save()
+        
+        # Update total P&L
+        self.total_pnl += pnl
+        
+        # Remove from active positions
+        del self.positions[token_symbol]
+        
+        logger.info(f"[POSITION] Closed {token_symbol}: P&L ${pnl:.2f}")
+    
+    def _update_prices(self):
+        """
+        Update simulated market prices.
+        
+        Simulates price movements for paper trading.
+        """
+        for token_symbol in self.price_history.keys():
+            prices = self.price_history[token_symbol]
+            last_price = prices[-1]
             
-            logger.debug(f"[POS] Closed position for {symbol}: P&L=${pnl:.2f}")
-            
-            # Remove from active positions
-            del self.positions[symbol]
-            
-            # Update account balance (add sale proceeds minus gas)
-            self.account.current_balance_usd += (amount_out - Decimal("5.00"))
-            
-            # Track performance
-            if pnl > 0:
-                self.successful_trades += 1
-                logger.info(f"[WIN] Profitable trade: +${pnl:.2f}")
+            # Determine trend
+            if len(prices) >= 2:
+                trend = 1 if prices[-1] > prices[-2] else -1
             else:
-                logger.info(f"[LOSS] Unprofitable trade: ${pnl:.2f}")
+                trend = random.choice([-1, 1])
             
-            # Update AI performance metrics with CORRECT field names
-            self.ai_engine.update_performance_metrics({
-                'profitable': pnl > 0,
-                'pnl_usd': pnl,  # ✅ FIXED: Correct field name
-                'lane_type': decision.get('lane_type', 'SMART'),  # Pass the lane that was used
-                'execution_time_ms': execution_time_ms  # Actual execution time
-            })
+            # Continue trend with probability
+            if random.random() < self.trend_probability:
+                change_direction = trend
+            else:
+                change_direction = -trend
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to handle sell position for {symbol}: {e}", exc_info=True)
-            raise
-
-    def _update_session_metrics(self):
-        """Update trading session metrics."""
+            # Calculate price change
+            change_percent = Decimal(str(random.uniform(0, float(self.price_volatility))))
+            change_amount = last_price * change_percent * change_direction
+            
+            # New price
+            new_price = max(last_price + change_amount, Decimal('0.01'))
+            
+            # Update history
+            prices.append(new_price)
+            if len(prices) > self.max_history_length:
+                prices.pop(0)
+    
+    def _calculate_recent_success_rate(self) -> float:
+        """Calculate recent trading success rate."""
+        if self.trades_executed == 0:
+            return 50.0
+        
+        return (self.successful_trades / self.trades_executed) * 100
+    
+    def _update_performance_metrics(self):
+        """Update and save performance metrics."""
         try:
-            # Calculate total realized P&L from closed positions
-            closed_positions = PaperPosition.objects.filter(
+            metrics, created = PaperPerformanceMetrics.objects.update_or_create(
                 account=self.account,
-                is_open=False
+                session=self.session,
+                defaults={
+                    'total_trades': self.trades_executed,
+                    'winning_trades': self.successful_trades,
+                    'losing_trades': self.failed_trades,
+                    'win_rate': Decimal(str(self._calculate_recent_success_rate())),
+                    'total_pnl_usd': self.total_pnl,
+                    'metadata': {
+                        'intel_level': self.intel_level,
+                        'session_id': str(self.session.session_id)
+                    }
+                }
             )
             
-            total_realized_pnl = sum(
-                position.realized_pnl_usd or Decimal("0")  # FIXED: Use realized_pnl_usd
-                for position in closed_positions
-            )
-            
-            # Update session
-            self.session.total_trades_executed = self.trades_executed
-            self.session.successful_trades = self.successful_trades
-            self.session.session_pnl_usd = total_realized_pnl
-            self.session.last_heartbeat = timezone.now()
-            
-            # Calculate failed trades
-            self.session.failed_trades = self.trades_executed - self.successful_trades
-            
-            self.session.save()
-            
-            logger.debug(f"[METRICS] Session updated: {self.trades_executed} trades, ${total_realized_pnl:.2f} P&L")
-            
+            # Send performance update via WebSocket
+            if self.trades_executed % 10 == 0:  # Every 10 trades
+                self._send_performance_update(metrics)
+                
         except Exception as e:
-            logger.error(f"[ERROR] Failed to update session metrics: {e}", exc_info=True)
+            logger.error(f"[ERROR] Failed to update metrics: {e}", exc_info=True)
     
-    def _display_status(self):
-        """Display current bot status."""
+    def _log_thought(self, action: str, reasoning: str, confidence: float,
+                     decision_type: str = "ANALYSIS", metadata: Optional[Dict] = None):
+        """
+        Log AI thought process to database and WebSocket.
+        
+        Args:
+            action: Action taken or considered
+            reasoning: Detailed reasoning
+            confidence: Confidence percentage (0-100)
+            decision_type: Type of decision
+            metadata: Additional metadata
+        """
         try:
-            logger.info(f"\n[DATA] Bot Status:")
-            logger.info(f"   Account Balance: ${self.account.current_balance_usd:.2f}")
-            logger.info(f"   Open Positions: {len(self.positions)}")
-            logger.info(f"   Trades Executed: {self.trades_executed}")
+            # ================================================================
+            # CREATE DATABASE RECORD
+            # ================================================================
+            thought_log = PaperAIThoughtLog.objects.create(
+                account=self.account,
+                session=self.session,
+                decision_type=decision_type,
+                action=action,
+                confidence_percent=Decimal(str(confidence)),
+                primary_reasoning=reasoning[:1000],  # Limit to 1000 chars
+                metadata=metadata or {},
+                intel_level=self.intel_level
+            )
             
-            if self.trades_executed > 0:
-                win_rate = (self.successful_trades / self.trades_executed) * 100
-                logger.info(f"   Win Rate: {win_rate:.1f}%")
+            # ================================================================
+            # SEND WEBSOCKET NOTIFICATION
+            # ================================================================
+            self.websocket_service.send_thought_log(
+                user_id=self.account.user.id,
+                thought_data={
+                    'id': str(thought_log.thought_id),
+                    'action': action,
+                    'reasoning': reasoning,
+                    'confidence_score': confidence,
+                    'decision_type': decision_type,
+                    'intel_level': self.intel_level,
+                    'timestamp': thought_log.created_at.isoformat()
+                }
+            )
             
-            # Display positions
-            if self.positions:
-                logger.info(f"\n[POS] Open Positions:")
-                for symbol, position in self.positions.items():
-                    current_price = self.price_history[symbol][-1]
-                    unrealized_pnl = (current_price - position.average_entry_price_usd) * position.quantity
-                    pnl_percent = (unrealized_pnl / (position.average_entry_price_usd * position.quantity)) * 100
-                    
-                    logger.info(f"   {symbol}: {position.quantity:.6f} @ ${position.average_entry_price_usd:.6f}")
-                    logger.info(f"      Current: ${current_price:.6f}, P&L: ${unrealized_pnl:.2f} ({pnl_percent:+.2f}%)")
+            logger.debug(f"[THOUGHT] Logged: {action} ({confidence:.1f}% confidence)")
+            
         except Exception as e:
-            logger.error(f"[ERROR] Failed to display status: {e}", exc_info=True)
+            logger.error(f"[ERROR] Failed to log thought: {e}", exc_info=True)
     
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals gracefully."""
+    def _send_trade_notification(self, trade: PaperTrade, decision: TradingDecision):
+        """Send trade notification via WebSocket."""
+        try:
+            self.websocket_service.send_trade_update(
+                user_id=self.account.user.id,
+                trade_data={
+                    'id': str(trade.trade_id),
+                    'trade_type': trade.trade_type,
+                    'token_in': trade.token_in_symbol,
+                    'token_out': trade.token_out_symbol,
+                    'amount_usd': float(trade.amount_in_usd),
+                    'status': trade.status,
+                    'intel_level': self.intel_level,
+                    'confidence': float(decision.overall_confidence),
+                    'risk_score': float(decision.risk_score),
+                    'timestamp': trade.created_at.isoformat()
+                }
+            )
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to send trade notification: {e}")
+    
+    def _send_bot_status_update(self, status: str):
+        """Send bot status update via WebSocket."""
+        try:
+            self.websocket_service.send_bot_status_update(
+                user_id=self.account.user.id,
+                status_data={
+                    'status': status,
+                    'intel_level': self.intel_level,
+                    'trades_executed': self.trades_executed,
+                    'success_rate': self._calculate_recent_success_rate(),
+                    'total_pnl': float(self.total_pnl),
+                    'session_id': str(self.session.session_id) if self.session else None
+                }
+            )
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to send status update: {e}")
+    
+    def _send_performance_update(self, metrics: PaperPerformanceMetrics):
+        """Send performance update via WebSocket."""
+        try:
+            self.websocket_service.send_performance_update(
+                user_id=self.account.user.id,
+                performance_data={
+                    'total_trades': metrics.total_trades,
+                    'win_rate': float(metrics.win_rate),
+                    'total_pnl': float(metrics.total_pnl_usd),
+                    'winning_trades': metrics.winning_trades,
+                    'losing_trades': metrics.losing_trades,
+                    'intel_level': self.intel_level
+                }
+            )
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to send performance update: {e}")
+    
+    def _handle_shutdown(self, signum, frame):
+        """
+        Handle shutdown signals gracefully.
+        
+        Args:
+            signum: Signal number
+            frame: Current stack frame
+        """
         logger.info("\n[STOP] Shutdown signal received...")
         self.running = False
     
     def _cleanup(self):
-        """Cleanup resources and close session."""
+        """
+        Cleanup resources and close session.
+        
+        This method:
+        1. Updates final session status
+        2. Saves final position values
+        3. Logs final metrics
+        4. Sends shutdown notification
+        """
         try:
-            # Update final session status
+            # ================================================================
+            # UPDATE SESSION STATUS
+            # ================================================================
             if self.session:
                 self.session.status = 'STOPPED'
                 self.session.ended_at = timezone.now()
                 self.session.ending_balance_usd = self.account.current_balance_usd
                 self.session.save()
-                logger.info(f"[DATA] Session {self.session.session_id} ended")
+                logger.info(f"[SESSION] Session {self.session.session_id} ended")
             
-            # Update final prices for open positions
-            for symbol, position in self.positions.items():
+            # ================================================================
+            # UPDATE FINAL POSITION VALUES
+            # ================================================================
+            for token_symbol, position in self.positions.items():
                 try:
-                    current_price = self.price_history[symbol][-1]
-                    position.current_price_usd = current_price
-                    position.current_value_usd = position.quantity * current_price
-                    position.unrealized_pnl_usd = (current_price - position.average_entry_price_usd) * position.quantity
-                    position.save()
-                    logger.info(f"[POS] Position {symbol} marked with final price ${current_price:.6f}")
+                    if token_symbol in self.price_history:
+                        current_price = self.price_history[token_symbol][-1]
+                        position.current_price_usd = current_price
+                        position.current_value_usd = position.quantity * current_price
+                        position.unrealized_pnl_usd = (
+                            position.current_value_usd - position.total_invested_usd
+                        )
+                        position.save()
+                        logger.info(
+                            f"[POSITION] Final update for {token_symbol}: "
+                            f"${current_price:.2f}"
+                        )
                 except Exception as e:
-                    logger.error(f"[ERROR] Failed to update final price for {symbol}: {e}")
+                    logger.error(f"[ERROR] Failed to update position {token_symbol}: {e}")
+            
+            # ================================================================
+            # LOG FINAL THOUGHT
+            # ================================================================
+            self._log_thought(
+                action="SHUTDOWN",
+                reasoning=f"Bot shutting down. Intel Level: {self.intel_level}. "
+                         f"Session summary: Trades: {self.trades_executed}, "
+                         f"Success rate: {self._calculate_recent_success_rate():.1f}%, "
+                         f"Total P&L: ${self.total_pnl:.2f}",
+                confidence=100,
+                decision_type="SYSTEM"
+            )
+            
+            # ================================================================
+            # SEND SHUTDOWN NOTIFICATION
+            # ================================================================
+            self._send_bot_status_update('stopped')
             
             logger.info("[OK] Cleanup completed")
             
@@ -639,20 +902,37 @@ class EnhancedPaperTradingBot:
 
 
 def main():
-    """Main entry point for the enhanced paper trading bot."""
+    """
+    Main entry point for the enhanced paper trading bot.
+    
+    Can be run directly or via Django management command.
+    """
     import argparse
     
-    parser = argparse.ArgumentParser(description='Enhanced Paper Trading Bot with AI')
-    parser.add_argument('--account-id', type=int, default=1,
-                       help='Paper trading account ID to use')
-    parser.add_argument('--tick-interval', type=int, default=5,
-                       help='Seconds between market ticks')
+    parser = argparse.ArgumentParser(
+        description='Enhanced Paper Trading Bot with Intel Slider System'
+    )
+    parser.add_argument(
+        '--account-id',
+        type=int,
+        default=1,
+        help='Paper trading account ID to use'
+    )
+    parser.add_argument(
+        '--intel-level',
+        type=int,
+        default=5,
+        choices=range(1, 11),
+        help='Intelligence level (1-10): 1-3=Cautious, 4-6=Balanced, 7-9=Aggressive, 10=Autonomous'
+    )
     
     args = parser.parse_args()
     
     # Create and run bot
-    bot = EnhancedPaperTradingBot(account_id=args.account_id)
-    bot.tick_interval = args.tick_interval
+    bot = EnhancedPaperTradingBot(
+        account_id=args.account_id,
+        intel_level=args.intel_level
+    )
     
     if bot.initialize():
         logger.info("[OK] Bot initialized successfully")
