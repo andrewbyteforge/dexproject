@@ -213,13 +213,23 @@ class EnhancedPaperTradingBot:
             # ================================================================
             # CREATE TRADING SESSION
             # ================================================================
+            # CORRECT - Only use fields that exist
+            # CREATE TRADING SESSION
+            # Build bot configuration first
+            self.bot_config = {
+                'intel_level': self.intel_level,
+                'tick_interval': self.tick_interval,
+                'min_trade_interval': self.min_trade_interval,
+                'price_volatility': float(self.price_volatility),
+                'trend_probability': self.trend_probability,
+            }
+
+            # Now create the session with the config
             self.session = PaperTradingSession.objects.create(
                 account=self.account,
-                name=f"Intel_{self.intel_level}_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                status='RUNNING',
-                starting_balance_usd=self.account.current_balance_usd,
-                session_type='ENHANCED_BOT',
-                intel_level=self.intel_level  # Store intel level with session
+                name=f"Intel Bot Session - Level {self.intel_level}",
+                config_snapshot=self.bot_config,
+                starting_balance_usd=self.account.current_balance_usd
             )
             logger.info(f"[SESSION] Created trading session: {self.session.session_id}")
             
@@ -293,8 +303,9 @@ class EnhancedPaperTradingBot:
                 'take_profit_percent': Decimal('10'),
                 'max_daily_trades': self._get_max_daily_trades(),
                 'confidence_threshold': config.min_confidence_required,
-                'intel_level': self.intel_level,
-                'metadata': {
+                # REMOVED: 'intel_level' and 'metadata' - these fields don't exist
+                'custom_parameters': {  # Use this existing JSONField instead
+                    'intel_level': self.intel_level,
                     'risk_tolerance': float(config.risk_tolerance),
                     'gas_aggressiveness': config.gas_aggressiveness,
                     'use_mev_protection': config.use_mev_protection
@@ -306,7 +317,15 @@ class EnhancedPaperTradingBot:
             logger.info(f"[CONFIG] Created new strategy: {self.strategy_config.name}")
         else:
             logger.info(f"[CONFIG] Updated strategy: {self.strategy_config.name}")
-    
+
+
+
+
+
+
+
+
+
     def _get_trading_mode(self) -> str:
         """Get trading mode based on intel level."""
         if self.intel_level <= 3:
@@ -438,7 +457,7 @@ class EnhancedPaperTradingBot:
         except Exception as e:
             logger.error(f"[ERROR] Tick error: {e}", exc_info=True)
     
-    async def _analyze_and_trade(self, token_symbol: str):
+    def _analyze_and_trade(self, token_symbol: str):  # Remove 'async' here
         """
         Analyze a token and make trading decision.
         
@@ -451,9 +470,7 @@ class EnhancedPaperTradingBot:
         try:
             current_price = self.price_history[token_symbol][-1]
             
-            # ================================================================
             # PREPARE TOKEN DATA
-            # ================================================================
             token_data = {
                 'address': '0x' + 'a' * 40,  # Simulated address
                 'symbol': token_symbol,
@@ -461,10 +478,9 @@ class EnhancedPaperTradingBot:
                 'volume_24h': Decimal('100000')  # Simulated volume
             }
             
-            # ================================================================
             # ANALYZE MARKET USING INTELLIGENCE ENGINE
-            # ================================================================
-            market_context = await self.intelligence_engine.analyze_market(
+            # Remove 'await' here - call it synchronously
+            market_context = self.intelligence_engine.analyze_market(
                 token_address=token_data['address'],
                 trade_size_usd=self.account.current_balance_usd * Decimal('0.1'),
                 liquidity_usd=token_data['liquidity_usd'],
@@ -473,9 +489,7 @@ class EnhancedPaperTradingBot:
                 success_rate_1h=self._calculate_recent_success_rate()
             )
             
-            # ================================================================
             # MAKE TRADING DECISION
-            # ================================================================
             existing_positions = [
                 {
                     'token_symbol': pos.token_symbol,
@@ -485,7 +499,8 @@ class EnhancedPaperTradingBot:
                 for pos in self.positions.values()
             ]
             
-            decision = await self.intelligence_engine.make_decision(
+            # Remove 'await' here too
+            decision = self.intelligence_engine.make_decision(
                 market_context=market_context,
                 account_balance=self.account.current_balance_usd,
                 existing_positions=existing_positions,
@@ -493,9 +508,7 @@ class EnhancedPaperTradingBot:
                 token_symbol=token_symbol
             )
             
-            # ================================================================
             # LOG THOUGHT PROCESS
-            # ================================================================
             thought_log = self.intelligence_engine.generate_thought_log(decision)
             self._log_thought(
                 action=decision.action,
@@ -510,9 +523,7 @@ class EnhancedPaperTradingBot:
                 }
             )
             
-            # ================================================================
             # EXECUTE TRADE IF DECIDED
-            # ================================================================
             if decision.action in ['BUY', 'SELL']:
                 # Check minimum trade interval
                 if self._can_trade():
@@ -523,7 +534,21 @@ class EnhancedPaperTradingBot:
             
         except Exception as e:
             logger.error(f"[ERROR] Failed to analyze {token_symbol}: {e}", exc_info=True)
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _execute_trade(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
         """
         Execute a paper trade based on the decision.
@@ -700,18 +725,16 @@ class EnhancedPaperTradingBot:
         """Update and save performance metrics."""
         try:
             metrics, created = PaperPerformanceMetrics.objects.update_or_create(
-                account=self.account,
-                session=self.session,
+                session=self.session,  # Use session, not account
                 defaults={
                     'total_trades': self.trades_executed,
                     'winning_trades': self.successful_trades,
                     'losing_trades': self.failed_trades,
                     'win_rate': Decimal(str(self._calculate_recent_success_rate())),
                     'total_pnl_usd': self.total_pnl,
-                    'metadata': {
-                        'intel_level': self.intel_level,
-                        'session_id': str(self.session.session_id)
-                    }
+                    # Store intel level in the existing market_data JSONField
+                    'period_start': self.session.started_at,
+                    'period_end': timezone.now()
                 }
             )
             
@@ -721,9 +744,17 @@ class EnhancedPaperTradingBot:
                 
         except Exception as e:
             logger.error(f"[ERROR] Failed to update metrics: {e}", exc_info=True)
-    
+
+
+
+
+
+
+
+
+
     def _log_thought(self, action: str, reasoning: str, confidence: float,
-                     decision_type: str = "ANALYSIS", metadata: Optional[Dict] = None):
+                    decision_type: str = "ANALYSIS", metadata: Optional[Dict] = None):
         """
         Log AI thought process to database and WebSocket.
         
@@ -735,25 +766,34 @@ class EnhancedPaperTradingBot:
             metadata: Additional metadata
         """
         try:
-            # ================================================================
-            # CREATE DATABASE RECORD
-            # ================================================================
+            # Map confidence to confidence level
+            if confidence >= 80:
+                confidence_level = 'VERY_HIGH'
+            elif confidence >= 60:
+                confidence_level = 'HIGH'
+            elif confidence >= 40:
+                confidence_level = 'MEDIUM'
+            elif confidence >= 20:
+                confidence_level = 'LOW'
+            else:
+                confidence_level = 'VERY_LOW'
+            
+            # CREATE DATABASE RECORD - Using only fields that exist
             thought_log = PaperAIThoughtLog.objects.create(
                 account=self.account,
-                session=self.session,
                 decision_type=decision_type,
-                action=action,
+                confidence_level=confidence_level,
                 confidence_percent=Decimal(str(confidence)),
                 primary_reasoning=reasoning[:1000],  # Limit to 1000 chars
-                metadata=metadata or {},
-                intel_level=self.intel_level
+                # Store metadata in market_data field (JSONField)
+                market_data=metadata or {},
+                # Store intel level in strategy_name
+                strategy_name=f"INTEL_{self.intel_level}"
             )
             
-            # ================================================================
-            # SEND WEBSOCKET NOTIFICATION
-            # ================================================================
+            # SEND WEBSOCKET NOTIFICATION - using account.user.id
             self.websocket_service.send_thought_log(
-                user_id=self.account.user.id,
+                user_id=self.account.user.id,  # Use user.id from account
                 thought_data={
                     'id': str(thought_log.thought_id),
                     'action': action,
@@ -769,7 +809,25 @@ class EnhancedPaperTradingBot:
             
         except Exception as e:
             logger.error(f"[ERROR] Failed to log thought: {e}", exc_info=True)
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _send_trade_notification(self, trade: PaperTrade, decision: TradingDecision):
         """Send trade notification via WebSocket."""
         try:
@@ -795,7 +853,7 @@ class EnhancedPaperTradingBot:
         """Send bot status update via WebSocket."""
         try:
             self.websocket_service.send_bot_status_update(
-                user_id=self.account.user.id,
+                user_id=self.account.user.id,  # Use user.id from account
                 status_data={
                     'status': status,
                     'intel_level': self.intel_level,
@@ -807,7 +865,17 @@ class EnhancedPaperTradingBot:
             )
         except Exception as e:
             logger.error(f"[ERROR] Failed to send status update: {e}")
-    
+
+
+
+
+
+
+
+
+
+
+
     def _send_performance_update(self, metrics: PaperPerformanceMetrics):
         """Send performance update via WebSocket."""
         try:
