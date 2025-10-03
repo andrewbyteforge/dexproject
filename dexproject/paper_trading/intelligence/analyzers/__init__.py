@@ -8,6 +8,7 @@ File: dexproject/paper_trading/intelligence/analyzers/__init__.py
 """
 
 import logging
+from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod

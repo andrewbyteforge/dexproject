@@ -206,7 +206,7 @@ if REDIS_AVAILABLE and PRODUCTION_MODE:
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
             'CONFIG': {
-                "hosts": [(REDIS_URL)],
+                "hosts": [REDIS_URL],  # ✅ CORRECT - no parentheses, just brackets
                 "capacity": 1500,
                 "expiry": 10,
             },
@@ -219,7 +219,7 @@ elif REDIS_AVAILABLE:
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
             'CONFIG': {
-                "hosts": [(REDIS_URL)],
+                "hosts": [REDIS_URL],  # ✅ CORRECT
             },
         },
     }

@@ -22,6 +22,38 @@ from paper_trading.intelligence.base import (
 )
 from paper_trading.intelligence.analyzers import CompositeMarketAnalyzer
 
+# Import the type utilities for production-level type safety
+try:
+    from paper_trading.utils.type_utils import TypeConverter, MarketDataNormalizer
+except ImportError:
+    # Fallback if type_utils not yet created
+    class TypeConverter:
+        @staticmethod
+        def to_decimal(value, default=None):
+            if default is None:
+                default = Decimal('0')
+            try:
+                if value is None:
+                    return default
+                return Decimal(str(value))
+            except:
+                return default
+        
+        @staticmethod
+        def safe_multiply(a, b):
+            return TypeConverter.to_decimal(a) * TypeConverter.to_decimal(b)
+        
+        @staticmethod
+        def safe_percentage(value, percentage, precision=2):
+            result = (TypeConverter.to_decimal(value) * TypeConverter.to_decimal(percentage)) / Decimal('100')
+            quantize_str = '0.' + '0' * precision
+            return result.quantize(Decimal(quantize_str))
+    
+    class MarketDataNormalizer:
+        @staticmethod
+        def normalize_context(context):
+            return context
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,10 +67,11 @@ class IntelLevelConfig:
     risk_tolerance: Decimal
     max_position_percent: Decimal
     min_confidence_required: Decimal
-    use_mev_protection: bool
-    gas_aggressiveness: str
-    trade_frequency: str
-    decision_speed: str
+    min_position_usd: Decimal = Decimal('10')  # Add minimum position
+    use_mev_protection: bool = True
+    gas_aggressiveness: str = "standard"
+    trade_frequency: str = "moderate"
+    decision_speed: str = "moderate"
 
 
 # Intel level configurations
@@ -50,6 +83,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('20'),
         max_position_percent=Decimal('2'),
         min_confidence_required=Decimal('95'),
+        min_position_usd=Decimal('10'),
         use_mev_protection=True,
         gas_aggressiveness="minimal",
         trade_frequency="very_low",
@@ -62,6 +96,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('25'),
         max_position_percent=Decimal('3'),
         min_confidence_required=Decimal('90'),
+        min_position_usd=Decimal('20'),
         use_mev_protection=True,
         gas_aggressiveness="low",
         trade_frequency="low",
@@ -74,6 +109,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('30'),
         max_position_percent=Decimal('5'),
         min_confidence_required=Decimal('85'),
+        min_position_usd=Decimal('30'),
         use_mev_protection=True,
         gas_aggressiveness="standard",
         trade_frequency="low",
@@ -86,6 +122,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('40'),
         max_position_percent=Decimal('7'),
         min_confidence_required=Decimal('75'),
+        min_position_usd=Decimal('40'),
         use_mev_protection=True,
         gas_aggressiveness="standard",
         trade_frequency="moderate",
@@ -98,6 +135,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('50'),
         max_position_percent=Decimal('10'),
         min_confidence_required=Decimal('65'),
+        min_position_usd=Decimal('50'),
         use_mev_protection=True,
         gas_aggressiveness="adaptive",
         trade_frequency="moderate",
@@ -110,6 +148,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('60'),
         max_position_percent=Decimal('12'),
         min_confidence_required=Decimal('55'),
+        min_position_usd=Decimal('60'),
         use_mev_protection=False,  # Only when needed
         gas_aggressiveness="adaptive",
         trade_frequency="moderate_high",
@@ -122,6 +161,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('70'),
         max_position_percent=Decimal('15'),
         min_confidence_required=Decimal('45'),
+        min_position_usd=Decimal('70'),
         use_mev_protection=False,
         gas_aggressiveness="aggressive",
         trade_frequency="high",
@@ -134,6 +174,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('80'),
         max_position_percent=Decimal('20'),
         min_confidence_required=Decimal('35'),
+        min_position_usd=Decimal('80'),
         use_mev_protection=False,
         gas_aggressiveness="aggressive",
         trade_frequency="high",
@@ -146,6 +187,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('90'),
         max_position_percent=Decimal('25'),
         min_confidence_required=Decimal('25'),
+        min_position_usd=Decimal('90'),
         use_mev_protection=False,
         gas_aggressiveness="ultra_aggressive",
         trade_frequency="very_high",
@@ -158,6 +200,7 @@ INTEL_CONFIGS = {
         risk_tolerance=Decimal('0'),  # Dynamic
         max_position_percent=Decimal('0'),  # Dynamic
         min_confidence_required=Decimal('0'),  # Dynamic
+        min_position_usd=Decimal('100'),
         use_mev_protection=False,  # Dynamic
         gas_aggressiveness="dynamic",
         trade_frequency="dynamic",
@@ -187,6 +230,8 @@ class IntelSliderEngine(IntelligenceEngine):
         self.config = INTEL_CONFIGS[intel_level]
         self.account_id = account_id
         self.analyzer = CompositeMarketAnalyzer()
+        self.converter = TypeConverter()  # Initialize type converter
+        self.normalizer = MarketDataNormalizer()  # Initialize normalizer
         
         # Learning system data (for level 10)
         self.historical_decisions: List[TradingDecision] = []
@@ -216,28 +261,31 @@ class IntelSliderEngine(IntelligenceEngine):
                 volume_24h=kwargs.get('volume_24h', Decimal('50000'))
             )
             
-            # Convert to MarketContext
+            # Convert to MarketContext with type safety
             context = MarketContext(
-                gas_price_gwei=Decimal(str(analysis['gas_analysis']['current_gas_gwei'])),
+                gas_price_gwei=self.converter.to_decimal(analysis['gas_analysis']['current_gas_gwei']),
                 network_congestion=analysis['gas_analysis']['network_congestion'],
                 pending_tx_count=analysis['gas_analysis']['pending_tx_count'],
                 mev_threat_level=analysis['mev_analysis']['threat_level'],
                 sandwich_risk=analysis['mev_analysis']['sandwich_risk'],
                 frontrun_probability=analysis['mev_analysis']['frontrun_probability'],
                 competing_bots_detected=analysis['competition']['competing_bots'],
-                average_bot_gas_price=Decimal(str(analysis['competition']['avg_bot_gas'])),
+                average_bot_gas_price=self.converter.to_decimal(analysis['competition']['avg_bot_gas']),
                 bot_success_rate=analysis['competition']['bot_success_rate'],
-                pool_liquidity_usd=Decimal(str(analysis['liquidity']['pool_liquidity_usd'])),
-                expected_slippage=Decimal(str(analysis['liquidity']['expected_slippage'])),
+                pool_liquidity_usd=self.converter.to_decimal(analysis['liquidity']['pool_liquidity_usd']),
+                expected_slippage=self.converter.to_decimal(analysis['liquidity']['expected_slippage']),
                 liquidity_depth_score=analysis['liquidity']['liquidity_depth_score'],
                 volatility_index=analysis['market_state']['volatility_index'],
                 chaos_event_detected=analysis['market_state']['chaos_event_detected'],
                 trend_direction=analysis['market_state']['trend_direction'],
-                volume_24h_change=Decimal(str(analysis['market_state']['volume_24h_change'])),
+                volume_24h_change=self.converter.to_decimal(analysis['market_state']['volume_24h_change']),
                 recent_failures=kwargs.get('recent_failures', 0),
                 success_rate_1h=kwargs.get('success_rate_1h', 50.0),
                 average_profit_1h=kwargs.get('average_profit_1h', Decimal('0'))
             )
+            
+            # Normalize all numeric fields to ensure Decimal consistency
+            context = self.normalizer.normalize_context(context)
             
             # Adjust perception based on intel level
             context = self._adjust_market_perception(context)
@@ -256,16 +304,16 @@ class IntelSliderEngine(IntelligenceEngine):
         """
         if self.intel_level <= 3:
             # Cautious levels see more risk
-            context.mev_threat_level *= 1.3
-            context.sandwich_risk *= 1.3
-            context.volatility_index *= 1.2
-            context.confidence_in_data *= 0.8
+            context.mev_threat_level = self.converter.safe_multiply(context.mev_threat_level, Decimal('1.3'))
+            context.sandwich_risk = self.converter.safe_multiply(context.sandwich_risk, Decimal('1.3'))
+            context.volatility_index = self.converter.safe_multiply(context.volatility_index, Decimal('1.2'))
+            context.confidence_in_data = self.converter.safe_multiply(context.confidence_in_data, Decimal('0.8'))
         elif self.intel_level >= 7:
             # Aggressive levels downplay risks
-            context.mev_threat_level *= 0.8
-            context.sandwich_risk *= 0.8
-            context.volatility_index *= 0.9
-            context.confidence_in_data *= 1.1
+            context.mev_threat_level = self.converter.safe_multiply(context.mev_threat_level, Decimal('0.8'))
+            context.sandwich_risk = self.converter.safe_multiply(context.sandwich_risk, Decimal('0.8'))
+            context.volatility_index = self.converter.safe_multiply(context.volatility_index, Decimal('0.9'))
+            context.confidence_in_data = self.converter.safe_multiply(context.confidence_in_data, Decimal('1.1'))
         
         return context
     
@@ -291,6 +339,9 @@ class IntelSliderEngine(IntelligenceEngine):
             Complete trading decision
         """
         try:
+            # Ensure account_balance is Decimal
+            account_balance = self.converter.to_decimal(account_balance)
+            
             # Calculate base scores
             risk_score = self._calculate_risk_score(market_context)
             opportunity_score = self._calculate_opportunity_score(market_context)
@@ -301,7 +352,9 @@ class IntelSliderEngine(IntelligenceEngine):
             
             # Calculate position size
             position_size = self._calculate_position_size(
-                risk_score, opportunity_score, account_balance
+                confidence_score,
+                risk_score,
+                account_balance
             )
             
             # Determine execution strategy
@@ -312,19 +365,22 @@ class IntelSliderEngine(IntelligenceEngine):
                 action, risk_score, opportunity_score, confidence_score, market_context
             )
             
-            # Build decision
+            # Build decision with type-safe values
             decision = TradingDecision(
                 action=action,
                 token_address=token_address,
                 token_symbol=token_symbol,
                 position_size_percent=position_size,
-                position_size_usd=account_balance * position_size / Decimal('100'),
+                position_size_usd=self.converter.safe_multiply(
+                    account_balance,
+                    position_size / Decimal('100')
+                ),
                 stop_loss_percent=self._calculate_stop_loss(risk_score),
                 take_profit_targets=self._calculate_take_profits(opportunity_score),
                 execution_mode=execution['mode'],
                 use_private_relay=execution['use_private_relay'],
                 gas_strategy=execution['gas_strategy'],
-                max_gas_price_gwei=execution['max_gas_gwei'],
+                max_gas_price_gwei=self.converter.to_decimal(execution['max_gas_gwei']),
                 overall_confidence=confidence_score,
                 risk_score=risk_score,
                 opportunity_score=opportunity_score,
@@ -335,7 +391,8 @@ class IntelSliderEngine(IntelligenceEngine):
                 intel_level_used=self.intel_level,
                 intel_adjustments={},
                 time_sensitivity=self._assess_time_sensitivity(market_context),
-                max_execution_time_ms=self._calculate_max_execution_time()
+                max_execution_time_ms=self._calculate_max_execution_time(),
+                processing_time_ms=100  # Add default processing time
             )
             
             # Apply intel level adjustments
@@ -352,28 +409,97 @@ class IntelSliderEngine(IntelligenceEngine):
             raise
     
     def _calculate_risk_score(self, context: MarketContext) -> Decimal:
-        """Calculate overall risk score."""
-        risk = (
-            context.mev_threat_level * Decimal('0.25') +
-            context.volatility_index * Decimal('0.25') +
-            context.bot_success_rate * Decimal('0.20') +
-            (Decimal('100') - context.liquidity_depth_score) * Decimal('0.15') +
-            context.expected_slippage * Decimal('10') * Decimal('0.15')
+        """
+        Calculate risk score based on market context.
+        
+        Production-level implementation with proper type handling.
+        
+        Args:
+            context: Market analysis context
+            
+        Returns:
+            Risk score (0-100)
+        """
+        # Normalize the context to ensure all numeric fields are Decimals
+        context = self.normalizer.normalize_context(context)
+        
+        # Base risk from market conditions (0-40 points)
+        market_risk = self.converter.safe_multiply(
+            self.converter.to_decimal(context.liquidity_depth_score, Decimal('50')),
+            Decimal('0.4')
         )
-        return min(risk, Decimal('100'))
+        
+        # Volatility risk (0-30 points)  
+        volatility_risk = self.converter.safe_multiply(
+            self.converter.to_decimal(context.volatility_index, Decimal('50')),
+            Decimal('0.3')
+        )
+        
+        # MEV threat risk (0-20 points)
+        mev_risk = self.converter.safe_multiply(
+            self.converter.to_decimal(context.mev_threat_level, Decimal('50')),
+            Decimal('0.2')
+        )
+        
+        # Slippage risk (0-10 points)
+        slippage_risk = self.converter.safe_multiply(
+            self.converter.to_decimal(context.expected_slippage, Decimal('5')),  # Note: expected_slippage is usually 0-10, not 0-100
+            Decimal('0.1')
+        )
+        
+        # Calculate total risk score
+        total_risk = market_risk + volatility_risk + mev_risk + slippage_risk
+        
+        # Ensure it's within bounds (0-100)
+        total_risk = max(Decimal('0'), min(Decimal('100'), total_risk))
+        
+        # Apply intelligence level modifier
+        risk_modifier = Decimal('1.0')
+        if self.intel_level <= 3:
+            risk_modifier = Decimal('1.2')  # Cautious - increase perceived risk
+        elif self.intel_level >= 7:
+            risk_modifier = Decimal('0.8')  # Aggressive - decrease perceived risk
+        
+        final_risk = self.converter.safe_multiply(total_risk, risk_modifier)
+        
+        # Round to 2 decimal places
+        return final_risk.quantize(Decimal('0.01'))
     
     def _calculate_opportunity_score(self, context: MarketContext) -> Decimal:
-        """Calculate opportunity score."""
+        """Calculate opportunity score with type safety."""
+        context = self.normalizer.normalize_context(context)
+        
         trend_bonus = Decimal('30') if context.trend_direction == 'bullish' else Decimal('0')
         
-        opportunity = (
-            context.liquidity_depth_score * Decimal('0.30') +
-            (Decimal('100') - context.network_congestion) * Decimal('0.20') +
-            (Decimal('100') - context.bot_success_rate) * Decimal('0.20') +
-            trend_bonus +
-            max(context.volume_24h_change, Decimal('0')) * Decimal('0.10')
+        liquidity_component = self.converter.safe_multiply(
+            self.converter.to_decimal(context.liquidity_depth_score, Decimal('50')),
+            Decimal('0.30')
         )
-        return min(opportunity, Decimal('100'))
+        
+        congestion_component = self.converter.safe_multiply(
+            Decimal('100') - self.converter.to_decimal(context.network_congestion, Decimal('50')),
+            Decimal('0.20')
+        )
+        
+        bot_component = self.converter.safe_multiply(
+            Decimal('100') - self.converter.to_decimal(context.bot_success_rate, Decimal('50')),
+            Decimal('0.20')
+        )
+        
+        volume_component = self.converter.safe_multiply(
+            max(self.converter.to_decimal(context.volume_24h_change, Decimal('0')), Decimal('0')),
+            Decimal('0.10')
+        )
+        
+        opportunity = (
+            liquidity_component +
+            congestion_component +
+            bot_component +
+            trend_bonus +
+            volume_component
+        )
+        
+        return min(opportunity, Decimal('100')).quantize(Decimal('0.01'))
     
     def _calculate_confidence_score(
         self,
@@ -381,25 +507,101 @@ class IntelSliderEngine(IntelligenceEngine):
         risk_score: Decimal,
         opportunity_score: Decimal
     ) -> Decimal:
-        """Calculate confidence in the decision."""
+        """Calculate confidence in the decision with type safety."""
+        context = self.normalizer.normalize_context(context)
+        
         if self.intel_level == 10:
             # Autonomous mode uses ML-based confidence
             return self._calculate_ml_confidence(context, risk_score, opportunity_score)
         
+        data_confidence = self.converter.safe_multiply(
+            self.converter.to_decimal(context.confidence_in_data, Decimal('50')),
+            Decimal('0.30')
+        )
+        
+        volatility_confidence = self.converter.safe_multiply(
+            Decimal('100') - self.converter.to_decimal(context.volatility_index, Decimal('50')),
+            Decimal('0.30')
+        )
+        
+        liquidity_confidence = self.converter.safe_multiply(
+            self.converter.to_decimal(context.liquidity_depth_score, Decimal('50')),
+            Decimal('0.20')
+        )
+        
+        chaos_confidence = self.converter.safe_multiply(
+            Decimal('100') if not context.chaos_event_detected else Decimal('20'),
+            Decimal('0.20')
+        )
+        
         base_confidence = (
-            context.confidence_in_data * Decimal('0.30') +
-            (Decimal('100') - context.volatility_index) * Decimal('0.30') +
-            context.liquidity_depth_score * Decimal('0.20') +
-            (Decimal('100') if not context.chaos_event_detected else Decimal('20')) * Decimal('0.20')
+            data_confidence +
+            volatility_confidence +
+            liquidity_confidence +
+            chaos_confidence
         )
         
         # Adjust for risk/opportunity balance
         if risk_score < self.config.risk_tolerance and opportunity_score > 50:
-            base_confidence *= Decimal('1.2')
+            base_confidence = self.converter.safe_multiply(base_confidence, Decimal('1.2'))
         elif risk_score > self.config.risk_tolerance:
-            base_confidence *= Decimal('0.8')
+            base_confidence = self.converter.safe_multiply(base_confidence, Decimal('0.8'))
         
-        return min(base_confidence, Decimal('100'))
+        return min(base_confidence, Decimal('100')).quantize(Decimal('0.01'))
+    
+    def _calculate_position_size(
+        self,
+        confidence: Decimal,
+        risk_score: Decimal,
+        account_balance: Decimal
+    ) -> Decimal:
+        """
+        Calculate position size based on confidence, risk, and account balance.
+        
+        Production-level implementation with proper type handling.
+        
+        Args:
+            confidence: Overall confidence score (0-100)
+            risk_score: Risk assessment score (0-100)
+            account_balance: Available account balance
+            
+        Returns:
+            Position size percentage
+        """
+        # Ensure all inputs are Decimals
+        confidence = self.converter.to_decimal(confidence)
+        risk_score = self.converter.to_decimal(risk_score)
+        account_balance = self.converter.to_decimal(account_balance)
+        
+        if self.intel_level == 10:
+            # Autonomous sizing
+            return self._calculate_ml_position_size(risk_score, confidence)
+        
+        # Base position from configuration (percentage of balance)
+        base_position_percent = self.converter.to_decimal(self.config.max_position_percent)
+        base_position = self.converter.safe_percentage(account_balance, base_position_percent)
+        
+        # Adjust by confidence (0.5x to 1.5x)
+        confidence_multiplier = Decimal('0.5') + (confidence / Decimal('100'))
+        
+        # Adjust by inverse risk (high risk = smaller position)
+        risk_multiplier = (Decimal('100') - risk_score) / Decimal('100')
+        
+        # Calculate final position size percentage
+        position_percent = self.converter.safe_multiply(
+            base_position_percent,
+            self.converter.safe_multiply(confidence_multiplier, risk_multiplier)
+        )
+        
+        # Apply minimum and maximum constraints
+        min_position_percent = (self.converter.to_decimal(self.config.min_position_usd) / account_balance) * Decimal('100')
+        max_position_percent = self.converter.to_decimal(self.config.max_position_percent)
+        
+        # Ensure position is within bounds
+        position_percent = max(min_position_percent, min(max_position_percent, position_percent))
+        
+        # Round to 2 decimal places
+        return position_percent.quantize(Decimal('0.01'))
     
     def _calculate_ml_confidence(
         self,
@@ -434,6 +636,11 @@ class IntelSliderEngine(IntelligenceEngine):
     ) -> str:
         """Determine trading action based on scores and intel level."""
         
+        # Ensure all scores are Decimals
+        risk_score = self.converter.to_decimal(risk_score)
+        opportunity_score = self.converter.to_decimal(opportunity_score)
+        confidence_score = self.converter.to_decimal(confidence_score)
+        
         # Check minimum confidence
         if confidence_score < self.config.min_confidence_required:
             return 'SKIP'
@@ -454,40 +661,15 @@ class IntelSliderEngine(IntelligenceEngine):
         else:
             return 'HOLD'
     
-    def _calculate_position_size(
-        self,
-        risk_score: Decimal,
-        opportunity_score: Decimal,
-        account_balance: Decimal
-    ) -> Decimal:
-        """Calculate position size based on intel level and scores."""
-        
-        if self.intel_level == 10:
-            # Autonomous sizing
-            return self._calculate_ml_position_size(risk_score, opportunity_score)
-        
-        base_size = self.config.max_position_percent
-        
-        # Adjust for risk
-        if risk_score > 70:
-            base_size *= Decimal('0.5')
-        elif risk_score > 50:
-            base_size *= Decimal('0.8')
-        
-        # Adjust for opportunity
-        if opportunity_score > 80:
-            base_size *= Decimal('1.3')
-        elif opportunity_score > 60:
-            base_size *= Decimal('1.1')
-        
-        return min(base_size, self.config.max_position_percent)
-    
     def _calculate_ml_position_size(
         self,
         risk_score: Decimal,
         opportunity_score: Decimal
     ) -> Decimal:
         """ML-based position sizing for level 10."""
+        risk_score = self.converter.to_decimal(risk_score)
+        opportunity_score = self.converter.to_decimal(opportunity_score)
+        
         # Kelly Criterion simulation
         win_prob = opportunity_score / Decimal('100')
         loss_prob = risk_score / Decimal('100')
@@ -498,7 +680,7 @@ class IntelSliderEngine(IntelligenceEngine):
         else:
             position_size = Decimal('10')
         
-        return max(position_size, Decimal('1'))
+        return max(position_size, Decimal('1')).quantize(Decimal('0.01'))
     
     def _determine_execution_strategy(
         self,
@@ -506,13 +688,14 @@ class IntelSliderEngine(IntelligenceEngine):
         action: str
     ) -> Dict[str, Any]:
         """Determine execution strategy based on intel level."""
+        context = self.normalizer.normalize_context(context)
         
         if action in ['SKIP', 'HOLD']:
             return {
                 'mode': 'NONE',
                 'use_private_relay': False,
                 'gas_strategy': 'standard',
-                'max_gas_gwei': context.gas_price_gwei
+                'max_gas_gwei': self.converter.to_decimal(context.gas_price_gwei)
             }
         
         # Base strategy on intel config
@@ -526,7 +709,7 @@ class IntelSliderEngine(IntelligenceEngine):
             gas_strategy = 'ultra_aggressive'
             gas_multiplier = Decimal('2.0')
         else:  # adaptive or dynamic
-            if context.network_congestion > 70:
+            if self.converter.to_decimal(context.network_congestion, Decimal('50')) > 70:
                 gas_strategy = 'aggressive'
                 gas_multiplier = Decimal('1.5')
             else:
@@ -536,7 +719,7 @@ class IntelSliderEngine(IntelligenceEngine):
         # Determine execution mode
         if self.config.decision_speed in ['ultra_fast', 'very_fast']:
             mode = 'FAST_LANE'
-        elif context.mev_threat_level > 60:
+        elif self.converter.to_decimal(context.mev_threat_level, Decimal('50')) > 60:
             mode = 'SMART_LANE'
         else:
             mode = 'HYBRID'
@@ -544,19 +727,24 @@ class IntelSliderEngine(IntelligenceEngine):
         # MEV protection
         use_relay = (
             self.config.use_mev_protection or
-            context.mev_threat_level > 70 or
-            context.sandwich_risk > 60
+            self.converter.to_decimal(context.mev_threat_level, Decimal('0')) > 70 or
+            self.converter.to_decimal(context.sandwich_risk, Decimal('0')) > 60
         )
         
         return {
             'mode': mode,
             'use_private_relay': use_relay,
             'gas_strategy': gas_strategy,
-            'max_gas_gwei': context.gas_price_gwei * gas_multiplier
+            'max_gas_gwei': self.converter.safe_multiply(
+                self.converter.to_decimal(context.gas_price_gwei),
+                gas_multiplier
+            )
         }
     
     def _calculate_stop_loss(self, risk_score: Decimal) -> Decimal:
         """Calculate stop loss based on risk."""
+        risk_score = self.converter.to_decimal(risk_score)
+        
         if self.intel_level <= 3:
             return Decimal('3')  # Tight stop loss
         elif self.intel_level <= 6:
@@ -569,6 +757,8 @@ class IntelSliderEngine(IntelligenceEngine):
     
     def _calculate_take_profits(self, opportunity_score: Decimal) -> List[Decimal]:
         """Calculate take profit targets."""
+        opportunity_score = self.converter.to_decimal(opportunity_score)
+        
         if opportunity_score > 80:
             return [Decimal('5'), Decimal('10'), Decimal('20')]
         elif opportunity_score > 60:
@@ -596,7 +786,7 @@ class IntelSliderEngine(IntelligenceEngine):
             reasoning += "Rationale: Favorable opportunity with acceptable risk. "
             if context.trend_direction == 'bullish':
                 reasoning += "Bullish trend supports entry. "
-            if context.liquidity_depth_score > 70:
+            if self.converter.to_decimal(context.liquidity_depth_score, Decimal('0')) > 70:
                 reasoning += "Good liquidity minimizes slippage. "
         elif action == 'SKIP':
             reasoning += "Rationale: "
@@ -609,60 +799,84 @@ class IntelSliderEngine(IntelligenceEngine):
     
     def _identify_risk_factors(self, context: MarketContext) -> List[str]:
         """Identify key risk factors."""
+        context = self.normalizer.normalize_context(context)
         factors = []
         
-        if context.mev_threat_level > 60:
-            factors.append(f"High MEV threat ({context.mev_threat_level:.1f}/100)")
-        if context.volatility_index > 70:
-            factors.append(f"High volatility ({context.volatility_index:.1f}/100)")
-        if context.liquidity_depth_score < 40:
-            factors.append(f"Poor liquidity depth ({context.liquidity_depth_score:.1f}/100)")
+        mev_threat = self.converter.to_decimal(context.mev_threat_level, Decimal('0'))
+        volatility = self.converter.to_decimal(context.volatility_index, Decimal('0'))
+        liquidity_score = self.converter.to_decimal(context.liquidity_depth_score, Decimal('100'))
+        competing_bots = self.converter.to_decimal(context.competing_bots_detected, Decimal('0'))
+        
+        if mev_threat > 60:
+            factors.append(f"High MEV threat ({mev_threat:.1f}/100)")
+        if volatility > 70:
+            factors.append(f"High volatility ({volatility:.1f}/100)")
+        if liquidity_score < 40:
+            factors.append(f"Poor liquidity depth ({liquidity_score:.1f}/100)")
         if context.chaos_event_detected:
             factors.append("Chaos event detected in market")
-        if context.competing_bots_detected > 5:
-            factors.append(f"{context.competing_bots_detected} competing bots detected")
+        if competing_bots > 5:
+            factors.append(f"{int(competing_bots)} competing bots detected")
         
         return factors[:5]  # Top 5 risks
     
     def _identify_opportunity_factors(self, context: MarketContext) -> List[str]:
         """Identify opportunity factors."""
+        context = self.normalizer.normalize_context(context)
         factors = []
+        
+        volume_change = self.converter.to_decimal(context.volume_24h_change, Decimal('0'))
+        liquidity_score = self.converter.to_decimal(context.liquidity_depth_score, Decimal('0'))
+        congestion = self.converter.to_decimal(context.network_congestion, Decimal('100'))
+        bot_success = self.converter.to_decimal(context.bot_success_rate, Decimal('100'))
         
         if context.trend_direction == 'bullish':
             factors.append("Bullish market trend")
-        if context.volume_24h_change > 50:
-            factors.append(f"Volume surge ({context.volume_24h_change:.1f}%)")
-        if context.liquidity_depth_score > 70:
-            factors.append(f"Excellent liquidity ({context.liquidity_depth_score:.1f}/100)")
-        if context.network_congestion < 30:
+        if volume_change > 50:
+            factors.append(f"Volume surge ({volume_change:.1f}%)")
+        if liquidity_score > 70:
+            factors.append(f"Excellent liquidity ({liquidity_score:.1f}/100)")
+        if congestion < 30:
             factors.append("Low network congestion")
-        if context.bot_success_rate < 40:
+        if bot_success < 40:
             factors.append("Low bot competition")
         
         return factors[:5]  # Top 5 opportunities
     
     def _generate_mitigation_strategies(self, context: MarketContext) -> List[str]:
         """Generate risk mitigation strategies."""
+        context = self.normalizer.normalize_context(context)
         strategies = []
         
-        if context.mev_threat_level > 60:
+        mev_threat = self.converter.to_decimal(context.mev_threat_level, Decimal('0'))
+        volatility = self.converter.to_decimal(context.volatility_index, Decimal('0'))
+        slippage = self.converter.to_decimal(context.expected_slippage, Decimal('0'))
+        competing_bots = self.converter.to_decimal(context.competing_bots_detected, Decimal('0'))
+        
+        if mev_threat > 60:
             strategies.append("Use private relay for MEV protection")
-        if context.volatility_index > 70:
+        if volatility > 70:
             strategies.append("Reduce position size for volatility")
-        if context.expected_slippage > 3:
+        if slippage > 3:
             strategies.append("Split trade to reduce slippage")
-        if context.competing_bots_detected > 5:
+        if competing_bots > 5:
             strategies.append("Increase gas for competitive execution")
         
         return strategies
     
     def _assess_time_sensitivity(self, context: MarketContext) -> str:
         """Assess time sensitivity of the opportunity."""
+        context = self.normalizer.normalize_context(context)
+        
+        volatility = self.converter.to_decimal(context.volatility_index, Decimal('0'))
+        competing_bots = self.converter.to_decimal(context.competing_bots_detected, Decimal('0'))
+        volume_change = self.converter.to_decimal(context.volume_24h_change, Decimal('0'))
+        
         if context.chaos_event_detected:
             return 'critical'
-        elif context.volatility_index > 70 or context.competing_bots_detected > 5:
+        elif volatility > 70 or competing_bots > 5:
             return 'high'
-        elif context.trend_direction == 'bullish' and context.volume_24h_change > 50:
+        elif context.trend_direction == 'bullish' and volume_change > 50:
             return 'medium'
         else:
             return 'low'
