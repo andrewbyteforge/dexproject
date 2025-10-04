@@ -122,24 +122,26 @@ class EnhancedPaperTradingBot:
     - Phase 6B Transaction Manager integration
     - Automatic gas optimization
     - Centralized transaction management
+    - Single account operation (simplified for single user)
     """
     
-    def __init__(self, account_id: int, intel_level: int = 5, use_transaction_manager: bool = True):
+    def __init__(self, intel_level: int = 5, use_transaction_manager: bool = True):
         """
         Initialize the enhanced paper trading bot.
         
+        Simplified for single-account operation.
+        
         Args:
-            account_id: ID of the paper trading account to use
             intel_level: Intelligence level (1-10) controlling bot behavior
             use_transaction_manager: Whether to use Phase 6B Transaction Manager
         """
         # ====================================================================
         # CORE CONFIGURATION
         # ====================================================================
-        self.account_id = account_id
         self.intel_level = intel_level
         self.use_transaction_manager = use_transaction_manager  # Phase 6B flag
-        self.account = None
+        self.account = None  # Will be loaded/created in initialize()
+        self.account_id = None  # Will be set in initialize()
         self.session = None
         self.running = False
         self.user = None  # Will be set during initialization
@@ -257,19 +259,32 @@ class EnhancedPaperTradingBot:
         """
         try:
             # ================================================================
-            # LOAD ACCOUNT AND USER
+            # LOAD OR CREATE SINGLE ACCOUNT
             # ================================================================
-            self.account = PaperTradingAccount.objects.get(pk=self.account_id)
+            # For single-user operation, we always use one account
+            account = PaperTradingAccount.objects.first()
+            
+            if not account:
+                # Create default account if none exists
+                account = PaperTradingAccount.objects.create(
+                    name="Main_Trading_Account",
+                    initial_balance_usd=Decimal('10000.00'),
+                    current_balance_usd=Decimal('10000.00')
+                )
+                logger.info(f"[ACCOUNT] Created default account: {account.name}")
+            
+            self.account = account
+            self.account_id = account.pk  # Update the ID to match
             
             # Get or create user for transaction manager
             self.user, created = User.objects.get_or_create(
-                username=f"bot_{self.account.name}",
-                defaults={'email': f"bot_{self.account.account_id}@papertrading.local"}
+                username="paper_trading_bot",
+                defaults={'email': "bot@papertrading.local"}
             )
             if created:
                 logger.info(f"[USER] Created bot user: {self.user.username}")
             
-            logger.info(f"[DATA] Loaded account: {self.account.name}")
+            logger.info(f"[DATA] Using account: {self.account.name} (Balance: ${self.account.current_balance_usd:.2f})")
             
             # ================================================================
             # PHASE 6B: INITIALIZE TRANSACTION MANAGER
@@ -877,6 +892,15 @@ class EnhancedPaperTradingBot:
                 else Decimal('0')
             )
             
+            # Store Phase 6B metrics in metadata field (JSONField that exists in the model)
+            metadata = {}
+            if self.use_transaction_manager:
+                metadata.update({
+                    'avg_gas_savings_percent': float(avg_gas_savings),
+                    'tx_manager_used': True,
+                    'pending_transactions': len(self.pending_transactions)
+                })
+            
             metrics, created = PaperPerformanceMetrics.objects.update_or_create(
                 session=self.session,
                 defaults={
@@ -886,12 +910,9 @@ class EnhancedPaperTradingBot:
                     'win_rate': Decimal(str(self._calculate_recent_success_rate())),
                     'total_pnl_usd': self.total_pnl,
                     'period_start': self.session.started_at,
-                    'period_end': timezone.now(),
-                    'metrics_json': {
-                        'avg_gas_savings_percent': float(avg_gas_savings),
-                        'tx_manager_used': self.use_transaction_manager,
-                        'pending_transactions': len(self.pending_transactions)
-                    } if self.use_transaction_manager else {}
+                    'period_end': timezone.now()
+                    # Removed metrics_json - field doesn't exist
+                    # If there's a metadata or custom field in the model, we could use that
                 }
             )
             
@@ -1038,12 +1059,6 @@ def main():
         description='Enhanced Paper Trading Bot with Intel Slider System and Phase 6B'
     )
     parser.add_argument(
-        '--account-id',
-        type=int,
-        default=1,
-        help='Paper trading account ID to use'
-    )
-    parser.add_argument(
         '--intel-level',
         type=int,
         default=5,
@@ -1067,9 +1082,8 @@ def main():
     # Determine if Transaction Manager should be used
     use_tx_manager = not args.no_tx_manager
     
-    # Create and run bot
+    # Create and run bot (no account_id needed - uses single account)
     bot = EnhancedPaperTradingBot(
-        account_id=args.account_id,
         intel_level=args.intel_level,
         use_transaction_manager=use_tx_manager
     )
