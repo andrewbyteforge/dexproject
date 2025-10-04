@@ -117,6 +117,8 @@ class Command(BaseCommand):
         # ====================================================================
         if options['verbose']:
             logging.getLogger('paper_trading').setLevel(logging.DEBUG)
+
+        from paper_trading.bot.simple_trader import EnhancedPaperTradingBot
         
         # ====================================================================
         # DISPLAY BANNER

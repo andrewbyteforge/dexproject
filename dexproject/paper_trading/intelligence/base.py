@@ -34,42 +34,65 @@ class IntelligenceLevel(IntEnum):
     AUTONOMOUS_10 = 10
 
 
+from dataclasses import dataclass, field
+from decimal import Decimal
+from datetime import datetime
+from typing import List, Optional
+
 @dataclass
 class MarketContext:
-    """Complete market context for decision making."""
+    """
+    Complete market context for decision making.
+    Combines token-level market data and network-level intelligence metrics.
+    """
     
-    # Network conditions
-    gas_price_gwei: Decimal
-    network_congestion: float  # 0-100
-    pending_tx_count: int
-    
-    # MEV environment
-    mev_threat_level: float  # 0-100
-    sandwich_risk: float  # 0-100
-    frontrun_probability: float  # 0-100
-    
-    # Competition
-    competing_bots_detected: int
-    average_bot_gas_price: Decimal
-    bot_success_rate: float  # 0-100
-    
-    # Liquidity
-    pool_liquidity_usd: Decimal
-    expected_slippage: Decimal
-    liquidity_depth_score: float  # 0-100
-    
-    # Market state
-    volatility_index: float  # 0-100
-    chaos_event_detected: bool
-    trend_direction: str  # 'bullish', 'bearish', 'neutral'
-    volume_24h_change: Decimal
-    
-    # Historical data
-    recent_failures: int
-    success_rate_1h: float
-    average_profit_1h: Decimal
-    
-    # Metadata
+    # === Token-Level Data ===
+    token_symbol: str
+    token_address: Optional[str] = None
+    current_price: Decimal = Decimal("0")
+    price_24h_ago: Decimal = Decimal("0")
+    volume_24h: Decimal = Decimal("0")
+    liquidity_usd: Decimal = Decimal("0")
+    holder_count: int = 0
+    market_cap: Decimal = Decimal("0")
+    volatility: Decimal = Decimal("0")
+    trend: str = "neutral"
+    momentum: Decimal = Decimal("0")
+    support_levels: List[Decimal] = field(default_factory=list)
+    resistance_levels: List[Decimal] = field(default_factory=list)
+
+    # === Network Conditions ===
+    gas_price_gwei: Decimal = Decimal("0")
+    network_congestion: float = 0.0  # 0-100
+    pending_tx_count: int = 0
+
+    # === MEV Environment ===
+    mev_threat_level: float = 0.0  # 0-100
+    sandwich_risk: float = 0.0  # 0-100
+    frontrun_probability: float = 0.0  # 0-100
+
+    # === Competition ===
+    competing_bots_detected: int = 0
+    average_bot_gas_price: Decimal = Decimal("0")
+    bot_success_rate: float = 0.0  # 0-100
+
+    # === Liquidity ===
+    pool_liquidity_usd: Decimal = Decimal("0")
+    expected_slippage: Decimal = Decimal("0")
+    liquidity_depth_score: float = 0.0  # 0-100
+
+    # === Market State ===
+    volatility_index: float = 0.0  # 0-100
+    chaos_event_detected: bool = False
+    trend_direction: str = "neutral"
+    volume_24h_change: Decimal = Decimal("0")
+
+    # === Historical Data ===
+    recent_failures: int = 0
+    success_rate_1h: float = 0.0
+    average_profit_1h: Decimal = Decimal("0")
+
+    # === Metadata ===
     timestamp: datetime = field(default_factory=datetime.now)
     confidence_in_data: float = 100.0  # 0-100
 
