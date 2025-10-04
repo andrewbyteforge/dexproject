@@ -146,10 +146,12 @@ class Command(BaseCommand):
                 )
             )
             
-            # Create bot instance with Intel level
+            # FIX: Pass account_id and intel_level as positional arguments
+            # The EnhancedPaperTradingBot.__init__ expects:
+            # def __init__(self, account_id: int, intel_level: int = 5):
             bot = EnhancedPaperTradingBot(
-                account_id=account.pk,
-                intel_level=options['intel']
+                account.pk,  # First positional argument
+                options['intel']  # Second positional argument
             )
             
             # Override tick interval if specified
@@ -161,119 +163,144 @@ class Command(BaseCommand):
                     )
                 )
             
-            # Initialize bot
+            # Initialize the bot
             if not bot.initialize():
                 self.stdout.write(self.style.ERROR('❌ Bot initialization failed'))
                 return
             
+            # Display final status
             self.stdout.write(self.style.SUCCESS('✅ Bot initialized successfully'))
+            
+            # Show AI thoughts in console if requested
+            if options['show_thoughts']:
+                self.stdout.write(
+                    self.style.WARNING(
+                        '👁️  AI thought process will be displayed in console'
+                    )
+                )
+                bot.display_thoughts = True
+            
+            # Start bot
             self.stdout.write(
-                self.style.WARNING('Press Ctrl+C to stop the bot gracefully\n')
+                self.style.NOTICE(
+                    '\n🏃 Bot is running... Press Ctrl+C to stop\n'
+                )
             )
             
-            # Run the bot
             bot.run()
             
-            self.stdout.write(self.style.SUCCESS('\n✅ Bot stopped successfully'))
-            
         except KeyboardInterrupt:
-            self.stdout.write(self.style.WARNING('\n🛑 Shutting down bot...'))
+            self.stdout.write('\n\n🛑 Shutting down bot...')
+            if 'bot' in locals():
+                bot.cleanup()
+            self.stdout.write(self.style.SUCCESS('✅ Bot stopped gracefully'))
         except Exception as e:
             self.stdout.write(self.style.ERROR(f'❌ Bot error: {e}'))
             logger.exception("Bot crashed with exception")
-            sys.exit(1)
     
     def _display_banner(self, intel_level: int):
-        """
-        Display startup banner with Intel level information.
+        """Display the startup banner with Intel level visualization."""
         
-        Args:
-            intel_level: Selected intelligence level
-        """
-        banner = """
-╔══════════════════════════════════════════════════════════════════╗
-║          ENHANCED PAPER TRADING BOT - INTEL SLIDER SYSTEM         ║
-╚══════════════════════════════════════════════════════════════════╝
-        """
-        self.stdout.write(self.style.SUCCESS(banner))
+        self.stdout.write('\n' + '╔' + '═' * 68 + '╗')
+        self.stdout.write('║' + ' ' * 10 + 
+                         'ENHANCED PAPER TRADING BOT - INTEL SLIDER SYSTEM' + 
+                         ' ' * 9 + '║')
+        self.stdout.write('╚' + '═' * 68 + '╝\n')
         
-        # Display Intel level description
-        level_descriptions = {
-            1: "🛡️  Level 1: ULTRA CAUTIOUS - Maximum safety, minimal trades",
-            2: "🛡️  Level 2: VERY CAUTIOUS - High safety, rare opportunities",
-            3: "🛡️  Level 3: CAUTIOUS - Conservative with careful risk management",
-            4: "⚖️  Level 4: MODERATELY CAUTIOUS - Balanced, leaning safe",
-            5: "⚖️  Level 5: BALANCED - Equal risk/reward consideration",
-            6: "⚖️  Level 6: MODERATELY AGGRESSIVE - Seeking opportunities",
-            7: "🚀 Level 7: AGGRESSIVE - Active trading, higher risks",
-            8: "🚀 Level 8: VERY AGGRESSIVE - Competitive, fast execution",
-            9: "🚀 Level 9: ULTRA AGGRESSIVE - Maximum risk for profits",
-            10: "🤖 Level 10: FULLY AUTONOMOUS - ML-driven optimization"
+        # Intel level visualization
+        level_names = {
+            range(1, 4): ('🛡️', 'CAUTIOUS', 'Maximum safety, minimal trades'),
+            range(4, 7): ('⚖️', 'BALANCED', 'Equal risk/reward consideration'),
+            range(7, 10): ('🔥', 'AGGRESSIVE', 'High risk tolerance, competitive'),
+            range(10, 11): ('🧠', 'AUTONOMOUS', 'ML-driven dynamic optimization')
         }
         
-        self.stdout.write("")
-        self.stdout.write(
-            self.style.WARNING(
-                f"INTELLIGENCE LEVEL: {level_descriptions[intel_level]}"
-            )
-        )
-        self.stdout.write("")
+        for range_obj, (icon, name, desc) in level_names.items():
+            if intel_level in range_obj:
+                self.stdout.write(f'\nINTELLIGENCE LEVEL: {icon}  Level {intel_level}: {name} - {desc}')
+                break
     
-    def _get_or_create_account(self, options):
+    def _get_or_create_account(self, options: dict) -> PaperTradingAccount:
         """
-        Get existing account or create new one.
+        Get existing account or create a new one.
         
         Args:
-            options: Command options
+            options: Command options dictionary
             
         Returns:
-            PaperTradingAccount instance or None
+            PaperTradingAccount instance or None if failed
         """
         try:
             # ================================================================
-            # USE SPECIFIC ACCOUNT ID IF PROVIDED
+            # DETERMINE ACCOUNT
             # ================================================================
             if options['account_id']:
-                return PaperTradingAccount.objects.get(pk=options['account_id'])
-            
-            # ================================================================
-            # GET OR CREATE DEFAULT ACCOUNT
-            # ================================================================
-            # Use consistent user for dashboard compatibility
-            user, user_created = User.objects.get_or_create(
-                username='demo_user',
-                defaults={
-                    'email': 'demo@papertrading.bot',
-                    'first_name': 'Demo',
-                    'last_name': 'Trader'
-                }
-            )
-            
-            if user_created:
-                self.stdout.write(f'✅ Created user: {user.username}')
-            
-            # Get or create account
-            account, account_created = PaperTradingAccount.objects.get_or_create(
-                user=user,
-                name='Intel_Slider_Bot',
-                defaults={
-                    'initial_balance_usd': Decimal(str(options['initial_balance'])),
-                    'current_balance_usd': Decimal(str(options['initial_balance']))
-                }
-            )
-            
-            if account_created:
-                self.stdout.write(f'✅ Created account: {account.name}')
+                # Use specific account ID
+                account = PaperTradingAccount.objects.get(pk=options['account_id'])
+                action = 'Using existing'
             else:
-                self.stdout.write(f'✅ Using existing account: {account.name}')
+                # Create or get default account
+                user, _ = User.objects.get_or_create(
+                    username='demo_user',
+                    defaults={
+                        'email': 'demo@papertrading.ai',
+                        'first_name': 'Demo',
+                        'last_name': 'User'
+                    }
+                )
+                
+                # Account name based on Intel level
+                intel_names = {
+                    range(1, 4): 'Cautious',
+                    range(4, 7): 'Balanced',
+                    range(7, 10): 'Aggressive',
+                    range(10, 11): 'Autonomous'
+                }
+                
+                account_suffix = 'Bot'
+                for range_obj, name in intel_names.items():
+                    if options['intel'] in range_obj:
+                        account_suffix = name
+                        break
+                
+                account_name = f"Intel_Slider_{account_suffix}"
+                
+                if options['create_account']:
+                    # Always create new account
+                    account = PaperTradingAccount.objects.create(
+                        user=user,
+                        name=account_name,
+                        initial_balance_usd=Decimal(str(options['initial_balance'])),
+                        current_balance_usd=Decimal(str(options['initial_balance']))
+                    )
+                    action = 'Created'
+                else:
+                    # Get or create account
+                    account, created = PaperTradingAccount.objects.get_or_create(
+                        user=user,
+                        name=account_name,
+                        defaults={
+                            'initial_balance_usd': Decimal(str(options['initial_balance'])),
+                            'current_balance_usd': Decimal(str(options['initial_balance']))
+                        }
+                    )
+                    action = 'Created' if created else 'Using existing'
             
             # ================================================================
-            # RESET BALANCE IF REQUESTED
+            # HANDLE RESET
             # ================================================================
-            if options['reset']:
+            if options['reset'] and account:
                 account.current_balance_usd = account.initial_balance_usd
                 account.save()
-                self.stdout.write('♻️  Account balance reset')
+                self.stdout.write(
+                    self.style.WARNING(
+                        f'💰 Reset balance to ${account.current_balance_usd:,.2f}'
+                    )
+                )
+            
+            self.stdout.write(
+                self.style.SUCCESS(f'✅ {action} account: {account.name}')
+            )
             
             return account
             
@@ -285,81 +312,81 @@ class Command(BaseCommand):
             )
             return None
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f'❌ Error getting account: {e}'))
+            logger.exception("Error getting/creating account")
+            self.stdout.write(self.style.ERROR(f'❌ Account error: {e}'))
             return None
     
-    def _display_configuration(self, account, options):
+    def _display_configuration(self, account: PaperTradingAccount, options: dict):
         """
-        Display bot configuration summary.
+        Display the bot configuration.
         
         Args:
-            account: PaperTradingAccount instance
-            options: Command options
+            account: The paper trading account
+            options: Command options dictionary
         """
-        # ====================================================================
-        # CONFIGURATION DISPLAY
-        # ====================================================================
-        self.stdout.write("\n" + "=" * 60)
-        self.stdout.write("📋 BOT CONFIGURATION")
-        self.stdout.write("=" * 60)
+        self.stdout.write('\n' + '=' * 60)
+        self.stdout.write('📋 BOT CONFIGURATION')
+        self.stdout.write('=' * 60)
         
-        # Account info
-        self.stdout.write(f"  Account         : {account.name} (ID: {account.account_id})")
-        self.stdout.write(f"  User            : {account.user.username}")
-        self.stdout.write(f"  Balance         : ${account.current_balance_usd:,.2f}")
+        self.stdout.write(f'  Account         : {account.name} (ID: {account.account_id})')
+        self.stdout.write(f'  User            : {account.user.username}')
+        self.stdout.write(f'  Balance         : ${account.current_balance_usd:,.2f}')
+        self.stdout.write('')
+        self.stdout.write(f'  INTELLIGENCE    : Level {options["intel"]}/10')
         
-        # Intelligence configuration
-        intel_level = options['intel']
-        self.stdout.write(f"\n  INTELLIGENCE    : Level {intel_level}/10")
+        # Show what the Intel level controls
+        intel_config = self._get_intel_configuration(options['intel'])
+        self.stdout.write('  Controlled by Intel Level:')
+        for key, value in intel_config.items():
+            self.stdout.write(f'    • {key:18}: {value}')
         
-        # Display what this Intel level controls
-        self.stdout.write("  Controlled by Intel Level:")
+        self.stdout.write('=' * 60)
+    
+    def _get_intel_configuration(self, intel_level: int) -> dict:
+        """
+        Get the configuration controlled by Intel level.
         
-        # Risk tolerance
-        risk_tolerances = {
-            1: "20%", 2: "25%", 3: "30%", 4: "40%", 5: "50%",
-            6: "60%", 7: "70%", 8: "80%", 9: "90%", 10: "Dynamic"
-        }
-        self.stdout.write(f"    • Risk Tolerance    : {risk_tolerances[intel_level]}")
+        Args:
+            intel_level: Intelligence level (1-10)
+            
+        Returns:
+            Dictionary of configuration parameters
+        """
+        # Risk tolerance: 10% at level 1, 100% at level 10
+        risk_tolerance = 10 + (intel_level - 1) * 10
         
-        # Max position size
-        position_sizes = {
-            1: "2%", 2: "3%", 3: "5%", 4: "7%", 5: "10%",
-            6: "12%", 7: "15%", 8: "20%", 9: "25%", 10: "Dynamic"
-        }
-        self.stdout.write(f"    • Max Position Size : {position_sizes[intel_level]}")
+        # Max position size: 5% at level 1, 25% at level 10
+        max_position = 5 + (intel_level - 1) * 2.22
         
-        # Trading frequency
-        frequencies = {
-            1: "Very Low", 2: "Low", 3: "Low", 4: "Moderate", 5: "Moderate",
-            6: "Moderate-High", 7: "High", 8: "High", 9: "Very High", 10: "Optimal"
-        }
-        self.stdout.write(f"    • Trade Frequency   : {frequencies[intel_level]}")
+        # Trade frequency
+        if intel_level <= 3:
+            trade_freq = "Very Low"
+            decision_speed = "Very Slow (30s)"
+        elif intel_level <= 6:
+            trade_freq = "Moderate"
+            decision_speed = "Moderate (15s)"
+        elif intel_level <= 9:
+            trade_freq = "High"
+            decision_speed = "Fast (5s)"
+        else:
+            trade_freq = "Maximum"
+            decision_speed = "Instant (1s)"
         
         # Gas strategy
-        gas_strategies = {
-            1: "Minimal", 2: "Low", 3: "Standard", 4: "Standard", 5: "Adaptive",
-            6: "Adaptive", 7: "Aggressive", 8: "Aggressive", 
-            9: "Ultra Aggressive", 10: "Dynamic"
-        }
-        self.stdout.write(f"    • Gas Strategy      : {gas_strategies[intel_level]}")
+        if intel_level <= 3:
+            gas_strategy = "Ultra Safe"
+        elif intel_level <= 6:
+            gas_strategy = "Adaptive"
+        elif intel_level <= 9:
+            gas_strategy = "Competitive"
+        else:
+            gas_strategy = "Maximum Speed"
         
-        # MEV Protection
-        mev_protection = {
-            1: "Always On", 2: "Always On", 3: "Always On", 4: "Always On", 
-            5: "Always On", 6: "When Needed", 7: "Rarely", 8: "Rarely", 
-            9: "Never", 10: "Dynamic"
+        return {
+            'Risk Tolerance': f'{risk_tolerance}%',
+            'Max Position Size': f'{max_position:.1f}%',
+            'Trade Frequency': trade_freq,
+            'Gas Strategy': gas_strategy,
+            'MEV Protection': 'Always On',
+            'Decision Speed': decision_speed
         }
-        self.stdout.write(f"    • MEV Protection    : {mev_protection[intel_level]}")
-        
-        # Decision speed
-        decision_speeds = {
-            1: "Slow (30s)", 2: "Slow (30s)", 3: "Moderate (30s)",
-            4: "Moderate (15s)", 5: "Moderate (15s)", 6: "Fast (15s)",
-            7: "Fast (5s)", 8: "Very Fast (5s)", 9: "Ultra Fast (5s)",
-            10: "Optimal (3s)"
-        }
-        self.stdout.write(f"    • Decision Speed    : {decision_speeds[intel_level]}")
-        
-        self.stdout.write("=" * 60)
-        self.stdout.write("")

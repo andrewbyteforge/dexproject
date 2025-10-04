@@ -1,18 +1,18 @@
+#!/usr/bin/env python
 """
-Enhanced Paper Trading Bot with Intel Slider System and Phase 6B Integration
+Enhanced Paper Trading Bot with Intel Slider System
 
-This is the main paper trading bot that integrates:
-- Intel Slider (1-10) system for intelligent decision making
-- Phase 6B Transaction Manager for gas optimization
-- Centralized transaction management
-- Real-time WebSocket updates
+This is the primary paper trading bot implementation.
+It replaces multiple bot implementations with
+a single, unified system.
+
+Key Features:
+- Intel Slider system (1-10 intelligence levels)
+- Modular market analyzers
+- Comprehensive thought logging
+- WebSocket real-time updates
 - Performance tracking
-
-Key Phase 6B Features:
-- Automatic gas optimization (23.1% average savings)
-- Transaction status tracking
-- Portfolio integration
-- Unified execution pipeline
+- Clean separation of concerns
 
 File: dexproject/paper_trading/bot/simple_trader.py
 """
@@ -22,10 +22,9 @@ import sys
 import time
 import signal
 import logging
-import asyncio
 from decimal import Decimal
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union
 import random
 import uuid
 
@@ -42,7 +41,6 @@ django.setup()
 
 from django.utils import timezone
 from django.db import transaction
-from django.contrib.auth.models import User
 from asgiref.sync import async_to_sync
 
 # ============================================================================
@@ -56,24 +54,6 @@ from paper_trading.models import (
     PaperAIThoughtLog,
     PaperStrategyConfiguration,
     PaperPerformanceMetrics
-)
-
-# ============================================================================
-# PHASE 6B: TRANSACTION MANAGER IMPORTS
-# ============================================================================
-from trading.services.transaction_manager import (
-    get_transaction_manager,
-    TransactionManager,
-    TransactionSubmissionRequest,
-    TransactionStatus,
-    create_transaction_submission_request
-)
-from trading.services.dex_router_service import (
-    SwapType, DEXVersion, TradingGasStrategy
-)
-from trading.tasks import (
-    execute_buy_order_with_transaction_manager,
-    execute_sell_order_with_transaction_manager
 )
 
 # ============================================================================
@@ -115,48 +95,44 @@ logger = logging.getLogger(__name__)
 
 class EnhancedPaperTradingBot:
     """
-    Unified Paper Trading Bot with Intel Slider System and Phase 6B Integration.
+    Unified Paper Trading Bot with Intel Slider System.
     
-    This bot consolidates all trading logic with:
-    - Configurable intelligence levels (1-10)
-    - Phase 6B Transaction Manager integration
-    - Automatic gas optimization
-    - Centralized transaction management
-    - Single account operation (simplified for single user)
+    This bot consolidates all trading logic into a single implementation
+    with configurable intelligence levels (1-10) that control:
+    - Risk tolerance
+    - Trading frequency
+    - Gas strategies
+    - MEV protection
+    - Decision confidence thresholds
     """
     
-    def __init__(self, intel_level: int = 5, use_transaction_manager: bool = True):
+    def __init__(self, account_id: Union[str, uuid.UUID, int], intel_level: int = 5):
         """
         Initialize the enhanced paper trading bot.
         
-        Simplified for single-account operation.
-        
         Args:
+            account_id: ID of the paper trading account to use (can be UUID, string, or int)
             intel_level: Intelligence level (1-10) controlling bot behavior
-            use_transaction_manager: Whether to use Phase 6B Transaction Manager
+                1-3: Ultra cautious
+                4-6: Balanced
+                7-9: Aggressive
+                10: Fully autonomous with ML
         """
         # ====================================================================
         # CORE CONFIGURATION
         # ====================================================================
+        # Handle different account_id types (UUID, string, or int)
+        self.account_id = account_id
         self.intel_level = intel_level
-        self.use_transaction_manager = use_transaction_manager  # Phase 6B flag
-        self.account = None  # Will be loaded/created in initialize()
-        self.account_id = None  # Will be set in initialize()
+        self.account = None
         self.session = None
         self.running = False
-        self.user = None  # Will be set during initialization
-        
-        # ====================================================================
-        # PHASE 6B: TRANSACTION MANAGER
-        # ====================================================================
-        self.transaction_manager = None  # Will be initialized if enabled
-        self.chain_id = 8453  # Base mainnet for paper trading
-        self.pending_transactions = {}  # tx_id -> status tracking
         
         # ====================================================================
         # INTELLIGENCE SYSTEM
         # ====================================================================
-        self.intelligence_engine = None
+        self.intelligence_engine = None  # Will be initialized in initialize()
+        # Use the global websocket service instance
         self.websocket_service = websocket_service
         
         # ====================================================================
@@ -167,7 +143,7 @@ class EnhancedPaperTradingBot:
         # ====================================================================
         # TRADING PARAMETERS (adjusted by intel level)
         # ====================================================================
-        self.tick_interval = self._calculate_tick_interval()
+        self.tick_interval = self._calculate_tick_interval()  # Seconds between checks
         self.min_trade_interval = 10  # Minimum seconds between trades
         self.last_trade_time = None
         
@@ -190,20 +166,23 @@ class EnhancedPaperTradingBot:
         self.successful_trades = 0
         self.failed_trades = 0
         self.total_pnl = Decimal('0')
-        self.total_gas_saved = Decimal('0')  # Phase 6B: Track gas savings
         
         # ====================================================================
         # DECISION TRACKING
         # ====================================================================
         self.last_decisions = {}  # token_symbol -> TradingDecision
         
-        logger.info(
-            f"[BOT] Enhanced Paper Trading Bot initialized with Intel Level {intel_level}"
-            f" (Transaction Manager: {'ENABLED' if use_transaction_manager else 'DISABLED'})"
-        )
+        logger.info(f"[BOT] Enhanced Paper Trading Bot initialized with Intel Level {intel_level}")
     
     def _calculate_tick_interval(self) -> int:
-        """Calculate tick interval based on intelligence level."""
+        """
+        Calculate tick interval based on intelligence level.
+        
+        Higher intelligence levels check markets more frequently.
+        
+        Returns:
+            Seconds between market checks
+        """
         if self.intel_level <= 3:
             return 30  # Cautious: Check every 30 seconds
         elif self.intel_level <= 6:
@@ -213,105 +192,43 @@ class EnhancedPaperTradingBot:
         else:
             return 3   # Autonomous: Check every 3 seconds
     
-    async def _initialize_transaction_manager(self) -> bool:
-        """
-        Initialize Phase 6B Transaction Manager if enabled.
-        
-        Returns:
-            True if initialized successfully or not needed, False on error
-        """
-        if not self.use_transaction_manager:
-            logger.info("[PHASE 6B] Transaction Manager disabled")
-            return True
-        
-        try:
-            # Get transaction manager for the chain
-            self.transaction_manager = await get_transaction_manager(self.chain_id)
-            
-            if self.transaction_manager:
-                logger.info(
-                    f"[PHASE 6B] Transaction Manager initialized for chain {self.chain_id}"
-                )
-                
-                # Get performance metrics
-                metrics = self.transaction_manager.get_performance_metrics()
-                logger.info(
-                    f"[PHASE 6B] Current metrics - "
-                    f"Success rate: {metrics['success_rate_percent']:.1f}%, "
-                    f"Avg gas savings: {metrics['average_gas_savings_percent']:.2f}%"
-                )
-                return True
-            else:
-                logger.warning("[PHASE 6B] Could not initialize Transaction Manager")
-                self.use_transaction_manager = False
-                return True  # Continue without it
-                
-        except Exception as e:
-            logger.error(f"[PHASE 6B] Transaction Manager init error: {e}")
-            self.use_transaction_manager = False
-            return True  # Continue without it
-    
     def initialize(self) -> bool:
         """
         Initialize bot components and create trading session.
         
-        Enhanced with Phase 6B Transaction Manager initialization.
+        This method:
+        1. Loads the trading account
+        2. Creates a new trading session
+        3. Initializes the intelligence engine
+        4. Loads existing positions
+        5. Sets up price tracking
+        
+        Returns:
+            True if initialization successful, False otherwise
         """
         try:
             # ================================================================
-            # LOAD OR CREATE SINGLE ACCOUNT
+            # LOAD ACCOUNT
             # ================================================================
-            # For single-user operation, we always use one account
-            account = PaperTradingAccount.objects.first()
-            
-            if not account:
-                # Create default account if none exists
-                account = PaperTradingAccount.objects.create(
-                    name="Main_Trading_Account",
-                    initial_balance_usd=Decimal('10000.00'),
-                    current_balance_usd=Decimal('10000.00')
-                )
-                logger.info(f"[ACCOUNT] Created default account: {account.name}")
-            
-            self.account = account
-            self.account_id = account.pk  # Update the ID to match
-            
-            # Get or create user for transaction manager
-            self.user, created = User.objects.get_or_create(
-                username="paper_trading_bot",
-                defaults={'email': "bot@papertrading.local"}
-            )
-            if created:
-                logger.info(f"[USER] Created bot user: {self.user.username}")
-            
-            logger.info(f"[DATA] Using account: {self.account.name} (Balance: ${self.account.current_balance_usd:.2f})")
-            
-            # ================================================================
-            # PHASE 6B: INITIALIZE TRANSACTION MANAGER
-            # ================================================================
-            if self.use_transaction_manager:
-                # Run async initialization
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self._initialize_transaction_manager())
-                loop.close()
+            self.account = PaperTradingAccount.objects.get(pk=self.account_id)
+            logger.info(f"[DATA] Loaded account: {self.account.name}")
             
             # ================================================================
             # CREATE TRADING SESSION
             # ================================================================
+            # Build bot configuration first
             self.bot_config = {
                 'intel_level': self.intel_level,
                 'tick_interval': self.tick_interval,
                 'min_trade_interval': self.min_trade_interval,
                 'price_volatility': float(self.price_volatility),
                 'trend_probability': self.trend_probability,
-                'use_transaction_manager': self.use_transaction_manager,  # Phase 6B
-                'chain_id': self.chain_id
             }
 
+            # Now create the session with the config
             self.session = PaperTradingSession.objects.create(
                 account=self.account,
-                name=f"Intel Bot Session - Level {self.intel_level} (6B: {self.use_transaction_manager})",
+                name=f"Intel Bot Session - Level {self.intel_level}",
                 config_snapshot=self.bot_config,
                 starting_balance_usd=self.account.current_balance_usd
             )
@@ -337,712 +254,742 @@ class EnhancedPaperTradingBot:
             self._load_positions()
             
             # ================================================================
-            # INITIALIZE PRICE HISTORY
+            # INITIALIZE PRICE TRACKING
             # ================================================================
-            self._initialize_price_history()
+            self._initialize_price_tracking()
             
             # ================================================================
             # SEND INITIALIZATION NOTIFICATION
             # ================================================================
             self._send_bot_status_update('initialized')
             
-            # ================================================================
-            # LOG INITIAL THOUGHT
-            # ================================================================
-            self._log_thought(
-                action="STARTUP",
-                reasoning=f"Bot initialized with Intel Level {self.intel_level}. "
-                         f"Strategy: {self.intelligence_engine.config.name}. "
-                         f"Risk tolerance: {self.intelligence_engine.config.risk_tolerance}%. "
-                         f"Transaction Manager: {'ENABLED' if self.use_transaction_manager else 'DISABLED'}. "
-                         f"Starting balance: ${self.account.current_balance_usd:.2f}",
-                confidence=100,
-                decision_type="SYSTEM"
-            )
-            
             return True
             
+        except PaperTradingAccount.DoesNotExist:
+            logger.error(f"[ERROR] Account with ID {self.account_id} not found")
+            return False
         except Exception as e:
-            logger.error(f"[ERROR] Initialization failed: {e}", exc_info=True)
+            logger.error(f"[ERROR] Bot initialization failed: {e}", exc_info=True)
             return False
     
     def _setup_strategy_configuration(self):
-        """Set up strategy configuration based on intel level."""
-        config = self.intelligence_engine.config
-        
-        # Determine gas strategy for Phase 6B
-        if self.intel_level <= 3:
-            gas_strategy = TradingGasStrategy.COST_EFFICIENT.value
-        elif self.intel_level <= 6:
-            gas_strategy = TradingGasStrategy.BALANCED.value
-        elif self.intel_level <= 9:
-            gas_strategy = TradingGasStrategy.SPEED_PRIORITY.value
-        else:
-            gas_strategy = TradingGasStrategy.MEV_PROTECTED.value
-        
-        self.strategy_config, created = PaperStrategyConfiguration.objects.update_or_create(
-            account=self.account,
-            name=f"Intel_Level_{self.intel_level}",
-            defaults={
-                'is_active': True,
-                'trading_mode': self._get_trading_mode(),
-                'use_fast_lane': self.intel_level >= 7,
-                'use_smart_lane': True,
-                'max_position_size_percent': config.max_position_percent,
-                'stop_loss_percent': Decimal('5'),
-                'take_profit_percent': Decimal('10'),
-                'max_daily_trades': self._get_max_daily_trades(),
-                'confidence_threshold': config.min_confidence_required,
-                'custom_parameters': {
-                    'intel_level': self.intel_level,
-                    'risk_tolerance': float(config.risk_tolerance),
-                    'gas_aggressiveness': config.gas_aggressiveness,
-                    'use_mev_protection': config.use_mev_protection,
-                    'use_transaction_manager': self.use_transaction_manager,  # Phase 6B
-                    'gas_strategy': gas_strategy  # Phase 6B
+        """Setup or get strategy configuration based on intel level."""
+        try:
+            # Map intel levels to trading modes
+            if self.intel_level <= 3:
+                trading_mode = 'CONSERVATIVE'
+                description = 'Ultra-safe trading with minimal risk'
+            elif self.intel_level <= 6:
+                trading_mode = 'BALANCED'
+                description = 'Balanced risk/reward approach'
+            elif self.intel_level <= 9:
+                trading_mode = 'AGGRESSIVE'
+                description = 'High-risk high-reward trading'
+            else:
+                trading_mode = 'EXPERIMENTAL'
+                description = 'ML-driven autonomous trading'
+            
+            # Get or create configuration
+            self.strategy_config, created = PaperStrategyConfiguration.objects.get_or_create(
+                account=self.account,
+                name=f"Intel_{self.intel_level}_Config",
+                defaults={
+                    'trading_mode': trading_mode,
+                    'description': description,
+                    'is_active': True,
+                    'config': {
+                        'intel_level': self.intel_level,
+                        'risk_tolerance': (self.intel_level / 10) * 100,
+                        'max_position_size': 5 + (self.intel_level * 2),
+                        'stop_loss_enabled': self.intel_level <= 7,
+                        'stop_loss_percent': max(2, 10 - self.intel_level),
+                        'take_profit_enabled': True,
+                        'take_profit_percent': 5 + (self.intel_level * 2),
+                        'use_mev_protection': True,
+                        'max_gas_price_gwei': 50 + (self.intel_level * 10),
+                        'slippage_tolerance': min(5, 1 + (self.intel_level * 0.5)),
+                    }
                 }
-            }
-        )
-        
-        if created:
-            logger.info(f"[CONFIG] Created new strategy: {self.strategy_config.name}")
-        else:
-            logger.info(f"[CONFIG] Updated strategy: {self.strategy_config.name}")
-    
-    def _get_trading_mode(self) -> str:
-        """Get trading mode based on intel level."""
-        if self.intel_level <= 3:
-            return 'CONSERVATIVE'
-        elif self.intel_level <= 6:
-            return 'MODERATE'
-        else:
-            return 'AGGRESSIVE'
-    
-    def _get_max_daily_trades(self) -> int:
-        """Get max daily trades based on intel level."""
-        if self.intel_level <= 3:
-            return 10
-        elif self.intel_level <= 6:
-            return 25
-        elif self.intel_level <= 9:
-            return 50
-        else:
-            return 100
+            )
+            
+            if created:
+                logger.info(f"[CONFIG] Created new strategy configuration: {self.strategy_config.name}")
+            else:
+                logger.info(f"[CONFIG] Using existing configuration: {self.strategy_config.name}")
+                
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to setup strategy configuration: {e}")
+            # Create default config in memory
+            self.strategy_config = None
     
     def _load_positions(self):
-        """Load existing open positions for the account."""
-        open_positions = PaperPosition.objects.filter(
-            account=self.account,
-            is_open=True
-        )
-        
-        for position in open_positions:
-            self.positions[position.token_symbol] = position
-            logger.info(f"[POSITION] Loaded: {position.token_symbol} - {position.quantity} @ ${position.average_entry_price_usd}")
-    
-    def _initialize_price_history(self):
-        """Initialize price history with simulated data."""
-        # Simulated tokens for paper trading
-        tokens = ['TEST1', 'TEST2', 'TEST3']
-        
-        for token in tokens:
-            # Generate random starting price between $10 and $1000
-            base_price = Decimal(str(random.uniform(10, 1000)))
-            
-            # Create price history with some variance
-            self.price_history[token] = []
-            for i in range(10):
-                variance = Decimal(str(random.uniform(-0.05, 0.05)))
-                price = base_price * (Decimal('1') + variance)
-                self.price_history[token].append(price)
-            
-            logger.info(f"[PRICE] Initialized {token} at ${self.price_history[token][-1]:.2f}")
-    
-    def run(self):
-        """Main bot execution loop."""
-        logger.info("[START] Bot starting main execution loop...")
-        
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
-        
-        self.running = True
-        
+        """Load existing positions for the account."""
         try:
-            while self.running:
-                # Market analysis tick
-                self._tick()
-                
-                # Sleep between ticks
-                time.sleep(self.tick_interval)
-                
-        except Exception as e:
-            logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
-        finally:
-            self._cleanup()
-    
-    def _tick(self):
-        """Single market analysis tick."""
-        try:
-            # Update simulated prices
-            self._update_prices()
-            
-            # Check pending transactions if using Transaction Manager
-            if self.use_transaction_manager:
-                self._check_pending_transactions()
-            
-            # Analyze each token
-            for token_symbol in self.price_history.keys():
-                self._analyze_and_trade(token_symbol)
-            
-            # Update performance metrics
-            self._update_performance_metrics()
-            
-            # Send status update
-            if self.trades_executed % 5 == 0:  # Every 5 trades
-                self._send_bot_status_update('running')
-            
-        except Exception as e:
-            logger.error(f"[ERROR] Tick error: {e}", exc_info=True)
-    
-    def _check_pending_transactions(self):
-        """Check status of pending transactions (Phase 6B)."""
-        if not self.transaction_manager or not self.pending_transactions:
-            return
-        
-        completed = []
-        for tx_id, start_time in list(self.pending_transactions.items()):
-            try:
-                # Create event loop for async call
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                tx_state = loop.run_until_complete(
-                    self.transaction_manager.get_transaction_status(tx_id)
-                )
-                loop.close()
-                
-                if tx_state:
-                    if tx_state.status == TransactionStatus.COMPLETED:
-                        logger.info(
-                            f"[PHASE 6B] Transaction completed: {tx_id[:8]}... "
-                            f"Gas saved: {tx_state.gas_savings_percent:.2f}%"
-                        )
-                        self.total_gas_saved += tx_state.gas_savings_percent or Decimal('0')
-                        completed.append(tx_id)
-                    elif tx_state.status in [TransactionStatus.FAILED, TransactionStatus.CANCELLED]:
-                        logger.warning(f"[PHASE 6B] Transaction failed: {tx_id[:8]}...")
-                        completed.append(tx_id)
-                
-            except Exception as e:
-                logger.error(f"[PHASE 6B] Error checking transaction {tx_id}: {e}")
-        
-        # Remove completed transactions
-        for tx_id in completed:
-            del self.pending_transactions[tx_id]
-    
-    def _analyze_and_trade(self, token_symbol: str):
-        """Analyze a token and make trading decision."""
-        try:
-            current_price = self.price_history[token_symbol][-1]
-            
-            # Prepare token data
-            token_data = {
-                'address': '0x' + 'a' * 40,  # Simulated address
-                'symbol': token_symbol,
-                'liquidity_usd': Decimal('500000'),
-                'volume_24h': Decimal('100000')
-            }
-            
-            # Analyze market using intelligence engine
-            market_context = async_to_sync(self.intelligence_engine.analyze_market)(
-                token_address=token_data['address'],
-                trade_size_usd=self.account.current_balance_usd * Decimal('0.1'),
-                liquidity_usd=token_data['liquidity_usd'],
-                volume_24h=token_data['volume_24h'],
-                recent_failures=self.failed_trades,
-                success_rate_1h=self._calculate_recent_success_rate()
+            positions = PaperPosition.objects.filter(
+                account=self.account,
+                is_active=True
             )
             
-            # Make trading decision
-            existing_positions = [
-                {
-                    'token_symbol': pos.token_symbol,
-                    'quantity': float(pos.quantity),
-                    'invested_usd': float(pos.total_invested_usd)
-                }
-                for pos in self.positions.values()
-            ]
+            for position in positions:
+                self.positions[position.token_symbol] = position
+                logger.info(f"[POSITION] Loaded {position.token_symbol}: "
+                          f"{position.quantity} @ ${position.average_entry_price_usd}")
             
-            decision = async_to_sync(self.intelligence_engine.make_decision)(
-                market_context=market_context,
-                account_balance=self.account.current_balance_usd,
-                existing_positions=existing_positions,
-                token_address=token_data['address'],
-                token_symbol=token_symbol
-            )
-            
-            # Log thought process
-            thought_log = self.intelligence_engine.generate_thought_log(decision)
-            self._log_thought(
-                action=decision.action,
-                reasoning=thought_log,
-                confidence=float(decision.overall_confidence),
-                decision_type="TRADE_DECISION",
-                metadata={
-                    'token': token_symbol,
-                    'intel_level': self.intel_level,
-                    'risk_score': float(decision.risk_score),
-                    'opportunity_score': float(decision.opportunity_score),
-                    'use_tx_manager': self.use_transaction_manager  # Phase 6B
-                }
-            )
-            
-            # Execute trade if decided
-            if decision.action in ['BUY', 'SELL']:
-                if self._can_trade():
-                    if self.use_transaction_manager:
-                        # Phase 6B: Use Transaction Manager
-                        self._execute_trade_with_tx_manager(decision, token_symbol, current_price)
-                    else:
-                        # Original execution
-                        self._execute_trade(decision, token_symbol, current_price)
-            
-            # Store decision for tracking
-            self.last_decisions[token_symbol] = decision
+            logger.info(f"[DATA] Loaded {len(self.positions)} active positions")
             
         except Exception as e:
-            logger.error(f"[ERROR] Failed to analyze {token_symbol}: {e}", exc_info=True)
+            logger.error(f"[ERROR] Failed to load positions: {e}")
     
-    def _execute_trade_with_tx_manager(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
-        """
-        Execute trade using Phase 6B Transaction Manager.
-        
-        This provides:
-        - Automatic gas optimization
-        - Transaction status tracking
-        - Portfolio integration
-        """
-        try:
-            logger.info(
-                f"[PHASE 6B] Executing trade via Transaction Manager: "
-                f"{decision.action} {token_symbol} ${decision.position_size_usd:.2f}"
-            )
-            
-            # Determine gas strategy based on intel level and decision
-            if self.intel_level <= 3:
-                gas_strategy = TradingGasStrategy.COST_EFFICIENT
-            elif self.intel_level <= 6:
-                gas_strategy = TradingGasStrategy.BALANCED
-            elif self.intel_level <= 9:
-                gas_strategy = TradingGasStrategy.SPEED_PRIORITY
-            else:
-                gas_strategy = TradingGasStrategy.MEV_PROTECTED
-            
-            # Create simulated token address (consistent for tracking)
-            token_address = f"0x{'b' * 39}{ord(token_symbol[-1]):x}"
-            
-            if decision.action == 'BUY':
-                # Execute buy order through Transaction Manager
-                result = execute_buy_order_with_transaction_manager.apply_async(
-                    args=[
-                        self.user.id,
-                        self.chain_id,
-                        token_address,
-                        float(decision.position_size_usd),
-                        None,  # strategy_id
-                        0.005,  # slippage
-                        True  # is_paper_trade
-                    ]
-                ).get(timeout=30)
-            else:
-                # Calculate token amount for sell
-                if token_symbol in self.positions:
-                    position = self.positions[token_symbol]
-                    token_amount = str(int(position.quantity * Decimal('1e18')))
-                else:
-                    logger.warning(f"[PHASE 6B] No position to sell for {token_symbol}")
-                    return
-                
-                # Execute sell order through Transaction Manager
-                result = execute_sell_order_with_transaction_manager.apply_async(
-                    args=[
-                        self.user.id,
-                        self.chain_id,
-                        token_address,
-                        token_amount,
-                        None,  # strategy_id
-                        0.005,  # slippage
-                        True  # is_paper_trade
-                    ]
-                ).get(timeout=30)
-            
-            if result.get('success'):
-                # Track pending transaction
-                tx_id = result.get('transaction_id')
-                if tx_id:
-                    self.pending_transactions[tx_id] = datetime.now()
-                
-                # Update metrics
-                self.trades_executed += 1
-                self.successful_trades += 1
-                self.last_trade_time = datetime.now()
-                
-                # Update positions
-                if decision.action == 'BUY':
-                    self._open_or_add_position(token_symbol, decision, current_price)
-                else:
-                    self._close_or_reduce_position(token_symbol, decision, current_price)
-                
-                # Log gas savings
-                gas_savings = result.get('gas_savings_percent', 0)
-                logger.info(
-                    f"[PHASE 6B] Trade executed successfully! "
-                    f"Transaction: {tx_id[:8] if tx_id else 'N/A'}... "
-                    f"Gas savings: {gas_savings:.2f}%"
-                )
-                
-                # Create paper trade record
-                self._record_paper_trade(
-                    decision, token_symbol, current_price,
-                    metadata={
-                        'tx_manager_used': True,
-                        'gas_savings_percent': gas_savings,
-                        'transaction_id': tx_id
-                    }
-                )
-            else:
-                logger.error(f"[PHASE 6B] Trade failed: {result.get('error')}")
-                self.failed_trades += 1
-                
-        except Exception as e:
-            logger.error(f"[PHASE 6B] Transaction Manager execution failed: {e}", exc_info=True)
-            self.failed_trades += 1
-            # Fall back to regular execution
-            self._execute_trade(decision, token_symbol, current_price)
-    
-    def _execute_trade(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
-        """Original trade execution (without Transaction Manager)."""
-        try:
-            # Record paper trade
-            self._record_paper_trade(decision, token_symbol, current_price)
-            
-            # Update position
-            if decision.action == 'BUY':
-                self._open_or_add_position(token_symbol, decision, current_price)
-            else:
-                self._close_or_reduce_position(token_symbol, decision, current_price)
-            
-            # Update metrics
-            self.trades_executed += 1
-            self.successful_trades += 1
-            self.last_trade_time = datetime.now()
-            
-            logger.info(
-                f"[TRADE] Executed: {decision.action} {token_symbol} "
-                f"Size: ${decision.position_size_usd:.2f} "
-                f"Intel: {self.intel_level} "
-                f"Confidence: {decision.overall_confidence:.1f}%"
-            )
-            
-        except Exception as e:
-            logger.error(f"[ERROR] Trade execution failed: {e}", exc_info=True)
-            self.failed_trades += 1
-    
-    def _record_paper_trade(self, decision: TradingDecision, token_symbol: str, 
-                           current_price: Decimal, metadata: Optional[Dict] = None):
-        """Record trade in database."""
-        trade_metadata = {
-            'intel_level': self.intel_level,
-            'confidence': float(decision.overall_confidence),
-            'risk_score': float(decision.risk_score)
+    def _initialize_price_tracking(self):
+        """Initialize price tracking for simulated market data."""
+        # Start with some base prices for common tokens
+        self.current_prices = {
+            'WETH': Decimal('2500.00'),
+            'USDC': Decimal('1.00'),
+            'USDT': Decimal('1.00'),
+            'DAI': Decimal('1.00'),
+            'WBTC': Decimal('45000.00'),
+            'LINK': Decimal('15.00'),
+            'UNI': Decimal('6.50'),
+            'AAVE': Decimal('95.00'),
+            'MATIC': Decimal('0.85'),
+            'ARB': Decimal('1.20'),
         }
-        if metadata:
-            trade_metadata.update(metadata)
         
-        trade = PaperTrade.objects.create(
-            account=self.account,
-            session=self.session,
-            trade_type=decision.action,
-            token_in_address='0x' + '0' * 40 if decision.action == 'BUY' else decision.token_address,
-            token_in_symbol='USDC' if decision.action == 'BUY' else token_symbol,
-            token_out_address=decision.token_address if decision.action == 'BUY' else '0x' + '0' * 40,
-            token_out_symbol=token_symbol if decision.action == 'BUY' else 'USDC',
-            amount_in=decision.position_size_usd,
-            amount_out=decision.position_size_usd / current_price if decision.action == 'BUY' else decision.position_size_usd,
-            amount_in_usd=decision.position_size_usd,
-            amount_out_usd=decision.position_size_usd,
-            strategy_name=f"INTEL_{self.intel_level}",
-            strategy_lane=decision.execution_mode,
-            gas_price_gwei=decision.max_gas_price_gwei,
-            mev_protection_used=decision.use_private_relay,
-            slippage_percent=Decimal('1'),
-            status='SUCCESS',
-            execution_time_ms=int(decision.processing_time_ms),
-            metadata=trade_metadata
-        )
+        # Initialize price history
+        for symbol, price in self.current_prices.items():
+            self.price_history[symbol] = [price]
         
-        # Send trade notification
-        self._send_trade_notification(trade, decision)
+        logger.info(f"[MARKET] Initialized tracking for {len(self.current_prices)} tokens")
     
-    def _can_trade(self) -> bool:
-        """Check if enough time has passed since last trade."""
-        if not self.last_trade_time:
-            return True
-        
-        time_since_last = (datetime.now() - self.last_trade_time).seconds
-        return time_since_last >= self.min_trade_interval
-    
-    def _open_or_add_position(self, token_symbol: str, decision: TradingDecision, price: Decimal):
-        """Open new position or add to existing."""
-        quantity = decision.position_size_usd / price
-        
-        if token_symbol in self.positions:
-            # Add to existing position
-            position = self.positions[token_symbol]
-            position.quantity += quantity
-            position.total_invested_usd += decision.position_size_usd
-            position.average_entry_price_usd = position.total_invested_usd / position.quantity
-            position.save()
-        else:
-            # Create new position
-            position = PaperPosition.objects.create(
-                account=self.account,
-                token_address=decision.token_address,
-                token_symbol=token_symbol,
-                quantity=quantity,
-                entry_price_usd=price,
-                average_entry_price_usd=price,
-                total_invested_usd=decision.position_size_usd,
-                current_price_usd=price,
-                current_value_usd=decision.position_size_usd,
-                is_open=True
-            )
-            self.positions[token_symbol] = position
-    
-    def _close_or_reduce_position(self, token_symbol: str, decision: TradingDecision, price: Decimal):
-        """Close or reduce existing position."""
-        if token_symbol not in self.positions:
-            logger.warning(f"[POSITION] No position to sell for {token_symbol}")
-            return
-        
-        position = self.positions[token_symbol]
-        
-        # Calculate P&L
-        exit_value = position.quantity * price
-        pnl = exit_value - position.total_invested_usd
-        
-        # Update position
-        position.realized_pnl_usd = pnl
-        position.is_open = False
-        position.closed_at = timezone.now()
-        position.save()
-        
-        # Update total P&L
-        self.total_pnl += pnl
-        
-        # Remove from active positions
-        del self.positions[token_symbol]
-        
-        logger.info(f"[POSITION] Closed {token_symbol}: P&L ${pnl:.2f}")
-    
-    def _update_prices(self):
-        """Update simulated market prices."""
-        for token_symbol in self.price_history.keys():
-            prices = self.price_history[token_symbol]
-            last_price = prices[-1]
-            
-            # Determine trend
-            if len(prices) >= 2:
-                trend = 1 if prices[-1] > prices[-2] else -1
-            else:
-                trend = random.choice([-1, 1])
-            
-            # Continue trend with probability
-            if random.random() < self.trend_probability:
-                change_direction = trend
-            else:
-                change_direction = -trend
-            
-            # Calculate price change
-            change_percent = Decimal(str(random.uniform(0, float(self.price_volatility))))
-            change_amount = last_price * change_percent * change_direction
-            
-            # New price
-            new_price = max(last_price + change_amount, Decimal('0.01'))
-            
-            # Update history
-            prices.append(new_price)
-            if len(prices) > self.max_history_length:
-                prices.pop(0)
-    
-    def _calculate_recent_success_rate(self) -> float:
-        """Calculate recent trading success rate."""
-        if self.trades_executed == 0:
-            return 50.0
-        
-        return (self.successful_trades / self.trades_executed) * 100
-    
-    def _update_performance_metrics(self):
-        """Update and save performance metrics."""
-        try:
-            # Calculate average gas savings if using Transaction Manager
-            avg_gas_savings = (
-                self.total_gas_saved / self.successful_trades 
-                if self.successful_trades > 0 and self.use_transaction_manager 
-                else Decimal('0')
-            )
-            
-            # Store Phase 6B metrics in metadata field (JSONField that exists in the model)
-            metadata = {}
-            if self.use_transaction_manager:
-                metadata.update({
-                    'avg_gas_savings_percent': float(avg_gas_savings),
-                    'tx_manager_used': True,
-                    'pending_transactions': len(self.pending_transactions)
-                })
-            
-            metrics, created = PaperPerformanceMetrics.objects.update_or_create(
-                session=self.session,
-                defaults={
-                    'total_trades': self.trades_executed,
-                    'winning_trades': self.successful_trades,
-                    'losing_trades': self.failed_trades,
-                    'win_rate': Decimal(str(self._calculate_recent_success_rate())),
-                    'total_pnl_usd': self.total_pnl,
-                    'period_start': self.session.started_at,
-                    'period_end': timezone.now()
-                    # Removed metrics_json - field doesn't exist
-                    # If there's a metadata or custom field in the model, we could use that
-                }
-            )
-            
-            # Send performance update via WebSocket
-            if self.trades_executed % 10 == 0:
-                self._send_performance_update(metrics)
-                
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to update metrics: {e}", exc_info=True)
-    
-    def _log_thought(self, action: str, reasoning: str, confidence: float,
-                    decision_type: str = "ANALYSIS", metadata: Optional[Dict] = None):
-        """Log AI thought process to database and WebSocket."""
-        try:
-            # Map confidence to confidence level
-            if confidence >= 80:
-                confidence_level = 'VERY_HIGH'
-            elif confidence >= 60:
-                confidence_level = 'HIGH'
-            elif confidence >= 40:
-                confidence_level = 'MEDIUM'
-            elif confidence >= 20:
-                confidence_level = 'LOW'
-            else:
-                confidence_level = 'VERY_LOW'
-            
-            # Extract scores from metadata or use defaults
-            risk_score = Decimal('0')
-            opportunity_score = Decimal('0')
-            if metadata:
-                risk_score = Decimal(str(metadata.get('risk_score', 0)))
-                opportunity_score = Decimal(str(metadata.get('opportunity_score', 0)))
-            
-            thought_log = PaperAIThoughtLog.objects.create(
-                account=self.account,
-                decision_type=decision_type,
-                confidence_level=confidence_level,
-                confidence_percent=Decimal(str(confidence)),
-                risk_score=risk_score,
-                opportunity_score=opportunity_score,
-                primary_reasoning=reasoning[:1000],
-                market_data=metadata or {},
-                strategy_name=f"INTEL_{self.intel_level}"
-            )
-            
-            logger.debug(f"[THOUGHT] Logged: {action} ({confidence:.1f}% confidence)")
-            
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to log thought: {e}", exc_info=True)
-    
-    def _send_trade_notification(self, trade: PaperTrade, decision: TradingDecision):
-        """Send trade notification via WebSocket."""
-        try:
-            # Temporarily disabled until WebSocket service is fixed
-            pass
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to send trade notification: {e}")
-
     def _send_bot_status_update(self, status: str):
         """Send bot status update via WebSocket."""
         try:
-            # Temporarily disabled until WebSocket service is fixed
-            pass
+            message = {
+                'type': 'bot_status',
+                'status': status,
+                'intel_level': self.intel_level,
+                'account_id': str(self.account.account_id),
+                'account_name': self.account.name,
+                'balance': float(self.account.current_balance_usd),
+                'positions': len(self.positions),
+                'session_id': str(self.session.session_id) if self.session else None,
+                'timestamp': timezone.now().isoformat()
+            }
+            
+            async_to_sync(self.websocket_service.send_bot_update)(
+                account_id=str(self.account.account_id),
+                update_type='status',
+                data=message
+            )
+            
         except Exception as e:
             logger.error(f"[ERROR] Failed to send status update: {e}")
-
-    def _send_performance_update(self, metrics: PaperPerformanceMetrics):
-        """Send performance update via WebSocket."""
+    
+    def run(self):
+        """
+        Main bot execution loop.
+        
+        Continuously monitors markets and executes trades based on
+        intelligence level and market conditions.
+        """
+        logger.info("[START] Bot starting main execution loop")
+        self.running = True
+        
+        # Setup signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        
+        tick_count = 0
+        
         try:
-            # Temporarily disabled until WebSocket service is fixed
-            pass
+            while self.running:
+                tick_count += 1
+                logger.info(f"\n{'='*60}")
+                logger.info(f"[TICK] Market tick #{tick_count}")
+                
+                # ============================================================
+                # UPDATE MARKET PRICES
+                # ============================================================
+                self._update_market_prices()
+                
+                # ============================================================
+                # ANALYZE MARKETS
+                # ============================================================
+                opportunities = self._scan_for_opportunities()
+                
+                # ============================================================
+                # MAKE TRADING DECISIONS
+                # ============================================================
+                if opportunities:
+                    self._process_opportunities(opportunities)
+                
+                # ============================================================
+                # UPDATE POSITIONS
+                # ============================================================
+                self._update_position_values()
+                
+                # ============================================================
+                # CHECK STOP LOSSES / TAKE PROFITS
+                # ============================================================
+                self._check_exit_conditions()
+                
+                # ============================================================
+                # SEND PERIODIC UPDATES
+                # ============================================================
+                if tick_count % 5 == 0:  # Every 5 ticks
+                    self._send_performance_update()
+                
+                # ============================================================
+                # SLEEP UNTIL NEXT TICK
+                # ============================================================
+                time.sleep(self.tick_interval)
+                
+        except KeyboardInterrupt:
+            logger.info("[STOP] Received interrupt signal")
+        except Exception as e:
+            logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
+        finally:
+            self.cleanup()
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully."""
+        logger.info(f"[SIGNAL] Received signal {signum}")
+        self.running = False
+    
+    def _update_market_prices(self):
+        """Simulate market price movements."""
+        for symbol in self.current_prices:
+            old_price = self.current_prices[symbol]
+            
+            # Determine price movement
+            if random.random() < self.trend_probability and len(self.price_history[symbol]) > 1:
+                # Continue trend
+                last_change = self.price_history[symbol][-1] - self.price_history[symbol][-2]
+                change_direction = 1 if last_change >= 0 else -1
+            else:
+                # Random movement
+                change_direction = random.choice([-1, 1])
+            
+            # Calculate price change (0-5% based on volatility)
+            change_percent = Decimal(str(random.uniform(0, float(self.price_volatility))))
+            price_change = old_price * change_percent * change_direction
+            
+            # Update price
+            new_price = max(Decimal('0.01'), old_price + price_change)
+            self.current_prices[symbol] = new_price
+            
+            # Update history
+            self.price_history[symbol].append(new_price)
+            if len(self.price_history[symbol]) > self.max_history_length:
+                self.price_history[symbol].pop(0)
+            
+            # Log significant changes
+            if abs(price_change / old_price) > Decimal('0.02'):
+                logger.info(f"[PRICE] {symbol}: ${old_price:.2f} -> ${new_price:.2f} "
+                          f"({change_percent*100*change_direction:+.2f}%)")
+    
+    def _scan_for_opportunities(self) -> List[Dict[str, Any]]:
+        """
+        Scan markets for trading opportunities.
+        
+        Returns:
+            List of potential opportunities
+        """
+        opportunities = []
+        
+        for symbol, price in self.current_prices.items():
+            # Skip stablecoins
+            if symbol in ['USDC', 'USDT', 'DAI']:
+                continue
+            
+            # Get price history
+            history = self.price_history.get(symbol, [])
+            if len(history) < 3:
+                continue
+            
+            # Simple momentum analysis
+            recent_change = (history[-1] - history[-3]) / history[-3]
+            
+            # Check for opportunities based on intel level
+            if self.intel_level <= 3:
+                # Ultra cautious: Only strong trends with low volatility
+                if abs(recent_change) > Decimal('0.03') and self._calculate_volatility(symbol) < Decimal('0.02'):
+                    opportunities.append({
+                        'symbol': symbol,
+                        'price': price,
+                        'signal': 'BUY' if recent_change > 0 else 'SELL',
+                        'strength': float(abs(recent_change) * 100),
+                        'reason': 'Strong trend with low volatility'
+                    })
+            elif self.intel_level <= 6:
+                # Balanced: Moderate trends
+                if abs(recent_change) > Decimal('0.02'):
+                    opportunities.append({
+                        'symbol': symbol,
+                        'price': price,
+                        'signal': 'BUY' if recent_change > 0 else 'SELL',
+                        'strength': float(abs(recent_change) * 100),
+                        'reason': 'Moderate trend detected'
+                    })
+            else:
+                # Aggressive: Any movement
+                if abs(recent_change) > Decimal('0.01'):
+                    opportunities.append({
+                        'symbol': symbol,
+                        'price': price,
+                        'signal': 'BUY' if recent_change > 0 else 'SELL',
+                        'strength': float(abs(recent_change) * 100),
+                        'reason': 'Market movement detected'
+                    })
+        
+        return opportunities
+    
+    def _calculate_volatility(self, symbol: str) -> Decimal:
+        """Calculate volatility for a symbol."""
+        history = self.price_history.get(symbol, [])
+        if len(history) < 2:
+            return Decimal('0')
+        
+        # Simple volatility: average of absolute changes
+        changes = []
+        for i in range(1, len(history)):
+            change = abs((history[i] - history[i-1]) / history[i-1])
+            changes.append(change)
+        
+        return sum(changes) / len(changes) if changes else Decimal('0')
+    
+    def _process_opportunities(self, opportunities: List[Dict[str, Any]]):
+        """Process trading opportunities and execute trades."""
+        # Check if we can trade (respect minimum interval)
+        if self.last_trade_time:
+            time_since_last = (timezone.now() - self.last_trade_time).seconds
+            if time_since_last < self.min_trade_interval:
+                logger.info(f"[WAIT] Waiting {self.min_trade_interval - time_since_last}s before next trade")
+                return
+        
+        # Sort opportunities by strength
+        opportunities.sort(key=lambda x: x['strength'], reverse=True)
+        
+        # Process top opportunity
+        for opp in opportunities[:1]:  # Only take best opportunity
+            self._execute_opportunity(opp)
+            break
+    
+    def _execute_opportunity(self, opportunity: Dict[str, Any]):
+        """Execute a trading opportunity."""
+        symbol = opportunity['symbol']
+        signal = opportunity['signal']
+        price = opportunity['price']
+        
+        try:
+            # Log thought process
+            self._log_thought(
+                f"Analyzing {symbol} opportunity: {signal} signal with "
+                f"{opportunity['strength']:.1f}% strength. {opportunity['reason']}",
+                confidence=50 + opportunity['strength'],
+                decision_type='ANALYSIS'
+            )
+            
+            # Determine position size based on intel level
+            max_position_pct = 5 + (self.intel_level * 2)  # 5-25%
+            position_size_pct = min(max_position_pct, opportunity['strength'])
+            position_size_usd = self.account.current_balance_usd * Decimal(position_size_pct) / 100
+            
+            # Check if we have an existing position
+            existing_position = self.positions.get(symbol)
+            
+            if signal == 'BUY':
+                if existing_position:
+                    # Already have position
+                    self._log_thought(
+                        f"Already holding {symbol} position. Skipping additional buy.",
+                        confidence=80,
+                        decision_type='SKIP'
+                    )
+                    return
+                
+                # Execute buy
+                self._execute_buy(symbol, price, position_size_usd)
+                
+            elif signal == 'SELL':
+                if not existing_position:
+                    # No position to sell
+                    self._log_thought(
+                        f"No {symbol} position to sell. Skipping.",
+                        confidence=80,
+                        decision_type='SKIP'
+                    )
+                    return
+                
+                # Execute sell
+                self._execute_sell(symbol, price, existing_position)
+                
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to execute opportunity: {e}")
+    
+    def _execute_buy(self, symbol: str, price: Decimal, amount_usd: Decimal):
+        """Execute a buy trade."""
+        try:
+            # Calculate quantities
+            quantity = amount_usd / price
+            gas_cost = Decimal('5.00')  # Simulated gas cost
+            
+            # Check balance
+            if amount_usd + gas_cost > self.account.current_balance_usd:
+                logger.warning(f"[INSUFFICIENT] Not enough balance for {symbol} buy")
+                return
+            
+            # Create trade
+            trade = PaperTrade.objects.create(
+                account=self.account,
+                session=self.session,
+                trade_type='buy',
+                token_in_address='0x' + '0' * 40,  # Mock ETH address
+                token_in_symbol='ETH',
+                token_out_address='0x' + '1' * 40,  # Mock token address
+                token_out_symbol=symbol,
+                amount_in=amount_usd,
+                amount_in_usd=amount_usd,
+                expected_amount_out=quantity,
+                actual_amount_out=quantity,
+                simulated_gas_price_gwei=Decimal('30'),
+                simulated_gas_used=150000,
+                simulated_gas_cost_usd=gas_cost,
+                simulated_slippage_percent=Decimal('0.5'),
+                status='completed',
+                executed_at=timezone.now(),
+                execution_time_ms=random.randint(100, 500),
+                mock_tx_hash='0x' + os.urandom(32).hex(),
+                strategy_name=f'Intel_{self.intel_level}'
+            )
+            
+            # Create or update position
+            position, created = PaperPosition.objects.get_or_create(
+                account=self.account,
+                token_symbol=symbol,
+                defaults={
+                    'token_address': '0x' + '1' * 40,
+                    'quantity': quantity,
+                    'average_entry_price_usd': price,
+                    'total_invested_usd': amount_usd,
+                    'current_price_usd': price,
+                    'current_value_usd': amount_usd,
+                }
+            )
+            
+            if not created:
+                # Update existing position (averaging)
+                total_quantity = position.quantity + quantity
+                total_invested = position.total_invested_usd + amount_usd
+                position.quantity = total_quantity
+                position.average_entry_price_usd = total_invested / total_quantity
+                position.total_invested_usd = total_invested
+                position.save()
+            
+            # Update account balance
+            self.account.current_balance_usd -= (amount_usd + gas_cost)
+            self.account.total_fees_paid_usd += gas_cost
+            self.account.total_trades += 1
+            self.account.successful_trades += 1
+            self.account.save()
+            
+            # Update local tracking
+            self.positions[symbol] = position
+            self.last_trade_time = timezone.now()
+            self.trades_executed += 1
+            self.successful_trades += 1
+            
+            # Log success
+            self._log_thought(
+                f"Successfully bought {quantity:.4f} {symbol} at ${price:.2f} "
+                f"for ${amount_usd:.2f}. Gas cost: ${gas_cost:.2f}",
+                confidence=90,
+                decision_type='EXECUTE'
+            )
+            
+            # Send WebSocket update
+            self._send_trade_update(trade)
+            
+            logger.info(f"[TRADE] BUY {quantity:.4f} {symbol} @ ${price:.2f}")
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Buy execution failed: {e}")
+            self.failed_trades += 1
+    
+    def _execute_sell(self, symbol: str, price: Decimal, position: PaperPosition):
+        """Execute a sell trade."""
+        try:
+            # Calculate values
+            sell_value = position.quantity * price
+            pnl = sell_value - position.total_invested_usd
+            gas_cost = Decimal('5.00')
+            
+            # Create trade
+            trade = PaperTrade.objects.create(
+                account=self.account,
+                session=self.session,
+                trade_type='sell',
+                token_in_address='0x' + '1' * 40,
+                token_in_symbol=symbol,
+                token_out_address='0x' + '0' * 40,
+                token_out_symbol='ETH',
+                amount_in=position.quantity,
+                amount_in_usd=sell_value,
+                expected_amount_out=sell_value,
+                actual_amount_out=sell_value,
+                simulated_gas_price_gwei=Decimal('30'),
+                simulated_gas_used=150000,
+                simulated_gas_cost_usd=gas_cost,
+                simulated_slippage_percent=Decimal('0.5'),
+                status='completed',
+                executed_at=timezone.now(),
+                execution_time_ms=random.randint(100, 500),
+                mock_tx_hash='0x' + os.urandom(32).hex(),
+                strategy_name=f'Intel_{self.intel_level}',
+                pnl_usd=pnl
+            )
+            
+            # Update position
+            position.realized_pnl_usd += pnl
+            position.is_active = False
+            position.closed_at = timezone.now()
+            position.save()
+            
+            # Update account
+            self.account.current_balance_usd += (sell_value - gas_cost)
+            self.account.total_pnl_usd += pnl
+            self.account.total_fees_paid_usd += gas_cost
+            self.account.total_trades += 1
+            self.account.successful_trades += 1
+            self.account.save()
+            
+            # Update tracking
+            del self.positions[symbol]
+            self.last_trade_time = timezone.now()
+            self.trades_executed += 1
+            self.successful_trades += 1
+            self.total_pnl += pnl
+            
+            # Log success
+            self._log_thought(
+                f"Successfully sold {position.quantity:.4f} {symbol} at ${price:.2f} "
+                f"for ${sell_value:.2f}. PnL: ${pnl:+.2f} "
+                f"({'profit' if pnl > 0 else 'loss'})",
+                confidence=90,
+                decision_type='EXECUTE'
+            )
+            
+            # Send update
+            self._send_trade_update(trade)
+            
+            logger.info(f"[TRADE] SELL {position.quantity:.4f} {symbol} @ ${price:.2f} "
+                       f"(PnL: ${pnl:+.2f})")
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Sell execution failed: {e}")
+            self.failed_trades += 1
+    
+    def _update_position_values(self):
+        """Update current values of all positions."""
+        for symbol, position in self.positions.items():
+            if symbol in self.current_prices:
+                old_value = position.current_value_usd
+                new_price = self.current_prices[symbol]
+                new_value = position.quantity * new_price
+                unrealized_pnl = new_value - position.total_invested_usd
+                
+                # Update position
+                position.current_price_usd = new_price
+                position.current_value_usd = new_value
+                position.unrealized_pnl_usd = unrealized_pnl
+                position.save()
+                
+                # Log significant changes
+                if abs(new_value - old_value) > Decimal('50'):
+                    logger.info(f"[POSITION] {symbol}: ${old_value:.2f} -> ${new_value:.2f} "
+                              f"(Unrealized PnL: ${unrealized_pnl:+.2f})")
+    
+    def _check_exit_conditions(self):
+        """Check stop loss and take profit conditions."""
+        if not self.strategy_config:
+            return
+        
+        config = self.strategy_config.config
+        
+        for symbol, position in list(self.positions.items()):
+            current_price = self.current_prices.get(symbol)
+            if not current_price:
+                continue
+            
+            # Calculate percentage change
+            pct_change = ((current_price - position.average_entry_price_usd) / 
+                         position.average_entry_price_usd) * 100
+            
+            # Check stop loss
+            if config.get('stop_loss_enabled') and pct_change <= -config.get('stop_loss_percent', 5):
+                logger.info(f"[STOP LOSS] Triggered for {symbol} at {pct_change:.2f}%")
+                self._log_thought(
+                    f"Stop loss triggered for {symbol}. "
+                    f"Price dropped {abs(pct_change):.2f}% from entry.",
+                    confidence=100,
+                    decision_type='RISK_MANAGEMENT'
+                )
+                self._execute_sell(symbol, current_price, position)
+            
+            # Check take profit
+            elif config.get('take_profit_enabled') and pct_change >= config.get('take_profit_percent', 10):
+                logger.info(f"[TAKE PROFIT] Triggered for {symbol} at {pct_change:.2f}%")
+                self._log_thought(
+                    f"Take profit triggered for {symbol}. "
+                    f"Price increased {pct_change:.2f}% from entry.",
+                    confidence=100,
+                    decision_type='PROFIT_TAKING'
+                )
+                self._execute_sell(symbol, current_price, position)
+    
+    def _log_thought(self, thought: str, confidence: float = 50.0, decision_type: str = 'ANALYSIS'):
+        """Log AI thought process."""
+        try:
+            PaperAIThoughtLog.objects.create(
+                session=self.session,
+                thought_type=decision_type,
+                thought_content=thought,
+                confidence_level=Decimal(str(confidence)),
+                intel_level_used=self.intel_level,
+                token_context={'prices': {k: str(v) for k, v in self.current_prices.items()}}
+            )
+            
+            # Also send via WebSocket
+            async_to_sync(self.websocket_service.send_bot_update)(
+                account_id=str(self.account.account_id),
+                update_type='thought',
+                data={
+                    'thought': thought,
+                    'confidence': confidence,
+                    'type': decision_type,
+                    'intel_level': self.intel_level,
+                    'timestamp': timezone.now().isoformat()
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to log thought: {e}")
+    
+    def _send_trade_update(self, trade: PaperTrade):
+        """Send trade update via WebSocket."""
+        try:
+            async_to_sync(self.websocket_service.send_trade_update)(
+                account_id=str(self.account.account_id),
+                trade_data={
+                    'trade_id': str(trade.trade_id),
+                    'type': trade.trade_type,
+                    'symbol': trade.token_out_symbol if trade.trade_type == 'buy' else trade.token_in_symbol,
+                    'amount': float(trade.amount_in_usd),
+                    'price': float(self.current_prices.get(
+                        trade.token_out_symbol if trade.trade_type == 'buy' else trade.token_in_symbol,
+                        0
+                    )),
+                    'pnl': float(trade.pnl_usd) if trade.pnl_usd else 0,
+                    'timestamp': trade.executed_at.isoformat() if trade.executed_at else timezone.now().isoformat()
+                }
+            )
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to send trade update: {e}")
+    
+    def _send_performance_update(self):
+        """Send periodic performance update."""
+        try:
+            # Calculate metrics
+            total_value = self.account.current_balance_usd
+            for position in self.positions.values():
+                total_value += position.current_value_usd
+            
+            metrics = {
+                'account_balance': float(self.account.current_balance_usd),
+                'total_value': float(total_value),
+                'total_pnl': float(self.account.total_pnl_usd),
+                'total_trades': self.trades_executed,
+                'successful_trades': self.successful_trades,
+                'failed_trades': self.failed_trades,
+                'win_rate': (self.successful_trades / self.trades_executed * 100) if self.trades_executed > 0 else 0,
+                'active_positions': len(self.positions),
+                'intel_level': self.intel_level,
+                'session_id': str(self.session.session_id) if self.session else None,
+                'timestamp': timezone.now().isoformat()
+            }
+            
+            # Send via WebSocket
+            async_to_sync(self.websocket_service.send_bot_update)(
+                account_id=str(self.account.account_id),
+                update_type='performance',
+                data=metrics
+            )
+            
+            # Log performance
+            logger.info(f"[PERFORMANCE] Balance: ${metrics['account_balance']:.2f}, "
+                       f"Total Value: ${metrics['total_value']:.2f}, "
+                       f"PnL: ${metrics['total_pnl']:+.2f}, "
+                       f"Win Rate: {metrics['win_rate']:.1f}%")
+            
         except Exception as e:
             logger.error(f"[ERROR] Failed to send performance update: {e}")
     
-    def _handle_shutdown(self, signum, frame):
-        """Handle shutdown signals gracefully."""
-        logger.info("\n[STOP] Shutdown signal received...")
-        self.running = False
+    def _calculate_recent_success_rate(self) -> float:
+        """Calculate recent success rate."""
+        if self.trades_executed == 0:
+            return 0.0
+        return (self.successful_trades / self.trades_executed) * 100
     
-    def _cleanup(self):
-        """Cleanup resources and close session."""
+    def cleanup(self):
+        """Clean up resources and save final state."""
         try:
-            # Update session status
+            logger.info("[CLEANUP] Shutting down bot...")
+            
+            # ================================================================
+            # CLOSE TRADING SESSION
+            # ================================================================
             if self.session:
-                self.session.status = 'STOPPED'
                 self.session.ended_at = timezone.now()
-                self.session.ending_balance_usd = self.account.current_balance_usd
+                self.session.final_balance_usd = self.account.current_balance_usd
+                self.session.total_pnl_usd = self.account.total_pnl_usd
+                self.session.is_active = False
                 self.session.save()
-                logger.info(f"[SESSION] Session {self.session.session_id} ended")
+                logger.info(f"[SESSION] Closed session {self.session.session_id}")
             
-            # Update final position values
-            for token_symbol, position in self.positions.items():
-                try:
-                    if token_symbol in self.price_history:
-                        current_price = self.price_history[token_symbol][-1]
-                        position.current_price_usd = current_price
-                        position.current_value_usd = position.quantity * current_price
-                        position.unrealized_pnl_usd = (
-                            position.current_value_usd - position.total_invested_usd
-                        )
-                        position.save()
-                        logger.info(
-                            f"[POSITION] Final update for {token_symbol}: "
-                            f"${current_price:.2f}"
-                        )
-                except Exception as e:
-                    logger.error(f"[ERROR] Failed to update position {token_symbol}: {e}")
-            
-            # Phase 6B: Log final gas savings
-            if self.use_transaction_manager and self.successful_trades > 0:
-                avg_gas_savings = self.total_gas_saved / self.successful_trades
-                logger.info(
-                    f"[PHASE 6B] Final gas savings: "
-                    f"Total: {self.total_gas_saved:.2f}%, "
-                    f"Average: {avg_gas_savings:.2f}%"
+            # ================================================================
+            # SAVE PERFORMANCE METRICS
+            # ================================================================
+            if self.session and self.trades_executed > 0:
+                PaperPerformanceMetrics.objects.create(
+                    session=self.session,
+                    period_start=self.session.started_at,
+                    period_end=timezone.now(),
+                    total_trades=self.trades_executed,
+                    winning_trades=self.successful_trades,
+                    losing_trades=self.failed_trades,
+                    win_rate=Decimal(str(self._calculate_recent_success_rate())),
+                    total_pnl_usd=self.total_pnl,
+                    total_pnl_percent=Decimal(str((self.total_pnl / self.account.initial_balance_usd) * 100))
+                    if self.account.initial_balance_usd > 0 else Decimal('0')
                 )
+                logger.info("[METRICS] Saved performance metrics")
             
-            # Log final thought
+            # ================================================================
+            # LOG FINAL THOUGHT
+            # ================================================================
             self._log_thought(
-                action="SHUTDOWN",
-                reasoning=f"Bot shutting down. Intel Level: {self.intel_level}. "
-                         f"Session summary: Trades: {self.trades_executed}, "
-                         f"Success rate: {self._calculate_recent_success_rate():.1f}%, "
-                         f"Total P&L: ${self.total_pnl:.2f}"
-                         f"{f', Avg Gas Saved: {(self.total_gas_saved/self.successful_trades if self.successful_trades > 0 else 0):.2f}%' if self.use_transaction_manager else ''}",
+                f"Bot shutting down. Intel Level: {self.intel_level}. "
+                f"Session summary: Trades: {self.trades_executed}, "
+                f"Success rate: {self._calculate_recent_success_rate():.1f}%, "
+                f"Total P&L: ${self.total_pnl:.2f}",
                 confidence=100,
                 decision_type="SYSTEM"
             )
             
-            # Send shutdown notification
+            # ================================================================
+            # SEND SHUTDOWN NOTIFICATION
+            # ================================================================
             self._send_bot_status_update('stopped')
             
             logger.info("[OK] Cleanup completed")
@@ -1052,11 +999,21 @@ class EnhancedPaperTradingBot:
 
 
 def main():
-    """Main entry point for the enhanced paper trading bot."""
+    """
+    Main entry point for the enhanced paper trading bot.
+    
+    Can be run directly or via Django management command.
+    """
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Enhanced Paper Trading Bot with Intel Slider System and Phase 6B'
+        description='Enhanced Paper Trading Bot with Intel Slider System'
+    )
+    parser.add_argument(
+        '--account-id',
+        type=str,  # Changed to str to handle UUIDs
+        default='1',
+        help='Paper trading account ID to use (can be UUID or numeric)'
     )
     parser.add_argument(
         '--intel-level',
@@ -1065,27 +1022,13 @@ def main():
         choices=range(1, 11),
         help='Intelligence level (1-10): 1-3=Cautious, 4-6=Balanced, 7-9=Aggressive, 10=Autonomous'
     )
-    parser.add_argument(
-        '--use-tx-manager',
-        action='store_true',
-        default=True,
-        help='Use Phase 6B Transaction Manager for gas optimization (default: True)'
-    )
-    parser.add_argument(
-        '--no-tx-manager',
-        action='store_true',
-        help='Disable Phase 6B Transaction Manager'
-    )
     
     args = parser.parse_args()
     
-    # Determine if Transaction Manager should be used
-    use_tx_manager = not args.no_tx_manager
-    
-    # Create and run bot (no account_id needed - uses single account)
+    # Create and run bot
     bot = EnhancedPaperTradingBot(
-        intel_level=args.intel_level,
-        use_transaction_manager=use_tx_manager
+        account_id=args.account_id,
+        intel_level=args.intel_level
     )
     
     if bot.initialize():
