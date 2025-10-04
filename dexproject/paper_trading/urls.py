@@ -112,3 +112,4 @@ urlpatterns = [
     # GET: /paper-trading/api/bot/status/
     path('api/bot/status/', api_views.api_bot_status, name='api_bot_status'),
 ]
+
