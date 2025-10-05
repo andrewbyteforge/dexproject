@@ -700,24 +700,55 @@ def safe_decimal(value: Any, default: Union[int, float, str] = 0) -> Decimal:
         return Decimal(str(default))
 
 
-def format_currency(amount: Union[Decimal, float, int], currency: str = "USD", decimals: int = 2) -> str:
+def format_currency(value: Decimal, symbol: str = "$") -> str:
     """
-    Format currency amount for display.
+    Format a decimal value as currency.
     
     Args:
-        amount: Amount to format
-        currency: Currency symbol
-        decimals: Number of decimal places
+        value: Decimal value to format
+        symbol: Currency symbol
         
     Returns:
         Formatted currency string
     """
     try:
-        amount_decimal = safe_decimal(amount)
-        formatted = f"{amount_decimal:.{decimals}f}"
-        return f"{formatted} {currency}"
-    except:
-        return f"0.{'0' * decimals} {currency}"
+        from decimal import Decimal
+        
+        if value is None:
+            return f"{symbol}0.00"
+        
+        if not isinstance(value, Decimal):
+            value = Decimal(str(value))
+        
+        # Format with commas and 2 decimal places
+        return f"{symbol}{value:,.2f}"
+        
+    except Exception:
+        return f"{symbol}0.00"
+
+def safe_decimal(value: Any, default: Decimal = Decimal('0')) -> Decimal:
+    """
+    Safely convert a value to Decimal.
+    
+    Args:
+        value: Value to convert
+        default: Default value if conversion fails
+        
+    Returns:
+        Decimal value
+    """
+    from decimal import Decimal
+    
+    if value is None:
+        return default
+    
+    if isinstance(value, Decimal):
+        return value
+    
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return default
 
 
 def calculate_slippage(expected: Union[Decimal, float], actual: Union[Decimal, float]) -> float:
@@ -1043,3 +1074,35 @@ def get_default_testnet_configs() -> Dict[int, ChainConfig]:
     )
     
     return configs
+
+
+
+
+
+def format_percentage(value: Decimal, decimals: int = 2) -> str:
+    """
+    Format a decimal value as a percentage string.
+    
+    Args:
+        value: Decimal value to format (e.g., 0.15 for 15%)
+        decimals: Number of decimal places
+        
+    Returns:
+        Formatted percentage string
+    """
+    try:
+        from decimal import Decimal
+        
+        if value is None:
+            return "0.00%"
+        
+        # Convert to Decimal if not already
+        if not isinstance(value, Decimal):
+            value = Decimal(str(value))
+        
+        # Multiply by 100 for percentage and format
+        percentage = value * 100
+        return f"{percentage:.{decimals}f}%"
+        
+    except Exception:
+        return "0.00%"

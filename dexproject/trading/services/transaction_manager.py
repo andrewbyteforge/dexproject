@@ -2,10 +2,17 @@
 Transaction Manager Service - Phase 6B Core Component
 
 Central coordinator for all trading transaction operations, integrating gas optimization,
-DEX routing, and real-time status tracking into a unified transaction lifecycle manager.
+DEX routing, circuit breaker protection, and real-time status tracking into a unified 
+transaction lifecycle manager.
 
 This service bridges the excellent Phase 6A gas optimizer with DEX execution and provides
 real-time WebSocket updates for transaction status monitoring.
+
+UPDATED: Added circuit breaker integration for production hardening
+- Pre-trade circuit breaker validation
+- Automatic breaker triggering on failures
+- WebSocket notifications for breaker events
+- Portfolio-based breaker checks
 
 File: dexproject/trading/services/transaction_manager.py
 """
@@ -14,7 +21,7 @@ import logging
 import asyncio
 import json
 import time
-from typing import Dict, Any, Optional, Callable, List
+from typing import Dict, Any, Optional, Callable, List, Tuple
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, asdict
@@ -35,6 +42,18 @@ from web3.types import TxReceipt
 from engine.config import ChainConfig
 from engine.web3_client import Web3Client
 from engine.wallet_manager import WalletManager
+
+# Import circuit breaker components
+from engine.utils import (
+    CircuitBreaker,
+    CircuitBreakerState,
+    CircuitBreakerOpenError
+)
+from engine.portfolio import (
+    CircuitBreakerManager,
+    CircuitBreakerType,
+    CircuitBreakerEvent
+)
 
 # Import existing services for integration
 from .dex_router_service import (
@@ -64,6 +83,7 @@ class TransactionStatus(Enum):
     """Transaction lifecycle status states."""
     PREPARING = "preparing"          # Building transaction
     GAS_OPTIMIZING = "gas_optimizing"  # Optimizing gas parameters
+    CIRCUIT_BREAKER_CHECK = "circuit_breaker_check"  # Checking circuit breakers
     READY_TO_SUBMIT = "ready_to_submit"  # Ready for submission
     SUBMITTED = "submitted"          # Submitted to network
     PENDING = "pending"              # Waiting for confirmation
@@ -73,6 +93,7 @@ class TransactionStatus(Enum):
     FAILED = "failed"                # Transaction failed
     RETRYING = "retrying"            # Retrying with higher gas
     CANCELLED = "cancelled"          # User cancelled
+    BLOCKED_BY_CIRCUIT_BREAKER = "blocked_by_circuit_breaker"  # Blocked by circuit breaker
 
 
 @dataclass
@@ -97,6 +118,10 @@ class TransactionState:
     gas_optimization_result: Optional[GasOptimizationResult] = None
     gas_savings_percent: Optional[Decimal] = None
     
+    # Circuit breaker information
+    circuit_breaker_status: Optional[str] = None
+    blocked_by_breakers: Optional[List[str]] = None
+    
     # Timing and metrics
     created_at: datetime = None
     submitted_at: Optional[datetime] = None
@@ -107,6 +132,7 @@ class TransactionState:
     error_message: Optional[str] = None
     retry_count: int = 0
     max_retries: int = 3
+    consecutive_failures: int = 0
     
     def __post_init__(self):
         """Initialize default values."""
@@ -124,6 +150,7 @@ class TransactionSubmissionRequest:
     is_paper_trade: bool = False
     callback_url: Optional[str] = None
     priority: str = "normal"  # normal, high, emergency
+    bypass_circuit_breaker: bool = False  # For emergency overrides only
 
 
 @dataclass
@@ -134,6 +161,8 @@ class TransactionManagerResult:
     transaction_state: Optional[TransactionState] = None
     error_message: Optional[str] = None
     gas_savings_achieved: Optional[Decimal] = None
+    circuit_breaker_triggered: bool = False
+    circuit_breaker_reasons: Optional[List[str]] = None
 
 
 class TransactionManager:
@@ -142,6 +171,7 @@ class TransactionManager:
     
     Features:
     - Integration with Phase 6A gas optimizer for 23.1% cost savings
+    - Circuit breaker protection for risk management
     - DEX router service integration for swap execution
     - Real-time transaction status monitoring
     - WebSocket broadcasts for live UI updates
@@ -167,16 +197,24 @@ class TransactionManager:
         self._dex_router_service: Optional[DEXRouterService] = None
         self._portfolio_service: Optional[PortfolioTrackingService] = None
         
+        # Circuit breaker components
+        self._circuit_breaker_manager: Optional[CircuitBreakerManager] = None
+        self._transaction_circuit_breaker: Optional[CircuitBreaker] = None
+        self._dex_circuit_breaker: Optional[CircuitBreaker] = None
+        self._gas_circuit_breaker: Optional[CircuitBreaker] = None
+        
         # WebSocket layer for real-time updates (optional)
         self.channel_layer = get_channel_layer() if CHANNELS_AVAILABLE else None
         
         # Transaction state management
         self._active_transactions: Dict[str, TransactionState] = {}
         self._transaction_callbacks: Dict[str, List[Callable]] = {}
+        self._user_failure_counts: Dict[int, int] = {}  # Track failures per user
         
         # Performance metrics
         self.total_transactions = 0
         self.successful_transactions = 0
+        self.circuit_breaker_blocks = 0
         self.gas_savings_total = Decimal('0')
         self.average_execution_time_ms = 0.0
         
@@ -184,6 +222,7 @@ class TransactionManager:
         self.max_concurrent_transactions = getattr(settings, 'TRADING_MAX_CONCURRENT_TX', 10)
         self.default_timeout_seconds = getattr(settings, 'TRADING_TX_TIMEOUT', 300)
         self.enable_websocket_updates = getattr(settings, 'TRADING_ENABLE_WEBSOCKET_UPDATES', True)
+        self.circuit_breaker_enabled = getattr(settings, 'CIRCUIT_BREAKER_ENABLED', True)
         
         self.logger.info(f"[INIT] Transaction Manager initialized for {chain_config.name}")
     
@@ -211,7 +250,35 @@ class TransactionManager:
             # Initialize portfolio service
             self._portfolio_service = create_portfolio_service(self.chain_config)
             
-            self.logger.info(f"✅ Transaction Manager services initialized for {self.chain_config.name}")
+            # Initialize circuit breakers
+            self._circuit_breaker_manager = CircuitBreakerManager()
+            
+            # Create specific circuit breakers for different failure types
+            self._transaction_circuit_breaker = CircuitBreaker(
+                name=f"tx_breaker_{self.chain_config.name}",
+                failure_threshold=5,
+                timeout_seconds=300,  # 5 minutes
+                success_threshold=2
+            )
+            
+            self._dex_circuit_breaker = CircuitBreaker(
+                name=f"dex_breaker_{self.chain_config.name}",
+                failure_threshold=3,
+                timeout_seconds=180,  # 3 minutes
+                success_threshold=1
+            )
+            
+            self._gas_circuit_breaker = CircuitBreaker(
+                name=f"gas_breaker_{self.chain_config.name}",
+                failure_threshold=10,  # More tolerant for gas issues
+                timeout_seconds=60,   # 1 minute
+                success_threshold=3
+            )
+            
+            self.logger.info(
+                f"✅ Transaction Manager services initialized for {self.chain_config.name} "
+                f"(Circuit breakers: {'ENABLED' if self.circuit_breaker_enabled else 'DISABLED'})"
+            )
             return True
             
         except Exception as e:
@@ -223,15 +290,16 @@ class TransactionManager:
         request: TransactionSubmissionRequest
     ) -> TransactionManagerResult:
         """
-        Submit a transaction through the complete lifecycle with gas optimization.
+        Submit a transaction through the complete lifecycle with gas optimization and circuit breaker protection.
         
         This is the main entry point that coordinates all transaction operations:
-        1. Gas optimization (Phase 6A integration)
-        2. Transaction preparation
-        3. DEX router execution
-        4. Status monitoring
-        5. Portfolio tracking
-        6. WebSocket updates
+        1. Circuit breaker validation
+        2. Gas optimization (Phase 6A integration)
+        3. Transaction preparation
+        4. DEX router execution
+        5. Status monitoring
+        6. Portfolio tracking
+        7. WebSocket updates
         
         Args:
             request: Transaction submission request with all parameters
@@ -263,13 +331,26 @@ class TransactionManager:
             # Broadcast initial status
             await self._broadcast_transaction_update(transaction_state)
             
-            # Step 1: Gas Optimization (Phase 6A Integration)
+            # Step 1: Check circuit breakers (unless bypassed for emergency)
+            if not request.bypass_circuit_breaker:
+                breaker_check = await self._check_circuit_breakers(transaction_state, request)
+                if not breaker_check[0]:  # Circuit breaker triggered
+                    return TransactionManagerResult(
+                        success=False,
+                        transaction_id=transaction_id,
+                        transaction_state=transaction_state,
+                        error_message="Transaction blocked by circuit breaker",
+                        circuit_breaker_triggered=True,
+                        circuit_breaker_reasons=breaker_check[1]
+                    )
+            
+            # Step 2: Gas Optimization (Phase 6A Integration)
             await self._optimize_transaction_gas(transaction_state, request)
             
-            # Step 2: Execute transaction through DEX router
-            swap_result = await self._execute_swap_transaction(transaction_state, request)
+            # Step 3: Execute transaction through DEX router with circuit breaker protection
+            swap_result = await self._execute_swap_with_circuit_breaker(transaction_state, request)
             
-            # Step 3: Update transaction state with results
+            # Step 4: Update transaction state with results
             transaction_state.swap_result = swap_result
             transaction_state.transaction_hash = swap_result.transaction_hash
             transaction_state.block_number = swap_result.block_number
@@ -277,22 +358,27 @@ class TransactionManager:
             transaction_state.gas_price_gwei = swap_result.gas_price_gwei
             transaction_state.execution_time_ms = swap_result.execution_time_ms
             
-            # Step 4: Start transaction monitoring
+            # Step 5: Start transaction monitoring
             asyncio.create_task(self._monitor_transaction_status(transaction_id))
             
-            # Step 5: Calculate gas savings achieved
+            # Step 6: Calculate gas savings achieved
             gas_savings = self._calculate_gas_savings(transaction_state)
             
             # Update performance metrics
             self.total_transactions += 1
             if swap_result.success:
                 self.successful_transactions += 1
+                self._user_failure_counts[request.user.id] = 0  # Reset failure count on success
                 if gas_savings:
                     self.gas_savings_total += gas_savings
+            else:
+                # Track failures for circuit breaker
+                self._user_failure_counts[request.user.id] = self._user_failure_counts.get(request.user.id, 0) + 1
+                transaction_state.consecutive_failures = self._user_failure_counts[request.user.id]
             
             self.logger.info(
                 f"✅ Transaction submitted successfully: {transaction_id} "
-                f"(Hash: {swap_result.transaction_hash[:10]}...)"
+                f"(Hash: {swap_result.transaction_hash[:10] if swap_result.transaction_hash else 'N/A'}...)"
             )
             
             return TransactionManagerResult(
@@ -300,6 +386,26 @@ class TransactionManager:
                 transaction_id=transaction_id,
                 transaction_state=transaction_state,
                 gas_savings_achieved=gas_savings
+            )
+            
+        except CircuitBreakerOpenError as e:
+            # Circuit breaker prevented execution
+            self.logger.warning(f"⚡ Circuit breaker blocked transaction: {transaction_id} - {e}")
+            self.circuit_breaker_blocks += 1
+            
+            if transaction_id in self._active_transactions:
+                transaction_state = self._active_transactions[transaction_id]
+                transaction_state.status = TransactionStatus.BLOCKED_BY_CIRCUIT_BREAKER
+                transaction_state.error_message = str(e)
+                transaction_state.circuit_breaker_status = "BLOCKED"
+                await self._broadcast_transaction_update(transaction_state)
+            
+            return TransactionManagerResult(
+                success=False,
+                transaction_id=transaction_id,
+                error_message=str(e),
+                circuit_breaker_triggered=True,
+                circuit_breaker_reasons=[str(e)]
             )
             
         except Exception as e:
@@ -318,13 +424,164 @@ class TransactionManager:
                 error_message=str(e)
             )
     
+    async def _check_circuit_breakers(
+        self, 
+        transaction_state: TransactionState,
+        request: TransactionSubmissionRequest
+    ) -> Tuple[bool, Optional[List[str]]]:
+        """
+        Check all circuit breakers before transaction execution.
+        
+        Args:
+            transaction_state: Current transaction state
+            request: Transaction submission request
+            
+        Returns:
+            Tuple of (can_proceed, list_of_triggered_breakers)
+        """
+        try:
+            # Update status
+            transaction_state.status = TransactionStatus.CIRCUIT_BREAKER_CHECK
+            await self._broadcast_transaction_update(transaction_state)
+            
+            self.logger.info(f"⚡ Checking circuit breakers for transaction: {transaction_state.transaction_id}")
+            
+            if not self.circuit_breaker_enabled or not self._circuit_breaker_manager:
+                return (True, None)
+            
+            # Get portfolio state for circuit breaker checks
+            portfolio_state = await self._get_portfolio_state_for_breakers(request.user.id)
+            
+            # Check portfolio-based circuit breakers
+            can_trade, reasons = self._circuit_breaker_manager.can_trade()
+            
+            if not can_trade:
+                transaction_state.status = TransactionStatus.BLOCKED_BY_CIRCUIT_BREAKER
+                transaction_state.circuit_breaker_status = "BLOCKED"
+                transaction_state.blocked_by_breakers = reasons
+                await self._broadcast_transaction_update(transaction_state)
+                
+                # Send WebSocket notification about circuit breaker
+                await self._broadcast_circuit_breaker_event(request.user.id, reasons)
+                
+                self.logger.warning(
+                    f"🛑 Transaction blocked by circuit breakers: {transaction_state.transaction_id} "
+                    f"- Reasons: {', '.join(reasons)}"
+                )
+                return (False, reasons)
+            
+            # Check user-specific failure count
+            user_failures = self._user_failure_counts.get(request.user.id, 0)
+            max_consecutive_failures = getattr(settings, 'MAX_CONSECUTIVE_FAILURES', 5)
+            
+            if user_failures >= max_consecutive_failures:
+                reason = f"User has {user_failures} consecutive failures (max: {max_consecutive_failures})"
+                transaction_state.status = TransactionStatus.BLOCKED_BY_CIRCUIT_BREAKER
+                transaction_state.circuit_breaker_status = "BLOCKED"
+                transaction_state.blocked_by_breakers = [reason]
+                await self._broadcast_transaction_update(transaction_state)
+                
+                self.logger.warning(
+                    f"🛑 Transaction blocked due to consecutive failures: {transaction_state.transaction_id}"
+                )
+                return (False, [reason])
+            
+            # All checks passed
+            transaction_state.circuit_breaker_status = "PASSED"
+            self.logger.info(f"✅ Circuit breaker checks passed: {transaction_state.transaction_id}")
+            return (True, None)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Circuit breaker check error: {transaction_state.transaction_id} - {e}")
+            # Allow transaction to proceed if circuit breaker check fails
+            return (True, None)
+    
+    async def _get_portfolio_state_for_breakers(self, user_id: int) -> Dict[str, Any]:
+        """
+        Get portfolio state for circuit breaker evaluation.
+        
+        Args:
+            user_id: User ID to get portfolio for
+            
+        Returns:
+            Portfolio state dictionary
+        """
+        try:
+            if not self._portfolio_service:
+                return {}
+            
+            # Get user's portfolio metrics
+            from django.contrib.auth.models import User
+            user = User.objects.get(id=user_id)
+            
+            # Get portfolio summary from portfolio service
+            portfolio_summary = await self._portfolio_service.get_portfolio_summary(user)
+            
+            # Get consecutive failures from our tracking
+            consecutive_losses = self._user_failure_counts.get(user_id, 0)
+            
+            return {
+                'daily_pnl': portfolio_summary.get('daily_pnl', Decimal('0')),
+                'total_pnl': portfolio_summary.get('total_pnl', Decimal('0')),
+                'consecutive_losses': consecutive_losses,
+                'portfolio_value': portfolio_summary.get('total_value', Decimal('0'))
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting portfolio state for circuit breakers: {e}")
+            return {}
+    
+    async def _execute_swap_with_circuit_breaker(
+        self, 
+        transaction_state: TransactionState,
+        request: TransactionSubmissionRequest
+    ) -> SwapResult:
+        """
+        Execute swap transaction with circuit breaker protection.
+        
+        Args:
+            transaction_state: Current transaction state
+            request: Transaction submission request
+            
+        Returns:
+            SwapResult from execution
+        """
+        try:
+            # Use DEX circuit breaker for swap execution
+            if self._dex_circuit_breaker and self.circuit_breaker_enabled:
+                return await self._dex_circuit_breaker.call(
+                    self._execute_swap_transaction,
+                    transaction_state,
+                    request
+                )
+            else:
+                # Execute without circuit breaker if disabled
+                return await self._execute_swap_transaction(transaction_state, request)
+                
+        except CircuitBreakerOpenError as e:
+            # Circuit breaker is open, create failed result
+            self.logger.error(f"⚡ DEX circuit breaker open: {transaction_state.transaction_id}")
+            return SwapResult(
+                transaction_hash="0x",
+                block_number=None,
+                gas_used=None,
+                gas_price_gwei=Decimal('0'),
+                amount_in=transaction_state.swap_params.amount_in,
+                amount_out=0,
+                actual_slippage_percent=Decimal('0'),
+                execution_time_ms=0.0,
+                dex_version=transaction_state.swap_params.dex_version,
+                success=False,
+                error_message=f"Circuit breaker open: {e}"
+            )
+    
     async def _optimize_transaction_gas(
         self, 
         transaction_state: TransactionState,
         request: TransactionSubmissionRequest
     ) -> None:
         """
-        Optimize gas parameters using Phase 6A gas optimizer.
+        Optimize gas parameters using Phase 6A gas optimizer with circuit breaker protection.
         
         Args:
             transaction_state: Current transaction state to update
@@ -337,14 +594,25 @@ class TransactionManager:
             
             self.logger.info(f"⚡ Optimizing gas for transaction: {transaction_state.transaction_id}")
             
-            # Call Phase 6A gas optimizer
-            gas_optimization_result = await optimize_trade_gas(
-                chain_id=request.chain_id,
-                trade_type=request.swap_params.swap_type.value,
-                amount_usd=self._estimate_trade_amount_usd(request.swap_params),
-                strategy=request.gas_strategy.value,
-                is_paper_trade=request.is_paper_trade
-            )
+            # Use gas circuit breaker if enabled
+            if self._gas_circuit_breaker and self.circuit_breaker_enabled:
+                gas_optimization_result = await self._gas_circuit_breaker.call(
+                    optimize_trade_gas,
+                    chain_id=request.chain_id,
+                    trade_type=request.swap_params.swap_type.value,
+                    amount_usd=self._estimate_trade_amount_usd(request.swap_params),
+                    strategy=request.gas_strategy.value,
+                    is_paper_trade=request.is_paper_trade
+                )
+            else:
+                # Call Phase 6A gas optimizer directly
+                gas_optimization_result = await optimize_trade_gas(
+                    chain_id=request.chain_id,
+                    trade_type=request.swap_params.swap_type.value,
+                    amount_usd=self._estimate_trade_amount_usd(request.swap_params),
+                    strategy=request.gas_strategy.value,
+                    is_paper_trade=request.is_paper_trade
+                )
             
             # Store gas optimization results
             transaction_state.gas_optimization_result = gas_optimization_result
@@ -381,6 +649,13 @@ class TransactionManager:
                 )
                 transaction_state.status = TransactionStatus.READY_TO_SUBMIT
             
+            await self._broadcast_transaction_update(transaction_state)
+            
+        except CircuitBreakerOpenError as e:
+            self.logger.warning(f"⚡ Gas optimization circuit breaker open: {transaction_state.transaction_id}")
+            # Continue with default gas parameters
+            transaction_state.status = TransactionStatus.READY_TO_SUBMIT
+            transaction_state.error_message = f"Gas optimization skipped (circuit breaker): {e}"
             await self._broadcast_transaction_update(transaction_state)
             
         except Exception as e:
@@ -427,11 +702,17 @@ class TransactionManager:
                 transaction_state.status = TransactionStatus.PENDING
                 self.logger.info(
                     f"✅ Swap executed successfully: {transaction_state.transaction_id} "
-                    f"(Hash: {swap_result.transaction_hash[:10]}...)"
+                    f"(Hash: {swap_result.transaction_hash[:10] if swap_result.transaction_hash else 'N/A'}...)"
                 )
             else:
                 transaction_state.status = TransactionStatus.FAILED
                 transaction_state.error_message = swap_result.error_message
+                
+                # Update circuit breaker manager with failure
+                if self._circuit_breaker_manager:
+                    portfolio_state = await self._get_portfolio_state_for_breakers(transaction_state.user_id)
+                    self._circuit_breaker_manager.check_circuit_breakers(portfolio_state)
+                
                 self.logger.error(
                     f"❌ Swap execution failed: {transaction_state.transaction_id} "
                     f"- {swap_result.error_message}"
@@ -457,6 +738,116 @@ class TransactionManager:
                 error_message=str(e)
             )
     
+    async def _broadcast_circuit_breaker_event(
+        self, 
+        user_id: int, 
+        reasons: List[str]
+    ) -> None:
+        """
+        Broadcast circuit breaker event via WebSocket.
+        
+        Args:
+            user_id: User ID affected by circuit breaker
+            reasons: List of reasons for circuit breaker activation
+        """
+        if not self.enable_websocket_updates or not CHANNELS_AVAILABLE or not self.channel_layer:
+            return
+        
+        try:
+            # Create circuit breaker event message
+            breaker_message = {
+                'type': 'circuit_breaker_event',
+                'user_id': user_id,
+                'reasons': reasons,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'action': 'TRADING_BLOCKED'
+            }
+            
+            # Send to user's dashboard group
+            group_name = f"dashboard_{user_id}"
+            await self.channel_layer.group_send(group_name, {
+                'type': 'circuit_breaker_notification',
+                'data': breaker_message
+            })
+            
+            self.logger.info(f"📡 Circuit breaker event broadcast to user {user_id}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Circuit breaker broadcast failed: {e}")
+    
+    async def reset_circuit_breakers(
+        self, 
+        user_id: Optional[int] = None, 
+        breaker_type: Optional[str] = None
+    ) -> bool:
+        """
+        Reset circuit breakers (admin function).
+        
+        Args:
+            user_id: User ID to reset breakers for (None for all)
+            breaker_type: Specific breaker type to reset (None for all)
+            
+        Returns:
+            True if reset successful
+        """
+        try:
+            if self._circuit_breaker_manager:
+                if breaker_type:
+                    # Reset specific breaker type
+                    breaker_enum = CircuitBreakerType[breaker_type.upper()]
+                    success = self._circuit_breaker_manager.manual_reset(breaker_enum)
+                else:
+                    # Reset all breakers
+                    success = self._circuit_breaker_manager.manual_reset()
+                
+                if success:
+                    self.logger.info(f"✅ Circuit breakers reset successfully")
+                    
+                    # Reset user failure counts if specified
+                    if user_id:
+                        self._user_failure_counts[user_id] = 0
+                    elif user_id is None and breaker_type is None:
+                        # Reset all user failure counts if resetting everything
+                        self._user_failure_counts.clear()
+                    
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Circuit breaker reset error: {e}")
+            return False
+    
+    async def get_circuit_breaker_status(self) -> Dict[str, Any]:
+        """
+        Get current circuit breaker status.
+        
+        Returns:
+            Circuit breaker status dictionary
+        """
+        status = {
+            'enabled': self.circuit_breaker_enabled,
+            'portfolio_breakers': {},
+            'service_breakers': {},
+            'user_failure_counts': dict(self._user_failure_counts),
+            'total_blocks': self.circuit_breaker_blocks
+        }
+        
+        # Get portfolio circuit breaker status
+        if self._circuit_breaker_manager:
+            status['portfolio_breakers'] = self._circuit_breaker_manager.get_status()
+        
+        # Get service circuit breaker status
+        if self._transaction_circuit_breaker:
+            status['service_breakers']['transaction'] = self._transaction_circuit_breaker.get_stats()
+        if self._dex_circuit_breaker:
+            status['service_breakers']['dex'] = self._dex_circuit_breaker.get_stats()
+        if self._gas_circuit_breaker:
+            status['service_breakers']['gas'] = self._gas_circuit_breaker.get_stats()
+        
+        return status
+    
+    # [Previous methods remain the same: _monitor_transaction_status, _update_portfolio_tracking, etc.]
     async def _monitor_transaction_status(self, transaction_id: str) -> None:
         """
         Monitor transaction status until completion or failure.
@@ -595,6 +986,7 @@ class TransactionManager:
                 'gas_price_gwei': str(transaction_state.gas_price_gwei) if transaction_state.gas_price_gwei else None,
                 'execution_time_ms': transaction_state.execution_time_ms,
                 'gas_savings_percent': str(transaction_state.gas_savings_percent) if transaction_state.gas_savings_percent else None,
+                'circuit_breaker_status': transaction_state.circuit_breaker_status,
                 'error_message': transaction_state.error_message,
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
@@ -690,7 +1082,12 @@ class TransactionManager:
                 return False
             
             # Can only cancel if not yet submitted
-            if transaction_state.status in [TransactionStatus.PREPARING, TransactionStatus.GAS_OPTIMIZING, TransactionStatus.READY_TO_SUBMIT]:
+            if transaction_state.status in [
+                TransactionStatus.PREPARING, 
+                TransactionStatus.GAS_OPTIMIZING, 
+                TransactionStatus.CIRCUIT_BREAKER_CHECK,
+                TransactionStatus.READY_TO_SUBMIT
+            ]:
                 transaction_state.status = TransactionStatus.CANCELLED
                 await self._broadcast_transaction_update(transaction_state)
                 self.logger.info(f"✅ Transaction cancelled: {transaction_id}")
@@ -719,6 +1116,11 @@ class TransactionManager:
             if self.successful_transactions > 0 else Decimal('0')
         )
         
+        circuit_breaker_rate = (
+            (self.circuit_breaker_blocks / self.total_transactions * 100)
+            if self.total_transactions > 0 else 0.0
+        )
+        
         return {
             'chain_id': self.chain_id,
             'chain_name': self.chain_config.name,
@@ -727,6 +1129,8 @@ class TransactionManager:
             'success_rate_percent': round(success_rate, 2),
             'average_gas_savings_percent': round(float(average_gas_savings), 2),
             'total_gas_savings_percent': round(float(self.gas_savings_total), 2),
+            'circuit_breaker_blocks': self.circuit_breaker_blocks,
+            'circuit_breaker_rate_percent': round(circuit_breaker_rate, 2),
             'active_transactions': len(self._active_transactions),
             'average_execution_time_ms': round(self.average_execution_time_ms, 2)
         }
@@ -748,8 +1152,12 @@ class TransactionManager:
             # Find transactions to clean up
             to_remove = []
             for tx_id, tx_state in self._active_transactions.items():
-                if (tx_state.status in [TransactionStatus.COMPLETED, TransactionStatus.FAILED, TransactionStatus.CANCELLED] and
-                    tx_state.created_at < cutoff_time):
+                if (tx_state.status in [
+                    TransactionStatus.COMPLETED, 
+                    TransactionStatus.FAILED, 
+                    TransactionStatus.CANCELLED,
+                    TransactionStatus.BLOCKED_BY_CIRCUIT_BREAKER
+                ] and tx_state.created_at < cutoff_time):
                     to_remove.append(tx_id)
             
             # Remove old transactions
@@ -832,7 +1240,8 @@ async def create_transaction_submission_request(
     gas_strategy: TradingGasStrategy = TradingGasStrategy.BALANCED,
     is_paper_trade: bool = False,
     slippage_tolerance: Decimal = Decimal('0.005'),
-    deadline_minutes: int = 20
+    deadline_minutes: int = 20,
+    bypass_circuit_breaker: bool = False
 ) -> TransactionSubmissionRequest:
     """
     Create a transaction submission request with all required parameters.
@@ -852,6 +1261,7 @@ async def create_transaction_submission_request(
         is_paper_trade: Whether this is a paper trade
         slippage_tolerance: Slippage tolerance (0.005 = 0.5%)
         deadline_minutes: Transaction deadline in minutes
+        bypass_circuit_breaker: Whether to bypass circuit breaker checks (emergency only)
         
     Returns:
         Configured TransactionSubmissionRequest
@@ -880,5 +1290,6 @@ async def create_transaction_submission_request(
         chain_id=chain_id,
         swap_params=swap_params,
         gas_strategy=gas_strategy,
-        is_paper_trade=is_paper_trade
+        is_paper_trade=is_paper_trade,
+        bypass_circuit_breaker=bypass_circuit_breaker
     )

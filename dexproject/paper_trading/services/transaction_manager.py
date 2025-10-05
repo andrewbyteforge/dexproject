@@ -1543,18 +1543,50 @@ async def get_transaction_manager(chain_id: int) -> TransactionManager:
             chain_config = config.get_chain_config(chain_id) if config else None
             
             if not chain_config:
-                # Create minimal chain config for testing
+                # Create proper chain config with required attributes
                 from dataclasses import dataclass
+                from typing import List, Optional
+                from decimal import Decimal
                 
                 @dataclass
-                class MinimalChainConfig:
+                class ProperChainConfig:
                     chain_id: int
                     name: str
-                    
-                chain_config = MinimalChainConfig(
-                    chain_id=chain_id,
-                    name=f"Chain_{chain_id}"
-                )
+                    rpc_providers: List[str]
+                    weth_address: str
+                    native_token_symbol: str = "ETH"
+                    block_time_seconds: int = 12
+                    max_gas_price_gwei: Decimal = Decimal('100')
+                    ws_providers: Optional[List[str]] = None
+                    uniswap_v2_router: Optional[str] = None
+                    uniswap_v3_router: Optional[str] = None
+                
+                # Use appropriate defaults based on chain_id
+                if chain_id == 1:  # Ethereum Mainnet
+                    chain_config = ProperChainConfig(
+                        chain_id=chain_id,
+                        name="Ethereum",
+                        rpc_providers=["https://eth-mainnet.g.alchemy.com/v2/demo"],
+                        weth_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                        uniswap_v2_router="0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+                        uniswap_v3_router="0xE592427A0AEce92De3Edee1F18E0157C05861564"
+                    )
+                elif chain_id == 8453:  # Base Mainnet
+                    chain_config = ProperChainConfig(
+                        chain_id=chain_id,
+                        name="Base",
+                        rpc_providers=["https://mainnet.base.org"],
+                        weth_address="0x4200000000000000000000000000000000000006",
+                        block_time_seconds=2,
+                        max_gas_price_gwei=Decimal('10')
+                    )
+                else:  # Default config
+                    chain_config = ProperChainConfig(
+                        chain_id=chain_id,
+                        name=f"Chain_{chain_id}",
+                        rpc_providers=["https://rpc.example.com"],
+                        weth_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                    )
             
             # Create and initialize transaction manager
             manager = TransactionManager(chain_config)
@@ -1566,7 +1598,6 @@ async def get_transaction_manager(chain_id: int) -> TransactionManager:
             raise ValueError(f"Failed to initialize transaction manager for chain {chain_id}: {e}")
     
     return _transaction_managers[chain_id]
-
 
 async def create_transaction_submission_request(
     user: User,

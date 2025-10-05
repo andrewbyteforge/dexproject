@@ -1,9 +1,10 @@
 """
-Enhanced Paper Trading Bot with Intel Slider System and Transaction Manager
+Enhanced Paper Trading Bot with Intel Slider System, Transaction Manager, and Circuit Breakers
 
 This is the complete paper trading bot that integrates:
 - Intel Slider (1-10) system for intelligent decision making
 - Phase 6B Transaction Manager for gas optimization (23.1% savings)
+- Circuit breaker protection for risk management
 - Real-time transaction status tracking
 - WebSocket updates for transaction lifecycle
 - Comprehensive thought logging
@@ -62,6 +63,22 @@ from paper_trading.intelligence.base import (
 )
 
 # ============================================================================
+# CIRCUIT BREAKER IMPORTS
+# ============================================================================
+try:
+    from engine.portfolio import (
+        CircuitBreakerManager,
+        CircuitBreakerType,
+        CircuitBreakerEvent
+    )
+    from trading.services.portfolio_service import create_portfolio_service
+    CIRCUIT_BREAKER_AVAILABLE = True
+except ImportError:
+    CIRCUIT_BREAKER_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Circuit breaker components not available - running without protection")
+
+# ============================================================================
 # SERVICE IMPORTS
 # ============================================================================
 from paper_trading.services.websocket_service import websocket_service
@@ -113,11 +130,12 @@ logger = logging.getLogger(__name__)
 
 class EnhancedPaperTradingBot:
     """
-    Unified Paper Trading Bot with Intel Slider System and Transaction Manager.
+    Unified Paper Trading Bot with Intel Slider System, Transaction Manager, and Circuit Breakers.
     
     This bot integrates:
     - Intel Slider (1-10) for intelligent decision making
     - Transaction Manager for gas optimization (Phase 6B)
+    - Circuit breaker protection for risk management
     - Real-time WebSocket updates
     - Comprehensive thought logging
     """
@@ -136,6 +154,13 @@ class EnhancedPaperTradingBot:
         self.account = None
         self.session = None
         self.intelligence_engine = None
+        
+        # Circuit breaker components
+        self.circuit_breaker_manager = None
+        self.circuit_breaker_enabled = CIRCUIT_BREAKER_AVAILABLE
+        self.consecutive_failures = 0
+        self.daily_trades_count = 0
+        self.last_trade_date = None
         
         # Transaction Manager instance (initialized later if needed)
         self.tx_manager = None
@@ -174,6 +199,8 @@ class EnhancedPaperTradingBot:
             log_msg += " (Transaction Manager ENABLED - Gas Optimization Active)"
         else:
             log_msg += " (Transaction Manager DISABLED - Legacy Mode)"
+        if self.circuit_breaker_enabled:
+            log_msg += " (Circuit Breakers ENABLED - Risk Protection Active)"
         logger.info(log_msg)
     
     def initialize(self) -> bool:
@@ -192,6 +219,9 @@ class EnhancedPaperTradingBot:
             
             # Initialize intelligence engine
             self._initialize_intelligence()
+            
+            # Initialize circuit breaker manager
+            self._initialize_circuit_breaker()
             
             # Setup strategy configuration
             self._setup_strategy_configuration()
@@ -216,6 +246,7 @@ class EnhancedPaperTradingBot:
                          f"Strategy: {self.intelligence_engine.config.name}. "
                          f"Risk tolerance: {self.intelligence_engine.config.risk_tolerance}%. "
                          f"Transaction Manager: {'ENABLED' if self.use_tx_manager else 'DISABLED'}. "
+                         f"Circuit Breakers: {'ENABLED' if self.circuit_breaker_enabled else 'DISABLED'}. "
                          f"Starting balance: ${self.account.current_balance_usd:.2f}",
                 confidence=100,
                 decision_type="SYSTEM"
@@ -226,6 +257,29 @@ class EnhancedPaperTradingBot:
         except Exception as e:
             logger.error(f"[ERROR] Initialization failed: {e}", exc_info=True)
             return False
+    
+    def _initialize_circuit_breaker(self):
+        """Initialize circuit breaker manager for risk management."""
+        if not CIRCUIT_BREAKER_AVAILABLE:
+            self.circuit_breaker_enabled = False
+            return
+            
+        try:
+            from engine.portfolio import CircuitBreakerManager
+            
+            self.circuit_breaker_manager = CircuitBreakerManager()
+            logger.info("[CB] Circuit breaker manager initialized for bot")
+            
+            # Log initial circuit breaker status
+            can_trade, reasons = self.circuit_breaker_manager.can_trade()
+            if can_trade:
+                logger.info("[CB] Circuit breakers clear - trading enabled")
+            else:
+                logger.warning(f"[CB] Circuit breakers active: {', '.join(reasons)}")
+                
+        except Exception as e:
+            logger.error(f"[CB] Failed to initialize circuit breaker: {e}")
+            self.circuit_breaker_enabled = False
     
     def _initialize_transaction_manager(self):
         """Initialize the Transaction Manager for gas optimization."""
@@ -276,6 +330,7 @@ class EnhancedPaperTradingBot:
             custom_parameters = {
                 "intel_level": self.intel_level,
                 "use_tx_manager": self.use_tx_manager,
+                "circuit_breaker_enabled": self.circuit_breaker_enabled,
                 "intel_config_summary": {
                     "risk_tolerance": risk_tolerance,
                     "trade_frequency": trade_freq,
@@ -362,13 +417,14 @@ class EnhancedPaperTradingBot:
             return data
 
         config_snapshot = {
-            "bot_version": "2.1.0",  # Updated version with TX Manager
+            "bot_version": "2.2.0",  # Updated version with Circuit Breakers
             "intel_level": self.intel_level,
             "account_name": self.account_name,
             "account_id": str(self.account.account_id),
             "session_uuid": str(uuid.uuid4()),
             "user_id": str(self.account.user.id),
             "transaction_manager_enabled": self.use_tx_manager,
+            "circuit_breaker_enabled": self.circuit_breaker_enabled,
         }
 
         safe_snapshot = json_safe(config_snapshot)
@@ -414,6 +470,48 @@ class EnhancedPaperTradingBot:
         """Get list of allowed token addresses."""
         return [token['address'] for token in self.token_list]
     
+    def _get_portfolio_state(self) -> Dict[str, Any]:
+        """
+        Get current portfolio state for circuit breaker evaluation.
+        
+        Returns:
+            Dictionary with portfolio metrics
+        """
+        try:
+            # Calculate current P&L
+            current_balance = self.account.current_balance_usd
+            starting_balance = self.session.starting_balance_usd if self.session else current_balance
+            total_pnl = current_balance - starting_balance
+            
+            # Calculate daily P&L (simplified - in production would track properly)
+            daily_pnl = total_pnl  # Simplified for paper trading
+            
+            # Count open positions value
+            positions_value = sum(
+                pos.current_value_usd for pos in self.positions.values()
+            )
+            
+            portfolio_state = {
+                'daily_pnl': daily_pnl,
+                'total_pnl': total_pnl,
+                'consecutive_losses': self.consecutive_failures,
+                'portfolio_value': current_balance + positions_value,
+                'cash_balance': current_balance,
+                'positions_count': len(self.positions),
+                'daily_trades': self.daily_trades_count
+            }
+            
+            return portfolio_state
+            
+        except Exception as e:
+            logger.error(f"[CB] Error getting portfolio state: {e}")
+            return {
+                'daily_pnl': Decimal('0'),
+                'total_pnl': Decimal('0'),
+                'consecutive_losses': 0,
+                'portfolio_value': Decimal('10000')
+            }
+    
     def _send_bot_status_update(self, status: str):
         """Send bot status update via WebSocket."""
         try:
@@ -423,11 +521,14 @@ class EnhancedPaperTradingBot:
                     'bot_status': status,
                     'intel_level': self.intel_level,
                     'tx_manager_enabled': self.use_tx_manager,
+                    'circuit_breaker_enabled': self.circuit_breaker_enabled,
                     'account_balance': float(self.account.current_balance_usd),
                     'open_positions': len(self.positions),
                     'tick_count': self.tick_count,
                     'total_gas_savings': float(self.total_gas_savings) if self.use_tx_manager else 0,
-                    'pending_transactions': len(self.pending_transactions)
+                    'pending_transactions': len(self.pending_transactions),
+                    'consecutive_failures': self.consecutive_failures,
+                    'daily_trades': self.daily_trades_count
                 }
             )
         except Exception as e:
@@ -480,6 +581,10 @@ class EnhancedPaperTradingBot:
                         elif tx_state.status == TransactionStatus.FAILED:
                             logger.error(f"[TX MANAGER] Transaction failed: {tx_id}")
                             completed.append(tx_id)
+                            self.consecutive_failures += 1
+                        elif tx_state.status == TransactionStatus.BLOCKED_BY_CIRCUIT_BREAKER:
+                            logger.warning(f"[TX MANAGER] Transaction blocked by circuit breaker: {tx_id}")
+                            completed.append(tx_id)
                 except Exception as e:
                     logger.error(f"[TX MANAGER] Error checking transaction {tx_id}: {e}")
             
@@ -490,12 +595,26 @@ class EnhancedPaperTradingBot:
         async_to_sync(check_transactions)()
     
     def _tick(self):
-        """Single market analysis tick."""
+        """Single market analysis tick with circuit breaker monitoring."""
         self.tick_count += 1
         logger.info("\n" + "=" * 60)
         logger.info(f"[TICK] Market tick #{self.tick_count}")
         
-        # Update market prices
+        # Check circuit breaker status
+        if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+            can_trade, reasons = self.circuit_breaker_manager.can_trade()
+            if not can_trade:
+                logger.warning(f"[CB] Circuit breakers active: {', '.join(reasons)}")
+                logger.info("[CB] Skipping trading analysis due to circuit breakers")
+                
+                # Still update market prices for tracking
+                self._update_market_prices()
+                
+                # Send status update
+                self._send_bot_status_update('circuit_breaker_active')
+                return
+        
+        # Normal tick processing
         self._update_market_prices()
         
         # Analyze each token
@@ -582,14 +701,14 @@ class EnhancedPaperTradingBot:
                     'risk_score': float(decision.risk_score),
                     'opportunity_score': float(decision.opportunity_score),
                     'current_price': float(current_price),
-                    'tx_manager_enabled': self.use_tx_manager
+                    'tx_manager_enabled': self.use_tx_manager,
+                    'circuit_breaker_enabled': self.circuit_breaker_enabled
                 }
             )
             
             # Execute trade if decided
             if decision.action in ['BUY', 'SELL']:
-                if self._can_trade():
-                    self._execute_trade(decision, token_symbol, current_price)
+                self._execute_trade(decision, token_symbol, current_price)
             
             # Store decision for tracking
             self.last_decisions[token_symbol] = decision
@@ -610,7 +729,9 @@ class EnhancedPaperTradingBot:
                 'HOLD': 'HOLD',
                 'SKIP': 'SKIP',
                 'STARTUP': 'SKIP',
-                'TRADE_DECISION': 'HOLD'
+                'TRADE_DECISION': 'HOLD',
+                'BLOCKED': 'SKIP',
+                'CB_RESET': 'SKIP'
             }
             
             # Get token info from metadata
@@ -632,7 +753,8 @@ class EnhancedPaperTradingBot:
                 key_factors=[
                     f"Intel Level: {metadata.get('intel_level', self.intel_level)}",
                     f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event",
-                    f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}"
+                    f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}",
+                    f"Circuit Breaker: {'Enabled' if metadata.get('circuit_breaker_enabled', False) else 'Disabled'}"
                 ],
                 positive_signals=[],
                 negative_signals=[],
@@ -661,12 +783,69 @@ class EnhancedPaperTradingBot:
             return 'VERY_LOW'
     
     def _can_trade(self) -> bool:
-        """Check if bot can execute a trade."""
-        return True
+        """
+        Check if bot can execute a trade based on circuit breakers and limits.
+        
+        Returns:
+            True if trading is allowed, False otherwise
+        """
+        try:
+            # Check if circuit breaker is enabled
+            if not self.circuit_breaker_enabled or not self.circuit_breaker_manager:
+                return True
+            
+            # Check portfolio circuit breakers
+            can_trade, reasons = self.circuit_breaker_manager.can_trade()
+            if not can_trade:
+                logger.warning(f"[CB] Trading blocked by circuit breaker: {', '.join(reasons)}")
+                
+                # Log blocked trade attempt
+                self._log_thought(
+                    action="BLOCKED",
+                    reasoning=f"Trade blocked by circuit breaker: {', '.join(reasons)}. "
+                             f"Safety mechanisms have triggered to protect the portfolio.",
+                    confidence=100,
+                    decision_type="RISK_MANAGEMENT",
+                    metadata={
+                        'circuit_breaker_reasons': reasons,
+                        'consecutive_failures': self.consecutive_failures,
+                        'daily_trades': self.daily_trades_count
+                    }
+                )
+                return False
+            
+            # Check daily trade limit
+            current_date = timezone.now().date()
+            if self.last_trade_date != current_date:
+                self.daily_trades_count = 0
+                self.last_trade_date = current_date
+            
+            max_daily_trades = getattr(self.strategy_config, 'max_daily_trades', 20)
+            if self.daily_trades_count >= max_daily_trades:
+                logger.warning(f"[CB] Daily trade limit reached: {self.daily_trades_count}/{max_daily_trades}")
+                return False
+            
+            # Check consecutive failures (bot-specific)
+            max_consecutive_failures = 5
+            if self.consecutive_failures >= max_consecutive_failures:
+                logger.warning(f"[CB] Too many consecutive failures: {self.consecutive_failures}")
+                return False
+            
+            # Check account balance minimum
+            min_balance = Decimal('100')  # Minimum $100 to trade
+            if self.account.current_balance_usd < min_balance:
+                logger.warning(f"[CB] Insufficient balance: ${self.account.current_balance_usd:.2f}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"[CB] Error checking trade permission: {e}")
+            return True  # Fail open if circuit breaker check fails
     
     def _execute_trade(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
         """
-        Execute a paper trade with Transaction Manager integration.
+        Execute a paper trade with circuit breaker and Transaction Manager integration.
         
         Args:
             decision: Trading decision from intelligence engine
@@ -674,24 +853,59 @@ class EnhancedPaperTradingBot:
             current_price: Current token price
         """
         try:
+            # Check circuit breakers before executing
+            if not self._can_trade():
+                logger.info(f"[TRADE] Trade blocked for {token_symbol} - circuit breaker active")
+                return
+            
+            # Check portfolio state for circuit breaker updates
+            if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+                portfolio_state = self._get_portfolio_state()
+                new_breakers = self.circuit_breaker_manager.check_circuit_breakers(portfolio_state)
+                
+                if new_breakers:
+                    for breaker in new_breakers:
+                        logger.warning(f"[CB] New circuit breaker triggered: {breaker.breaker_type.value}")
+                        logger.warning(f"[CB] Reason: {breaker.description}")
+                    
+                    # Stop trading if new breakers triggered
+                    return
+            
+            # Execute trade (existing logic)
+            trade_success = False
+            
             # Use Transaction Manager if enabled
             if self.use_tx_manager and self.tx_manager:
-                self._execute_trade_with_tx_manager(decision, token_symbol, current_price)
+                trade_success = self._execute_trade_with_tx_manager(decision, token_symbol, current_price)
             else:
-                self._execute_trade_legacy(decision, token_symbol, current_price)
+                trade_success = self._execute_trade_legacy(decision, token_symbol, current_price)
+            
+            # Update failure tracking
+            if trade_success:
+                self.consecutive_failures = 0
+                self.daily_trades_count += 1
+                logger.info(f"[TRADE] Successfully executed {decision.action} for {token_symbol}")
+            else:
+                self.consecutive_failures += 1
+                logger.warning(f"[TRADE] Failed to execute {decision.action} for {token_symbol} "
+                              f"(Consecutive failures: {self.consecutive_failures})")
                 
+                # Check if circuit breakers should trigger after failure
+                if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+                    portfolio_state = self._get_portfolio_state()
+                    self.circuit_breaker_manager.check_circuit_breakers(portfolio_state)
+                    
         except Exception as e:
             logger.error(f"[ERROR] {decision.action} execution failed: {e}")
+            self.consecutive_failures += 1
     
     def _execute_trade_with_tx_manager(self, decision: TradingDecision, 
-                                       token_symbol: str, current_price: Decimal):
+                                       token_symbol: str, current_price: Decimal) -> bool:
         """
         Execute trade using Transaction Manager for gas optimization.
         
-        This method uses the Phase 6B Transaction Manager to:
-        - Optimize gas costs (targeting 23.1% savings)
-        - Track transaction lifecycle
-        - Provide real-time status updates
+        Returns:
+            True if trade was successful, False otherwise
         """
         logger.info(f"[TX MANAGER] Executing {decision.action} via Transaction Manager")
         
@@ -737,6 +951,11 @@ class EnhancedPaperTradingBot:
                 result = await self.tx_manager.submit_transaction(tx_request)
                 
                 if result.success:
+                    # Check if circuit breaker was triggered
+                    if result.circuit_breaker_triggered:
+                        logger.warning(f"[CB] Trade blocked by TX Manager circuit breaker")
+                        return False
+                    
                     logger.info(f"[TX MANAGER] Transaction submitted: {result.transaction_id}")
                     
                     # Track pending transaction
@@ -765,35 +984,42 @@ class EnhancedPaperTradingBot:
                     # Update positions
                     self._update_positions_after_trade(decision, token_symbol, current_price)
                     
+                    return True
+                    
                 else:
                     logger.error(f"[TX MANAGER] Transaction failed: {result.error_message}")
-                    # Fall back to legacy execution
-                    self._execute_trade_legacy(decision, token_symbol, current_price)
+                    return False
                     
             except Exception as e:
                 logger.error(f"[TX MANAGER] Error: {e}")
-                # Fall back to legacy execution
-                self._execute_trade_legacy(decision, token_symbol, current_price)
+                return False
         
-        # Execute async function
-        async_to_sync(execute_with_tx_manager)()
+        # Execute async function and return result
+        return async_to_sync(execute_with_tx_manager)()
     
     def _execute_trade_legacy(self, decision: TradingDecision, 
-                             token_symbol: str, current_price: Decimal):
+                             token_symbol: str, current_price: Decimal) -> bool:
         """
         Legacy trade execution without Transaction Manager.
         
-        This is the fallback method when TX Manager is not available.
+        Returns:
+            True if trade was successful, False otherwise
         """
-        logger.info(f"[LEGACY] Executing {decision.action} without Transaction Manager")
-        
-        # Create paper trade record
-        self._create_paper_trade_record(decision, token_symbol, current_price)
-        
-        # Update positions
-        self._update_positions_after_trade(decision, token_symbol, current_price)
-        
-        logger.info(f"[TRADE] Executed {decision.action} for {token_symbol}: ${decision.position_size_usd:.2f}")
+        try:
+            logger.info(f"[LEGACY] Executing {decision.action} without Transaction Manager")
+            
+            # Create paper trade record
+            self._create_paper_trade_record(decision, token_symbol, current_price)
+            
+            # Update positions
+            self._update_positions_after_trade(decision, token_symbol, current_price)
+            
+            logger.info(f"[TRADE] Executed {decision.action} for {token_symbol}: ${decision.position_size_usd:.2f}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[LEGACY] Trade execution failed: {e}")
+            return False
     
     def _create_paper_trade_record(self, decision: TradingDecision, token_symbol: str, 
                                    current_price: Decimal, transaction_id: str = None,
@@ -826,7 +1052,8 @@ class EnhancedPaperTradingBot:
                 'risk_score': float(decision.risk_score),
                 'strategy_name': f"Intel_{self.intel_level}",
                 'tx_manager_used': self.use_tx_manager,
-                'gas_savings_percent': float(gas_savings) if gas_savings else 0
+                'gas_savings_percent': float(gas_savings) if gas_savings else 0,
+                'circuit_breaker_enabled': self.circuit_breaker_enabled
             }
         )
         return trade
@@ -890,6 +1117,37 @@ class EnhancedPaperTradingBot:
                 del self.positions[token_symbol]
             
             position.save()
+    
+    def reset_circuit_breakers(self, breaker_type: Optional[str] = None):
+        """
+        Reset circuit breakers for the bot.
+        
+        Args:
+            breaker_type: Specific breaker type to reset, or None for all
+        """
+        try:
+            if self.circuit_breaker_manager:
+                if breaker_type:
+                    from engine.portfolio import CircuitBreakerType
+                    breaker_enum = CircuitBreakerType[breaker_type.upper()]
+                    success = self.circuit_breaker_manager.manual_reset(breaker_enum)
+                else:
+                    success = self.circuit_breaker_manager.manual_reset()
+                
+                if success:
+                    logger.info(f"[CB] Circuit breakers reset successfully")
+                    self.consecutive_failures = 0
+                    
+                    # Log reset event
+                    self._log_thought(
+                        action="CB_RESET",
+                        reasoning=f"Circuit breakers manually reset. Trading can resume normally.",
+                        confidence=100,
+                        decision_type="SYSTEM"
+                    )
+            
+        except Exception as e:
+            logger.error(f"[CB] Failed to reset circuit breakers: {e}")
     
     def _update_performance_metrics(self):
         """Update performance metrics for the session."""
@@ -975,6 +1233,11 @@ class EnhancedPaperTradingBot:
                 logger.info(f"[TX MANAGER] Final Stats: {self.trades_with_tx_manager} trades executed")
                 logger.info(f"[TX MANAGER] Total gas savings: {self.total_gas_savings:.2f}%")
                 logger.info(f"[TX MANAGER] Average gas savings per trade: {avg_savings:.2f}%")
+            
+            # Log final circuit breaker stats if enabled
+            if self.circuit_breaker_enabled:
+                logger.info(f"[CB] Final Stats: {self.daily_trades_count} trades today")
+                logger.info(f"[CB] Consecutive failures at shutdown: {self.consecutive_failures}")
                 
             logger.info("[CLEANUP] Bot shutdown complete")
         except Exception as e:
@@ -985,15 +1248,16 @@ def main():
     """Main entry point for the bot."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Enhanced Paper Trading Bot with TX Manager')
+    parser = argparse.ArgumentParser(description='Enhanced Paper Trading Bot with TX Manager and Circuit Breakers')
     parser.add_argument('--account', default='AI_Paper_Bot', help='Account name (default: AI_Paper_Bot)')
     parser.add_argument('--intel', type=int, default=5, choices=range(1, 11), help='Intelligence level 1-10 (default: 5 - Balanced)')
     parser.add_argument('--tick-interval', type=int, default=15, help='Seconds between market ticks (default: 15)')
+    parser.add_argument('--disable-circuit-breaker', action='store_true', help='Disable circuit breaker protection')
     
     args = parser.parse_args()
     
     print("\n╔════════════════════════════════════════════════════════════════════╗")
-    print("║     ENHANCED PAPER TRADING BOT - INTEL SLIDER + TX MANAGER        ║")
+    print("║  ENHANCED PAPER TRADING BOT - INTEL + TX MANAGER + CIRCUIT BREAKERS ║")
     print("╚════════════════════════════════════════════════════════════════════╝\n")
     
     # Intelligence level descriptions
@@ -1019,12 +1283,21 @@ def main():
     else:
         print("⚠️  TRANSACTION MANAGER: NOT AVAILABLE - Required modules not installed")
     
+    # Circuit Breaker status
+    if not args.disable_circuit_breaker and CIRCUIT_BREAKER_AVAILABLE:
+        print("🛡️  CIRCUIT BREAKERS: ENABLED - Risk protection active")
+    else:
+        print("⚠️  CIRCUIT BREAKERS: DISABLED - Trading without protection")
+    
     print("")
     
     bot = EnhancedPaperTradingBot(
         account_name=args.account,
         intel_level=args.intel
     )
+    
+    if args.disable_circuit_breaker:
+        bot.circuit_breaker_enabled = False
     
     bot.tick_interval = args.tick_interval
     
@@ -1052,6 +1325,14 @@ def main():
             print("    • Target Savings    : 23.1%")
             print("    • Status Tracking   : REAL-TIME")
             print("    • WebSocket Updates : ENABLED")
+        
+        if bot.circuit_breaker_enabled:
+            print("\n  CIRCUIT BREAKERS:")
+            print("    • Portfolio Loss    : ACTIVE")
+            print("    • Daily Loss Limit  : ACTIVE")
+            print("    • Consecutive Fails : ACTIVE (Max: 5)")
+            print("    • Daily Trade Limit : 20 trades")
+            print("    • Min Balance Check : $100")
         
         print("=" * 60)
         

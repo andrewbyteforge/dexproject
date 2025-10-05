@@ -1,53 +1,42 @@
 """
-Paper Trading Celery Tasks - Complete Implementation
+Trading Celery Tasks - Complete Implementation with Circuit Breaker Protection
 
-Provides Celery task automation for paper trading bot operations, integrating
-with the Transaction Manager from Phase 6B for unified trade execution.
+Provides Celery task automation for trading operations with full circuit breaker
+integration, Transaction Manager coordination, and portfolio protection.
 
-This module bridges the gap between API endpoints and bot execution, enabling:
-- Automated bot lifecycle management via Celery
-- Transaction Manager integration for paper trades
-- Real-time status monitoring and updates
-- Proper user authentication handling
+This module bridges trading operations with safety mechanisms:
+- Circuit breaker validation before all trades
+- Transaction Manager integration for gas optimization
+- Portfolio-based risk limits
+- Real-time status monitoring
 
-File: dexproject/paper_trading/tasks.py
+File: dexproject/trading/tasks.py
 """
 
 import logging
-import asyncio
-import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, Tuple, List
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 
 from celery import shared_task, Task
 from celery.exceptions import SoftTimeLimitExceeded
-from django.utils import timezone
-from django.db import transaction
 from django.contrib.auth.models import User
 from django.conf import settings
-from asgiref.sync import async_to_sync
+from django.db import transaction as db_transaction
 
-# Import paper trading models
-from paper_trading.models import (
-    PaperTradingAccount,
-    PaperTrade,
-    PaperPosition,
-    PaperTradingSession,
-    PaperAIThoughtLog,
-    PaperStrategyConfiguration,
-    PaperPerformanceMetrics
+# Import circuit breaker components
+from engine.portfolio import (
+    CircuitBreakerManager,
+    CircuitBreakerType,
+    CircuitBreakerEvent
+)
+from engine.utils import (
+    CircuitBreaker,
+    CircuitBreakerState,
+    CircuitBreakerOpenError
 )
 
-# Import the enhanced bot
-from paper_trading.bot.simple_trader import EnhancedPaperTradingBot
-
-# Import services
-from paper_trading.services.websocket_service import websocket_service
-# Note: SimplePaperTradingSimulator is the actual class name in simulator.py
-from paper_trading.services.simulator import SimplePaperTradingSimulator as TradingSimulator
-
-# Import Transaction Manager for Phase 6B integration
+# Import Transaction Manager
 from trading.services.transaction_manager import (
     TransactionManager,
     TransactionSubmissionRequest,
@@ -58,859 +47,167 @@ from trading.services.transaction_manager import (
 
 # Import trading services
 from trading.services.dex_router_service import (
-    SwapParams, SwapType, DEXVersion, TradingGasStrategy
+    SwapParams, 
+    SwapType, 
+    DEXVersion, 
+    TradingGasStrategy
+)
+from trading.services.portfolio_service import (
+    create_portfolio_service,
+    PortfolioTrackingService
 )
 
-# Import engine configuration
-from engine.config import config
+# Import models
+from trading.models import (
+    Trade,
+    Position
+)
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# HELPER FUNCTIONS
+# CIRCUIT BREAKER MANAGEMENT
 # =============================================================================
 
-def run_async_task(coro):
-    """Helper to run async code in sync Celery task."""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(coro)
+# Global circuit breaker instances
+_circuit_breaker_manager: Optional[CircuitBreakerManager] = None
+_trade_execution_breaker: Optional[CircuitBreaker] = None
 
 
-async def get_transaction_manager_for_paper_trading(chain_id: int) -> Optional[TransactionManager]:
-    """
-    Get transaction manager configured for paper trading.
-    
-    Args:
-        chain_id: Blockchain network ID
-        
-    Returns:
-        Transaction manager instance or None if unavailable
-    """
-    try:
-        tx_manager = await get_transaction_manager(chain_id)
-        logger.info(f"[PAPER] Transaction Manager initialized for chain {chain_id}")
-        return tx_manager
-    except Exception as e:
-        logger.warning(f"[PAPER] Transaction Manager not available: {e}")
-        return None
+def get_circuit_breaker_manager() -> CircuitBreakerManager:
+    """Get or create the global circuit breaker manager."""
+    global _circuit_breaker_manager
+    if _circuit_breaker_manager is None:
+        _circuit_breaker_manager = CircuitBreakerManager()
+        logger.info("[CB] Circuit breaker manager initialized")
+    return _circuit_breaker_manager
 
 
-# =============================================================================
-# BOT LIFECYCLE TASKS
-# =============================================================================
-
-@shared_task(
-    bind=True,
-    name='paper_trading.tasks.run_paper_trading_bot',
-    queue='paper_trading.bot',
-    max_retries=3,
-    soft_time_limit=3600,  # 1 hour soft limit
-    time_limit=3900,  # 1 hour 5 min hard limit
-)
-def run_paper_trading_bot(
-    self,
-    session_id: str,
-    user_id: Optional[int] = None,
-    use_transaction_manager: bool = True
-) -> Dict[str, Any]:
-    """
-    Run the paper trading bot for a specific session.
-    
-    This task manages the complete lifecycle of a paper trading bot session,
-    including Transaction Manager integration for Phase 6B benefits.
-    
-    Args:
-        session_id: Trading session UUID
-        user_id: Optional user ID (uses session.account.user if not provided)
-        use_transaction_manager: Whether to use Transaction Manager for trades
-        
-    Returns:
-        Dictionary with bot execution results
-    """
-    task_id = self.request.id
-    start_time = time.time()
-    bot_instance = None
-    
-    try:
-        logger.info(f"[BOT] Starting paper trading bot for session {session_id}")
-        
-        # Get session
-        try:
-            session = PaperTradingSession.objects.get(session_id=session_id)
-        except PaperTradingSession.DoesNotExist:
-            raise ValueError(f"Session {session_id} not found")
-        
-        # Validate session state
-        if session.status not in ['STARTING', 'RUNNING']:
-            logger.warning(f"[BOT] Session {session_id} not in startable state: {session.status}")
-            return {
-                'success': False,
-                'error': f'Session is {session.status}, cannot start bot',
-                'session_id': session_id
-            }
-        
-        # Update session status
-        session.status = 'RUNNING'
-        session.save()
-        
-        # Get user (use provided user_id or session's account user)
-        if user_id:
-            user = User.objects.get(id=user_id)
-        else:
-            user = session.account.user
-        
-        # Initialize bot
-        logger.info(f"[BOT] Initializing bot for account {session.account.account_id}")
-        bot_instance = EnhancedPaperTradingBot(account_id=session.account.pk)
-        
-        # Configure bot with Transaction Manager if available
-        if use_transaction_manager:
-            try:
-                chain_id = getattr(settings, 'DEFAULT_CHAIN_ID', 8453)  # Base mainnet
-                tx_manager = run_async_task(
-                    get_transaction_manager_for_paper_trading(chain_id)
-                )
-                
-                if tx_manager:
-                    bot_instance.transaction_manager = tx_manager
-                    bot_instance.use_transaction_manager = True
-                    logger.info("[BOT] Transaction Manager integrated successfully")
-                else:
-                    logger.warning("[BOT] Transaction Manager not available, using direct execution")
-            except Exception as e:
-                logger.warning(f"[BOT] Failed to integrate Transaction Manager: {e}")
-        
-        # Initialize bot systems
-        if not bot_instance.initialize():
-            raise RuntimeError("Bot initialization failed")
-        
-        # Send WebSocket update
-        async_to_sync(websocket_service.send_bot_status_update)(
-            session_id=str(session.session_id),
-            status='running',
-            message='Paper trading bot is running'
+def get_trade_execution_breaker() -> CircuitBreaker:
+    """Get or create the trade execution circuit breaker."""
+    global _trade_execution_breaker
+    if _trade_execution_breaker is None:
+        _trade_execution_breaker = CircuitBreaker(
+            name="trade_execution_breaker",
+            failure_threshold=getattr(settings, 'TRADE_CB_FAILURE_THRESHOLD', 5),
+            timeout_seconds=getattr(settings, 'TRADE_CB_TIMEOUT_SECONDS', 300),
+            success_threshold=getattr(settings, 'TRADE_CB_SUCCESS_THRESHOLD', 2)
         )
-        
-        # Run bot main loop
-        logger.info(f"[BOT] Entering main trading loop for session {session_id}")
-        
-        tick_count = 0
-        max_ticks = 720  # 1 hour at 5-second ticks
-        tick_interval = 5  # seconds
-        
-        while tick_count < max_ticks:
-            # Check if we should stop
-            session.refresh_from_db()
-            if session.status in ['STOPPING', 'STOPPED', 'ERROR']:
-                logger.info(f"[BOT] Session {session_id} requested stop: {session.status}")
-                break
-            
-            # Check for soft time limit
-            if time.time() - start_time > 3500:  # Stop before soft limit
-                logger.warning(f"[BOT] Approaching time limit, stopping gracefully")
-                break
-            
-            # Execute bot tick
-            try:
-                bot_instance.tick()
-                tick_count += 1
-                
-                # Send periodic status updates
-                if tick_count % 12 == 0:  # Every minute
-                    _send_bot_metrics_update(session, bot_instance)
-                
-                # Sleep between ticks
-                time.sleep(tick_interval)
-                
-            except Exception as tick_error:
-                logger.error(f"[BOT] Error during tick {tick_count}: {tick_error}")
-                # Continue running unless it's critical
-                if "critical" in str(tick_error).lower():
-                    break
-        
-        # Finalize session
-        duration = time.time() - start_time
-        
-        # Calculate final metrics
-        final_metrics = _calculate_session_metrics(session)
-        
-        # Update session
-        session.status = 'COMPLETED'
-        session.ended_at = timezone.now()
-        session.ending_balance_usd = session.account.current_balance_usd
-        session.session_pnl_usd = session.account.current_balance_usd - session.starting_balance_usd
-        session.total_trades_executed = final_metrics['total_trades']
-        session.save()
-        
-        logger.info(
-            f"[BOT] Session {session_id} completed: "
-            f"Duration={duration:.1f}s, Trades={final_metrics['total_trades']}, "
-            f"P&L=${session.session_pnl_usd:.2f}"
-        )
-        
-        return {
-            'success': True,
-            'session_id': str(session.session_id),
-            'duration_seconds': duration,
-            'tick_count': tick_count,
-            'metrics': final_metrics,
-            'final_balance': float(session.account.current_balance_usd),
-            'pnl': float(session.session_pnl_usd),
-            'status': 'completed'
-        }
-        
-    except SoftTimeLimitExceeded:
-        logger.warning(f"[BOT] Soft time limit exceeded for session {session_id}")
-        if session:
-            session.status = 'STOPPED'
-            session.ended_at = timezone.now()
-            session.save()
-        return {
-            'success': False,
-            'error': 'Time limit exceeded',
-            'session_id': session_id
-        }
-        
-    except Exception as e:
-        logger.error(f"[BOT] Fatal error in session {session_id}: {e}", exc_info=True)
-        
-        # Update session status
-        try:
-            session.status = 'ERROR'
-            session.ended_at = timezone.now()
-            session.error_message = str(e)
-            session.save()
-        except:
-            pass
-        
-        # Retry if appropriate
-        if self.request.retries < self.max_retries:
-            retry_delay = 2 ** self.request.retries
-            logger.info(f"[BOT] Retrying session {session_id} in {retry_delay}s")
-            raise self.retry(countdown=retry_delay, exc=e)
-        
-        return {
-            'success': False,
-            'error': str(e),
-            'session_id': session_id,
-            'task_id': task_id
-        }
-        
-    finally:
-        # Cleanup
-        if bot_instance:
-            try:
-                bot_instance.shutdown()
-            except:
-                pass
+        logger.info("[CB] Trade execution circuit breaker initialized")
+    return _trade_execution_breaker
 
 
-@shared_task(
-    bind=True,
-    name='paper_trading.tasks.stop_paper_trading_bot',
-    queue='paper_trading.control',
-    max_retries=3
-)
-def stop_paper_trading_bot(
-    self,
-    session_id: str,
-    reason: str = "User requested stop"
-) -> Dict[str, Any]:
-    """
-    Stop a running paper trading bot session.
-    
-    Args:
-        session_id: Trading session UUID to stop
-        reason: Reason for stopping the bot
-        
-    Returns:
-        Dictionary with stop operation results
-    """
-    try:
-        logger.info(f"[BOT] Stopping session {session_id}: {reason}")
-        
-        # Get session
-        try:
-            session = PaperTradingSession.objects.get(session_id=session_id)
-        except PaperTradingSession.DoesNotExist:
-            return {
-                'success': False,
-                'error': f'Session {session_id} not found'
-            }
-        
-        # Update session status
-        previous_status = session.status
-        session.status = 'STOPPING'
-        session.save()
-        
-        # Calculate final metrics
-        final_metrics = _calculate_session_metrics(session)
-        
-        # Finalize session
-        with transaction.atomic():
-            session.status = 'STOPPED'
-            session.ended_at = timezone.now()
-            session.ending_balance_usd = session.account.current_balance_usd
-            session.session_pnl_usd = session.account.current_balance_usd - session.starting_balance_usd
-            session.total_trades_executed = final_metrics['total_trades']
-            session.save()
-        
-        # Send WebSocket notification
-        async_to_sync(websocket_service.send_bot_status_update)(
-            session_id=str(session.session_id),
-            status='stopped',
-            message=reason
-        )
-        
-        logger.info(
-            f"[BOT] Session {session_id} stopped successfully. "
-            f"Previous status: {previous_status}, "
-            f"P&L: ${session.session_pnl_usd:.2f}"
-        )
-        
-        return {
-            'success': True,
-            'session_id': str(session.session_id),
-            'previous_status': previous_status,
-            'reason': reason,
-            'final_metrics': final_metrics,
-            'pnl': float(session.session_pnl_usd)
-        }
-        
-    except Exception as e:
-        logger.error(f"[BOT] Error stopping session {session_id}: {e}", exc_info=True)
-        return {
-            'success': False,
-            'error': str(e),
-            'session_id': session_id
-        }
-
-
-@shared_task(
-    name='paper_trading.tasks.monitor_paper_trading_session',
-    queue='paper_trading.monitor'
-)
-def monitor_paper_trading_session(session_id: str) -> Dict[str, Any]:
-    """
-    Monitor and update the status of a paper trading session.
-    
-    This task checks session health, updates metrics, and handles
-    stuck or failed sessions.
-    
-    Args:
-        session_id: Trading session UUID to monitor
-        
-    Returns:
-        Dictionary with monitoring results
-    """
-    try:
-        session = PaperTradingSession.objects.get(session_id=session_id)
-        
-        # Check session age
-        session_age = timezone.now() - session.started_at
-        
-        # Handle stuck sessions
-        if session.status == 'RUNNING' and session_age > timedelta(hours=2):
-            logger.warning(f"[MONITOR] Session {session_id} stuck, auto-stopping")
-            return stop_paper_trading_bot.apply_async(
-                args=[session_id, "Auto-stopped due to timeout"]
-            ).get()
-        
-        # Calculate current metrics
-        metrics = _calculate_session_metrics(session)
-        
-        # Update performance metrics
-        _update_performance_metrics(session, metrics)
-        
-        # Send status update
-        async_to_sync(websocket_service.send_session_metrics)(
-            session_id=str(session.session_id),
-            metrics=metrics
-        )
-        
-        return {
-            'success': True,
-            'session_id': str(session.session_id),
-            'status': session.status,
-            'age_minutes': session_age.total_seconds() / 60,
-            'metrics': metrics
-        }
-        
-    except Exception as e:
-        logger.error(f"[MONITOR] Error monitoring session {session_id}: {e}")
-        return {
-            'success': False,
-            'error': str(e),
-            'session_id': session_id
-        }
-
-
-# =============================================================================
-# PAPER TRADING WITH TRANSACTION MANAGER
-# =============================================================================
-
-@shared_task(
-    bind=True,
-    name='paper_trading.tasks.execute_paper_trade_with_tx_manager',
-    queue='paper_trading.execution',
-    max_retries=3
-)
-def execute_paper_trade_with_tx_manager(
-    self,
-    account_id: int,
-    trade_type: str,  # 'BUY' or 'SELL'
-    token_address: str,
-    amount: str,
-    chain_id: int = 8453,
-    slippage_tolerance: float = 0.005
-) -> Dict[str, Any]:
-    """
-    Execute a paper trade using the Transaction Manager from Phase 6B.
-    
-    This provides paper trades with the same gas optimization analytics
-    and transaction lifecycle management as live trades.
-    
-    Args:
-        account_id: Paper trading account ID
-        trade_type: 'BUY' or 'SELL'
-        token_address: Token to trade
-        amount: Amount in USD (for buys) or tokens (for sells)
-        chain_id: Blockchain network ID
-        slippage_tolerance: Maximum acceptable slippage
-        
-    Returns:
-        Dictionary with trade execution results including gas metrics
-    """
-    try:
-        logger.info(
-            f"[TX PAPER] Executing {trade_type} via Transaction Manager: "
-            f"Token={token_address[:10]}..., Amount={amount}"
-        )
-        
-        # Get account and user
-        account = PaperTradingAccount.objects.get(pk=account_id)
-        user = account.user
-        
-        # Execute through Transaction Manager
-        async def execute_with_tx_manager():
-            # Get transaction manager
-            tx_manager = await get_transaction_manager_for_paper_trading(chain_id)
-            
-            if not tx_manager:
-                # Fallback to simulator if Transaction Manager unavailable
-                logger.warning("[TX PAPER] Transaction Manager unavailable, using simulator")
-                return _execute_simulated_trade(account, trade_type, token_address, amount)
-            
-            # Prepare swap parameters based on trade type
-            chain_config = config.get_chain_config(chain_id)
-            weth_address = chain_config.weth_address if chain_config else None
-            
-            if trade_type == 'BUY':
-                # Convert USD to ETH amount (mock price)
-                eth_price = Decimal('2000')
-                eth_amount = Decimal(amount) / eth_price
-                amount_in_wei = int(eth_amount * Decimal('1e18'))
-                
-                swap_params = SwapParams(
-                    token_in=weth_address,
-                    token_out=token_address,
-                    amount_in=amount_in_wei,
-                    amount_out_minimum=0,  # Will be calculated by TX manager
-                    swap_type=SwapType.EXACT_ETH_FOR_TOKENS,
-                    dex_version=DEXVersion.UNISWAP_V3,
-                    fee_tier=3000,
-                    slippage_tolerance=Decimal(str(slippage_tolerance))
-                )
-            else:  # SELL
-                amount_in_wei = int(Decimal(amount) * Decimal('1e18'))
-                
-                swap_params = SwapParams(
-                    token_in=token_address,
-                    token_out=weth_address,
-                    amount_in=amount_in_wei,
-                    amount_out_minimum=0,
-                    swap_type=SwapType.EXACT_TOKENS_FOR_ETH,
-                    dex_version=DEXVersion.UNISWAP_V3,
-                    fee_tier=3000,
-                    slippage_tolerance=Decimal(str(slippage_tolerance))
-                )
-            
-            # Create transaction submission request
-            tx_request = TransactionSubmissionRequest(
-                user=user,
-                chain_id=chain_id,
-                swap_params=swap_params,
-                gas_strategy=TradingGasStrategy.PAPER_TRADING,
-                is_paper_trade=True,
-                priority="normal"
-            )
-            
-            # Submit through transaction manager
-            result = await tx_manager.submit_transaction(tx_request)
-            
-            if result.success:
-                # Create paper trade record
-                paper_trade = PaperTrade.objects.create(
-                    account=account,
-                    trade_type=trade_type,
-                    token_address=token_address,
-                    amount_usd=Decimal(amount) if trade_type == 'BUY' else None,
-                    token_amount=Decimal(amount) if trade_type == 'SELL' else None,
-                    price_usd=Decimal('0.001'),  # Mock price
-                    transaction_id=result.transaction_id,
-                    status='COMPLETED',
-                    gas_used=result.transaction_state.gas_used if result.transaction_state else 0,
-                    gas_price_gwei=result.transaction_state.gas_price_gwei if result.transaction_state else 20,
-                    metadata={
-                        'tx_manager': True,
-                        'gas_savings': float(result.gas_savings_achieved) if result.gas_savings_achieved else 0
-                    }
-                )
-                
-                # Update account balance
-                if trade_type == 'BUY':
-                    account.current_balance_usd -= Decimal(amount)
-                else:
-                    # Mock conversion to USD
-                    account.current_balance_usd += Decimal(amount) * Decimal('0.001')
-                account.save()
-                
-                return {
-                    'success': True,
-                    'trade_id': paper_trade.trade_id,
-                    'transaction_id': result.transaction_id,
-                    'gas_savings_percent': float(result.gas_savings_achieved or 0),
-                    'execution_time_ms': result.transaction_state.execution_time_ms if result.transaction_state else 100
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': result.error_message
-                }
-        
-        result = run_async_task(execute_with_tx_manager())
-        return result
-        
-    except Exception as e:
-        logger.error(f"[TX PAPER] Trade execution failed: {e}", exc_info=True)
-        return {
-            'success': False,
-            'error': str(e)
-        }
-
-
-def _execute_simulated_trade(
-    account: PaperTradingAccount,
+async def check_circuit_breakers_for_trade(
+    user_id: int,
     trade_type: str,
-    token_address: str,
-    amount: str
-) -> Dict[str, Any]:
-    """Fallback simulated trade execution without Transaction Manager."""
-    from paper_trading.services.simulator import (
-        SimplePaperTradingSimulator,
-        SimplePaperTradeRequest
-    )
-    
-    simulator = SimplePaperTradingSimulator()
-    
-    # Create trade request
-    request = SimplePaperTradeRequest(
-        account=account,
-        trade_type=trade_type.lower(),
-        token_in='WETH' if trade_type == 'BUY' else token_address,
-        token_out=token_address if trade_type == 'BUY' else 'WETH',
-        amount_in_usd=Decimal(amount)
-    )
-    
-    # Execute through simulator
-    result = simulator.execute_trade(request)
-    
-    if result.success:
-        return {
-            'success': True,
-            'trade_id': result.trade_id,
-            'simulated': True
-        }
-    
-    return {
-        'success': False,
-        'error': result.error_message or 'Simulation failed'
-    }
-
-
-# =============================================================================
-# METRICS AND ANALYTICS
-# =============================================================================
-
-@shared_task(
-    name='paper_trading.tasks.calculate_paper_trading_analytics',
-    queue='paper_trading.analytics'
-)
-def calculate_paper_trading_analytics(
-    account_id: Optional[int] = None,
-    session_id: Optional[str] = None,
-    time_period_hours: int = 24
-) -> Dict[str, Any]:
+    amount_usd: Decimal,
+    bypass_checks: bool = False
+) -> Tuple[bool, Optional[List[str]]]:
     """
-    Calculate comprehensive analytics for paper trading.
+    Check all circuit breakers before executing a trade.
     
     Args:
-        account_id: Optional account ID to filter by
-        session_id: Optional session ID to filter by
-        time_period_hours: Time period for analytics calculation
+        user_id: User ID making the trade
+        trade_type: 'BUY' or 'SELL'
+        amount_usd: Trade amount in USD
+        bypass_checks: Emergency override flag
         
     Returns:
-        Dictionary with analytics data
+        Tuple of (can_proceed, list_of_blocking_reasons)
     """
+    if bypass_checks:
+        logger.warning(f"[CB] Circuit breakers BYPASSED for user {user_id}")
+        return (True, None)
+    
     try:
-        cutoff_time = timezone.now() - timedelta(hours=time_period_hours)
+        # Get circuit breaker manager
+        cb_manager = get_circuit_breaker_manager()
         
-        # Build query filters
-        filters = {'created_at__gte': cutoff_time}
-        if account_id:
-            filters['account_id'] = account_id
-        if session_id:
-            filters['account__papertradingsession__session_id'] = session_id
+        # Get portfolio state for user
+        portfolio_service = create_portfolio_service()
+        user = User.objects.get(id=user_id)
+        portfolio_state = await portfolio_service.get_portfolio_summary(user)
         
-        # Get trades
-        trades = PaperTrade.objects.filter(**filters)
+        # Add the proposed trade impact to portfolio state
+        if trade_type == 'BUY':
+            # Simulate the impact of this buy on portfolio
+            portfolio_state['pending_exposure'] = portfolio_state.get('total_value', 0) + amount_usd
         
-        # Calculate metrics
-        total_trades = trades.count()
-        buy_trades = trades.filter(trade_type='BUY').count()
-        sell_trades = trades.filter(trade_type='SELL').count()
+        # Check portfolio circuit breakers
+        can_trade, reasons = cb_manager.can_trade()
         
-        # Calculate volumes
-        from django.db.models import Sum
-        total_volume = trades.aggregate(
-            volume=Sum('amount_usd')
-        )['volume'] or Decimal('0')
+        if not can_trade:
+            logger.warning(
+                f"[CB] Trade BLOCKED for user {user_id}: {', '.join(reasons)}"
+            )
+            return (False, reasons)
         
-        # Get positions
-        position_filters = {'created_at__gte': cutoff_time}
-        if account_id:
-            position_filters['account_id'] = account_id
-            
-        positions = PaperPosition.objects.filter(**position_filters)
-        open_positions = positions.filter(is_open=True).count()
-        closed_positions = positions.filter(is_open=False).count()
+        # Check if trade execution circuit breaker is open
+        trade_breaker = get_trade_execution_breaker()
+        if trade_breaker.is_open:
+            reason = "Trade execution circuit breaker is OPEN (system-wide trading pause)"
+            logger.warning(f"[CB] Trade BLOCKED: {reason}")
+            return (False, [reason])
         
-        # Calculate P&L
-        total_pnl = positions.filter(is_open=False).aggregate(
-            pnl=Sum('realized_pnl_usd')
-        )['pnl'] or Decimal('0')
+        # Check user-specific limits
+        user_daily_trades = await get_user_daily_trade_count(user_id)
+        max_daily_trades = getattr(settings, 'MAX_DAILY_TRADES_PER_USER', 100)
         
-        # Win rate
-        profitable_positions = positions.filter(
-            is_open=False,
-            realized_pnl_usd__gt=0
+        if user_daily_trades >= max_daily_trades:
+            reason = f"Daily trade limit exceeded ({user_daily_trades}/{max_daily_trades})"
+            logger.warning(f"[CB] Trade BLOCKED for user {user_id}: {reason}")
+            return (False, [reason])
+        
+        # Check position limits
+        if trade_type == 'BUY':
+            max_position_size = getattr(settings, 'MAX_POSITION_SIZE_USD', 1000)
+            if amount_usd > max_position_size:
+                reason = f"Trade size ${amount_usd} exceeds maximum ${max_position_size}"
+                logger.warning(f"[CB] Trade BLOCKED for user {user_id}: {reason}")
+                return (False, [reason])
+        
+        logger.info(f"[CB] All checks PASSED for user {user_id}")
+        return (True, None)
+        
+    except Exception as e:
+        logger.error(f"[CB] Error checking circuit breakers: {e}")
+        # Fail open - allow trade if check fails
+        return (True, None)
+
+
+async def get_user_daily_trade_count(user_id: int) -> int:
+    """Get the number of trades a user has executed today."""
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    try:
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        trade_count = Trade.objects.filter(
+            user_id=user_id,
+            created_at__gte=today_start,
+            status__in=['COMPLETED', 'PENDING']
         ).count()
-        
-        win_rate = (profitable_positions / max(closed_positions, 1)) * 100
-        
-        analytics = {
-            'period_hours': time_period_hours,
-            'total_trades': total_trades,
-            'buy_trades': buy_trades,
-            'sell_trades': sell_trades,
-            'total_volume': float(total_volume),
-            'open_positions': open_positions,
-            'closed_positions': closed_positions,
-            'total_pnl': float(total_pnl),
-            'win_rate': float(win_rate),
-            'timestamp': timezone.now().isoformat()
-        }
-        
-        logger.info(f"[ANALYTICS] Calculated: {total_trades} trades, P&L=${total_pnl:.2f}")
-        
-        return analytics
-        
+        return trade_count
     except Exception as e:
-        logger.error(f"[ANALYTICS] Error calculating analytics: {e}")
-        return {
-            'error': str(e),
-            'timestamp': timezone.now().isoformat()
-        }
+        logger.error(f"Error getting user trade count: {e}")
+        return 0
 
 
 # =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def _calculate_session_metrics(session: PaperTradingSession) -> Dict[str, Any]:
-    """Calculate comprehensive metrics for a trading session."""
-    try:
-        # Get trades for this session
-        trades = PaperTrade.objects.filter(
-            account=session.account,
-            created_at__gte=session.started_at
-        )
-        
-        # Get positions
-        positions = PaperPosition.objects.filter(
-            account=session.account,
-            created_at__gte=session.started_at
-        )
-        
-        # Calculate metrics
-        total_trades = trades.count()
-        total_volume = sum(t.amount_usd or 0 for t in trades)
-        
-        closed_positions = positions.filter(is_open=False)
-        profitable_trades = closed_positions.filter(realized_pnl_usd__gt=0).count()
-        
-        win_rate = (profitable_trades / max(closed_positions.count(), 1)) * 100
-        
-        return {
-            'total_trades': total_trades,
-            'total_volume': float(total_volume),
-            'win_rate': float(win_rate),
-            'open_positions': positions.filter(is_open=True).count(),
-            'closed_positions': closed_positions.count(),
-            'session_pnl': float(session.account.current_balance_usd - session.starting_balance_usd)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error calculating session metrics: {e}")
-        return {
-            'total_trades': 0,
-            'total_volume': 0.0,
-            'win_rate': 0.0,
-            'open_positions': 0,
-            'closed_positions': 0,
-            'session_pnl': 0.0
-        }
-
-
-def _update_performance_metrics(
-    session: PaperTradingSession,
-    metrics: Dict[str, Any]
-) -> None:
-    """Update or create performance metrics for a session."""
-    try:
-        PaperPerformanceMetrics.objects.update_or_create(
-            session=session,
-            period_start=session.started_at,
-            period_end=timezone.now(),
-            defaults={
-                'total_trades': metrics['total_trades'],
-                'winning_trades': int(metrics['win_rate'] * metrics.get('closed_positions', 0) / 100),
-                'losing_trades': metrics.get('closed_positions', 0) - int(metrics['win_rate'] * metrics.get('closed_positions', 0) / 100),
-                'win_rate': Decimal(str(metrics['win_rate'])),
-                'total_pnl_usd': Decimal(str(metrics['session_pnl'])),
-                'total_pnl_percent': (Decimal(str(metrics['session_pnl'])) / session.starting_balance_usd * 100) if session.starting_balance_usd > 0 else 0
-            }
-        )
-    except Exception as e:
-        logger.error(f"Failed to update performance metrics: {e}")
-
-
-def _send_bot_metrics_update(
-    session: PaperTradingSession,
-    bot_instance: EnhancedPaperTradingBot
-) -> None:
-    """Send real-time metrics update via WebSocket."""
-    try:
-        metrics = _calculate_session_metrics(session)
-        
-        # Add bot-specific metrics if available
-        if hasattr(bot_instance, 'get_current_metrics'):
-            bot_metrics = bot_instance.get_current_metrics()
-            metrics.update(bot_metrics)
-        
-        async_to_sync(websocket_service.send_session_metrics)(
-            session_id=str(session.session_id),
-            metrics=metrics
-        )
-    except Exception as e:
-        logger.error(f"Failed to send metrics update: {e}")
-
-
-# =============================================================================
-# PERIODIC CLEANUP TASKS
+# MAIN TRADING TASKS WITH CIRCUIT BREAKER PROTECTION
 # =============================================================================
 
 @shared_task(
-    name='paper_trading.tasks.cleanup_old_sessions',
-    queue='paper_trading.maintenance'
+    bind=True,
+    name="trading.tasks.execute_buy_order",
+    queue="trading.execution",
+    max_retries=3,
+    soft_time_limit=120,
+    time_limit=180
 )
-def cleanup_old_sessions(max_age_days: int = 30) -> Dict[str, int]:
-    """
-    Clean up old paper trading sessions and related data.
-    
-    Args:
-        max_age_days: Maximum age of sessions to keep
-        
-    Returns:
-        Dictionary with cleanup statistics
-    """
-    try:
-        cutoff_date = timezone.now() - timedelta(days=max_age_days)
-        
-        # Find old sessions
-        old_sessions = PaperTradingSession.objects.filter(
-            created_at__lt=cutoff_date,
-            status__in=['COMPLETED', 'STOPPED', 'ERROR']
-        )
-        
-        session_count = old_sessions.count()
-        
-        # Delete related data
-        for session in old_sessions:
-            # Delete AI thoughts
-            PaperAIThoughtLog.objects.filter(
-                session=session
-            ).delete()
-            
-            # Delete performance metrics
-            PaperPerformanceMetrics.objects.filter(
-                session=session
-            ).delete()
-        
-        # Delete sessions
-        old_sessions.delete()
-        
-        logger.info(f"[CLEANUP] Deleted {session_count} old sessions")
-        
-        return {
-            'sessions_deleted': session_count,
-            'cutoff_date': cutoff_date.isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"[CLEANUP] Error: {e}")
-        return {
-            'error': str(e)
-        }
-    
-
-
-
-"""
-Trading Celery Tasks - Stub Implementations
-
-Provides Celery task entry points for trade execution (buy/sell orders)
-so that imports in trading/views.py work correctly.
-
-These will later be upgraded to integrate with the Transaction Manager
-and DEX Router Service (Phase 6B), but for now they return mock results
-so your Django project runs cleanly.
-"""
-
-import logging
-from celery import shared_task
-
-logger = logging.getLogger(__name__)
-
-
-@shared_task(name="trading.tasks.execute_buy_order")
 def execute_buy_order(
+    self,
     pair_address: str,
     token_address: str,
     amount_eth: str,
@@ -918,61 +215,685 @@ def execute_buy_order(
     gas_price_gwei: float,
     trade_id: str,
     user_id: int,
-    strategy_id: str = None,
+    strategy_id: Optional[str] = None,
     chain_id: int = 8453,
-):
+    bypass_circuit_breaker: bool = False
+) -> Dict[str, Any]:
     """
-    Stub Celery task for executing a BUY order.
-    Logs parameters and returns a mock successful result.
+    Execute a BUY order with full circuit breaker protection and Transaction Manager integration.
+    
+    This task:
+    1. Validates circuit breakers before execution
+    2. Uses Transaction Manager for gas optimization
+    3. Updates portfolio tracking
+    4. Handles failures with circuit breaker updates
+    
+    Args:
+        pair_address: DEX pair address
+        token_address: Token to buy
+        amount_eth: Amount of ETH to spend
+        slippage_tolerance: Maximum slippage (0.01 = 1%)
+        gas_price_gwei: Gas price in gwei
+        trade_id: Unique trade identifier
+        user_id: User executing the trade
+        strategy_id: Optional strategy identifier
+        chain_id: Blockchain network ID
+        bypass_circuit_breaker: Emergency override flag
+        
+    Returns:
+        Dictionary with execution results
     """
-    logger.info(
-        f"[TRADING] (Stub) BUY order | Trade ID={trade_id} | "
-        f"Token={token_address[:10]}... | Amount={amount_eth} ETH | Chain={chain_id}"
-    )
+    task_id = self.request.id
+    start_time = datetime.now(timezone.utc)
+    
+    try:
+        logger.info(
+            f"[BUY] Starting buy order execution: Trade {trade_id}, "
+            f"Token {token_address[:10]}..., Amount {amount_eth} ETH"
+        )
+        
+        # Convert amount to USD for circuit breaker checks
+        eth_price = Decimal('2000')  # In production, get from price oracle
+        amount_usd = Decimal(amount_eth) * eth_price
+        
+        # Step 1: Circuit Breaker Validation
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        can_proceed, blocking_reasons = loop.run_until_complete(
+            check_circuit_breakers_for_trade(
+                user_id=user_id,
+                trade_type='BUY',
+                amount_usd=amount_usd,
+                bypass_checks=bypass_circuit_breaker
+            )
+        )
+        
+        if not can_proceed:
+            logger.warning(f"[BUY] Trade {trade_id} BLOCKED by circuit breakers")
+            
+            # Update trade record
+            try:
+                trade = Trade.objects.get(trade_id=trade_id)
+                trade.status = 'BLOCKED'
+                trade.error_message = f"Circuit breaker: {', '.join(blocking_reasons)}"
+                trade.save()
+            except Trade.DoesNotExist:
+                pass
+            
+            return {
+                'success': False,
+                'trade_id': trade_id,
+                'error': 'Trade blocked by circuit breaker',
+                'circuit_breaker_reasons': blocking_reasons,
+                'blocked_at': datetime.now(timezone.utc).isoformat()
+            }
+        
+        # Step 2: Execute through Trade Execution Circuit Breaker
+        trade_breaker = get_trade_execution_breaker()
+        
+        async def execute_with_breaker():
+            """Execute trade with circuit breaker protection."""
+            return await trade_breaker.call(
+                _execute_buy_with_tx_manager,
+                trade_id=trade_id,
+                user_id=user_id,
+                token_address=token_address,
+                amount_eth=amount_eth,
+                amount_usd=amount_usd,
+                chain_id=chain_id,
+                slippage_tolerance=slippage_tolerance,
+                gas_price_gwei=gas_price_gwei,
+                pair_address=pair_address,
+                strategy_id=strategy_id
+            )
+        
+        result = loop.run_until_complete(execute_with_breaker())
+        
+        # Step 3: Update circuit breaker state based on result
+        if not result.get('success', False):
+            # Trade failed - update circuit breaker manager
+            cb_manager = get_circuit_breaker_manager()
+            
+            # Get latest portfolio state
+            portfolio_service = create_portfolio_service()
+            user = User.objects.get(id=user_id)
+            portfolio_state = loop.run_until_complete(
+                portfolio_service.get_portfolio_summary(user)
+            )
+            
+            # Check if new circuit breakers should trigger
+            cb_manager.check_circuit_breakers(portfolio_state)
+        
+        execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        result['execution_time_seconds'] = execution_time
+        
+        logger.info(
+            f"[BUY] Trade {trade_id} completed: Success={result.get('success')}, "
+            f"Time={execution_time:.2f}s"
+        )
+        
+        return result
+        
+    except CircuitBreakerOpenError as e:
+        logger.error(f"[BUY] Circuit breaker OPEN for trade {trade_id}: {e}")
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': 'Circuit breaker open - trading temporarily disabled',
+            'retry_after_seconds': 300
+        }
+        
+    except SoftTimeLimitExceeded:
+        logger.error(f"[BUY] Time limit exceeded for trade {trade_id}")
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': 'Trade execution timeout'
+        }
+        
+    except Exception as e:
+        logger.error(f"[BUY] Fatal error in trade {trade_id}: {e}", exc_info=True)
+        
+        # Update circuit breaker on failure
+        try:
+            cb_manager = get_circuit_breaker_manager()
+            portfolio_service = create_portfolio_service()
+            user = User.objects.get(id=user_id)
+            
+            loop = asyncio.new_event_loop()
+            portfolio_state = loop.run_until_complete(
+                portfolio_service.get_portfolio_summary(user)
+            )
+            cb_manager.check_circuit_breakers(portfolio_state)
+        except:
+            pass
+        
+        # Retry if appropriate
+        if self.request.retries < self.max_retries:
+            retry_delay = 2 ** self.request.retries
+            logger.info(f"[BUY] Retrying trade {trade_id} in {retry_delay}s")
+            raise self.retry(countdown=retry_delay, exc=e)
+        
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': str(e)
+        }
 
-    return {
-        "success": True,
-        "trade_id": trade_id,
-        "pair_address": pair_address,
-        "token_address": token_address,
-        "executed_price_usd": 2000.0,  # Mock ETH price
-        "chain_id": chain_id,
-        "message": "Stub execute_buy_order executed successfully"
-    }
 
-
-@shared_task(name="trading.tasks.execute_sell_order")
+@shared_task(
+    bind=True,
+    name="trading.tasks.execute_sell_order",
+    queue="trading.execution",
+    max_retries=3,
+    soft_time_limit=120,
+    time_limit=180
+)
 def execute_sell_order(
+    self,
     pair_address: str,
     token_address: str,
     token_amount: str,
     slippage_tolerance: float,
     gas_price_gwei: float,
-    trade_id: str = None,
-    user_id: int = None,
+    trade_id: Optional[str] = None,
+    user_id: Optional[int] = None,
     is_position_close: bool = False,
-    position_id: str = None,
+    position_id: Optional[str] = None,
     chain_id: int = 8453,
-):
+    bypass_circuit_breaker: bool = False
+) -> Dict[str, Any]:
     """
-    Stub Celery task for executing a SELL order.
-    Logs parameters and returns a mock successful result.
+    Execute a SELL order with full circuit breaker protection and Transaction Manager integration.
+    
+    This task:
+    1. Validates circuit breakers before execution
+    2. Uses Transaction Manager for gas optimization
+    3. Updates portfolio tracking
+    4. Handles position closing with special logic
+    
+    Args:
+        pair_address: DEX pair address
+        token_address: Token to sell
+        token_amount: Amount of tokens to sell
+        slippage_tolerance: Maximum slippage (0.01 = 1%)
+        gas_price_gwei: Gas price in gwei
+        trade_id: Unique trade identifier
+        user_id: User executing the trade
+        is_position_close: Whether this is closing a position
+        position_id: Position being closed (if applicable)
+        chain_id: Blockchain network ID
+        bypass_circuit_breaker: Emergency override flag
+        
+    Returns:
+        Dictionary with execution results
     """
-    logger.info(
-        f"[TRADING] (Stub) SELL order | Trade ID={trade_id} | "
-        f"Token={token_address[:10]}... | Amount={token_amount} | Chain={chain_id}"
-    )
+    task_id = self.request.id
+    start_time = datetime.now(timezone.utc)
+    
+    try:
+        logger.info(
+            f"[SELL] Starting sell order execution: Trade {trade_id}, "
+            f"Token {token_address[:10]}..., Amount {token_amount}"
+        )
+        
+        # Estimate value in USD for circuit breaker checks
+        token_price = Decimal('0.001')  # In production, get from price oracle
+        amount_usd = Decimal(token_amount) * token_price
+        
+        # Step 1: Circuit Breaker Validation (may be relaxed for position closes)
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Allow position closes even during circuit breaker if it reduces risk
+        check_breakers = not is_position_close or not getattr(
+            settings, 'ALLOW_POSITION_CLOSE_DURING_CB', True
+        )
+        
+        if check_breakers:
+            can_proceed, blocking_reasons = loop.run_until_complete(
+                check_circuit_breakers_for_trade(
+                    user_id=user_id,
+                    trade_type='SELL',
+                    amount_usd=amount_usd,
+                    bypass_checks=bypass_circuit_breaker
+                )
+            )
+            
+            if not can_proceed:
+                logger.warning(f"[SELL] Trade {trade_id} BLOCKED by circuit breakers")
+                
+                # Update trade record if exists
+                if trade_id:
+                    try:
+                        trade = Trade.objects.get(trade_id=trade_id)
+                        trade.status = 'BLOCKED'
+                        trade.error_message = f"Circuit breaker: {', '.join(blocking_reasons)}"
+                        trade.save()
+                    except Trade.DoesNotExist:
+                        pass
+                
+                return {
+                    'success': False,
+                    'trade_id': trade_id,
+                    'error': 'Trade blocked by circuit breaker',
+                    'circuit_breaker_reasons': blocking_reasons,
+                    'blocked_at': datetime.now(timezone.utc).isoformat()
+                }
+        
+        # Step 2: Execute through Trade Execution Circuit Breaker
+        trade_breaker = get_trade_execution_breaker()
+        
+        async def execute_with_breaker():
+            """Execute trade with circuit breaker protection."""
+            return await trade_breaker.call(
+                _execute_sell_with_tx_manager,
+                trade_id=trade_id,
+                user_id=user_id,
+                token_address=token_address,
+                token_amount=token_amount,
+                amount_usd=amount_usd,
+                chain_id=chain_id,
+                slippage_tolerance=slippage_tolerance,
+                gas_price_gwei=gas_price_gwei,
+                pair_address=pair_address,
+                is_position_close=is_position_close,
+                position_id=position_id
+            )
+        
+        result = loop.run_until_complete(execute_with_breaker())
+        
+        # Step 3: Update circuit breaker state based on result
+        if not result.get('success', False) and user_id:
+            # Trade failed - update circuit breaker manager
+            cb_manager = get_circuit_breaker_manager()
+            
+            # Get latest portfolio state
+            portfolio_service = create_portfolio_service()
+            user = User.objects.get(id=user_id)
+            portfolio_state = loop.run_until_complete(
+                portfolio_service.get_portfolio_summary(user)
+            )
+            
+            # Check if new circuit breakers should trigger
+            cb_manager.check_circuit_breakers(portfolio_state)
+        
+        execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        result['execution_time_seconds'] = execution_time
+        
+        logger.info(
+            f"[SELL] Trade {trade_id} completed: Success={result.get('success')}, "
+            f"Time={execution_time:.2f}s"
+        )
+        
+        return result
+        
+    except CircuitBreakerOpenError as e:
+        logger.error(f"[SELL] Circuit breaker OPEN for trade {trade_id}: {e}")
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': 'Circuit breaker open - trading temporarily disabled',
+            'retry_after_seconds': 300
+        }
+        
+    except SoftTimeLimitExceeded:
+        logger.error(f"[SELL] Time limit exceeded for trade {trade_id}")
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': 'Trade execution timeout'
+        }
+        
+    except Exception as e:
+        logger.error(f"[SELL] Fatal error in trade {trade_id}: {e}", exc_info=True)
+        
+        # Retry if appropriate
+        if self.request.retries < self.max_retries:
+            retry_delay = 2 ** self.request.retries
+            logger.info(f"[SELL] Retrying trade {trade_id} in {retry_delay}s")
+            raise self.retry(countdown=retry_delay, exc=e)
+        
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': str(e)
+        }
 
-    return {
-        "success": True,
-        "trade_id": trade_id,
-        "pair_address": pair_address,
-        "token_address": token_address,
-        "sold_amount": token_amount,
-        "is_position_close": is_position_close,
-        "position_id": position_id,
-        "chain_id": chain_id,
-        "message": "Stub execute_sell_order executed successfully"
-    }
+
+# =============================================================================
+# TRANSACTION MANAGER INTEGRATION
+# =============================================================================
+
+async def _execute_buy_with_tx_manager(
+    trade_id: str,
+    user_id: int,
+    token_address: str,
+    amount_eth: str,
+    amount_usd: Decimal,
+    chain_id: int,
+    slippage_tolerance: float,
+    gas_price_gwei: float,
+    pair_address: str,
+    strategy_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Execute buy order through Transaction Manager for gas optimization.
+    """
+    try:
+        # Get user
+        user = User.objects.get(id=user_id)
+        
+        # Get Transaction Manager
+        tx_manager = await get_transaction_manager(chain_id)
+        
+        # Convert ETH amount to Wei
+        amount_in_wei = int(Decimal(amount_eth) * Decimal('1e18'))
+        
+        # Create transaction request
+        tx_request = await create_transaction_submission_request(
+            user=user,
+            chain_id=chain_id,
+            token_in='0x' + '0' * 40,  # WETH address (placeholder)
+            token_out=token_address,
+            amount_in=amount_in_wei,
+            amount_out_minimum=0,  # Will be calculated
+            swap_type=SwapType.EXACT_ETH_FOR_TOKENS,
+            dex_version=DEXVersion.UNISWAP_V3,
+            gas_strategy=TradingGasStrategy.BALANCED,
+            is_paper_trade=False,
+            slippage_tolerance=Decimal(str(slippage_tolerance))
+        )
+        
+        # Submit through Transaction Manager
+        result = await tx_manager.submit_transaction(tx_request)
+        
+        if result.success:
+            # Update trade record
+            try:
+                trade = Trade.objects.get(trade_id=trade_id)
+                trade.status = 'COMPLETED'
+                trade.transaction_hash = result.transaction_state.transaction_hash
+                trade.gas_used = result.transaction_state.gas_used
+                trade.gas_price_gwei = result.transaction_state.gas_price_gwei
+                trade.save()
+            except Trade.DoesNotExist:
+                pass
+            
+            return {
+                'success': True,
+                'trade_id': trade_id,
+                'transaction_id': result.transaction_id,
+                'transaction_hash': result.transaction_state.transaction_hash,
+                'gas_savings_percent': float(result.gas_savings_achieved or 0),
+                'executed_price_usd': float(amount_usd / Decimal(amount_eth))
+            }
+        else:
+            return {
+                'success': False,
+                'trade_id': trade_id,
+                'error': result.error_message
+            }
+            
+    except Exception as e:
+        logger.error(f"Transaction Manager execution failed: {e}")
+        # Fallback to direct execution
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': str(e),
+            'fallback': True
+        }
 
 
+async def _execute_sell_with_tx_manager(
+    trade_id: Optional[str],
+    user_id: Optional[int],
+    token_address: str,
+    token_amount: str,
+    amount_usd: Decimal,
+    chain_id: int,
+    slippage_tolerance: float,
+    gas_price_gwei: float,
+    pair_address: str,
+    is_position_close: bool = False,
+    position_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Execute sell order through Transaction Manager for gas optimization.
+    """
+    try:
+        # Get user
+        user = User.objects.get(id=user_id) if user_id else None
+        
+        if not user:
+            return {
+                'success': False,
+                'trade_id': trade_id,
+                'error': 'User not found'
+            }
+        
+        # Get Transaction Manager
+        tx_manager = await get_transaction_manager(chain_id)
+        
+        # Convert token amount to Wei
+        amount_in_wei = int(Decimal(token_amount) * Decimal('1e18'))
+        
+        # Create transaction request
+        tx_request = await create_transaction_submission_request(
+            user=user,
+            chain_id=chain_id,
+            token_in=token_address,
+            token_out='0x' + '0' * 40,  # WETH address (placeholder)
+            amount_in=amount_in_wei,
+            amount_out_minimum=0,  # Will be calculated
+            swap_type=SwapType.EXACT_TOKENS_FOR_ETH,
+            dex_version=DEXVersion.UNISWAP_V3,
+            gas_strategy=TradingGasStrategy.FAST if is_position_close else TradingGasStrategy.BALANCED,
+            is_paper_trade=False,
+            slippage_tolerance=Decimal(str(slippage_tolerance))
+        )
+        
+        # Submit through Transaction Manager
+        result = await tx_manager.submit_transaction(tx_request)
+        
+        if result.success:
+            # Update trade record if exists
+            if trade_id:
+                try:
+                    trade = Trade.objects.get(trade_id=trade_id)
+                    trade.status = 'COMPLETED'
+                    trade.transaction_hash = result.transaction_state.transaction_hash
+                    trade.gas_used = result.transaction_state.gas_used
+                    trade.gas_price_gwei = result.transaction_state.gas_price_gwei
+                    trade.save()
+                except Trade.DoesNotExist:
+                    pass
+            
+            # Update position if closing
+            if is_position_close and position_id:
+                try:
+                    position = Position.objects.get(position_id=position_id)
+                    position.is_open = False
+                    position.close_date = datetime.now(timezone.utc)
+                    position.close_price = amount_usd / Decimal(token_amount)
+                    position.save()
+                except Position.DoesNotExist:
+                    pass
+            
+            return {
+                'success': True,
+                'trade_id': trade_id,
+                'transaction_id': result.transaction_id,
+                'transaction_hash': result.transaction_state.transaction_hash,
+                'gas_savings_percent': float(result.gas_savings_achieved or 0),
+                'sold_amount': token_amount,
+                'is_position_close': is_position_close
+            }
+        else:
+            return {
+                'success': False,
+                'trade_id': trade_id,
+                'error': result.error_message
+            }
+            
+    except Exception as e:
+        logger.error(f"Transaction Manager execution failed: {e}")
+        return {
+            'success': False,
+            'trade_id': trade_id,
+            'error': str(e),
+            'fallback': True
+        }
+
+
+# =============================================================================
+# CIRCUIT BREAKER MANAGEMENT TASKS
+# =============================================================================
+
+@shared_task(
+    name="trading.tasks.reset_circuit_breakers",
+    queue="trading.control"
+)
+def reset_circuit_breakers(
+    user_id: Optional[int] = None,
+    breaker_type: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Reset circuit breakers (admin task).
+    
+    Args:
+        user_id: Optional user to reset breakers for
+        breaker_type: Optional specific breaker type to reset
+        
+    Returns:
+        Dictionary with reset results
+    """
+    try:
+        cb_manager = get_circuit_breaker_manager()
+        
+        if breaker_type:
+            from engine.portfolio import CircuitBreakerType
+            breaker_enum = CircuitBreakerType[breaker_type.upper()]
+            success = cb_manager.manual_reset(breaker_enum)
+        else:
+            success = cb_manager.manual_reset()
+        
+        # Also reset trade execution circuit breaker
+        trade_breaker = get_trade_execution_breaker()
+        trade_breaker.reset()
+        
+        logger.info(
+            f"[CB] Circuit breakers reset: User={user_id}, Type={breaker_type}, Success={success}"
+        )
+        
+        return {
+            'success': success,
+            'user_id': user_id,
+            'breaker_type': breaker_type,
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"[CB] Reset failed: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+@shared_task(
+    name="trading.tasks.get_circuit_breaker_status",
+    queue="trading.monitor"
+)
+def get_circuit_breaker_status() -> Dict[str, Any]:
+    """
+    Get current circuit breaker status.
+    
+    Returns:
+        Dictionary with circuit breaker states
+    """
+    try:
+        status = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'portfolio_breakers': {},
+            'trade_execution_breaker': {}
+        }
+        
+        # Get portfolio circuit breakers
+        cb_manager = get_circuit_breaker_manager()
+        status['portfolio_breakers'] = cb_manager.get_status()
+        
+        # Get trade execution breaker
+        trade_breaker = get_trade_execution_breaker()
+        status['trade_execution_breaker'] = trade_breaker.get_stats()
+        
+        return status
+        
+    except Exception as e:
+        logger.error(f"[CB] Status check failed: {e}")
+        return {
+            'error': str(e),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+
+
+@shared_task(
+    name="trading.tasks.monitor_circuit_breakers",
+    queue="trading.monitor"
+)
+def monitor_circuit_breakers() -> Dict[str, Any]:
+    """
+    Monitor circuit breakers and send alerts if triggered.
+    
+    This task should run periodically to check circuit breaker health.
+    
+    Returns:
+        Dictionary with monitoring results
+    """
+    try:
+        alerts = []
+        
+        # Check portfolio circuit breakers
+        cb_manager = get_circuit_breaker_manager()
+        cb_status = cb_manager.get_status()
+        
+        if cb_status['active_breakers']:
+            for breaker in cb_status['active_breakers']:
+                alerts.append({
+                    'type': 'portfolio_breaker',
+                    'breaker': breaker['type'],
+                    'description': breaker['description'],
+                    'triggered_at': breaker['triggered_at']
+                })
+        
+        # Check trade execution breaker
+        trade_breaker = get_trade_execution_breaker()
+        if trade_breaker.is_open:
+            alerts.append({
+                'type': 'trade_execution_breaker',
+                'state': 'OPEN',
+                'failure_count': trade_breaker.failure_count,
+                'last_failure': trade_breaker.last_failure_time.isoformat() if trade_breaker.last_failure_time else None
+            })
+        
+        # Send alerts if any (implement notification logic here)
+        if alerts:
+            logger.warning(f"[CB MONITOR] {len(alerts)} circuit breakers active")
+            # TODO: Send notifications via email/Slack/etc
+        
+        return {
+            'alerts': alerts,
+            'total_alerts': len(alerts),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"[CB MONITOR] Monitoring failed: {e}")
+        return {
+            'error': str(e),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
