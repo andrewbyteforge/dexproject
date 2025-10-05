@@ -248,3 +248,7 @@ def get_simulator() -> SimplePaperTradingSimulator:
     if _simulator is None:
         _simulator = SimplePaperTradingSimulator()
     return _simulator
+
+
+# Alias for backward compatibility with trading/tasks.py
+TradingSimulator = SimplePaperTradingSimulator
