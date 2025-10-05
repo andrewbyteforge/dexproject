@@ -78,6 +78,16 @@ app.conf.update(
         'trading.tasks.validate_transaction': {'queue': 'execution.critical'},
         
         # =============================================================================
+        # PAPER TRADING TASKS - NEW SECTION
+        # =============================================================================
+        
+        # Paper trading bot control tasks
+        'paper_trading.tasks.run_paper_trading_bot': {'queue': 'paper_trading'},
+        'paper_trading.tasks.stop_paper_trading_bot': {'queue': 'paper_trading'},
+        'paper_trading.tasks.get_bot_status': {'queue': 'paper_trading'},
+        'paper_trading.tasks.cleanup_old_sessions': {'queue': 'paper_trading'},
+        
+        # =============================================================================
         # ANALYTICS AND REPORTING TASKS - BACKGROUND PROCESSING
         # =============================================================================
         
@@ -159,6 +169,15 @@ app.conf.update(
             'time_limit': 30,  # 30 seconds for Fast Lane (when implemented)
             'soft_time_limit': 20,
         },
+        # Paper trading specific timeouts
+        'paper_trading.tasks.run_paper_trading_bot': {
+            'time_limit': 7200,  # 2 hours hard limit
+            'soft_time_limit': 7000,  # Just under 2 hours soft limit
+        },
+        'paper_trading.tasks.stop_paper_trading_bot': {
+            'time_limit': 60,  # 1 minute
+            'soft_time_limit': 45,
+        },
     },
     
     # Result backend configuration
@@ -218,6 +237,7 @@ app.conf.task_create_missing_queues = True
 # Autodiscover tasks in Django apps
 app.autodiscover_tasks()
 
+
 # Custom logging setup for trading operations
 @setup_logging.connect
 def config_loggers(*args, **kwargs):
@@ -238,6 +258,10 @@ def config_loggers(*args, **kwargs):
             },
             'risk': {
                 'format': '[{asctime}] 🛡️ RISK {levelname} {name} - {message}',
+                'style': '{',
+            },
+            'paper': {
+                'format': '[{asctime}] 📝 PAPER {levelname} {name} - {message}',
                 'style': '{',
             },
         },
@@ -263,6 +287,14 @@ def config_loggers(*args, **kwargs):
                 'formatter': 'risk',
                 'level': 'DEBUG',
             },
+            'paper_file': {
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': 'logs/paper_trading.log',
+                'maxBytes': 10485760,  # 10MB
+                'backupCount': 5,
+                'formatter': 'paper',
+                'level': 'DEBUG',
+            },
         },
         'loggers': {
             'trading': {
@@ -272,6 +304,11 @@ def config_loggers(*args, **kwargs):
             },
             'risk': {
                 'handlers': ['console', 'risk_file'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
+            'paper_trading': {
+                'handlers': ['console', 'paper_file'],
                 'level': 'DEBUG',
                 'propagate': False,
             },
@@ -315,6 +352,14 @@ app.conf.beat_schedule = {
         'task': 'risk.tasks.cleanup_old_assessments',
         'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
         'options': {'queue': 'risk.background'}
+    },
+    
+    # Paper trading cleanup - daily at 3 AM
+    'cleanup-paper-trading-sessions': {
+        'task': 'paper_trading.tasks.cleanup_old_sessions',
+        'schedule': crontab(hour=3, minute=0),  # Daily at 3 AM
+        'options': {'queue': 'paper_trading'},
+        'kwargs': {'days': 30}  # Keep sessions for 30 days
     },
     
     # Update risk statistics
@@ -374,15 +419,23 @@ class RiskIntegratedTask(Task):
         """Log successful task completion."""
         logger = logging.getLogger('trading')
         
-        # Extract key metrics for logging
-        operation = retval.get('operation', 'UNKNOWN')
-        status = retval.get('status', 'unknown')
-        execution_time = retval.get('execution_time_seconds', 0)
+        # Handle None return values
+        if retval is None:
+            logger.info(f"✅ Task completed: {self.name} (ID: {task_id})")
+            return
         
-        logger.info(
-            f"✅ Risk-integrated task completed: {self.name} (ID: {task_id})\n"
-            f"Operation: {operation}, Status: {status}, Time: {execution_time:.2f}s"
-        )
+        # Extract key metrics for logging if retval is a dict
+        if isinstance(retval, dict):
+            operation = retval.get('operation', 'UNKNOWN')
+            status = retval.get('status', 'unknown')
+            execution_time = retval.get('execution_time_seconds', 0)
+            
+            logger.info(
+                f"✅ Risk-integrated task completed: {self.name} (ID: {task_id})\n"
+                f"Operation: {operation}, Status: {status}, Time: {execution_time:.2f}s"
+            )
+        else:
+            logger.info(f"✅ Task completed: {self.name} (ID: {task_id}), Result: {retval}")
     
     def retry(self, args=None, kwargs=None, exc=None, throw=True, eta=None, countdown=None, max_retries=None, **options):
         """Enhanced retry with trading-specific logic."""
@@ -422,7 +475,8 @@ def setup_periodic_tasks(sender, **kwargs):
         'risk.normal', 
         'risk.background',
         'execution.critical',
-        'analytics.background'
+        'analytics.background',
+        'paper_trading'  # Added paper trading queue
     ]
     
     logger.info(f"✅ Celery configured with risk-integrated trading tasks")

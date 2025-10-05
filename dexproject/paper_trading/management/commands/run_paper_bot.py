@@ -95,6 +95,29 @@ class Command(BaseCommand):
         )
         
         # ====================================================================
+        # EXECUTION MODE
+        # ====================================================================
+        parser.add_argument(
+            '--background',
+            action='store_true',
+            help='Run bot in background using Celery (optional)'
+        )
+        
+        parser.add_argument(
+            '--session-name',
+            type=str,
+            default=None,
+            help='Name for this trading session'
+        )
+        
+        parser.add_argument(
+            '--runtime-minutes',
+            type=int,
+            default=None,
+            help='Runtime limit in minutes (only for background mode)'
+        )
+        
+        # ====================================================================
         # DISPLAY OPTIONS
         # ====================================================================
         parser.add_argument(
@@ -139,66 +162,166 @@ class Command(BaseCommand):
         self._display_configuration(account, options)
         
         # ====================================================================
-        # CREATE AND RUN BOT
+        # CREATE SESSION FOR TRACKING
         # ====================================================================
-        try:
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f'🤖 Initializing bot for account: {account.name}'
-                )
+        session_name = options['session_name'] or f'Session_{timezone.now().strftime("%Y%m%d_%H%M%S")}'
+        
+        # Create a trading session for better tracking
+        session = PaperTradingSession.objects.create(
+            account=account,
+            name=session_name,
+            status='STARTING',
+            starting_balance_usd=account.current_balance_usd,
+            config_snapshot={
+                'intel_level': options['intel'],
+                'tick_interval': options['override_tick_interval'],
+                'show_thoughts': options['show_thoughts'],
+                'mode': 'background' if options['background'] else 'direct'
+            }
+        )
+        
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'📝 Created trading session: {session.name} (ID: {session.session_id})'
             )
-            
-            # FIX: Pass account_id and intel_level as positional arguments
-            # The EnhancedPaperTradingBot.__init__ expects:
-            # def __init__(self, account_id: int, intel_level: int = 5):
-            bot = EnhancedPaperTradingBot(
-                account.pk,  # First positional argument
-                options['intel']  # Second positional argument
-            )
-            
-            # Override tick interval if specified
-            if options['override_tick_interval']:
-                bot.tick_interval = options['override_tick_interval']
+        )
+        
+        # ====================================================================
+        # RUN BOT (BACKGROUND OR DIRECT)
+        # ====================================================================
+        if options['background']:
+            # Run via Celery in background
+            try:
+                from paper_trading.tasks import run_paper_trading_bot
+                
                 self.stdout.write(
                     self.style.WARNING(
-                        f'⚠️  Overriding tick interval to {bot.tick_interval}s'
+                        '🚀 Starting bot in BACKGROUND mode using Celery...'
                     )
                 )
-            
-            # Initialize the bot
-            if not bot.initialize():
-                self.stdout.write(self.style.ERROR('❌ Bot initialization failed'))
-                return
-            
-            # Display final status
-            self.stdout.write(self.style.SUCCESS('✅ Bot initialized successfully'))
-            
-            # Show AI thoughts in console if requested
-            if options['show_thoughts']:
+                
+                # Start the Celery task
+                task = run_paper_trading_bot.delay(
+                    session_id=str(session.session_id),
+                    user_id=account.user.id,
+                    runtime_minutes=options['runtime_minutes']
+                )
+                
+                # Store task ID in session
+                session.metadata = session.metadata or {}
+                session.metadata['celery_task_id'] = task.id
+                session.save()
+                
                 self.stdout.write(
-                    self.style.WARNING(
-                        '👁️  AI thought process will be displayed in console'
+                    self.style.SUCCESS(
+                        f'✅ Bot started in background with task ID: {task.id}\n'
+                        f'   Session ID: {session.session_id}\n'
+                        f'   Use "celery -A dexproject inspect active" to monitor\n'
+                        f'   Use API endpoints to stop the bot'
                     )
                 )
-                bot.display_thoughts = True
-            
-            # Start bot
-            self.stdout.write(
-                self.style.NOTICE(
-                    '\n🏃 Bot is running... Press Ctrl+C to stop\n'
+                
+            except ImportError:
+                self.stdout.write(
+                    self.style.ERROR(
+                        '❌ Celery tasks not available. Running in direct mode instead.'
+                    )
                 )
-            )
-            
-            bot.run()
-            
-        except KeyboardInterrupt:
-            self.stdout.write('\n\n🛑 Shutting down bot...')
-            if 'bot' in locals():
-                bot.cleanup()
-            self.stdout.write(self.style.SUCCESS('✅ Bot stopped gracefully'))
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f'❌ Bot error: {e}'))
-            logger.exception("Bot crashed with exception")
+                options['background'] = False
+            except Exception as e:
+                self.stdout.write(
+                    self.style.ERROR(
+                        f'❌ Failed to start background task: {e}\n'
+                        f'   Running in direct mode instead.'
+                    )
+                )
+                options['background'] = False
+        
+        if not options['background']:
+            # Run directly (current behavior)
+            try:
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f'🤖 Initializing bot for account: {account.name}'
+                    )
+                )
+                
+                # Update session status
+                session.status = 'RUNNING'
+                session.save()
+                
+                # Create and initialize bot
+                bot = EnhancedPaperTradingBot(
+                    account.pk,  # First positional argument
+                    options['intel']  # Second positional argument
+                )
+                
+                # Store session reference in bot
+                bot.session = session
+                
+                # Override tick interval if specified
+                if options['override_tick_interval']:
+                    bot.tick_interval = options['override_tick_interval']
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f'⚠️  Overriding tick interval to {bot.tick_interval}s'
+                        )
+                    )
+                
+                # Initialize the bot
+                if not bot.initialize():
+                    self.stdout.write(self.style.ERROR('❌ Bot initialization failed'))
+                    session.status = 'ERROR'
+                    session.save()
+                    return
+                
+                # Display final status
+                self.stdout.write(self.style.SUCCESS('✅ Bot initialized successfully'))
+                
+                # Show AI thoughts in console if requested
+                if options['show_thoughts']:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            '👁️  AI thought process will be displayed in console'
+                        )
+                    )
+                    bot.display_thoughts = True
+                
+                # Start bot
+                self.stdout.write(
+                    self.style.NOTICE(
+                        '\n🏃 Bot is running... Press Ctrl+C to stop\n'
+                    )
+                )
+                
+                bot.run()
+                
+            except KeyboardInterrupt:
+                self.stdout.write('\n\n🛑 Shutting down bot...')
+                
+                # Update session status
+                if session:
+                    session.status = 'STOPPED'
+                    session.ended_at = timezone.now()
+                    session.ending_balance_usd = account.current_balance_usd
+                    session.session_pnl_usd = account.current_balance_usd - session.starting_balance_usd
+                    session.save()
+                
+                if 'bot' in locals():
+                    bot.cleanup()
+                    
+                self.stdout.write(self.style.SUCCESS('✅ Bot stopped gracefully'))
+                
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f'❌ Bot error: {e}'))
+                logger.exception("Bot crashed with exception")
+                
+                # Update session status on error
+                if session:
+                    session.status = 'ERROR'
+                    session.error_message = str(e)
+                    session.ended_at = timezone.now()
+                    session.save()
     
     def _display_banner(self, intel_level: int):
         """Display the startup banner with Intel level visualization."""
@@ -335,6 +458,14 @@ class Command(BaseCommand):
         self.stdout.write(f'  Balance         : ${account.current_balance_usd:,.2f}')
         self.stdout.write('')
         self.stdout.write(f'  INTELLIGENCE    : Level {options["intel"]}/10')
+        
+        # Show execution mode
+        if options['background']:
+            self.stdout.write(f'  EXECUTION MODE  : Background (Celery)')
+            if options['runtime_minutes']:
+                self.stdout.write(f'  RUNTIME LIMIT   : {options["runtime_minutes"]} minutes')
+        else:
+            self.stdout.write(f'  EXECUTION MODE  : Direct (Foreground)')
         
         # Show what the Intel level controls
         intel_config = self._get_intel_configuration(options['intel'])

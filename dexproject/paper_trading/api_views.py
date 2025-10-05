@@ -32,6 +32,9 @@ from .models import (
     PaperPerformanceMetrics
 )
 
+# Import Celery tasks for bot control
+from .tasks import run_paper_trading_bot, stop_paper_trading_bot
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,11 +58,18 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
         JsonResponse: AI thoughts data with metadata
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user or fall back to demo
+        if request.user.is_authenticated:
+            user = request.user
+        else:
+            from django.contrib.auth.models import User
+            try:
+                user = User.objects.get(username='demo_user')
+            except User.DoesNotExist:
+                return JsonResponse({'error': 'Authentication required'}, status=401)
         
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
@@ -123,11 +133,18 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         JsonResponse: Portfolio data with positions and metrics
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user or fall back to demo
+        if request.user.is_authenticated:
+            user = request.user
+        else:
+            from django.contrib.auth.models import User
+            try:
+                user = User.objects.get(username='demo_user')
+            except User.DoesNotExist:
+                return JsonResponse({'error': 'Authentication required'}, status=401)
             
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
@@ -212,11 +229,18 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         JsonResponse: Filtered trade data
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user or fall back to demo
+        if request.user.is_authenticated:
+            user = request.user
+        else:
+            from django.contrib.auth.models import User
+            try:
+                user = User.objects.get(username='demo_user')
+            except User.DoesNotExist:
+                return JsonResponse({'error': 'Authentication required'}, status=401)
             
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
@@ -286,7 +310,7 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
     try:
         from django.contrib.auth.models import User
         
-        # Get user (demo or authenticated)
+        # Get user (authenticated or demo)
         if request.user.is_authenticated:
             user = request.user
         else:
@@ -295,9 +319,9 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
             except User.DoesNotExist:
                 return JsonResponse({
                     'success': False,
-                    'error': 'Demo user not configured',
+                    'error': 'Authentication required',
                     'trades': []
-                }, status=404)
+                }, status=401)
         
         # Get active account
         account = PaperTradingAccount.objects.filter(
@@ -383,7 +407,7 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
     try:
         from django.contrib.auth.models import User
         
-        # Get user (demo or authenticated)
+        # Get user (authenticated or demo)
         if request.user.is_authenticated:
             user = request.user
         else:
@@ -392,9 +416,9 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             except User.DoesNotExist:
                 return JsonResponse({
                     'success': False,
-                    'error': 'Demo user not configured',
+                    'error': 'Authentication required',
                     'positions': []
-                }, status=404)
+                }, status=401)
         
         # Get active account
         account = PaperTradingAccount.objects.filter(
@@ -511,8 +535,8 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             except User.DoesNotExist:
                 return JsonResponse({
                     'success': False,
-                    'error': 'Demo user not configured'
-                }, status=404)
+                    'error': 'Authentication required'
+                }, status=401)
         
         # Get active account
         account = PaperTradingAccount.objects.filter(
@@ -589,11 +613,18 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
         JsonResponse: Configuration data or update status
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            try:
+                user = User.objects.get(username='demo_user')
+            except User.DoesNotExist:
+                return JsonResponse({'error': 'Authentication required'}, status=401)
+        else:
+            user = request.user
         
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
@@ -694,11 +725,18 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         JsonResponse: Performance data including Sharpe ratio, win rate, etc.
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user
+        if not request.user.is_authenticated:
+            from django.contrib.auth.models import User
+            try:
+                user = User.objects.get(username='demo_user')
+            except User.DoesNotExist:
+                return JsonResponse({'error': 'Authentication required'}, status=401)
+        else:
+            user = request.user
         
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
@@ -791,7 +829,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
 
 
 # =============================================================================
-# BOT CONTROL API
+# BOT CONTROL API - UPDATED WITH CELERY INTEGRATION
 # =============================================================================
 
 
@@ -801,22 +839,36 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
     """
     Start paper trading bot.
     
-    Creates a new trading session and initiates the bot process.
+    Creates a new trading session and initiates the bot process via Celery.
     
     Returns:
-        JsonResponse: Bot status with session ID
+        JsonResponse: Bot status with session ID and Celery task ID
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user instead of demo_user
+        if not request.user.is_authenticated:
+            return JsonResponse({
+                'error': 'Authentication required'
+            }, status=401)
         
+        user = request.user
+        
+        # Get or create account for user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+            # Create default account if none exists
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name=f"{user.username}_paper_account",
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account for user {user.id}")
         
         # Check if there's already an active session
         active_session = PaperTradingSession.objects.filter(
@@ -828,7 +880,8 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
             return JsonResponse({
                 'success': False,
                 'error': 'Bot is already running',
-                'session_id': str(active_session.session_id)
+                'session_id': str(active_session.session_id),
+                'status': active_session.status
             }, status=400)
         
         # Get active strategy configuration
@@ -839,9 +892,12 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         
         # Parse request body for session config
         session_config = {}
+        runtime_minutes = None
         if request.body:
             try:
-                session_config = json.loads(request.body)
+                body_data = json.loads(request.body)
+                session_config = body_data.get('config', {})
+                runtime_minutes = body_data.get('runtime_minutes')
             except json.JSONDecodeError:
                 pass
         
@@ -855,23 +911,30 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
             config_snapshot=session_config
         )
         
-        # Update session status to RUNNING
-        session.status = 'RUNNING'
+        # Start the bot via Celery task
+        task_result = run_paper_trading_bot.delay(
+            session_id=str(session.session_id),
+            user_id=user.id,
+            runtime_minutes=runtime_minutes
+        )
+        
+        # Store task ID in session metadata
+        session.metadata = session.metadata or {}
+        session.metadata['celery_task_id'] = task_result.id
         session.save()
         
-        # TODO: Actually start the bot process
-        # This would typically trigger a background task or service
-        # For example, using Celery:
-        # from .tasks import run_paper_trading_bot
-        # run_paper_trading_bot.delay(session.session_id)
-        
-        logger.info(f"Started paper trading session {session.session_id} for account {account.account_id}")
+        logger.info(
+            f"Started paper trading session {session.session_id} "
+            f"for user {user.id} with task {task_result.id}"
+        )
         
         return JsonResponse({
             'success': True,
             'session_id': str(session.session_id),
+            'task_id': task_result.id,
             'message': 'Paper trading bot started',
-            'status': 'running'
+            'status': 'starting',
+            'account_balance': float(account.current_balance_usd)
         })
         
     except Exception as e:
@@ -888,59 +951,79 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
     """
     Stop paper trading bot.
     
-    Ends active trading sessions and stops the bot process.
+    Ends active trading sessions and stops the bot process via Celery.
     
     Returns:
         JsonResponse: Bot status with number of sessions ended
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user instead of demo_user
+        if not request.user.is_authenticated:
+            return JsonResponse({
+                'error': 'Authentication required'
+            }, status=401)
+        
+        user = request.user
         
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
             return JsonResponse({'error': 'No active account found'}, status=404)
         
-        # Find active sessions
+        # Find active sessions for this user
         active_sessions = PaperTradingSession.objects.filter(
             account=account,
             status__in=['STARTING', 'RUNNING', 'PAUSED']
         )
         
-        sessions_ended = active_sessions.count()
+        sessions_ended = 0
+        tasks_stopped = []
         
-        if sessions_ended == 0:
+        if active_sessions.count() == 0:
             return JsonResponse({
                 'success': False,
                 'error': 'No active bot session found',
                 'sessions_ended': 0
             }, status=400)
         
-        # Update session status
+        # Parse request body for stop reason
+        stop_reason = "User requested stop"
+        if request.body:
+            try:
+                body_data = json.loads(request.body)
+                stop_reason = body_data.get('reason', stop_reason)
+            except json.JSONDecodeError:
+                pass
+        
+        # Stop each active session via Celery
         for session in active_sessions:
-            session.status = 'STOPPED'
-            session.ended_at = timezone.now()
-            session.ending_balance_usd = account.current_balance_usd
-            session.session_pnl_usd = account.current_balance_usd - session.starting_balance_usd
-            session.save()
-        
-        # TODO: Actually stop the bot process
-        # This would typically stop background tasks or services
-        # For example, using Celery:
-        # from .tasks import stop_paper_trading_bot
-        # for session in active_sessions:
-        #     stop_paper_trading_bot.delay(session.session_id)
-        
-        logger.info(f"Stopped {sessions_ended} paper trading sessions for account {account.account_id}")
+            # Call stop task
+            task_result = stop_paper_trading_bot.delay(
+                session_id=str(session.session_id),
+                user_id=user.id,
+                reason=stop_reason
+            )
+            
+            tasks_stopped.append({
+                'session_id': str(session.session_id),
+                'task_id': task_result.id
+            })
+            
+            sessions_ended += 1
+            
+            logger.info(
+                f"Stopping paper trading session {session.session_id} "
+                f"for user {user.id} with task {task_result.id}"
+            )
         
         return JsonResponse({
             'success': True,
             'sessions_ended': sessions_ended,
-            'message': 'Paper trading bot stopped',
+            'tasks_stopped': tasks_stopped,
+            'message': f'Stopped {sessions_ended} paper trading bot session(s)',
             'status': 'stopped'
         })
         
@@ -960,92 +1043,86 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
     Returns current bot status with session information.
     
     Returns:
-        JsonResponse: Bot status data
+        JsonResponse: Bot status and metrics
     """
     try:
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
+        # Use authenticated user
+        if not request.user.is_authenticated:
+            return JsonResponse({
+                'error': 'Authentication required'
+            }, status=401)
+        
+        user = request.user
         
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+            return JsonResponse({
+                'status': 'no_account',
+                'message': 'No paper trading account found'
+            })
         
-        # Check for active session
-        active_session = PaperTradingSession.objects.filter(
+        # Find active sessions
+        active_sessions = PaperTradingSession.objects.filter(
             account=account,
             status__in=['STARTING', 'RUNNING', 'PAUSED']
-        ).order_by('-started_at').first()
+        ).order_by('-started_at')
         
-        if active_session:
-            # Calculate session stats
-            session_duration = timezone.now() - active_session.started_at
-            
-            # Get trades during this session
-            session_trades = PaperTrade.objects.filter(
-                account=account,
-                created_at__gte=active_session.started_at
-            )
-            
-            # Get recent AI thoughts
-            recent_thoughts = PaperAIThoughtLog.objects.filter(
-                account=account,
-                created_at__gte=active_session.started_at
-            ).order_by('-created_at')[:5]
-            
-            status_data = {
-                'status': 'running',
-                'session_id': str(active_session.session_id),
-                'session_name': active_session.name,
-                'started_at': active_session.started_at.isoformat(),
-                'duration_minutes': int(session_duration.total_seconds() / 60),
-                'duration_seconds': int(session_duration.total_seconds()),
-                'trades_executed': session_trades.count(),
-                'successful_trades': session_trades.filter(status='completed').count(),
-                'failed_trades': session_trades.filter(status='failed').count(),
-                'session_pnl': float(active_session.session_pnl_usd) if active_session.session_pnl_usd else 0,
-                'starting_balance': float(active_session.starting_balance_usd),
-                'current_balance': float(account.current_balance_usd),
-                'last_heartbeat': active_session.last_heartbeat.isoformat() if active_session.last_heartbeat else None,
-                'recent_thoughts': [
-                    {
-                        'thought_id': str(thought.thought_id),
-                        'decision_type': thought.decision_type,
-                        'token_symbol': thought.token_symbol,
-                        'confidence_percent': float(thought.confidence_percent),
-                        'created_at': thought.created_at.isoformat()
-                    }
-                    for thought in recent_thoughts
-                ],
-                'config': active_session.config_snapshot if active_session.config_snapshot else {},
-            }
-        else:
-            # No active session
-            status_data = {
-                'status': 'stopped',
-                'message': 'No active trading session',
-                'last_session': None
+        # Get recent completed sessions
+        recent_sessions = PaperTradingSession.objects.filter(
+            account=account,
+            status__in=['COMPLETED', 'STOPPED']
+        ).order_by('-ended_at')[:5]
+        
+        # Build response
+        sessions_data = []
+        for session in active_sessions:
+            session_data = {
+                'session_id': str(session.session_id),
+                'status': session.status,
+                'name': session.name,
+                'started_at': session.started_at.isoformat() if session.started_at else None,
+                'current_pnl': float(
+                    account.current_balance_usd - session.starting_balance_usd
+                ),
+                'trades_executed': session.total_trades_executed or 0
             }
             
-            # Get last session if exists
-            last_session = PaperTradingSession.objects.filter(
-                account=account
-            ).order_by('-ended_at').first()
+            # Add Celery task status if available
+            if session.metadata and 'celery_task_id' in session.metadata:
+                from celery.result import AsyncResult
+                task_id = session.metadata['celery_task_id']
+                task_result = AsyncResult(task_id)
+                session_data['task_status'] = task_result.status
+                session_data['task_id'] = task_id
             
-            if last_session and last_session.ended_at:
-                status_data['last_session'] = {
-                    'session_id': str(last_session.session_id),
-                    'ended_at': last_session.ended_at.isoformat(),
-                    'duration_minutes': int((last_session.ended_at - last_session.started_at).total_seconds() / 60),
-                    'total_trades': last_session.total_trades_executed,
-                    'session_pnl': float(last_session.session_pnl_usd) if last_session.session_pnl_usd else 0,
-                }
+            sessions_data.append(session_data)
         
-        return JsonResponse(status_data)
+        # Add recent sessions summary
+        recent_data = []
+        for session in recent_sessions:
+            recent_data.append({
+                'session_id': str(session.session_id),
+                'name': session.name,
+                'ended_at': session.ended_at.isoformat() if session.ended_at else None,
+                'final_pnl': float(session.session_pnl_usd) if session.session_pnl_usd else 0,
+                'trades': session.total_trades_executed or 0
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'account_balance': float(account.current_balance_usd),
+            'active_sessions': sessions_data,
+            'recent_sessions': recent_data,
+            'bot_running': len(sessions_data) > 0
+        })
         
     except Exception as e:
         logger.error(f"Error getting bot status: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
