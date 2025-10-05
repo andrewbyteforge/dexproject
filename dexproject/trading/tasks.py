@@ -45,7 +45,7 @@ from paper_trading.bot.simple_trader import EnhancedPaperTradingBot
 # Import services
 from paper_trading.services.websocket_service import websocket_service
 # Note: SimplePaperTradingSimulator is the actual class name in simulator.py
-from paper_trading.services.simulator import SimplePaperTradingSimulator, get_simulator
+from paper_trading.services.simulator import SimplePaperTradingSimulator as TradingSimulator
 
 # Import Transaction Manager for Phase 6B integration
 from trading.services.transaction_manager import (
@@ -888,3 +888,91 @@ def cleanup_old_sessions(max_age_days: int = 30) -> Dict[str, int]:
         return {
             'error': str(e)
         }
+    
+
+
+
+"""
+Trading Celery Tasks - Stub Implementations
+
+Provides Celery task entry points for trade execution (buy/sell orders)
+so that imports in trading/views.py work correctly.
+
+These will later be upgraded to integrate with the Transaction Manager
+and DEX Router Service (Phase 6B), but for now they return mock results
+so your Django project runs cleanly.
+"""
+
+import logging
+from celery import shared_task
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task(name="trading.tasks.execute_buy_order")
+def execute_buy_order(
+    pair_address: str,
+    token_address: str,
+    amount_eth: str,
+    slippage_tolerance: float,
+    gas_price_gwei: float,
+    trade_id: str,
+    user_id: int,
+    strategy_id: str = None,
+    chain_id: int = 8453,
+):
+    """
+    Stub Celery task for executing a BUY order.
+    Logs parameters and returns a mock successful result.
+    """
+    logger.info(
+        f"[TRADING] (Stub) BUY order | Trade ID={trade_id} | "
+        f"Token={token_address[:10]}... | Amount={amount_eth} ETH | Chain={chain_id}"
+    )
+
+    return {
+        "success": True,
+        "trade_id": trade_id,
+        "pair_address": pair_address,
+        "token_address": token_address,
+        "executed_price_usd": 2000.0,  # Mock ETH price
+        "chain_id": chain_id,
+        "message": "Stub execute_buy_order executed successfully"
+    }
+
+
+@shared_task(name="trading.tasks.execute_sell_order")
+def execute_sell_order(
+    pair_address: str,
+    token_address: str,
+    token_amount: str,
+    slippage_tolerance: float,
+    gas_price_gwei: float,
+    trade_id: str = None,
+    user_id: int = None,
+    is_position_close: bool = False,
+    position_id: str = None,
+    chain_id: int = 8453,
+):
+    """
+    Stub Celery task for executing a SELL order.
+    Logs parameters and returns a mock successful result.
+    """
+    logger.info(
+        f"[TRADING] (Stub) SELL order | Trade ID={trade_id} | "
+        f"Token={token_address[:10]}... | Amount={token_amount} | Chain={chain_id}"
+    )
+
+    return {
+        "success": True,
+        "trade_id": trade_id,
+        "pair_address": pair_address,
+        "token_address": token_address,
+        "sold_amount": token_amount,
+        "is_position_close": is_position_close,
+        "position_id": position_id,
+        "chain_id": chain_id,
+        "message": "Stub execute_sell_order executed successfully"
+    }
+
+
