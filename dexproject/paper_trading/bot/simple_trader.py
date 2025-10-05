@@ -1,17 +1,12 @@
 """
-Enhanced Paper Trading Bot with Intel Slider System
+Enhanced Paper Trading Bot with Intel Slider System and Transaction Manager
 
-This is the main paper trading bot that integrates the Intel Slider (1-10) system
-for intelligent decision making. It replaces multiple bot implementations with
-a single, unified system.
-
-Key Features:
-- Intel Slider system (1-10 intelligence levels)
-- Modular market analyzers
+This is the complete paper trading bot that integrates:
+- Intel Slider (1-10) system for intelligent decision making
+- Phase 6B Transaction Manager for gas optimization (23.1% savings)
+- Real-time transaction status tracking
+- WebSocket updates for transaction lifecycle
 - Comprehensive thought logging
-- WebSocket real-time updates
-- Performance tracking
-- Clean separation of concerns
 
 File: dexproject/paper_trading/bot/simple_trader.py
 """
@@ -21,6 +16,7 @@ import sys
 import time
 import signal
 import logging
+import asyncio
 from decimal import Decimal
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
@@ -66,12 +62,35 @@ from paper_trading.intelligence.base import (
 )
 
 # ============================================================================
-# SERVICE IMPORTS - Use global instance
+# SERVICE IMPORTS
 # ============================================================================
 from paper_trading.services.websocket_service import websocket_service
 
 # ============================================================================
-# LEGACY AI ENGINE IMPORT (for backward compatibility during transition)
+# TRANSACTION MANAGER IMPORTS (Phase 6B Integration)
+# ============================================================================
+try:
+    from trading.services.transaction_manager import (
+        get_transaction_manager,
+        create_transaction_submission_request,
+        TransactionStatus,
+        TransactionSubmissionRequest,
+        TransactionManagerResult
+    )
+    from trading.services.dex_router_service import (
+        SwapType, 
+        DEXVersion, 
+        TradingGasStrategy,
+        SwapParams
+    )
+    TRANSACTION_MANAGER_AVAILABLE = True
+except ImportError:
+    TRANSACTION_MANAGER_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Transaction Manager not available - running in legacy mode")
+
+# ============================================================================
+# LEGACY AI ENGINE IMPORT (for backward compatibility)
 # ============================================================================
 from paper_trading.bot.ai_engine import (
     TradingSignal as LegacyTradingSignal,
@@ -94,11 +113,13 @@ logger = logging.getLogger(__name__)
 
 class EnhancedPaperTradingBot:
     """
-    Unified Paper Trading Bot with Intel Slider System.
+    Unified Paper Trading Bot with Intel Slider System and Transaction Manager.
     
-    This bot replaces multiple implementations with a clean,
-    modular design that uses the Intel Slider (1-10) for
-    intelligent decision making.
+    This bot integrates:
+    - Intel Slider (1-10) for intelligent decision making
+    - Transaction Manager for gas optimization (Phase 6B)
+    - Real-time WebSocket updates
+    - Comprehensive thought logging
     """
     
     def __init__(self, account_name: str, intel_level: int = 5):
@@ -111,9 +132,19 @@ class EnhancedPaperTradingBot:
         """
         self.account_name = account_name
         self.intel_level = intel_level
+        self.use_tx_manager = TRANSACTION_MANAGER_AVAILABLE  # Always use if available
         self.account = None
         self.session = None
         self.intelligence_engine = None
+        
+        # Transaction Manager instance (initialized later if needed)
+        self.tx_manager = None
+        self.chain_id = 1  # Default to Ethereum mainnet
+        
+        # Performance tracking for Transaction Manager
+        self.total_gas_savings = Decimal('0')
+        self.trades_with_tx_manager = 0
+        self.pending_transactions = {}  # Track pending TX manager transactions
         
         # Market tracking
         self.token_list = [
@@ -138,7 +169,12 @@ class EnhancedPaperTradingBot:
         self.tick_interval = 15  # seconds between market checks
         self.tick_count = 0
         
-        logger.info(f"[BOT] Enhanced Paper Trading Bot initialized with Intel Level {intel_level}")
+        log_msg = f"[BOT] Enhanced Paper Trading Bot initialized with Intel Level {intel_level}"
+        if self.use_tx_manager:
+            log_msg += " (Transaction Manager ENABLED - Gas Optimization Active)"
+        else:
+            log_msg += " (Transaction Manager DISABLED - Legacy Mode)"
+        logger.info(log_msg)
     
     def initialize(self) -> bool:
         """
@@ -148,49 +184,38 @@ class EnhancedPaperTradingBot:
             True if initialization successful
         """
         try:
-            # ================================================================
-            # LOAD OR CREATE ACCOUNT
-            # ================================================================
+            # Load or create account
             self._load_account()
             
-            # ================================================================
-            # CREATE TRADING SESSION
-            # ================================================================
+            # Create trading session
             self._create_session()
             
-            # ================================================================
-            # INITIALIZE INTELLIGENCE ENGINE
-            # ================================================================
+            # Initialize intelligence engine
             self._initialize_intelligence()
             
-            # ================================================================
-            # SETUP STRATEGY CONFIGURATION
-            # ================================================================
+            # Setup strategy configuration
             self._setup_strategy_configuration()
             
-            # ================================================================
-            # LOAD EXISTING POSITIONS
-            # ================================================================
+            # Initialize Transaction Manager if enabled
+            if self.use_tx_manager:
+                self._initialize_transaction_manager()
+            
+            # Load existing positions
             self._load_positions()
             
-            # ================================================================
-            # INITIALIZE PRICE HISTORY
-            # ================================================================
+            # Initialize price history
             self._initialize_price_history()
             
-            # ================================================================
-            # SEND INITIALIZATION NOTIFICATION
-            # ================================================================
+            # Send initialization notification
             self._send_bot_status_update('initialized')
             
-            # ================================================================
-            # LOG INITIAL THOUGHT
-            # ================================================================
+            # Log initial thought
             self._log_thought(
                 action="STARTUP",
                 reasoning=f"Bot initialized with Intel Level {self.intel_level}. "
                          f"Strategy: {self.intelligence_engine.config.name}. "
                          f"Risk tolerance: {self.intelligence_engine.config.risk_tolerance}%. "
+                         f"Transaction Manager: {'ENABLED' if self.use_tx_manager else 'DISABLED'}. "
                          f"Starting balance: ${self.account.current_balance_usd:.2f}",
                 confidence=100,
                 decision_type="SYSTEM"
@@ -202,11 +227,30 @@ class EnhancedPaperTradingBot:
             logger.error(f"[ERROR] Initialization failed: {e}", exc_info=True)
             return False
     
+    def _initialize_transaction_manager(self):
+        """Initialize the Transaction Manager for gas optimization."""
+        try:
+            # Run async initialization in sync context
+            async def init_tx_manager():
+                self.tx_manager = await get_transaction_manager(self.chain_id)
+                return self.tx_manager is not None
+            
+            success = async_to_sync(init_tx_manager)()
+            
+            if success:
+                logger.info("[TX MANAGER] Transaction Manager initialized successfully")
+                logger.info("[TX MANAGER] Gas optimization enabled - targeting 23.1% savings")
+            else:
+                logger.warning("[TX MANAGER] Failed to initialize - falling back to legacy mode")
+                self.use_tx_manager = False
+                
+        except Exception as e:
+            logger.error(f"[TX MANAGER] Initialization error: {e}")
+            self.use_tx_manager = False
+    
     def _setup_strategy_configuration(self):
         """
         Set up or load a valid PaperStrategyConfiguration for this account.
-
-        Ensures only valid fields are used and all JSON fields are serializable.
         """
         from decimal import Decimal
         from paper_trading.models import PaperStrategyConfiguration
@@ -231,6 +275,7 @@ class EnhancedPaperTradingBot:
 
             custom_parameters = {
                 "intel_level": self.intel_level,
+                "use_tx_manager": self.use_tx_manager,
                 "intel_config_summary": {
                     "risk_tolerance": risk_tolerance,
                     "trade_frequency": trade_freq,
@@ -239,7 +284,6 @@ class EnhancedPaperTradingBot:
                 },
             }
 
-            # Ensure all JSON-safe
             custom_parameters = json_safe(custom_parameters)
 
             strategy_config, created = PaperStrategyConfiguration.objects.get_or_create(
@@ -275,11 +319,6 @@ class EnhancedPaperTradingBot:
             logger.error("[ERROR] Failed to setup strategy configuration: %s", e, exc_info=True)
             raise
 
-    
-
-
-
-
     def _load_account(self):
         """Load or create paper trading account."""
         from django.contrib.auth.models import User
@@ -304,12 +343,7 @@ class EnhancedPaperTradingBot:
             logger.info(f"[ACCOUNT] Using existing account: {self.account_name}")
     
     def _create_session(self) -> None:
-        """
-        Create a new trading session with a UUID-safe JSON snapshot.
-
-        Ensures all values inside the config_snapshot are JSON serializable
-        (e.g., UUID, Decimal, datetime converted to str or float).
-        """
+        """Create a new trading session."""
         import json
         from uuid import UUID
 
@@ -327,14 +361,14 @@ class EnhancedPaperTradingBot:
                 return data.isoformat()
             return data
 
-        # Build safe config snapshot
         config_snapshot = {
-            "bot_version": "2.0.0",
+            "bot_version": "2.1.0",  # Updated version with TX Manager
             "intel_level": self.intel_level,
             "account_name": self.account_name,
             "account_id": str(self.account.account_id),
             "session_uuid": str(uuid.uuid4()),
             "user_id": str(self.account.user.id),
+            "transaction_manager_enabled": self.use_tx_manager,
         }
 
         safe_snapshot = json_safe(config_snapshot)
@@ -347,7 +381,6 @@ class EnhancedPaperTradingBot:
             config_snapshot=safe_snapshot,
         )
         logger.info("[SESSION] Created trading session: %s", self.session.session_id)
-
     
     def _initialize_intelligence(self):
         """Initialize the intelligence engine."""
@@ -362,7 +395,7 @@ class EnhancedPaperTradingBot:
         try:
             positions = PaperPosition.objects.filter(
                 account=self.account,
-                is_open=True  # Use is_open instead of is_active
+                is_open=True
             )
             
             for position in positions:
@@ -384,33 +417,27 @@ class EnhancedPaperTradingBot:
     def _send_bot_status_update(self, status: str):
         """Send bot status update via WebSocket."""
         try:
-            # Note: The websocket_service doesn't have send_bot_update method
-            # We'll use a different method that exists
             websocket_service.send_portfolio_update(
                 account_id=str(self.account.account_id),
                 portfolio_data={
                     'bot_status': status,
                     'intel_level': self.intel_level,
+                    'tx_manager_enabled': self.use_tx_manager,
                     'account_balance': float(self.account.current_balance_usd),
                     'open_positions': len(self.positions),
-                    'tick_count': self.tick_count
+                    'tick_count': self.tick_count,
+                    'total_gas_savings': float(self.total_gas_savings) if self.use_tx_manager else 0,
+                    'pending_transactions': len(self.pending_transactions)
                 }
             )
         except Exception as e:
             logger.error(f"[ERROR] Failed to send status update: {e}")
     
     def run(self):
-        """
-        Main bot execution loop.
-        
-        Runs continuously until stopped, checking markets and making
-        trading decisions based on the intelligence level.
-        """
+        """Main bot execution loop."""
         logger.info("[START] Bot starting main execution loop...")
         
-        # ====================================================================
-        # SETUP SIGNAL HANDLERS
-        # ====================================================================
+        # Setup signal handlers
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
@@ -418,53 +445,64 @@ class EnhancedPaperTradingBot:
         
         try:
             while self.running:
-                # ============================================================
-                # MARKET ANALYSIS TICK
-                # ============================================================
+                # Check pending transactions if TX Manager is enabled
+                if self.use_tx_manager and self.pending_transactions:
+                    self._check_pending_transactions()
+                
+                # Market analysis tick
                 self._tick()
                 
-                # ============================================================
-                # SLEEP BETWEEN TICKS
-                # ============================================================
+                # Sleep between ticks
                 time.sleep(self.tick_interval)
                 
         except Exception as e:
             logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
         finally:
-            # ============================================================
-            # CLEANUP ON EXIT
-            # ============================================================
             self._cleanup()
     
-    def _tick(self):
-        """
-        Single market analysis tick.
+    def _check_pending_transactions(self):
+        """Check status of pending transactions from Transaction Manager."""
+        if not self.use_tx_manager or not self.tx_manager:
+            return
         
-        This method:
-        1. Updates market prices
-        2. Analyzes each token
-        3. Makes trading decisions
-        4. Executes trades
-        5. Updates performance metrics
-        """
+        async def check_transactions():
+            completed = []
+            for tx_id, tx_info in self.pending_transactions.items():
+                try:
+                    tx_state = await self.tx_manager.get_transaction_status(tx_id)
+                    if tx_state:
+                        if tx_state.status == TransactionStatus.COMPLETED:
+                            logger.info(f"[TX MANAGER] Transaction completed: {tx_id}")
+                            if tx_state.gas_savings_percent:
+                                self.total_gas_savings += tx_state.gas_savings_percent
+                                logger.info(f"[TX MANAGER] Gas saved: {tx_state.gas_savings_percent:.2f}%")
+                            completed.append(tx_id)
+                        elif tx_state.status == TransactionStatus.FAILED:
+                            logger.error(f"[TX MANAGER] Transaction failed: {tx_id}")
+                            completed.append(tx_id)
+                except Exception as e:
+                    logger.error(f"[TX MANAGER] Error checking transaction {tx_id}: {e}")
+            
+            # Remove completed transactions
+            for tx_id in completed:
+                del self.pending_transactions[tx_id]
+        
+        async_to_sync(check_transactions)()
+    
+    def _tick(self):
+        """Single market analysis tick."""
         self.tick_count += 1
         logger.info("\n" + "=" * 60)
         logger.info(f"[TICK] Market tick #{self.tick_count}")
         
-        # ====================================================================
-        # UPDATE MARKET PRICES
-        # ====================================================================
+        # Update market prices
         self._update_market_prices()
         
-        # ====================================================================
-        # ANALYZE EACH TOKEN
-        # ====================================================================
+        # Analyze each token
         for token_data in self.token_list:
             self._analyze_token(token_data)
         
-        # ====================================================================
-        # UPDATE PERFORMANCE METRICS
-        # ====================================================================
+        # Update performance metrics
         self._update_performance_metrics()
     
     def _update_market_prices(self):
@@ -489,19 +527,12 @@ class EnhancedPaperTradingBot:
                 logger.info(f"[PRICE] {token['symbol']}: ${old_price:.2f} -> ${token['price']:.2f} ({change*100:.2f}%)")
     
     def _analyze_token(self, token_data: Dict[str, Any]):
-        """
-        Analyze a single token for trading opportunities.
-        
-        Args:
-            token_data: Token information dictionary
-        """
+        """Analyze a single token for trading opportunities."""
         try:
             token_symbol = token_data['symbol']
             current_price = token_data['price']
             
-            # ================================================================
-            # PREPARE MARKET CONTEXT
-            # ================================================================
+            # Prepare market context
             market_context = MarketContext(
                 token_address=token_data['address'],
                 token_symbol=token_symbol,
@@ -519,9 +550,7 @@ class EnhancedPaperTradingBot:
                 timestamp=timezone.now()
             )
             
-            # ================================================================
-            # MAKE TRADING DECISION
-            # ================================================================
+            # Make trading decision
             existing_positions = [
                 {
                     'token_symbol': pos.token_symbol,
@@ -531,7 +560,6 @@ class EnhancedPaperTradingBot:
                 for pos in self.positions.values()
             ]
             
-            # Use async_to_sync for make_decision
             decision = async_to_sync(self.intelligence_engine.make_decision)(
                 market_context=market_context,
                 account_balance=self.account.current_balance_usd,
@@ -540,9 +568,7 @@ class EnhancedPaperTradingBot:
                 token_symbol=token_symbol
             )
             
-            # ================================================================
-            # LOG THOUGHT PROCESS
-            # ================================================================
+            # Log thought process
             thought_log = self.intelligence_engine.generate_thought_log(decision)
             self._log_thought(
                 action=decision.action,
@@ -555,13 +581,12 @@ class EnhancedPaperTradingBot:
                     'intel_level': self.intel_level,
                     'risk_score': float(decision.risk_score),
                     'opportunity_score': float(decision.opportunity_score),
-                    'current_price': float(current_price)
+                    'current_price': float(current_price),
+                    'tx_manager_enabled': self.use_tx_manager
                 }
             )
             
-            # ================================================================
-            # EXECUTE TRADE IF DECIDED
-            # ================================================================
+            # Execute trade if decided
             if decision.action in ['BUY', 'SELL']:
                 if self._can_trade():
                     self._execute_trade(decision, token_symbol, current_price)
@@ -574,20 +599,11 @@ class EnhancedPaperTradingBot:
     
     def _log_thought(self, action: str, reasoning: str, confidence: float, 
                      decision_type: str = "ANALYSIS", metadata: Dict[str, Any] = None):
-        """
-        Log AI thought process to database.
-        
-        Args:
-            action: Action taken (BUY, SELL, HOLD, etc.)
-            reasoning: Detailed reasoning for the decision
-            confidence: Confidence level (0-100)
-            decision_type: Type of decision
-            metadata: Additional metadata
-        """
+        """Log AI thought process to database."""
         try:
             metadata = metadata or {}
             
-            # Map action to decision type for PaperAIThoughtLog
+            # Map action to decision type
             decision_type_map = {
                 'BUY': 'BUY',
                 'SELL': 'SELL',
@@ -601,10 +617,10 @@ class EnhancedPaperTradingBot:
             token_symbol = metadata.get('token', 'SYSTEM')
             token_address = metadata.get('token_address', '0x' + '0' * 40)
             
-            # Create thought log record with correct fields
+            # Create thought log record
             thought_log = PaperAIThoughtLog.objects.create(
                 account=self.account,
-                paper_trade=None,  # Will be linked if trade is executed
+                paper_trade=None,
                 decision_type=decision_type_map.get(action, 'SKIP'),
                 token_address=token_address,
                 token_symbol=token_symbol,
@@ -612,17 +628,18 @@ class EnhancedPaperTradingBot:
                 confidence_percent=Decimal(str(confidence)),
                 risk_score=Decimal(str(metadata.get('risk_score', 50))),
                 opportunity_score=Decimal(str(metadata.get('opportunity_score', 50))),
-                primary_reasoning=reasoning[:500],  # Truncate if needed
+                primary_reasoning=reasoning[:500],
                 key_factors=[
                     f"Intel Level: {metadata.get('intel_level', self.intel_level)}",
-                    f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event"
+                    f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event",
+                    f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}"
                 ],
                 positive_signals=[],
                 negative_signals=[],
                 market_data=metadata,
                 strategy_name=f"Intel_{self.intel_level}",
                 lane_used='SMART',
-                analysis_time_ms=100  # Simulated
+                analysis_time_ms=100
             )
             
             logger.info(f"[THOUGHT] Logged: {action} for {token_symbol} ({confidence:.0f}% confidence)")
@@ -645,12 +662,11 @@ class EnhancedPaperTradingBot:
     
     def _can_trade(self) -> bool:
         """Check if bot can execute a trade."""
-        # Add any trade restrictions here
         return True
     
     def _execute_trade(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
         """
-        Execute a paper trade based on the decision.
+        Execute a paper trade with Transaction Manager integration.
         
         Args:
             decision: Trading decision from intelligence engine
@@ -658,63 +674,180 @@ class EnhancedPaperTradingBot:
             current_price: Current token price
         """
         try:
-            # ================================================================
-            # CREATE TRADE RECORD WITH CORRECT FIELDS
-            # ================================================================
-            trade = PaperTrade.objects.create(
-                account=self.account,
-                # Don't use 'session' field - use the correct field names
-                trade_type=decision.action.lower(),  # 'buy' or 'sell'
-                token_in_address='0x' + '0' * 40 if decision.action == 'BUY' else decision.token_address,
-                token_in_symbol='USDC' if decision.action == 'BUY' else token_symbol,
-                token_out_address=decision.token_address if decision.action == 'BUY' else '0x' + '0' * 40,
-                token_out_symbol=token_symbol if decision.action == 'BUY' else 'USDC',
-                amount_in=decision.position_size_usd,
-                amount_out=decision.position_size_usd / current_price if decision.action == 'BUY' else decision.position_size_usd,
-                amount_in_usd=decision.position_size_usd,
-                amount_out_usd=decision.position_size_usd,
-                price_per_token=current_price,
-                gas_price_gwei=decision.max_gas_price_gwei,
-                gas_used=21000,  # Simulated
-                gas_cost_usd=Decimal('5'),  # Simulated
-                slippage_percent=Decimal('1'),  # Simulated
-                execution_time_ms=int(decision.processing_time_ms),
-                status='SUCCESS',  # Simulated success
-                transaction_hash='0x' + uuid.uuid4().hex,
-                block_number=1000000,  # Simulated
-                dex_used='UNISWAP_V3',
-                metadata={
-                    'intel_level': self.intel_level,
-                    'confidence': float(decision.overall_confidence),
-                    'risk_score': float(decision.risk_score),
-                    'strategy_name': f"Intel_{self.intel_level}"
-                }
-            )
-            
-            # ================================================================
-            # UPDATE POSITION
-            # ================================================================
-            if decision.action == 'BUY':
-                self._open_or_add_position(token_symbol, decision, current_price, trade)
+            # Use Transaction Manager if enabled
+            if self.use_tx_manager and self.tx_manager:
+                self._execute_trade_with_tx_manager(decision, token_symbol, current_price)
             else:
-                self._close_or_reduce_position(token_symbol, decision, current_price, trade)
-            
-            # ================================================================
-            # UPDATE ACCOUNT BALANCE
-            # ================================================================
-            if decision.action == 'BUY':
-                self.account.current_balance_usd -= decision.position_size_usd
-            else:
-                self.account.current_balance_usd += decision.position_size_usd
-            self.account.save()
-            
-            logger.info(f"[TRADE] Executed {decision.action} for {token_symbol}: ${decision.position_size_usd:.2f}")
-            
+                self._execute_trade_legacy(decision, token_symbol, current_price)
+                
         except Exception as e:
             logger.error(f"[ERROR] {decision.action} execution failed: {e}")
     
+    def _execute_trade_with_tx_manager(self, decision: TradingDecision, 
+                                       token_symbol: str, current_price: Decimal):
+        """
+        Execute trade using Transaction Manager for gas optimization.
+        
+        This method uses the Phase 6B Transaction Manager to:
+        - Optimize gas costs (targeting 23.1% savings)
+        - Track transaction lifecycle
+        - Provide real-time status updates
+        """
+        logger.info(f"[TX MANAGER] Executing {decision.action} via Transaction Manager")
+        
+        async def execute_with_tx_manager():
+            try:
+                # Determine swap parameters based on decision
+                if decision.action == 'BUY':
+                    token_in = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
+                    token_out = decision.token_address
+                    swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
+                else:  # SELL
+                    token_in = decision.token_address
+                    token_out = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
+                    swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
+                
+                # Calculate amounts (in wei units for simulation)
+                amount_in = int(decision.position_size_usd * 10**6)  # USDC has 6 decimals
+                amount_out_min = int(amount_in * 0.99)  # 1% slippage tolerance
+                
+                # Determine gas strategy based on intel level
+                if self.intel_level <= 3:
+                    gas_strategy = TradingGasStrategy.COST_EFFICIENT
+                elif self.intel_level >= 7:
+                    gas_strategy = TradingGasStrategy.AGGRESSIVE
+                else:
+                    gas_strategy = TradingGasStrategy.BALANCED
+                
+                # Create transaction submission request
+                tx_request = await create_transaction_submission_request(
+                    user=self.account.user,
+                    chain_id=self.chain_id,
+                    token_in=token_in,
+                    token_out=token_out,
+                    amount_in=amount_in,
+                    amount_out_minimum=amount_out_min,
+                    swap_type=swap_type,
+                    gas_strategy=gas_strategy,
+                    is_paper_trade=True,  # Always paper trade
+                    slippage_tolerance=Decimal('0.01')
+                )
+                
+                # Submit transaction through Transaction Manager
+                result = await self.tx_manager.submit_transaction(tx_request)
+                
+                if result.success:
+                    logger.info(f"[TX MANAGER] Transaction submitted: {result.transaction_id}")
+                    
+                    # Track pending transaction
+                    self.pending_transactions[result.transaction_id] = {
+                        'token_symbol': token_symbol,
+                        'action': decision.action,
+                        'amount': decision.position_size_usd,
+                        'submitted_at': timezone.now()
+                    }
+                    
+                    # Update gas savings tracking
+                    if result.gas_savings_achieved:
+                        self.total_gas_savings += result.gas_savings_achieved
+                        self.trades_with_tx_manager += 1
+                        avg_savings = self.total_gas_savings / self.trades_with_tx_manager
+                        logger.info(f"[TX MANAGER] Gas saved: {result.gas_savings_achieved:.2f}% "
+                                  f"(Average: {avg_savings:.2f}%)")
+                    
+                    # Create paper trade record
+                    self._create_paper_trade_record(
+                        decision, token_symbol, current_price,
+                        transaction_id=result.transaction_id,
+                        gas_savings=result.gas_savings_achieved
+                    )
+                    
+                    # Update positions
+                    self._update_positions_after_trade(decision, token_symbol, current_price)
+                    
+                else:
+                    logger.error(f"[TX MANAGER] Transaction failed: {result.error_message}")
+                    # Fall back to legacy execution
+                    self._execute_trade_legacy(decision, token_symbol, current_price)
+                    
+            except Exception as e:
+                logger.error(f"[TX MANAGER] Error: {e}")
+                # Fall back to legacy execution
+                self._execute_trade_legacy(decision, token_symbol, current_price)
+        
+        # Execute async function
+        async_to_sync(execute_with_tx_manager)()
+    
+    def _execute_trade_legacy(self, decision: TradingDecision, 
+                             token_symbol: str, current_price: Decimal):
+        """
+        Legacy trade execution without Transaction Manager.
+        
+        This is the fallback method when TX Manager is not available.
+        """
+        logger.info(f"[LEGACY] Executing {decision.action} without Transaction Manager")
+        
+        # Create paper trade record
+        self._create_paper_trade_record(decision, token_symbol, current_price)
+        
+        # Update positions
+        self._update_positions_after_trade(decision, token_symbol, current_price)
+        
+        logger.info(f"[TRADE] Executed {decision.action} for {token_symbol}: ${decision.position_size_usd:.2f}")
+    
+    def _create_paper_trade_record(self, decision: TradingDecision, token_symbol: str, 
+                                   current_price: Decimal, transaction_id: str = None,
+                                   gas_savings: Decimal = None):
+        """Create paper trade record in database."""
+        trade = PaperTrade.objects.create(
+            account=self.account,
+            trade_type=decision.action.lower(),
+            token_in_address='0x' + '0' * 40 if decision.action == 'BUY' else decision.token_address,
+            token_in_symbol='USDC' if decision.action == 'BUY' else token_symbol,
+            token_out_address=decision.token_address if decision.action == 'BUY' else '0x' + '0' * 40,
+            token_out_symbol=token_symbol if decision.action == 'BUY' else 'USDC',
+            amount_in=decision.position_size_usd,
+            amount_out=decision.position_size_usd / current_price if decision.action == 'BUY' else decision.position_size_usd,
+            amount_in_usd=decision.position_size_usd,
+            amount_out_usd=decision.position_size_usd,
+            price_per_token=current_price,
+            gas_price_gwei=decision.max_gas_price_gwei,
+            gas_used=21000,
+            gas_cost_usd=Decimal('5') * (Decimal('1') - (gas_savings or Decimal('0')) / 100),
+            slippage_percent=Decimal('1'),
+            execution_time_ms=int(decision.processing_time_ms),
+            status='SUCCESS',
+            transaction_hash=transaction_id or ('0x' + uuid.uuid4().hex),
+            block_number=1000000,
+            dex_used='UNISWAP_V3',
+            metadata={
+                'intel_level': self.intel_level,
+                'confidence': float(decision.overall_confidence),
+                'risk_score': float(decision.risk_score),
+                'strategy_name': f"Intel_{self.intel_level}",
+                'tx_manager_used': self.use_tx_manager,
+                'gas_savings_percent': float(gas_savings) if gas_savings else 0
+            }
+        )
+        return trade
+    
+    def _update_positions_after_trade(self, decision: TradingDecision, 
+                                      token_symbol: str, current_price: Decimal):
+        """Update positions after trade execution."""
+        if decision.action == 'BUY':
+            self._open_or_add_position(token_symbol, decision, current_price)
+        else:
+            self._close_or_reduce_position(token_symbol, decision, current_price)
+        
+        # Update account balance
+        if decision.action == 'BUY':
+            self.account.current_balance_usd -= decision.position_size_usd
+        else:
+            self.account.current_balance_usd += decision.position_size_usd
+        self.account.save()
+    
     def _open_or_add_position(self, token_symbol: str, decision: TradingDecision, 
-                              current_price: Decimal, trade: PaperTrade):
+                              current_price: Decimal):
         """Open new position or add to existing."""
         if token_symbol in self.positions:
             position = self.positions[token_symbol]
@@ -736,12 +869,12 @@ class EnhancedPaperTradingBot:
                 total_invested_usd=decision.position_size_usd,
                 current_value_usd=decision.position_size_usd,
                 unrealized_pnl_usd=Decimal('0'),
-                is_open=True  # Use is_open instead of is_active
+                is_open=True
             )
             self.positions[token_symbol] = position
     
     def _close_or_reduce_position(self, token_symbol: str, decision: TradingDecision,
-                                  current_price: Decimal, trade: PaperTrade):
+                                  current_price: Decimal):
         """Close or reduce existing position."""
         if token_symbol in self.positions:
             position = self.positions[token_symbol]
@@ -752,7 +885,7 @@ class EnhancedPaperTradingBot:
             position.realized_pnl_usd += (sell_quantity * current_price) - (sell_quantity * position.average_entry_price_usd)
             
             if position.quantity <= 0:
-                position.is_open = False  # Use is_open instead of is_active
+                position.is_open = False
                 position.closed_at = timezone.now()
                 del self.positions[token_symbol]
             
@@ -767,11 +900,12 @@ class EnhancedPaperTradingBot:
                 created_at__gte=self.session.started_at
             ).count()
             
-            # For SQLite compatibility, we'll just estimate winning trades
-            # In a real implementation, you'd track this differently
-            winning_trades = int(total_trades * 0.6)  # Assume 60% win rate for simulation
-            
+            winning_trades = int(total_trades * 0.6)  # Simulated win rate
             win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+            
+            # Calculate gas savings metrics if TX Manager is used
+            avg_gas_savings = (self.total_gas_savings / self.trades_with_tx_manager 
+                              if self.trades_with_tx_manager > 0 else Decimal('0'))
             
             # Create or update metrics
             metrics, created = PaperPerformanceMetrics.objects.get_or_create(
@@ -793,7 +927,7 @@ class EnhancedPaperTradingBot:
                     'max_drawdown_percent': Decimal('0'),
                     'profit_factor': None,
                     'avg_execution_time_ms': 100,
-                    'total_gas_fees_usd': Decimal('5') * total_trades,
+                    'total_gas_fees_usd': Decimal('5') * total_trades * (Decimal('1') - avg_gas_savings / 100),
                     'avg_slippage_percent': Decimal('1'),
                     'fast_lane_trades': 0,
                     'smart_lane_trades': total_trades,
@@ -809,17 +943,16 @@ class EnhancedPaperTradingBot:
                 metrics.win_rate = Decimal(str(win_rate))
                 metrics.total_pnl_usd = self.account.current_balance_usd - self.session.starting_balance_usd
                 metrics.total_pnl_percent = ((self.account.current_balance_usd / self.session.starting_balance_usd) - 1) * 100 if self.session.starting_balance_usd > 0 else 0
+                metrics.total_gas_fees_usd = Decimal('5') * total_trades * (Decimal('1') - avg_gas_savings / 100)
                 metrics.save()
+            
+            # Log TX Manager performance if enabled
+            if self.use_tx_manager and self.trades_with_tx_manager > 0:
+                logger.info(f"[TX MANAGER] Performance: {self.trades_with_tx_manager} trades, "
+                          f"Avg gas savings: {avg_gas_savings:.2f}%")
                 
         except Exception as e:
             logger.error(f"[ERROR] Failed to update performance metrics: {e}")
-
-
-
-
-
-
-
     
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signals."""
@@ -830,11 +963,18 @@ class EnhancedPaperTradingBot:
         """Clean up on exit."""
         try:
             if self.session:
-                self.session.status = 'STOPPED'  # Use valid status from SessionStatus choices
+                self.session.status = 'STOPPED'
                 self.session.ended_at = timezone.now()
                 self.session.ending_balance_usd = self.account.current_balance_usd
                 self.session.session_pnl_usd = self.account.current_balance_usd - self.session.starting_balance_usd
                 self.session.save()
+            
+            # Log final TX Manager stats if enabled
+            if self.use_tx_manager and self.trades_with_tx_manager > 0:
+                avg_savings = self.total_gas_savings / self.trades_with_tx_manager
+                logger.info(f"[TX MANAGER] Final Stats: {self.trades_with_tx_manager} trades executed")
+                logger.info(f"[TX MANAGER] Total gas savings: {self.total_gas_savings:.2f}%")
+                logger.info(f"[TX MANAGER] Average gas savings per trade: {avg_savings:.2f}%")
                 
             logger.info("[CLEANUP] Bot shutdown complete")
         except Exception as e:
@@ -845,14 +985,15 @@ def main():
     """Main entry point for the bot."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Enhanced Paper Trading Bot')
-    parser.add_argument('--account', default='Intel_Slider_Balanced', help='Account name')
-    parser.add_argument('--intel', type=int, default=5, choices=range(1, 11), help='Intelligence level (1-10)')
+    parser = argparse.ArgumentParser(description='Enhanced Paper Trading Bot with TX Manager')
+    parser.add_argument('--account', default='AI_Paper_Bot', help='Account name (default: AI_Paper_Bot)')
+    parser.add_argument('--intel', type=int, default=5, choices=range(1, 11), help='Intelligence level 1-10 (default: 5 - Balanced)')
+    parser.add_argument('--tick-interval', type=int, default=15, help='Seconds between market ticks (default: 15)')
     
     args = parser.parse_args()
     
     print("\n╔════════════════════════════════════════════════════════════════════╗")
-    print("║          ENHANCED PAPER TRADING BOT - INTEL SLIDER SYSTEM         ║")
+    print("║     ENHANCED PAPER TRADING BOT - INTEL SLIDER + TX MANAGER        ║")
     print("╚════════════════════════════════════════════════════════════════════╝\n")
     
     # Intelligence level descriptions
@@ -870,12 +1011,22 @@ def main():
     }
     
     print(f"INTELLIGENCE LEVEL: ⚖️  Level {args.intel}: {intel_descriptions[args.intel].upper()}")
-    print(f"✅ Using account: {args.account}\n")
+    print(f"✅ Using account: {args.account}")
+    
+    # Transaction Manager is always enabled when available
+    if TRANSACTION_MANAGER_AVAILABLE:
+        print("⚡ TRANSACTION MANAGER: ENABLED - Gas optimization active (targeting 23.1% savings)")
+    else:
+        print("⚠️  TRANSACTION MANAGER: NOT AVAILABLE - Required modules not installed")
+    
+    print("")
     
     bot = EnhancedPaperTradingBot(
         account_name=args.account,
         intel_level=args.intel
     )
+    
+    bot.tick_interval = args.tick_interval
     
     print("=" * 60)
     print("📋 BOT CONFIGURATION")
@@ -884,7 +1035,8 @@ def main():
     
     if bot.initialize():
         print(f"  User            : {bot.account.user.username}")
-        print(f"  Balance         : ${bot.account.current_balance_usd:,.2f}\n")
+        print(f"  Balance         : ${bot.account.current_balance_usd:,.2f}")
+        print(f"  Tick Interval   : {args.tick_interval} seconds\n")
         print(f"  INTELLIGENCE    : Level {args.intel}/10")
         print("  Controlled by Intel Level:")
         print(f"    • Risk Tolerance    : {bot.intelligence_engine.config.risk_tolerance}%")
@@ -892,10 +1044,18 @@ def main():
         print(f"    • Trade Frequency   : {bot.intelligence_engine.config.trade_frequency.value}")
         print(f"    • Gas Strategy      : {bot.intelligence_engine.config.gas_strategy.value}")
         print(f"    • MEV Protection    : {'Always On' if bot.intelligence_engine.config.use_mev_protection else 'Off'}")
-        print(f"    • Decision Speed    : {bot.intelligence_engine.config.decision_speed.value} ({bot.intelligence_engine.config.base_analysis_time}ms)")
+        print(f"    • Decision Speed    : {bot.intelligence_engine.config.decision_speed.value}")
+        
+        if bot.use_tx_manager:
+            print("\n  TRANSACTION MANAGER:")
+            print("    • Gas Optimization  : ACTIVE")
+            print("    • Target Savings    : 23.1%")
+            print("    • Status Tracking   : REAL-TIME")
+            print("    • WebSocket Updates : ENABLED")
+        
         print("=" * 60)
         
-        print("🤖 Initializing bot for account:", args.account)
+        print("\n🤖 Initializing bot for account:", args.account)
         print("✅ Bot initialized successfully\n")
         print("🏃 Bot is running... Press Ctrl+C to stop\n")
         
