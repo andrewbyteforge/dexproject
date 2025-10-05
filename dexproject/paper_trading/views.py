@@ -21,8 +21,8 @@ from django.core.paginator import Paginator
 from django.db.models import Q, Sum, Avg, Count
 from django.utils import timezone
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
 from django.db import connection
+from django.contrib.auth.models import User
 
 # Import all models
 from .models import (
@@ -40,9 +40,33 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# DASHBOARD VIEWS
+# HELPER FUNCTION TO GET DEFAULT USER
 # =============================================================================
 
+def get_default_user():
+    """
+    Get or create the default user for single-user operation.
+    No authentication required.
+    
+    Returns:
+        User: The default user instance
+    """
+    user, created = User.objects.get_or_create(
+        username='default_user',
+        defaults={
+            'email': 'user@localhost',
+            'first_name': 'Default',
+            'last_name': 'User'
+        }
+    )
+    if created:
+        logger.info("Created default user for paper trading")
+    return user
+
+
+# =============================================================================
+# DASHBOARD VIEWS
+# =============================================================================
 
 def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
     """
@@ -58,33 +82,21 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         Rendered dashboard template with context data
     """
     try:
-        logger.debug(f"Loading paper trading dashboard for user: {request.user}")
-        from django.contrib.auth.models import User
+        # Get default user - no authentication required
+        user = get_default_user()
+        logger.debug(f"Loading paper trading dashboard for default user")
         
-        # Get demo user for now (will be replaced with actual user)
-        try:
-            demo_user = User.objects.get(username='demo_user')
-        except User.DoesNotExist:
-            # Create demo user if it doesn't exist
-            demo_user = User.objects.create_user(
-                username='demo_user',
-                email='demo@example.com',
-                password='demo_password'
-            )
-            logger.info("Created demo_user for paper trading")
-        
-        # FIX: Get the first active account or create one if none exists
-        # Since there should only be one account, we just get the first one
+        # Get or create account for default user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
-            # No active account exists, create one
+            # No active account exists, create one for the user
             account = PaperTradingAccount.objects.create(
-                user=demo_user,
-                name='Demo Paper Trading Account',
+                user=user,
+                name='My Paper Trading Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -96,7 +108,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         # Get active session if exists
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status="ACTIVE"
+            status__in=["ACTIVE", "RUNNING", "STARTING"]
         ).first()
         
         # Get recent trades with error handling
@@ -168,6 +180,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'initial_balance': account.initial_balance_usd,
             'total_pnl': account.total_pnl_usd,
             'return_percent': account.total_return_percent,
+            'user': user,
         }
         
         logger.info(f"Successfully loaded dashboard for account {account.account_id}")
@@ -190,27 +203,26 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         Rendered trade history template
     """
     try:
-        logger.debug("Loading trade history page")
-        from django.contrib.auth.models import User
+        # Get default user - no authentication required
+        user = get_default_user()
+        logger.debug(f"Loading trade history page")
         
-        # Get demo user
-        try:
-            demo_user = User.objects.get(username='demo_user')
-        except User.DoesNotExist:
-            logger.warning("Demo user not found for trade history")
-            messages.error(request, "Demo user not found")
-            return redirect('paper_trading:dashboard')
-        
-        # FIX: Get the first active account (there should only be one)
+        # Get active account for default user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
-            logger.warning("No active account found")
-            messages.error(request, "No active trading account found")
-            return redirect('paper_trading:dashboard')
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Build query with filters
         trades_query = PaperTrade.objects.filter(account=account)
@@ -293,6 +305,7 @@ def trade_history(request: HttpRequest) -> HttpResponse:
                 'date_to': date_to,
             },
             'summary': summary_stats,
+            'user': user,
         }
         
         logger.info(f"Successfully loaded trade history: {summary_stats['total_trades']} trades")
@@ -315,27 +328,26 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
         Rendered portfolio template
     """
     try:
-        logger.debug("Loading portfolio view")
-        from django.contrib.auth.models import User
+        # Get default user - no authentication required
+        user = get_default_user()
+        logger.debug(f"Loading portfolio view")
         
-        # Get demo user
-        try:
-            demo_user = User.objects.get(username='demo_user')
-        except User.DoesNotExist:
-            logger.warning("Demo user not found for portfolio view")
-            messages.error(request, "Demo user not found")
-            return redirect('paper_trading:dashboard')
-        
-        # FIX: Get the first active account (there should only be one)
+        # Get active account for default user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
-            logger.warning("No active account found")
-            messages.error(request, "No active trading account found")
-            return redirect('paper_trading:dashboard')
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Get positions with error handling
         try:
@@ -403,6 +415,7 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
             'unrealized_pnl': unrealized_pnl,
             'position_distribution': json.dumps(position_distribution),
             'positions_count': len(open_positions),
+            'user': user,
         }
         
         logger.info(f"Successfully loaded portfolio with {len(open_positions)} open positions")
@@ -428,27 +441,26 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         Rendered configuration template or redirect after action
     """
     try:
-        logger.debug("Loading configuration view")
-        from django.contrib.auth.models import User
+        # Get default user - no authentication required
+        user = get_default_user()
+        logger.debug(f"Loading configuration view")
         
-        # Get demo user
-        try:
-            demo_user = User.objects.get(username='demo_user')
-        except User.DoesNotExist:
-            logger.warning("Demo user not found for configuration")
-            messages.error(request, "Demo user not found")
-            return redirect('paper_trading:dashboard')
-        
-        # FIX: Get the first active account (there should only be one)
+        # Get active account for default user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
-            logger.warning("No active account found")
-            messages.error(request, "No active trading account found")
-            return redirect('paper_trading:dashboard')
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Handle delete action if requested
         if request.method == 'POST' and request.POST.get('action') == 'delete':
@@ -652,7 +664,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         # Get active session for bot status
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status="ACTIVE"
+            status__in=["ACTIVE", "RUNNING", "STARTING"]
         ).first()
         
         # Load available strategies
@@ -669,9 +681,10 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
             'account': account,
             'config': config,
             'available_strategies': available_strategies,
-            'all_configs': all_configs,  # This is now a Page object
+            'all_configs': all_configs,
             'active_session': active_session,
             'total_configs': all_configs_query.count(),
+            'user': user,
             
             # Map actual model fields to template variables
             'strategy_config': {
@@ -724,27 +737,26 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
         Rendered analytics template
     """
     try:
-        logger.debug("Loading analytics view")
-        from django.contrib.auth.models import User
+        # Get default user - no authentication required
+        user = get_default_user()
+        logger.debug(f"Loading analytics view")
         
-        # Get demo user
-        try:
-            demo_user = User.objects.get(username='demo_user')
-        except User.DoesNotExist:
-            logger.warning("Demo user not found for analytics")
-            messages.warning(request, "Demo user not found. Please set up the demo account first.")
-            return redirect('paper_trading:dashboard')
-        
-        # FIX: Get the first active account (there should only be one)
+        # Get active account for default user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
         if not account:
-            logger.warning("No active paper trading account found")
-            messages.info(request, "No active paper trading account found.")
-            return redirect('paper_trading:dashboard')
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Date range for analytics (default to last 30 days)
         end_date = timezone.now()
@@ -919,6 +931,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'account': account,
             'date_from': start_date.date(),
             'date_to': end_date.date(),
+            'user': user,
             
             # Key metrics
             'win_rate': float(win_rate),
@@ -980,14 +993,13 @@ def api_analytics_data(request: HttpRequest) -> JsonResponse:
     Returns JSON data for updating charts without page refresh.
     """
     try:
-        logger.debug("API call for analytics data")
-        from django.contrib.auth.models import User
+        # Get default user - no authentication required
+        user = get_default_user()
+        logger.debug(f"API call for analytics data")
         
-        demo_user = User.objects.get(username='demo_user')
-        
-        # FIX: Get the first active account (there should only be one)
+        # Get active account for default user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
@@ -1034,24 +1046,22 @@ def api_analytics_export(request: HttpRequest) -> HttpResponse:
     import csv
     
     try:
-        logger.info("Exporting analytics data to CSV")
+        # Get default user - no authentication required
+        user = get_default_user()
+        logger.info(f"Exporting analytics data to CSV")
         
         # Create CSV response
         response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="paper_trading_analytics.csv"'
+        response['Content-Disposition'] = f'attachment; filename="paper_trading_analytics.csv"'
         
         writer = csv.writer(response)
         
         # Write header
         writer.writerow(['Date', 'Trade ID', 'Token In', 'Token Out', 'Type', 'Amount USD', 'Status'])
         
-        # Get trades using raw SQL
-        from django.contrib.auth.models import User
-        demo_user = User.objects.get(username='demo_user')
-        
-        # FIX: Get the first active account (there should only be one)
+        # Get active account for default user
         account = PaperTradingAccount.objects.filter(
-            user=demo_user,
+            user=user,
             is_active=True
         ).first()
         
@@ -1079,7 +1089,7 @@ def api_analytics_export(request: HttpRequest) -> HttpResponse:
                     row[6] or ''
                 ])
         
-        logger.info("Analytics export completed successfully")
+        logger.info(f"Analytics export completed successfully")
         return response
         
     except Exception as e:
@@ -1090,7 +1100,6 @@ def api_analytics_export(request: HttpRequest) -> HttpResponse:
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
-
 
 def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
     """
@@ -1148,55 +1157,3 @@ def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
             'profit_factor': 0,
             'error': str(e)
         }
-
-
-def get_or_create_demo_account() -> PaperTradingAccount:
-    """
-    Get or create a demo paper trading account.
-    
-    Helper function to ensure a demo account exists for testing.
-    This will only ever return ONE account since there should only be one.
-    
-    Returns:
-        PaperTradingAccount: The demo account instance
-    """
-    from django.contrib.auth.models import User
-    
-    try:
-        logger.debug("Getting or creating demo account")
-        
-        # Get or create demo user
-        try:
-            demo_user = User.objects.get(username='demo_user')
-        except User.DoesNotExist:
-            demo_user = User.objects.create_user(
-                username='demo_user',
-                email='demo@example.com',
-                password='demo_password'
-            )
-            logger.info("Created demo_user for paper trading")
-        
-        # FIX: Get the first active account or create one if none exists
-        account = PaperTradingAccount.objects.filter(
-            user=demo_user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # No active account exists, create the ONE account
-            account = PaperTradingAccount.objects.create(
-                user=demo_user,
-                name='Demo Paper Trading Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new demo paper trading account: {account.account_id}")
-        else:
-            logger.debug(f"Using existing demo account: {account.account_id}")
-        
-        return account
-        
-    except Exception as e:
-        logger.error(f"Error getting/creating demo account: {e}", exc_info=True)
-        raise

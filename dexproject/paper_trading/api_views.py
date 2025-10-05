@@ -19,6 +19,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q, Sum, Avg, Count
 from django.utils import timezone
 from django.core.cache import cache
+from django.contrib.auth.models import User
 
 # Import all models
 from .models import (
@@ -39,9 +40,33 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# DATA API ENDPOINTS
+# HELPER FUNCTION TO GET DEFAULT USER
 # =============================================================================
 
+def get_default_user():
+    """
+    Get or create the default user for single-user operation.
+    No authentication required.
+    
+    Returns:
+        User: The default user instance
+    """
+    user, created = User.objects.get_or_create(
+        username='default_user',
+        defaults={
+            'email': 'user@localhost',
+            'first_name': 'Default',
+            'last_name': 'User'
+        }
+    )
+    if created:
+        logger.info("Created default user for paper trading API")
+    return user
+
+
+# =============================================================================
+# DATA API ENDPOINTS
+# =============================================================================
 
 @require_http_methods(["GET"])
 def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
@@ -58,23 +83,25 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
         JsonResponse: AI thoughts data with metadata
     """
     try:
-        # Use authenticated user or fall back to demo
-        if request.user.is_authenticated:
-            user = request.user
-        else:
-            from django.contrib.auth.models import User
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({'error': 'Authentication required'}, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
         
+        # Get or create account for user
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Get query parameters
         limit = int(request.GET.get('limit', 10))
@@ -95,8 +122,6 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
             'thoughts': [
                 {
                     'id': str(thought.thought_id),
-                    # 'category': thought.thought_category,
-                    # 'content': thought.thought_content,
                     'metadata': thought.metadata or {},
                     'created_at': thought.created_at.isoformat(),
                     'importance': thought.importance_score,
@@ -133,23 +158,25 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         JsonResponse: Portfolio data with positions and metrics
     """
     try:
-        # Use authenticated user or fall back to demo
-        if request.user.is_authenticated:
-            user = request.user
-        else:
-            from django.contrib.auth.models import User
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({'error': 'Authentication required'}, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
             
+        # Get or create account for user
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Get open positions
         positions = PaperPosition.objects.filter(
@@ -157,7 +184,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
             is_open=True
         )
         
-        # Build portfolio data - FIXED: Calculate unrealized_pnl_percent
+        # Build portfolio data
         portfolio_data = {
             'account': {
                 'id': str(account.account_id),
@@ -180,7 +207,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         # Process positions with calculated fields
         total_position_value = Decimal('0')
         for pos in positions:
-            # FIXED: Calculate unrealized_pnl_percent dynamically
+            # Calculate unrealized_pnl_percent dynamically
             if pos.total_invested_usd and pos.total_invested_usd > 0:
                 unrealized_pnl_percent = (pos.unrealized_pnl_usd / pos.total_invested_usd) * 100
             else:
@@ -195,7 +222,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
                 'current_price': float(pos.current_price_usd) if pos.current_price_usd else 0,
                 'current_value': float(pos.current_value_usd) if pos.current_value_usd else 0,
                 'unrealized_pnl': float(pos.unrealized_pnl_usd),
-                'unrealized_pnl_percent': float(unrealized_pnl_percent),  # Calculated value
+                'unrealized_pnl_percent': float(unrealized_pnl_percent),
                 'opened_at': pos.opened_at.isoformat(),
             }
             portfolio_data['positions'].append(position_dict)
@@ -208,6 +235,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
             (account.current_balance_usd / total_value * 100) if total_value > 0 else 100
         )
         
+        logger.debug(f"Portfolio data fetched")
         return JsonResponse(portfolio_data)
         
     except Exception as e:
@@ -229,23 +257,25 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         JsonResponse: Filtered trade data
     """
     try:
-        # Use authenticated user or fall back to demo
-        if request.user.is_authenticated:
-            user = request.user
-        else:
-            from django.contrib.auth.models import User
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({'error': 'Authentication required'}, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
             
+        # Get account for user
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Build query with filters
         trades_query = PaperTrade.objects.filter(account=account)
@@ -288,6 +318,7 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
             'timestamp': timezone.now().isoformat(),
         }
         
+        logger.debug(f"Trade data fetched: {len(trades_query)} trades")
         return JsonResponse(trades_data)
         
     except Exception as e:
@@ -308,20 +339,8 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
         JsonResponse: Recent trades with essential information
     """
     try:
-        from django.contrib.auth.models import User
-        
-        # Get user (authenticated or demo)
-        if request.user.is_authenticated:
-            user = request.user
-        else:
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Authentication required',
-                    'trades': []
-                }, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
         
         # Get active account
         account = PaperTradingAccount.objects.filter(
@@ -330,12 +349,15 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
         ).first()
         
         if not account:
-            return JsonResponse({
-                'success': True,
-                'trades': [],
-                'count': 0,
-                'timestamp': timezone.now().isoformat()
-            })
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Build query
         trades_query = PaperTrade.objects.filter(account=account)
@@ -353,7 +375,7 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
         limit = min(int(request.GET.get('limit', 10)), 50)
         trades = trades_query.order_by('-created_at')[:limit]
         
-        # Build response data - FIXED: Removed execution_price_usd
+        # Build response data
         trades_data = []
         for trade in trades:
             trade_data = {
@@ -364,19 +386,20 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
                 'token_in_symbol': trade.token_in_symbol,
                 'amount_in_usd': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
                 'amount_usd': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
-                # FIXED: Use amount_in_usd instead of execution_price_usd
                 'price': float(trade.amount_in_usd) if trade.amount_in_usd else 0,
                 'status': trade.status.upper() if trade.status else 'PENDING',
                 'created_at': trade.created_at.isoformat(),
                 'execution_time_ms': trade.execution_time_ms,
             }
             
-            # Add P&L if available (these fields might not exist)
+            # Add P&L if available
             if hasattr(trade, 'pnl_usd') and trade.pnl_usd is not None:
                 trade_data['pnl_usd'] = float(trade.pnl_usd)
                 trade_data['pnl_percent'] = float(trade.pnl_percent) if hasattr(trade, 'pnl_percent') and trade.pnl_percent else 0
             
             trades_data.append(trade_data)
+        
+        logger.debug(f"Recent trades fetched: {len(trades_data)} trades")
         
         return JsonResponse({
             'success': True,
@@ -405,20 +428,8 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
         JsonResponse: Open positions data with summary metrics
     """
     try:
-        from django.contrib.auth.models import User
-        
-        # Get user (authenticated or demo)
-        if request.user.is_authenticated:
-            user = request.user
-        else:
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Authentication required',
-                    'positions': []
-                }, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
         
         # Get active account
         account = PaperTradingAccount.objects.filter(
@@ -427,17 +438,15 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
         ).first()
         
         if not account:
-            return JsonResponse({
-                'success': True,
-                'positions': [],
-                'summary': {
-                    'total_positions': 0,
-                    'total_value_usd': 0,
-                    'total_unrealized_pnl_usd': 0,
-                    'total_unrealized_pnl_percent': 0
-                },
-                'timestamp': timezone.now().isoformat()
-            })
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Get open positions
         positions = PaperPosition.objects.filter(
@@ -445,7 +454,7 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             is_open=True
         ).order_by('-current_value_usd')
         
-        # Build response data - FIXED: Calculate unrealized_pnl_percent
+        # Build response data
         positions_data = []
         total_value = Decimal('0')
         total_pnl = Decimal('0')
@@ -457,7 +466,7 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             invested = position.total_invested_usd or Decimal('0')
             unrealized_pnl = position.unrealized_pnl_usd or Decimal('0')
             
-            # FIXED: Calculate unrealized_pnl_percent dynamically
+            # Calculate unrealized_pnl_percent dynamically
             if invested and invested > 0:
                 unrealized_pnl_percent = (unrealized_pnl / invested) * 100
             else:
@@ -474,7 +483,7 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
                 'cost_basis_usd': float(invested),
                 'total_invested_usd': float(invested),
                 'unrealized_pnl_usd': float(unrealized_pnl),
-                'unrealized_pnl_percent': float(unrealized_pnl_percent),  # Calculated value
+                'unrealized_pnl_percent': float(unrealized_pnl_percent),
                 'opened_at': position.opened_at.isoformat() if position.opened_at else None,
                 'last_updated': position.last_updated.isoformat() if position.last_updated else None,
             }
@@ -496,6 +505,8 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             'total_unrealized_pnl_usd': float(total_pnl),
             'total_unrealized_pnl_percent': total_unrealized_pnl_percent
         }
+        
+        logger.debug(f"Open positions fetched: {len(positions_data)} positions")
         
         return JsonResponse({
             'success': True,
@@ -524,19 +535,8 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
         JsonResponse: Metrics data including P&L, win rate, and trading volume
     """
     try:
-        from django.contrib.auth.models import User
-        
-        # Get user
-        if request.user.is_authenticated:
-            user = request.user
-        else:
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Authentication required'
-                }, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
         
         # Get active account
         account = PaperTradingAccount.objects.filter(
@@ -545,17 +545,15 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
         ).first()
         
         if not account:
-            return JsonResponse({
-                'success': True,
-                'current_balance': 10000,
-                'total_pnl': 0,
-                'return_percent': 0,
-                'win_rate': 0,
-                'trades_24h': 0,
-                'volume_24h': 0,
-                'total_trades': 0,
-                'successful_trades': 0
-            })
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Get 24h stats
         time_24h_ago = timezone.now() - timedelta(hours=24)
@@ -585,6 +583,7 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             'timestamp': timezone.now().isoformat()
         }
         
+        logger.debug(f"Metrics fetched")
         return JsonResponse(metrics)
         
     except Exception as e:
@@ -599,7 +598,6 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
 # CONFIGURATION API
 # =============================================================================
 
-
 @require_http_methods(["GET", "POST"])
 @csrf_exempt
 def api_configuration(request: HttpRequest) -> JsonResponse:
@@ -613,23 +611,25 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
         JsonResponse: Configuration data or update status
     """
     try:
-        # Use authenticated user
-        if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({'error': 'Authentication required'}, status=401)
-        else:
-            user = request.user
+        # Get default user - no authentication required
+        user = get_default_user()
         
+        # Get or create account
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         if request.method == 'GET':
             # Get current configuration
@@ -658,11 +658,29 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
                     'updated_at': config.updated_at.isoformat(),
                 }
             else:
+                # Create default configuration
+                config = PaperStrategyConfiguration.objects.create(
+                    account=account,
+                    name='Default Strategy',
+                    is_active=True,
+                    trading_mode='MODERATE',
+                    use_fast_lane=True,
+                    use_smart_lane=False,
+                    fast_lane_threshold_usd=Decimal('100'),
+                    max_position_size_percent=Decimal('5.0'),
+                    stop_loss_percent=Decimal('5.0'),
+                    take_profit_percent=Decimal('10.0'),
+                    max_daily_trades=20,
+                    max_concurrent_positions=5,
+                    min_liquidity_usd=Decimal('10000'),
+                    max_slippage_percent=Decimal('1.0'),
+                    confidence_threshold=Decimal('60')
+                )
                 config_data = {
-                    'strategy_name': 'default',
-                    'is_active': False,
-                    'trading_mode': 'MODERATE',
-                    'message': 'No active configuration found'
+                    'strategy_name': config.name,
+                    'is_active': config.is_active,
+                    'trading_mode': config.trading_mode,
+                    'message': 'Created default configuration'
                 }
             
             return JsonResponse(config_data)
@@ -725,23 +743,25 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         JsonResponse: Performance data including Sharpe ratio, win rate, etc.
     """
     try:
-        # Use authenticated user
-        if not request.user.is_authenticated:
-            from django.contrib.auth.models import User
-            try:
-                user = User.objects.get(username='demo_user')
-            except User.DoesNotExist:
-                return JsonResponse({'error': 'Authentication required'}, status=401)
-        else:
-            user = request.user
+        # Get default user - no authentication required
+        user = get_default_user()
         
+        # Get account
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
         ).first()
         
         if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+            # Create account if it doesn't exist
+            account = PaperTradingAccount.objects.create(
+                user=user,
+                name='My Paper Trading Account',
+                initial_balance_usd=Decimal('10000.00'),
+                current_balance_usd=Decimal('10000.00'),
+                is_active=True
+            )
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Get active sessions
         active_sessions = PaperTradingSession.objects.filter(
@@ -821,6 +841,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
             'win_rate': float(account.win_rate) if account.win_rate else 0,
         }
         
+        logger.debug(f"Performance metrics fetched")
         return JsonResponse(metrics_data)
         
     except Exception as e:
@@ -829,9 +850,8 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
 
 
 # =============================================================================
-# BOT CONTROL API - UPDATED WITH CELERY INTEGRATION
+# BOT CONTROL API - NO AUTHENTICATION REQUIRED
 # =============================================================================
-
 
 @require_http_methods(["POST"])
 @csrf_exempt
@@ -845,13 +865,8 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         JsonResponse: Bot status with session ID and Celery task ID
     """
     try:
-        # Use authenticated user instead of demo_user
-        if not request.user.is_authenticated:
-            return JsonResponse({
-                'error': 'Authentication required'
-            }, status=401)
-        
-        user = request.user
+        # Get default user - no authentication required
+        user = get_default_user()
         
         # Get or create account for user
         account = PaperTradingAccount.objects.filter(
@@ -863,12 +878,12 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
             # Create default account if none exists
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name=f"{user.username}_paper_account",
+                name="My Paper Trading Account",
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
             )
-            logger.info(f"Created new paper trading account for user {user.id}")
+            logger.info(f"Created new paper trading account: {account.account_id}")
         
         # Check if there's already an active session
         active_session = PaperTradingSession.objects.filter(
@@ -924,8 +939,7 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         session.save()
         
         logger.info(
-            f"Started paper trading session {session.session_id} "
-            f"for user {user.id} with task {task_result.id}"
+            f"Started paper trading session {session.session_id} with task {task_result.id}"
         )
         
         return JsonResponse({
@@ -957,14 +971,10 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         JsonResponse: Bot status with number of sessions ended
     """
     try:
-        # Use authenticated user instead of demo_user
-        if not request.user.is_authenticated:
-            return JsonResponse({
-                'error': 'Authentication required'
-            }, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
         
-        user = request.user
-        
+        # Get account
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
@@ -1015,8 +1025,7 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
             sessions_ended += 1
             
             logger.info(
-                f"Stopping paper trading session {session.session_id} "
-                f"for user {user.id} with task {task_result.id}"
+                f"Stopping paper trading session {session.session_id} with task {task_result.id}"
             )
         
         return JsonResponse({
@@ -1046,14 +1055,10 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         JsonResponse: Bot status and metrics
     """
     try:
-        # Use authenticated user
-        if not request.user.is_authenticated:
-            return JsonResponse({
-                'error': 'Authentication required'
-            }, status=401)
+        # Get default user - no authentication required
+        user = get_default_user()
         
-        user = request.user
-        
+        # Get account
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
@@ -1111,6 +1116,8 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
                 'final_pnl': float(session.session_pnl_usd) if session.session_pnl_usd else 0,
                 'trades': session.total_trades_executed or 0
             })
+        
+        logger.debug(f"Bot status fetched")
         
         return JsonResponse({
             'success': True,
