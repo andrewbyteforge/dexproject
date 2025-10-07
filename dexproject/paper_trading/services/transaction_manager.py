@@ -746,45 +746,521 @@ class TransactionManager:
             if transaction_id in self._retry_tasks:
                 del self._retry_tasks[transaction_id]
     
+        """
+    Enhanced stuck transaction monitoring and nonce management methods for TransactionManager.
+
+    These methods replace the existing basic implementation with sophisticated logic for:
+    - Detecting genuinely stuck transactions (not just slow)
+    - Smart nonce management to prevent nonce conflicts
+    - Gas price analysis to determine if replacement is needed
+    - Automatic recovery from nonce gaps
+
+    Add these methods to your TransactionManager class, replacing the existing
+    _monitor_stuck_transactions method and adding the new helper methods.
+
+    File: dexproject/trading/services/transaction_manager.py (partial update)
+    """
+
     async def _monitor_stuck_transactions(self) -> None:
         """
-        Background task to monitor and handle stuck transactions.
+        Enhanced background task to monitor and handle stuck transactions.
         
-        Runs continuously to detect transactions that are stuck and need replacement.
+        Features:
+        - Detects stuck transactions using multiple criteria
+        - Smart replacement decisions based on gas price analysis
+        - Nonce gap detection and recovery
+        - Prevents excessive replacements
         """
+        self.logger.info("🔍 Starting enhanced stuck transaction monitor")
+        
         while True:
             try:
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(30)  # Check every 30 seconds for efficiency
                 
                 current_time = datetime.now(timezone.utc)
-                stuck_threshold = timedelta(minutes=self.retry_config.stuck_transaction_minutes)
                 
-                for tx_id, tx_state in list(self._active_transactions.items()):
-                    # Check if transaction is stuck
-                    if (tx_state.status == TransactionStatus.PENDING and
-                        tx_state.submitted_at and
-                        current_time - tx_state.submitted_at > stuck_threshold):
-                        
-                        self.logger.warning(
-                            f"⚠️ Detected stuck transaction: {tx_id} "
-                            f"(Pending for {(current_time - tx_state.submitted_at).total_seconds() / 60:.1f} minutes)"
-                        )
-                        
-                        # Mark as stuck
-                        tx_state.status = TransactionStatus.STUCK
-                        await self._broadcast_transaction_update(tx_state)
-                        
-                        # Attempt replacement if configured
-                        if self.retry_config.auto_retry_enabled:
-                            self.logger.info(f"🔄 Auto-replacing stuck transaction: {tx_id}")
-                            asyncio.create_task(
-                                self.replace_stuck_transaction(tx_id)
-                            )
+                # Get current network gas price for comparison
+                current_gas_price = await self._get_current_gas_price()
+                
+                # Group transactions by user for nonce management
+                user_transactions = {}
+                for tx_id, tx_state in self._active_transactions.items():
+                    if tx_state.status in [TransactionStatus.PENDING, TransactionStatus.SUBMITTED]:
+                        user_id = tx_state.user_id
+                        if user_id not in user_transactions:
+                            user_transactions[user_id] = []
+                        user_transactions[user_id].append((tx_id, tx_state))
+                
+                # Process each user's transactions
+                for user_id, transactions in user_transactions.items():
+                    await self._process_user_stuck_transactions(
+                        user_id, 
+                        transactions, 
+                        current_time, 
+                        current_gas_price
+                    )
                 
             except Exception as e:
                 self.logger.error(f"❌ Error in stuck transaction monitor: {e}")
-                await asyncio.sleep(60)  # Continue after error
-    
+                await asyncio.sleep(60)  # Wait longer on error
+
+    async def _process_user_stuck_transactions(
+        self,
+        user_id: int,
+        transactions: List[Tuple[str, TransactionState]],
+        current_time: datetime,
+        current_gas_price: Decimal
+    ) -> None:
+        """
+        Process stuck transactions for a specific user.
+        
+        Args:
+            user_id: User ID
+            transactions: List of (tx_id, tx_state) tuples for this user
+            current_time: Current timestamp
+            current_gas_price: Current network gas price
+        """
+        try:
+            # Sort transactions by nonce if available
+            transactions_with_nonce = [
+                (tx_id, tx_state) for tx_id, tx_state in transactions 
+                if tx_state.nonce is not None
+            ]
+            transactions_with_nonce.sort(key=lambda x: x[1].nonce)
+            
+            # Get expected next nonce for user
+            expected_nonce = await self._get_user_next_nonce(user_id)
+            
+            # Check for nonce gaps
+            if transactions_with_nonce:
+                await self._check_nonce_gaps(
+                    transactions_with_nonce, 
+                    expected_nonce
+                )
+            
+            # Process each transaction
+            for tx_id, tx_state in transactions:
+                stuck_reason = await self._check_if_stuck(
+                    tx_state, 
+                    current_time, 
+                    current_gas_price
+                )
+                
+                if stuck_reason:
+                    await self._handle_stuck_transaction(
+                        tx_id, 
+                        tx_state, 
+                        stuck_reason,
+                        current_gas_price
+                    )
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Error processing user {user_id} stuck transactions: {e}")
+
+    async def _check_if_stuck(
+        self,
+        tx_state: TransactionState,
+        current_time: datetime,
+        current_gas_price: Decimal
+    ) -> Optional[str]:
+        """
+        Determine if a transaction is stuck and why.
+        
+        Args:
+            tx_state: Transaction state to check
+            current_time: Current timestamp
+            current_gas_price: Current network gas price
+            
+        Returns:
+            Reason why transaction is stuck, or None if not stuck
+        """
+        if not tx_state.submitted_at:
+            return None
+        
+        time_pending = current_time - tx_state.submitted_at
+        
+        # Check various stuck conditions
+        
+        # 1. Time-based: Transaction pending too long
+        base_threshold = timedelta(minutes=self.retry_config.stuck_transaction_minutes)
+        
+        # Adjust threshold based on gas price (lower gas = longer wait expected)
+        if tx_state.gas_price_gwei and current_gas_price > 0:
+            gas_ratio = float(tx_state.gas_price_gwei / current_gas_price)
+            if gas_ratio < 0.5:  # Gas price is less than 50% of current
+                adjusted_threshold = base_threshold * 2  # Double the wait time
+            elif gas_ratio < 0.8:  # Gas price is 50-80% of current
+                adjusted_threshold = base_threshold * 1.5
+            else:
+                adjusted_threshold = base_threshold
+        else:
+            adjusted_threshold = base_threshold
+        
+        if time_pending > adjusted_threshold:
+            return f"pending_too_long ({time_pending.total_seconds() / 60:.1f} minutes)"
+        
+        # 2. Gas price too low: Transaction gas is significantly below current price
+        if tx_state.gas_price_gwei and current_gas_price > 0:
+            if tx_state.gas_price_gwei < (current_gas_price * Decimal('0.5')):
+                return f"gas_too_low ({tx_state.gas_price_gwei:.2f} vs {current_gas_price:.2f} gwei)"
+        
+        # 3. Check if transaction still exists in mempool
+        if await self._transaction_dropped_from_mempool(tx_state):
+            return "dropped_from_mempool"
+        
+        # 4. Nonce conflict detection
+        if await self._has_nonce_conflict(tx_state):
+            return "nonce_conflict"
+        
+        return None
+
+    async def _handle_stuck_transaction(
+        self,
+        tx_id: str,
+        tx_state: TransactionState,
+        stuck_reason: str,
+        current_gas_price: Decimal
+    ) -> None:
+        """
+        Handle a stuck transaction based on the reason it's stuck.
+        
+        Args:
+            tx_id: Transaction ID
+            tx_state: Transaction state
+            stuck_reason: Reason why transaction is stuck
+            current_gas_price: Current network gas price
+        """
+        self.logger.warning(
+            f"⚠️ Stuck transaction detected: {tx_id} "
+            f"(Reason: {stuck_reason}, "
+            f"Pending for {(datetime.now(timezone.utc) - tx_state.submitted_at).total_seconds() / 60:.1f} minutes)"
+        )
+        
+        # Mark as stuck
+        tx_state.status = TransactionStatus.STUCK
+        tx_state.error_message = f"Transaction stuck: {stuck_reason}"
+        await self._broadcast_transaction_update(tx_state)
+        
+        # Determine action based on stuck reason and configuration
+        if not self.retry_config.auto_retry_enabled:
+            self.logger.info(f"ℹ️ Auto-retry disabled, not replacing stuck transaction {tx_id}")
+            return
+        
+        # Check if we've already tried to replace this transaction recently
+        if tx_state.last_retry_at:
+            time_since_last_retry = datetime.now(timezone.utc) - tx_state.last_retry_at
+            if time_since_last_retry < timedelta(minutes=5):
+                self.logger.info(f"ℹ️ Recently tried to replace {tx_id}, waiting before next attempt")
+                return
+        
+        # Decide on replacement strategy
+        if stuck_reason.startswith("gas_too_low"):
+            # Need significant gas increase
+            gas_multiplier = Decimal('1.5')  # 50% increase
+        elif stuck_reason == "dropped_from_mempool":
+            # Transaction was dropped, need to resubmit with higher gas
+            gas_multiplier = Decimal('1.3')  # 30% increase
+        elif stuck_reason == "nonce_conflict":
+            # Handle nonce conflict specially
+            await self._resolve_nonce_conflict(tx_id, tx_state)
+            return
+        else:
+            # Standard replacement
+            gas_multiplier = self.retry_config.replacement_gas_multiplier
+        
+        # Calculate new gas price
+        new_gas_price = self._calculate_replacement_gas_price(
+            tx_state.gas_price_gwei or current_gas_price,
+            current_gas_price,
+            gas_multiplier
+        )
+        
+        # Check if new gas price is worth it
+        if not await self._is_replacement_worthwhile(tx_state, new_gas_price):
+            self.logger.info(f"ℹ️ Replacement not worthwhile for {tx_id}, keeping original")
+            return
+        
+        # Attempt replacement
+        self.logger.info(f"🔄 Auto-replacing stuck transaction: {tx_id}")
+        await self.replace_stuck_transaction(tx_id, gas_multiplier)
+
+    async def _get_current_gas_price(self) -> Decimal:
+        """
+        Get current network gas price.
+        
+        Returns:
+            Current gas price in gwei
+        """
+        try:
+            if self._web3_client:
+                # Get gas price from network
+                gas_price_wei = await self._web3_client.web3.eth.gas_price
+                gas_price_gwei = Decimal(gas_price_wei) / Decimal(10**9)
+                return gas_price_gwei
+            else:
+                # Fallback to configured default
+                return Decimal(os.getenv('DEFAULT_GAS_PRICE_GWEI', '30'))
+        except Exception as e:
+            self.logger.error(f"Error getting current gas price: {e}")
+            return Decimal('30')  # Safe default
+
+    async def _get_user_next_nonce(self, user_id: int) -> int:
+        """
+        Get the next expected nonce for a user's wallet.
+        
+        Args:
+            user_id: User ID
+            
+        Returns:
+            Next expected nonce
+        """
+        try:
+            if self._wallet_manager and self._web3_client:
+                # Get user's wallet address
+                from django.contrib.auth.models import User
+                user = await User.objects.aget(id=user_id)
+                
+                # For paper trading or if wallet not available, return 0
+                if not hasattr(user, 'wallet') or not user.wallet:
+                    return 0
+                
+                wallet_address = user.wallet.address
+                
+                # Get pending transaction count (includes pending transactions)
+                nonce = await self._web3_client.web3.eth.get_transaction_count(
+                    wallet_address, 
+                    'pending'
+                )
+                return nonce
+            else:
+                return 0
+        except Exception as e:
+            self.logger.error(f"Error getting next nonce for user {user_id}: {e}")
+            return 0
+
+    async def _check_nonce_gaps(
+        self,
+        transactions: List[Tuple[str, TransactionState]],
+        expected_nonce: int
+    ) -> None:
+        """
+        Check for gaps in transaction nonces that could block later transactions.
+        
+        Args:
+            transactions: List of transactions with nonces, sorted by nonce
+            expected_nonce: Expected next nonce from blockchain
+        """
+        if not transactions:
+            return
+        
+        # Check if first transaction has the expected nonce
+        first_tx_id, first_tx_state = transactions[0]
+        if first_tx_state.nonce > expected_nonce:
+            self.logger.warning(
+                f"⚠️ Nonce gap detected: Expected {expected_nonce}, "
+                f"but first pending transaction has nonce {first_tx_state.nonce}"
+            )
+            # This indicates a missing transaction that needs to be filled
+        
+        # Check for gaps between transactions
+        for i in range(len(transactions) - 1):
+            current_tx_id, current_tx_state = transactions[i]
+            next_tx_id, next_tx_state = transactions[i + 1]
+            
+            if next_tx_state.nonce > current_tx_state.nonce + 1:
+                self.logger.warning(
+                    f"⚠️ Nonce gap between transactions: "
+                    f"{current_tx_id} (nonce {current_tx_state.nonce}) and "
+                    f"{next_tx_id} (nonce {next_tx_state.nonce})"
+                )
+                # Mark the later transaction as stuck due to nonce gap
+                next_tx_state.error_message = f"Blocked by nonce gap (waiting for nonce {current_tx_state.nonce + 1})"
+
+    async def _transaction_dropped_from_mempool(
+        self,
+        tx_state: TransactionState
+    ) -> bool:
+        """
+        Check if a transaction has been dropped from the mempool.
+        
+        Args:
+            tx_state: Transaction state to check
+            
+        Returns:
+            True if transaction was dropped from mempool
+        """
+        try:
+            if not tx_state.transaction_hash or not self._web3_client:
+                return False
+            
+            # Try to get the transaction from mempool
+            try:
+                tx = await self._web3_client.web3.eth.get_transaction(tx_state.transaction_hash)
+                # Transaction still exists
+                return False
+            except Exception as e:
+                if "not found" in str(e).lower():
+                    # Transaction not found in mempool or blockchain
+                    # Check if it was mined
+                    try:
+                        receipt = await self._web3_client.web3.eth.get_transaction_receipt(
+                            tx_state.transaction_hash
+                        )
+                        # Transaction was mined (shouldn't happen if we're monitoring correctly)
+                        return False
+                    except:
+                        # Not mined and not in mempool = dropped
+                        return True
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error checking mempool for transaction: {e}")
+            return False
+
+    async def _has_nonce_conflict(self, tx_state: TransactionState) -> bool:
+        """
+        Check if transaction has a nonce conflict.
+        
+        Args:
+            tx_state: Transaction state to check
+            
+        Returns:
+            True if there's a nonce conflict
+        """
+        if tx_state.nonce is None:
+            return False
+        
+        # Check if another transaction with the same nonce was confirmed
+        for other_tx_id, other_tx_state in self._active_transactions.items():
+            if (other_tx_state.user_id == tx_state.user_id and
+                other_tx_state.nonce == tx_state.nonce and
+                other_tx_state.transaction_id != tx_state.transaction_id and
+                other_tx_state.status == TransactionStatus.CONFIRMED):
+                return True
+        
+        return False
+
+    async def _resolve_nonce_conflict(
+        self,
+        tx_id: str,
+        tx_state: TransactionState
+    ) -> None:
+        """
+        Resolve a nonce conflict by cancelling or replacing the transaction.
+        
+        Args:
+            tx_id: Transaction ID with conflict
+            tx_state: Transaction state
+        """
+        self.logger.info(f"🔧 Resolving nonce conflict for transaction {tx_id}")
+        
+        # Mark as failed due to nonce conflict
+        tx_state.status = TransactionStatus.FAILED
+        tx_state.error_message = "Nonce conflict - another transaction used this nonce"
+        await self._broadcast_transaction_update(tx_state)
+        
+        # Clean up the transaction
+        if tx_id in self._retry_tasks:
+            self._retry_tasks[tx_id].cancel()
+            del self._retry_tasks[tx_id]
+
+    def _calculate_replacement_gas_price(
+        self,
+        original_gas: Decimal,
+        current_gas: Decimal,
+        multiplier: Decimal
+    ) -> Decimal:
+        """
+        Calculate replacement gas price intelligently.
+        
+        Args:
+            original_gas: Original transaction gas price
+            current_gas: Current network gas price
+            multiplier: Gas multiplier
+            
+        Returns:
+            Replacement gas price
+        """
+        # Use the higher of: current gas * multiplier OR original gas * multiplier
+        replacement_price = max(
+            current_gas * multiplier,
+            original_gas * multiplier
+        )
+        
+        # Apply ceiling
+        if replacement_price > self.retry_config.max_gas_price_gwei:
+            self.logger.warning(
+                f"⚠️ Capping replacement gas at {self.retry_config.max_gas_price_gwei} gwei"
+            )
+            replacement_price = self.retry_config.max_gas_price_gwei
+        
+        return replacement_price
+
+    async def _is_replacement_worthwhile(
+        self,
+        tx_state: TransactionState,
+        new_gas_price: Decimal
+    ) -> bool:
+        """
+        Determine if replacing a transaction is worthwhile.
+        
+        Args:
+            tx_state: Current transaction state
+            new_gas_price: Proposed new gas price
+            
+        Returns:
+            True if replacement is worthwhile
+        """
+        # Don't replace if we've already replaced multiple times
+        if tx_state.retry_count >= 2:
+            return False
+        
+        # Don't replace if new gas price isn't significantly higher (at least 10%)
+        if tx_state.gas_price_gwei:
+            increase_ratio = (new_gas_price - tx_state.gas_price_gwei) / tx_state.gas_price_gwei
+            if increase_ratio < Decimal('0.1'):
+                return False
+        
+        # Don't replace if gas cost would exceed a threshold relative to trade value
+        if tx_state.swap_params:
+            estimated_gas_cost_usd = self._estimate_gas_cost_usd(new_gas_price)
+            trade_value_usd = self._estimate_trade_amount_usd(tx_state.swap_params)
+            
+            # Don't spend more than 5% of trade value on gas
+            if estimated_gas_cost_usd > (trade_value_usd * Decimal('0.05')):
+                self.logger.warning(
+                    f"⚠️ Replacement gas cost (${estimated_gas_cost_usd:.2f}) exceeds "
+                    f"5% of trade value (${trade_value_usd:.2f})"
+                )
+                return False
+        
+        return True
+
+    def _estimate_gas_cost_usd(self, gas_price_gwei: Decimal) -> Decimal:
+        """
+        Estimate gas cost in USD.
+        
+        Args:
+            gas_price_gwei: Gas price in gwei
+            
+        Returns:
+            Estimated cost in USD
+        """
+        # Assume 150k gas for a swap and $2000 ETH price
+        gas_limit = 150000
+        eth_price = Decimal('2000')
+        
+        gas_cost_eth = (gas_price_gwei * Decimal(gas_limit)) / Decimal(10**9)
+        gas_cost_usd = gas_cost_eth * eth_price
+        
+        return gas_cost_usd
+
+
+
+
+
+
+
     async def _should_retry_transaction(
         self,
         transaction_state: TransactionState,
