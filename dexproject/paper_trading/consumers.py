@@ -419,47 +419,49 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
     # DATABASE OPERATIONS - Async Wrapped
     # =========================================================================
     
+    
     @database_sync_to_async
     def get_or_create_default_account(self) -> Optional[PaperTradingAccount]:
         """
-        Get or create default paper trading account for single-user setup.
+        Get the single paper trading account for the system.
         
-        Returns:
-            PaperTradingAccount or None if error
+        Since we're using a single-account setup, this always returns
+        the one account we have (Intel_Slider_Balanced).
         """
         try:
-            # Try to get existing default account
-            account = PaperTradingAccount.objects.filter(
-                name="Default Paper Trading Account"
-            ).first()
+            # Get the single account (we only have one now)
+            account = PaperTradingAccount.objects.get(
+                account_id='f2ea4290-15b7-456c-bb28-43e96fc5c992'
+            )
             
-            if not account:
-                # Create default user if needed
-                user, _ = User.objects.get_or_create(
-                    username='default_trader',
-                    defaults={
-                        'email': 'trader@localhost',
-                        'first_name': 'Default',
-                        'last_name': 'Trader'
-                    }
-                )
-                
-                # Create default paper trading account
-                account = PaperTradingAccount.objects.create(
-                    user=user,
-                    name="Default Paper Trading Account",
-                    initial_balance_usd=Decimal('10000.00'),
-                    current_balance_usd=Decimal('10000.00'),
-                    is_active=True
-                )
-                logger.info(f"Created default paper trading account: {account.account_id}")
-            
+            logger.info(f"WebSocket using account: {account.name} ({account.account_id})")
             return account
             
+        except PaperTradingAccount.DoesNotExist:
+            # This shouldn't happen since we just verified the account exists
+            logger.error("Account f2ea4290-15b7-456c-bb28-43e96fc5c992 not found!")
+            
+            # Fallback: try to get any account
+            account = PaperTradingAccount.objects.first()
+            if account:
+                logger.warning(f"Using fallback account: {account.name} ({account.account_id})")
+                return account
+            else:
+                logger.error("No paper trading accounts found in database!")
+                return None
+                
         except Exception as e:
-            logger.error(f"Error getting/creating default account: {e}", exc_info=True)
+            logger.error(f"Error getting account: {e}", exc_info=True)
             return None
-    
+
+
+
+
+
+
+
+
+
     @database_sync_to_async
     def get_user_account(self) -> Optional[PaperTradingAccount]:
         """
@@ -661,3 +663,37 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"Error getting performance metrics: {e}", exc_info=True)
             return None
+        
+
+
+
+    # Add this method to your PaperTradingConsumer class in paper_trading/consumers.py
+    async def performance_update(self, event):
+        """
+        Handle performance update messages from the bot.
+        
+        Args:
+            event: Dictionary containing performance metrics data
+        """
+        try:
+            # Extract the performance data from the event
+            performance_data = event.get('data', {})
+            
+            # Log the update for debugging
+            logger.info(f"[WS] Broadcasting performance update to client")
+            
+            # Send the performance update to the WebSocket client
+            await self.send(text_data=json.dumps({
+                'type': 'performance_update',
+                'data': performance_data,
+                'timestamp': timezone.now().isoformat()
+            }))
+            
+        except Exception as e:
+            logger.error(f"[WS] Error handling performance update: {e}")
+            # Don't crash the connection on error
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Failed to process performance update',
+                'timestamp': timezone.now().isoformat()
+            }))

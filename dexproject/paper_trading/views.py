@@ -86,30 +86,63 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         user = get_default_user()
         logger.debug(f"Loading paper trading dashboard for default user")
         
-        # Get or create account for default user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
+        # Get the single account for the default user
+        # Always look for the first account, don't create duplicates
+        accounts = PaperTradingAccount.objects.filter(
+            user=user
+        ).order_by('created_at')
         
-        if not account:
-            # No active account exists, create one for the user
+        if accounts.exists():
+            # Use the first (oldest) account
+            account = accounts.first()
+            
+            # Clean up any duplicates if they exist
+            if accounts.count() > 1:
+                logger.warning(f"Found {accounts.count()} accounts, using first and cleaning duplicates")
+                # Keep the first account, delete others
+                for duplicate in accounts[1:]:
+                    logger.info(f"Removing duplicate account: {duplicate.name} ({duplicate.account_id})")
+                    # Optional: Migrate data before deletion
+                    # You could migrate trades, positions, sessions here if needed
+                    duplicate.delete()
+            
+            # Ensure the account is active
+            if not account.is_active:
+                account.is_active = True
+                account.save()
+                
+            logger.info(f"Using existing account: {account.name} ({account.account_id})")
+        else:
+            # No account exists, create the single account
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',  # Use consistent name with bot
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
             )
-            logger.info(f"Created new paper trading account: {account.account_id}")
-        else:
-            logger.debug(f"Using existing account: {account.account_id}")
+            logger.info(f"Created new paper trading account: {account.name} ({account.account_id})")
         
-        # Get active session if exists
+        # Get active session if exists (check for today's session)
+        today = timezone.now().date()
         active_session = PaperTradingSession.objects.filter(
             account=account,
+            started_at__date=today,
             status__in=["ACTIVE", "RUNNING", "STARTING"]
-        ).first()
+        ).order_by('-started_at').first()
+        
+        # If no session today but there are old running sessions, close them
+        if not active_session:
+            old_sessions = PaperTradingSession.objects.filter(
+                account=account,
+                started_at__date__lt=today,
+                status__in=["ACTIVE", "RUNNING", "STARTING"]
+            )
+            for old_session in old_sessions:
+                old_session.status = "STOPPED"
+                old_session.ended_at = timezone.now()
+                old_session.save()
+                logger.info(f"Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
         
         # Get recent trades with error handling
         try:
@@ -166,6 +199,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         context = {
             'page_title': 'Paper Trading Dashboard',
             'account': account,
+            'account_id': str(account.account_id),  # Ensure account_id is in context
             'active_session': active_session,
             'recent_trades': recent_trades,
             'open_positions': open_positions,

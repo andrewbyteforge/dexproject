@@ -375,32 +375,57 @@ class EnhancedPaperTradingBot:
             raise
 
     def _load_account(self):
-        """Load or create paper trading account."""
+        """
+        Load the single paper trading account for this user.
+        Always uses the same account regardless of parameters.
+        """
         from django.contrib.auth.models import User
         
+        # Always use the same user
         user, _ = User.objects.get_or_create(
             username='demo_user',
             defaults={'email': 'demo@example.com'}
         )
         
-        self.account, created = PaperTradingAccount.objects.get_or_create(
-            name=self.account_name,
-            user=user,
-            defaults={
-                'current_balance_usd': Decimal('10000'),
-                'initial_balance_usd': Decimal('10000')
-            }
-        )
+        # Get the first existing account for this user, or create one
+        existing_accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
         
-        if created:
-            logger.info(f"[ACCOUNT] Created new account: {self.account_name}")
+        if existing_accounts.exists():
+            # Always use the first (oldest) account
+            self.account = existing_accounts.first()
+            logger.info(f"[ACCOUNT] Using existing account: {self.account.name} (ID: {self.account.account_id})")
+            
+            # Optional: Clean up any duplicate accounts
+            if existing_accounts.count() > 1:
+                duplicates = existing_accounts[1:]
+                for dup in duplicates:
+                    logger.warning(f"[ACCOUNT] Removing duplicate account: {dup.name} (ID: {dup.account_id})")
+                    dup.delete()
+                logger.info(f"[ACCOUNT] Cleaned up {len(duplicates)} duplicate accounts")
         else:
-            logger.info(f"[ACCOUNT] Using existing account: {self.account_name}")
-    
+            # Create the one and only account
+            self.account = PaperTradingAccount.objects.create(
+                name='My_Trading_Bot',
+                user=user,
+                current_balance_usd=Decimal('10000'),
+                initial_balance_usd=Decimal('10000')
+            )
+            logger.info(f"[ACCOUNT] Created new account: {self.account.name} (ID: {self.account.account_id})")
+        
+        logger.info(f"[ACCOUNT] Balance: ${self.account.current_balance_usd:,.2f}")
+        
+        # Override the account_name to match what we're actually using
+        self.account_name = self.account.name
+
+
     def _create_session(self) -> None:
-        """Create a new trading session."""
+        """
+        Create or resume a trading session for today.
+        Only one active session per day is allowed.
+        """
         import json
         from uuid import UUID
+        from datetime import date
 
         def json_safe(data):
             """Recursively convert non-serializable types to safe formats."""
@@ -416,28 +441,91 @@ class EnhancedPaperTradingBot:
                 return data.isoformat()
             return data
 
-        config_snapshot = {
-            "bot_version": "2.2.0",  # Updated version with Circuit Breakers
-            "intel_level": self.intel_level,
-            "account_name": self.account_name,
-            "account_id": str(self.account.account_id),
-            "session_uuid": str(uuid.uuid4()),
-            "user_id": str(self.account.user.id),
-            "transaction_manager_enabled": self.use_tx_manager,
-            "circuit_breaker_enabled": self.circuit_breaker_enabled,
-        }
-
-        safe_snapshot = json_safe(config_snapshot)
-
-        self.session = PaperTradingSession.objects.create(
+        today = timezone.now().date()
+        
+        # Check for existing session today
+        existing_sessions = PaperTradingSession.objects.filter(
             account=self.account,
-            status="RUNNING",
-            starting_balance_usd=self.account.current_balance_usd,
-            name=f"Bot Session - Intel Level {self.intel_level}",
-            config_snapshot=safe_snapshot,
-        )
-        logger.info("[SESSION] Created trading session: %s", self.session.session_id)
-    
+            started_at__date=today,
+            status='RUNNING'
+        ).order_by('-started_at')
+        
+        if existing_sessions.exists():
+            # Resume the most recent session from today
+            self.session = existing_sessions.first()
+            logger.info(f"[SESSION] Resuming existing session from today: {self.session.session_id}")
+            logger.info(f"[SESSION] Session started at: {self.session.started_at.strftime('%H:%M:%S')}")
+            
+            # Update session config to reflect current bot settings
+            config_snapshot = {
+                "bot_version": "2.2.0",
+                "intel_level": self.intel_level,
+                "account_name": self.account_name,
+                "account_id": str(self.account.account_id),
+                "session_uuid": str(self.session.session_id),
+                "user_id": str(self.account.user.id),
+                "transaction_manager_enabled": self.use_tx_manager,
+                "circuit_breaker_enabled": self.circuit_breaker_enabled,
+                "resumed_at": timezone.now().isoformat()
+            }
+            
+            self.session.config_snapshot = json_safe(config_snapshot)
+            self.session.save()
+            
+        else:
+            # Close any old running sessions from previous days
+            old_sessions = PaperTradingSession.objects.filter(
+                account=self.account,
+                status='RUNNING',
+                started_at__date__lt=today
+            )
+            
+            for old_session in old_sessions:
+                old_session.status = 'STOPPED'
+                old_session.ended_at = timezone.now()
+                old_session.ending_balance_usd = self.account.current_balance_usd
+                old_session.session_pnl_usd = self.account.current_balance_usd - old_session.starting_balance_usd
+                old_session.save()
+                logger.info(f"[SESSION] Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
+            
+            # Create new session for today
+            config_snapshot = {
+                "bot_version": "2.2.0",
+                "intel_level": self.intel_level,
+                "account_name": self.account_name,
+                "account_id": str(self.account.account_id),
+                "session_uuid": str(uuid.uuid4()),
+                "user_id": str(self.account.user.id),
+                "transaction_manager_enabled": self.use_tx_manager,
+                "circuit_breaker_enabled": self.circuit_breaker_enabled,
+            }
+
+            safe_snapshot = json_safe(config_snapshot)
+            
+            session_name = f"Bot_Session_{today.strftime('%Y%m%d')}_Intel_{self.intel_level}"
+
+            self.session = PaperTradingSession.objects.create(
+                account=self.account,
+                status="RUNNING",
+                starting_balance_usd=self.account.current_balance_usd,
+                name=session_name,
+                config_snapshot=safe_snapshot,
+            )
+            logger.info(f"[SESSION] Created new session for today: {self.session.session_id}")
+            logger.info(f"[SESSION] Session name: {session_name}")
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _initialize_intelligence(self):
         """Initialize the intelligence engine."""
         self.intelligence_engine = IntelSliderEngine(

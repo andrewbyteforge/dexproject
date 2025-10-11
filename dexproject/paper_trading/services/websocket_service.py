@@ -83,15 +83,15 @@ class WebSocketNotificationService:
     ) -> bool:
         """
         Generic method to send any type of update to WebSocket clients.
-        
+    
         This is the core method that all other send methods use internally.
-        
+    
         Args:
             account_id: Account UUID (string or UUID object)
             message_type: Type of message (e.g., 'trade_update', 'thought_log')
             data: Message payload
             include_timestamp: Whether to add timestamp to message
-            
+        
         Returns:
             True if message sent successfully, False otherwise
         """
@@ -99,27 +99,33 @@ class WebSocketNotificationService:
         if not self.channel_layer:
             logger.error("Cannot send WebSocket update: Channel layer not configured")
             return False
-        
+    
         # Validate inputs
         if not account_id:
             logger.error("Cannot send WebSocket update: No account_id provided")
             return False
-        
+    
         if not message_type:
             logger.error("Cannot send WebSocket update: No message_type provided")
             return False
-        
+    
         try:
             # Get room group name
             room_group_name = self._get_room_group_name(account_id)
-            
+        
             # Serialize data
             serialized_data = self._serialize_data(data)
-            
+        
             # Add timestamp if requested
             if include_timestamp and 'timestamp' not in serialized_data:
                 serialized_data['timestamp'] = datetime.now().isoformat()
             
+            # DEBUG: Log what we're sending
+            logger.info(
+                f"SENDING WebSocket message to room {room_group_name}: "
+                f"type={message_type} -> {message_type.replace('_', '.')}"
+            )
+        
             # Send message to room group
             async_to_sync(self.channel_layer.group_send)(
                 room_group_name,
@@ -128,13 +134,13 @@ class WebSocketNotificationService:
                     'data': serialized_data
                 }
             )
-            
-            logger.debug(
-                f"Sent WebSocket update: type={message_type}, "
+        
+            logger.info(
+                f"SENT WebSocket update: type={message_type}, "
                 f"room={room_group_name}, data_keys={list(serialized_data.keys())}"
             )
             return True
-            
+        
         except Exception as e:
             logger.error(
                 f"Error sending WebSocket update: type={message_type}, "
@@ -142,7 +148,10 @@ class WebSocketNotificationService:
                 exc_info=True
             )
             return False
-    
+
+
+
+
     # =========================================================================
     # SPECIFIC MESSAGE METHODS (for backward compatibility and convenience)
     # =========================================================================
@@ -205,11 +214,11 @@ class WebSocketNotificationService:
     ) -> bool:
         """
         Send AI thought log to user's WebSocket group.
-        
+    
         Args:
             account_id: Account UUID
             thought_data: AI decision thought log
-            
+        
         Returns:
             Success status
         """
@@ -221,11 +230,21 @@ class WebSocketNotificationService:
             'intel_level': thought_data.get('intel_level'),
             'risk_score': thought_data.get('risk_score'),
             'opportunity_score': thought_data.get('opportunity_score'),
-            'created_at': thought_data.get('created_at', datetime.now().isoformat())
+            'created_at': thought_data.get('created_at', datetime.now().isoformat()),
+            # Add fields that the frontend expects
+            'decision_type': thought_data.get('decision_type', 'ANALYSIS'),
+            'token_symbol': thought_data.get('token_symbol', ''),
+            'thought_content': thought_data.get('primary_reasoning', thought_data.get('reasoning', '')),
+            'thought_id': thought_data.get('thought_id', str(uuid.uuid4()))
         }
-        
-        return self.send_update(account_id, 'thought_update', formatted_thought)
     
+        # CRITICAL: Use 'thought_log_created' to match what JavaScript expects
+        return self.send_update(account_id, 'thought_log_created', formatted_thought)
+
+
+
+
+
     def send_performance_update(
         self,
         account_id: Union[str, uuid.UUID],
