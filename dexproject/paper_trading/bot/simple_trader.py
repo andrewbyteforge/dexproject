@@ -417,7 +417,6 @@ class EnhancedPaperTradingBot:
         # Override the account_name to match what we're actually using
         self.account_name = self.account.name
 
-
     def _create_session(self) -> None:
         """
         Create or resume a trading session for today.
@@ -513,18 +512,6 @@ class EnhancedPaperTradingBot:
             )
             logger.info(f"[SESSION] Created new session for today: {self.session.session_id}")
             logger.info(f"[SESSION] Session name: {session_name}")
-
-
-
-
-
-
-
-
-
-
-
-
 
     def _initialize_intelligence(self):
         """Initialize the intelligence engine."""
@@ -1112,39 +1099,237 @@ class EnhancedPaperTradingBot:
     def _create_paper_trade_record(self, decision: TradingDecision, token_symbol: str, 
                                    current_price: Decimal, transaction_id: str = None,
                                    gas_savings: Decimal = None):
-        """Create paper trade record in database."""
-        trade = PaperTrade.objects.create(
-            account=self.account,
-            trade_type=decision.action.lower(),
-            token_in_address='0x' + '0' * 40 if decision.action == 'BUY' else decision.token_address,
-            token_in_symbol='USDC' if decision.action == 'BUY' else token_symbol,
-            token_out_address=decision.token_address if decision.action == 'BUY' else '0x' + '0' * 40,
-            token_out_symbol=token_symbol if decision.action == 'BUY' else 'USDC',
-            amount_in=decision.position_size_usd,
-            amount_out=decision.position_size_usd / current_price if decision.action == 'BUY' else decision.position_size_usd,
-            amount_in_usd=decision.position_size_usd,
-            amount_out_usd=decision.position_size_usd,
-            price_per_token=current_price,
-            gas_price_gwei=decision.max_gas_price_gwei,
-            gas_used=21000,
-            gas_cost_usd=Decimal('5') * (Decimal('1') - (gas_savings or Decimal('0')) / 100),
-            slippage_percent=Decimal('1'),
-            execution_time_ms=int(decision.processing_time_ms),
-            status='SUCCESS',
-            transaction_hash=transaction_id or ('0x' + uuid.uuid4().hex),
-            block_number=1000000,
-            dex_used='UNISWAP_V3',
-            metadata={
-                'intel_level': self.intel_level,
-                'confidence': float(decision.overall_confidence),
-                'risk_score': float(decision.risk_score),
-                'strategy_name': f"Intel_{self.intel_level}",
-                'tx_manager_used': self.use_tx_manager,
-                'gas_savings_percent': float(gas_savings) if gas_savings else 0,
-                'circuit_breaker_enabled': self.circuit_breaker_enabled
+        """
+        Create paper trade record in database with proper lowercase status values.
+        
+        This method creates and saves PaperTrade records that will appear in the dashboard.
+        """
+        try:
+            # Map decision action to trade type (lowercase)
+            trade_type_map = {
+                'BUY': 'buy',
+                'SELL': 'sell',
+                'HOLD': None,  # Don't create trade for HOLD
             }
-        )
-        return trade
+            
+            trade_type = trade_type_map.get(decision.action)
+            if not trade_type:
+                logger.info(f"[TRADE] No trade created for HOLD action")
+                return None
+            
+            # Token addresses mapping
+            token_address_map = {
+                'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+                'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+                'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+                'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+                'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+                'UNI': '0x1f9840a85d5aF5bf1D1762F925BDADdc4201F984',
+                'AAVE': '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',
+                'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',
+                'MATIC': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0',
+                'ARB': '0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1'
+            }
+            
+            # For BUY: USDC -> Token, For SELL: Token -> USDC
+            if trade_type == 'buy':
+                token_in_symbol = 'USDC'
+                token_in_address = token_address_map['USDC']
+                token_out_symbol = token_symbol
+                token_out_address = token_address_map.get(token_symbol, decision.token_address)
+            else:  # sell
+                token_in_symbol = token_symbol
+                token_in_address = token_address_map.get(token_symbol, decision.token_address)
+                token_out_symbol = 'USDC'
+                token_out_address = token_address_map['USDC']
+            
+            # Calculate amounts
+            amount_in_usd = decision.position_size_usd
+            
+            # Simulate slippage
+            base_slippage = Decimal('0.5')
+            volatility_slippage = Decimal(str(random.uniform(0, 1.5)))
+            total_slippage = base_slippage + volatility_slippage
+            
+            # Calculate expected output
+            if trade_type == 'buy':
+                # Buying token with USDC
+                token_quantity = amount_in_usd / current_price
+                expected_amount_out = token_quantity * (Decimal('1') - total_slippage / Decimal('100'))
+                actual_amount_out = expected_amount_out  # For paper trading, actual equals expected
+            else:
+                # Selling token for USDC
+                token_quantity = amount_in_usd / current_price
+                expected_amount_out = amount_in_usd * (Decimal('1') - total_slippage / Decimal('100'))
+                actual_amount_out = expected_amount_out
+            
+            # Simulate gas costs
+            gas_price_gwei = Decimal(str(random.uniform(20, 40)))
+            gas_used = random.randint(120000, 200000)
+            gas_cost_eth = (gas_price_gwei * gas_used) / Decimal('1e9')
+            gas_cost_usd = gas_cost_eth * Decimal('3000')  # Assume ETH = $3000
+            
+            # Apply gas savings if using TX Manager
+            if gas_savings and gas_savings > 0:
+                gas_cost_usd = gas_cost_usd * (Decimal('1') - gas_savings / Decimal('100'))
+            
+            # Create trade record with lowercase status
+            trade = PaperTrade.objects.create(
+                account=self.account,
+                trade_type=trade_type,  # lowercase: 'buy' or 'sell'
+                token_in_address=token_in_address,
+                token_in_symbol=token_in_symbol,
+                token_out_address=token_out_address,
+                token_out_symbol=token_out_symbol,
+                amount_in=amount_in_usd * Decimal('1e18'),  # Convert to wei
+                amount_in_usd=amount_in_usd,
+                expected_amount_out=expected_amount_out * Decimal('1e18'),
+                actual_amount_out=actual_amount_out * Decimal('1e18'),
+                simulated_gas_price_gwei=gas_price_gwei,
+                simulated_gas_used=gas_used,
+                simulated_gas_cost_usd=gas_cost_usd,
+                simulated_slippage_percent=total_slippage,
+                status='completed',  # IMPORTANT: Use lowercase 'completed'
+                executed_at=timezone.now(),
+                execution_time_ms=random.randint(500, 2000),
+                mock_tx_hash='0x' + uuid.uuid4().hex,
+                mock_block_number=random.randint(18000000, 18100000),
+                strategy_name=self.strategy_config.name if hasattr(self, 'strategy_config') else f'Intel_{self.intel_level}',
+                metadata={
+                    'intel_level': self.intel_level,
+                    'confidence_percent': float(decision.confidence_percent) if hasattr(decision, 'confidence_percent') else 75,
+                    'transaction_id': transaction_id,
+                    'gas_savings': float(gas_savings) if gas_savings else None,
+                    'decision_data': {
+                        'action': decision.action,
+                        'position_size_usd': float(decision.position_size_usd),
+                        'risk_score': float(decision.risk_score) if hasattr(decision, 'risk_score') else 50,
+                        'primary_reasoning': getattr(decision, 'primary_reasoning', 'Market opportunity detected')[:200]
+                    }
+                }
+            )
+            
+            logger.info(
+                f"[TRADE SAVED] {trade_type.upper()} trade created: "
+                f"trade_id={trade.trade_id}, amount=${amount_in_usd:.2f}, "
+                f"token={token_symbol}, slippage={total_slippage:.2f}%, "
+                f"gas=${gas_cost_usd:.2f}, status=completed"
+            )
+            
+            # Create AI thought log for this trade
+            self._create_ai_thought_log(
+                paper_trade=trade,
+                decision=decision,
+                token_symbol=token_symbol,
+                token_address=token_out_address if trade_type == 'buy' else token_in_address
+            )
+            
+            # Update account balance
+            if trade_type == 'buy':
+                # Deduct USDC and gas
+                self.account.current_balance_usd -= (amount_in_usd + gas_cost_usd)
+            else:  # sell
+                # Add USDC minus gas
+                self.account.current_balance_usd += (actual_amount_out - gas_cost_usd)
+            
+            self.account.total_trades += 1
+            self.account.save()
+            
+            # Send WebSocket update
+            try:
+                trade_data = {
+                    'trade_id': str(trade.trade_id),
+                    'trade_type': trade_type,
+                    'token_in_symbol': token_in_symbol,
+                    'token_out_symbol': token_out_symbol,
+                    'amount_in_usd': float(amount_in_usd),
+                    'status': 'completed',
+                    'created_at': trade.created_at.isoformat()
+                }
+                websocket_service.send_trade_update(
+                    account_id=str(self.account.account_id),
+                    trade_data=trade_data
+                )
+            except Exception as e:
+                logger.error(f"Failed to send WebSocket update: {e}")
+            
+            return trade
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to create trade record: {e}", exc_info=True)
+            return None
+    
+    def _create_ai_thought_log(self, paper_trade: PaperTrade, decision: TradingDecision,
+                               token_symbol: str, token_address: str):
+        """Create AI thought log for the trade."""
+        try:
+            # Map confidence to level
+            confidence = float(getattr(decision, 'confidence_percent', 75))
+            if confidence >= 90:
+                confidence_level = 'VERY_HIGH'
+            elif confidence >= 70:
+                confidence_level = 'HIGH'
+            elif confidence >= 50:
+                confidence_level = 'MEDIUM'
+            elif confidence >= 30:
+                confidence_level = 'LOW'
+            else:
+                confidence_level = 'VERY_LOW'
+            
+            thought_log = PaperAIThoughtLog.objects.create(
+                account=self.account,
+                paper_trade=paper_trade,
+                decision_type=decision.action,
+                token_address=token_address,
+                token_symbol=token_symbol,
+                confidence_level=confidence_level,
+                confidence_percent=Decimal(str(confidence)),
+                risk_score=Decimal(str(getattr(decision, 'risk_score', 50))),
+                opportunity_score=Decimal('70'),  # Default opportunity score
+                primary_reasoning=getattr(decision, 'primary_reasoning', 'Market analysis suggests favorable conditions')[:500],
+                supporting_factors=getattr(decision, 'supporting_factors', [])[:3] if hasattr(decision, 'supporting_factors') else [],
+                risk_factors=getattr(decision, 'risk_factors', [])[:3] if hasattr(decision, 'risk_factors') else [],
+                market_conditions={
+                    'volatility': 'medium',
+                    'trend': 'bullish' if decision.action == 'BUY' else 'bearish'
+                },
+                lane_used='SMART' if self.intel_level >= 5 else 'FAST',
+                strategy_name=self.strategy_config.name if hasattr(self, 'strategy_config') else f'Intel_{self.intel_level}',
+                intelligence_level=self.intel_level,
+                metadata={
+                    'position_size_usd': float(decision.position_size_usd),
+                    'stop_loss': float(decision.stop_loss) if hasattr(decision, 'stop_loss') else None,
+                    'take_profit': float(decision.take_profit) if hasattr(decision, 'take_profit') else None,
+                }
+            )
+            
+            logger.info(
+                f"[AI THOUGHT] Created thought log: confidence={confidence:.1f}%, "
+                f"risk={getattr(decision, 'risk_score', 50):.1f}, decision={decision.action}"
+            )
+            
+            # Send WebSocket update for AI thought
+            try:
+                thought_data = {
+                    'thought_id': str(thought_log.thought_id),
+                    'decision_type': decision.action,
+                    'token_symbol': token_symbol,
+                    'confidence_percent': float(confidence),
+                    'reasoning': getattr(decision, 'primary_reasoning', 'Market analysis')[:200],
+                    'created_at': thought_log.created_at.isoformat()
+                }
+                websocket_service.send_ai_thought_update(
+                    account_id=str(self.account.account_id),
+                    thought_data=thought_data
+                )
+            except Exception as e:
+                logger.error(f"Failed to send AI thought WebSocket update: {e}")
+            
+            return thought_log
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to create AI thought log: {e}", exc_info=True)
+            return None
     
     def _update_positions_after_trade(self, decision: TradingDecision, 
                                       token_symbol: str, current_price: Decimal):
@@ -1153,13 +1338,6 @@ class EnhancedPaperTradingBot:
             self._open_or_add_position(token_symbol, decision, current_price)
         else:
             self._close_or_reduce_position(token_symbol, decision, current_price)
-        
-        # Update account balance
-        if decision.action == 'BUY':
-            self.account.current_balance_usd -= decision.position_size_usd
-        else:
-            self.account.current_balance_usd += decision.position_size_usd
-        self.account.save()
     
     def _open_or_add_position(self, token_symbol: str, decision: TradingDecision, 
                               current_price: Decimal):

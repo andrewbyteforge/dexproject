@@ -5,7 +5,7 @@ This module provides all dashboard and page views for the paper trading system.
 Includes portfolio display, trade history, and configuration management pages.
 API endpoints have been moved to api_views.py
 
-UPDATED: Centralized account management to prevent duplicate accounts
+UPDATED: Fixed decimal handling issues for large wei values
 
 File: dexproject/paper_trading/views.py
 """
@@ -39,6 +39,102 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# DECIMAL HANDLING HELPERS
+# =============================================================================
+
+def safe_decimal(value, default='0'):
+    """
+    Safely convert a value to decimal, handling large wei values.
+    
+    Args:
+        value: The value to convert
+        default: Default value if conversion fails
+        
+    Returns:
+        Decimal safe for display
+    """
+    try:
+        if value is None:
+            return Decimal(default)
+        
+        # If it's already a Decimal, check if it's too large (wei value)
+        if isinstance(value, Decimal):
+            # If it's a wei value (> 10^15), return 0 for display
+            if value > Decimal('1000000000000000'):
+                return Decimal(default)
+            return value
+            
+        # Try to convert to Decimal
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal(default)
+
+
+def format_trade_for_template(trade):
+    """
+    Format a trade object for safe template display.
+    
+    Converts wei values to human-readable format and ensures
+    all decimal values are safe for template rendering.
+    
+    Args:
+        trade: PaperTrade object
+        
+    Returns:
+        Dictionary with formatted trade data
+    """
+    return {
+        'trade_id': str(trade.trade_id),
+        'trade_type': trade.trade_type,
+        'token_in_symbol': trade.token_in_symbol,
+        'token_out_symbol': trade.token_out_symbol,
+        'amount_in_usd': safe_decimal(trade.amount_in_usd, '0'),
+        'amount_in_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD for display
+        'amount_out_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD approximation
+        'simulated_gas_cost_usd': safe_decimal(trade.simulated_gas_cost_usd, '0'),
+        'simulated_slippage_percent': safe_decimal(trade.simulated_slippage_percent, '0'),
+        'status': trade.status,
+        'created_at': trade.created_at,
+        'executed_at': trade.executed_at,
+        'execution_time_ms': trade.execution_time_ms or 0,
+        'mock_tx_hash': trade.mock_tx_hash,
+        'strategy_name': trade.strategy_name,
+        'simulated_gas_price_gwei': safe_decimal(trade.simulated_gas_price_gwei, '0'),
+        'simulated_gas_used': trade.simulated_gas_used or 0,
+        # Original trade object for other attributes
+        '_original': trade
+    }
+
+
+def format_position_for_template(position):
+    """
+    Format a position object for safe template display.
+    
+    Args:
+        position: PaperPosition object
+        
+    Returns:
+        Dictionary with formatted position data
+    """
+    return {
+        'position_id': str(position.position_id),
+        'token_symbol': position.token_symbol,
+        'token_address': position.token_address,
+        'quantity': safe_decimal(position.quantity, '0'),
+        'average_entry_price_usd': safe_decimal(position.average_entry_price_usd, '0'),
+        'current_price_usd': safe_decimal(position.current_price_usd, '0'),
+        'total_invested_usd': safe_decimal(position.total_invested_usd, '0'),
+        'current_value_usd': safe_decimal(position.current_value_usd, '0'),
+        'unrealized_pnl_usd': safe_decimal(position.unrealized_pnl_usd, '0'),
+        'realized_pnl_usd': safe_decimal(position.realized_pnl_usd, '0'),
+        'is_open': position.is_open,
+        'opened_at': position.opened_at,
+        'closed_at': position.closed_at,
+        '_original': position
+    }
 
 
 # =============================================================================
@@ -165,29 +261,44 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
                 old_session.save()
                 logger.info(f"Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
         
-        # Get recent trades with error handling
+        # Get recent trades - format them for safe display
         try:
-            recent_trades = PaperTrade.objects.filter(
+            raw_trades = PaperTrade.objects.filter(
                 account=account
             ).order_by('-created_at')[:10]
+            recent_trades = [format_trade_for_template(trade) for trade in raw_trades]
         except Exception as e:
             logger.warning(f"Error fetching recent trades: {e}")
             recent_trades = []
         
-        # Get open positions with error handling
+        # Get open positions - format them for safe display
         try:
-            open_positions = PaperPosition.objects.filter(
+            raw_positions = PaperPosition.objects.filter(
                 account=account,
                 is_open=True
             ).order_by('-current_value_usd')
+            open_positions = [format_position_for_template(pos) for pos in raw_positions]
         except Exception as e:
             logger.warning(f"Error fetching open positions: {e}")
             open_positions = []
         
-        # Get recent AI thoughts
+        # Get recent AI thoughts - these are usually safe
         recent_thoughts = PaperAIThoughtLog.objects.filter(
             account=account
         ).order_by('-created_at')[:5]
+        
+        # Format thoughts for template
+        formatted_thoughts = []
+        for thought in recent_thoughts:
+            formatted_thoughts.append({
+                'thought_id': str(thought.thought_id),
+                'decision_type': thought.decision_type,
+                'token_symbol': thought.token_symbol,
+                'confidence_percent': safe_decimal(thought.confidence_percent, '0'),
+                'created_at': thought.created_at,
+                'thought_content': thought.primary_reasoning[:150] if thought.primary_reasoning else "Analyzing market conditions...",
+                '_original': thought
+            })
         
         # Get performance metrics
         performance = None
@@ -199,7 +310,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             except Exception as e:
                 logger.warning(f"Error fetching performance metrics: {e}")
         
-        # Calculate summary statistics with error handling
+        # Calculate summary statistics with safe decimal handling
         total_trades = account.total_trades or 0
         successful_trades = account.successful_trades or 0
         
@@ -215,7 +326,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             )
         except Exception as e:
             logger.warning(f"Error calculating 24h stats: {e}")
-            trades_24h = {'count': 0, 'total_volume': 0}
+            trades_24h = {'count': 0, 'total_volume': Decimal('0')}
         
         context = {
             'page_title': 'Paper Trading Dashboard',
@@ -225,16 +336,16 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'recent_trades': recent_trades,
             'open_positions': open_positions,
             'performance': performance,
-            'recent_thoughts': recent_thoughts,
+            'recent_thoughts': formatted_thoughts,
             'total_trades': total_trades,
             'successful_trades': successful_trades,
-            'win_rate': (successful_trades / total_trades * 100) if total_trades > 0 else 0,
+            'win_rate': safe_decimal((successful_trades / total_trades * 100) if total_trades > 0 else 0),
             'trades_24h': trades_24h.get('count', 0),
-            'volume_24h': trades_24h.get('total_volume', 0),
-            'current_balance': account.current_balance_usd,
-            'initial_balance': account.initial_balance_usd,
-            'total_pnl': account.total_pnl_usd,
-            'return_percent': account.total_return_percent,
+            'volume_24h': safe_decimal(trades_24h.get('total_volume', 0)),
+            'current_balance': safe_decimal(account.current_balance_usd),
+            'initial_balance': safe_decimal(account.initial_balance_usd),
+            'total_pnl': safe_decimal(account.total_pnl_usd),
+            'return_percent': safe_decimal(account.total_return_percent),
             'user': user,
         }
         
@@ -268,15 +379,15 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         trades_query = PaperTrade.objects.filter(account=account)
         
         # Apply filters with validation
-        status_filter = request.GET.get('status')
+        status_filter = request.GET.get('status', '').lower()  # Convert to lowercase
         if status_filter:
             trades_query = trades_query.filter(status=status_filter)
             logger.debug(f"Applied status filter: {status_filter}")
         
-        trade_type = request.GET.get('type')
-        if trade_type:
-            trades_query = trades_query.filter(trade_type=trade_type)
-            logger.debug(f"Applied trade type filter: {trade_type}")
+        trade_type_filter = request.GET.get('trade_type', '').lower()  # Convert to lowercase
+        if trade_type_filter:
+            trades_query = trades_query.filter(trade_type=trade_type_filter)
+            logger.debug(f"Applied trade type filter: {trade_type_filter}")
         
         token_symbol = request.GET.get('token')
         if token_symbol:
@@ -306,30 +417,48 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         # Order by creation date
         trades_query = trades_query.order_by('-created_at')
         
-        # Pagination with error handling
+        # Pagination with formatted trades
         paginator = Paginator(trades_query, 25)
         page_number = request.GET.get('page', 1)
         try:
             page_obj = paginator.get_page(page_number)
+            # Format trades for template
+            formatted_page = []
+            for trade in page_obj:
+                formatted_page.append(format_trade_for_template(trade))
+            page_obj.object_list = formatted_page
         except Exception as e:
             logger.warning(f"Pagination error: {e}")
             page_obj = paginator.get_page(1)
         
-        # Calculate summary stats with error handling
+        # Calculate summary stats with safe decimal handling
         try:
-            summary_stats = trades_query.aggregate(
-                total_trades=Count('trade_id'),
-                total_volume=Sum('amount_in_usd', default=Decimal('0')),
-                avg_trade_size=Avg('amount_in_usd', default=Decimal('0')),
-                successful_trades=Count('trade_id', filter=Q(status='COMPLETED'))
-            )
+            # Use raw SQL to avoid decimal issues
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN amount_in_usd IS NOT NULL THEN CAST(amount_in_usd AS REAL) ELSE 0 END) as total_volume,
+                        AVG(CASE WHEN amount_in_usd IS NOT NULL THEN CAST(amount_in_usd AS REAL) ELSE NULL END) as avg_trade_size,
+                        SUM(CASE WHEN simulated_gas_cost_usd IS NOT NULL THEN CAST(simulated_gas_cost_usd AS REAL) ELSE 0 END) as total_gas_cost
+                    FROM paper_trading_papertrade
+                    WHERE account_id = %s
+                """, [str(account.account_id)])
+                
+                stats = cursor.fetchone()
+                summary_stats = {
+                    'total_trades': stats[0] or 0,
+                    'total_volume': safe_decimal(str(stats[1] or 0)),
+                    'avg_trade_size': safe_decimal(str(stats[2] or 0)),
+                    'total_gas_cost': safe_decimal(str(stats[3] or 0))
+                }
         except Exception as e:
             logger.error(f"Error calculating summary stats: {e}")
             summary_stats = {
                 'total_trades': 0,
-                'total_volume': 0,
-                'avg_trade_size': 0,
-                'successful_trades': 0
+                'total_volume': Decimal('0'),
+                'avg_trade_size': Decimal('0'),
+                'total_gas_cost': Decimal('0')
             }
         
         context = {
@@ -337,14 +466,11 @@ def trade_history(request: HttpRequest) -> HttpResponse:
             'account': account,
             'page_obj': page_obj,
             'trades': page_obj,
-            'filters': {
-                'status': status_filter,
-                'type': trade_type,
-                'token': token_symbol,
-                'date_from': date_from,
-                'date_to': date_to,
-            },
-            'summary': summary_stats,
+            'status_filter': status_filter,
+            'trade_type_filter': trade_type_filter,
+            'date_from': date_from,
+            'date_to': date_to,
+            'summary_stats': summary_stats,
             'user': user,
         }
         
@@ -374,59 +500,59 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
         
         logger.debug(f"Loading portfolio view for account {account.account_id}")
         
-        # Get positions with error handling
+        # Get positions with error handling and formatting
         try:
-            open_positions = PaperPosition.objects.filter(
+            raw_open_positions = PaperPosition.objects.filter(
                 account=account,
                 is_open=True
             ).order_by('-current_value_usd')
+            open_positions = [format_position_for_template(pos) for pos in raw_open_positions]
         except Exception as e:
             logger.error(f"Error fetching open positions: {e}")
             open_positions = []
         
         try:
-            closed_positions = PaperPosition.objects.filter(
+            raw_closed_positions = PaperPosition.objects.filter(
                 account=account,
                 is_open=False
             ).order_by('-closed_at')[:20]
+            closed_positions = [format_position_for_template(pos) for pos in raw_closed_positions]
         except Exception as e:
             logger.error(f"Error fetching closed positions: {e}")
             closed_positions = []
         
-        # Calculate portfolio metrics with safe defaults
+        # Calculate portfolio metrics with safe decimal handling
         try:
-            portfolio_value = account.current_balance_usd + sum(
-                pos.current_value_usd or Decimal('0') for pos in open_positions
+            portfolio_value = safe_decimal(account.current_balance_usd) + sum(
+                safe_decimal(pos['current_value_usd']) for pos in open_positions
             )
         except Exception as e:
             logger.error(f"Error calculating portfolio value: {e}")
-            portfolio_value = account.current_balance_usd
+            portfolio_value = safe_decimal(account.current_balance_usd)
         
         try:
             total_invested = sum(
-                (pos.average_entry_price_usd or Decimal('0')) * (pos.quantity or Decimal('0'))
-                for pos in open_positions 
-                if pos.average_entry_price_usd
+                safe_decimal(pos['total_invested_usd']) for pos in open_positions
             )
         except Exception as e:
             logger.error(f"Error calculating total invested: {e}")
             total_invested = Decimal('0')
         
-        total_current_value = sum(pos.current_value_usd or Decimal('0') for pos in open_positions)
+        total_current_value = sum(safe_decimal(pos['current_value_usd']) for pos in open_positions)
         unrealized_pnl = total_current_value - total_invested if total_invested > 0 else Decimal('0')
         
         # Position distribution for chart
         position_distribution = {}
         for pos in open_positions:
             try:
-                if pos.token_symbol and portfolio_value > 0:
-                    position_distribution[pos.token_symbol] = {
-                        'value': float(pos.current_value_usd or 0),
-                        'percentage': float(((pos.current_value_usd or 0) / portfolio_value * 100)),
-                        'pnl': float(pos.unrealized_pnl_usd or 0)
+                if pos['token_symbol'] and portfolio_value > 0:
+                    position_distribution[pos['token_symbol']] = {
+                        'value': float(pos['current_value_usd']),
+                        'percentage': float((pos['current_value_usd'] / portfolio_value * 100)),
+                        'pnl': float(pos['unrealized_pnl_usd'])
                     }
             except Exception as e:
-                logger.warning(f"Error calculating distribution for {pos.token_symbol}: {e}")
+                logger.warning(f"Error calculating distribution for {pos['token_symbol']}: {e}")
                 continue
         
         context = {
@@ -435,7 +561,7 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
             'open_positions': open_positions,
             'closed_positions': closed_positions,
             'portfolio_value': portfolio_value,
-            'cash_balance': account.current_balance_usd,
+            'cash_balance': safe_decimal(account.current_balance_usd),
             'total_invested': total_invested,
             'unrealized_pnl': unrealized_pnl,
             'position_distribution': json.dumps(position_distribution),
@@ -685,7 +811,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
             {'name': 'arbitrage', 'display': 'Arbitrage Bot'},
         ]
         
-        # Prepare context
+        # Prepare context with safe decimal values
         context = {
             'page_title': 'Strategy Configuration',
             'account': account,
@@ -696,7 +822,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
             'total_configs': all_configs_query.count(),
             'user': user,
             
-            # Map actual model fields to template variables
+            # Map actual model fields to template variables with safe decimals
             'strategy_config': {
                 'config_id': str(config.config_id),
                 'name': config.name,
@@ -704,15 +830,15 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                 'trading_mode': config.trading_mode,
                 'use_fast_lane': config.use_fast_lane,
                 'use_smart_lane': config.use_smart_lane,
-                'fast_lane_threshold_usd': config.fast_lane_threshold_usd,
-                'max_position_size_percent': config.max_position_size_percent,
-                'stop_loss_percent': config.stop_loss_percent,
-                'take_profit_percent': config.take_profit_percent,
+                'fast_lane_threshold_usd': safe_decimal(config.fast_lane_threshold_usd),
+                'max_position_size_percent': safe_decimal(config.max_position_size_percent),
+                'stop_loss_percent': safe_decimal(config.stop_loss_percent),
+                'take_profit_percent': safe_decimal(config.take_profit_percent),
                 'max_daily_trades': config.max_daily_trades,
                 'max_concurrent_positions': config.max_concurrent_positions,
-                'min_liquidity_usd': config.min_liquidity_usd,
-                'max_slippage_percent': config.max_slippage_percent,
-                'confidence_threshold': config.confidence_threshold,
+                'min_liquidity_usd': safe_decimal(config.min_liquidity_usd),
+                'max_slippage_percent': safe_decimal(config.max_slippage_percent),
+                'confidence_threshold': safe_decimal(config.confidence_threshold),
                 'allowed_tokens': config.allowed_tokens if config.allowed_tokens else [],
                 'blocked_tokens': config.blocked_tokens if config.blocked_tokens else [],
                 'custom_parameters': config.custom_parameters if config.custom_parameters else {},
@@ -783,9 +909,9 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             with connection.cursor() as cursor:
                 cursor.execute("""
                     SELECT COUNT(*) as total_trades,
-                           SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed,
-                           SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed,
-                           SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
+                           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
                            SUM(CASE WHEN amount_in_usd IS NOT NULL THEN CAST(amount_in_usd AS REAL) ELSE 0 END) as total_volume,
                            AVG(CASE WHEN amount_in_usd IS NOT NULL THEN CAST(amount_in_usd AS REAL) ELSE NULL END) as avg_trade_size
                     FROM paper_trading_papertrade
@@ -799,8 +925,8 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                 completed_trades = trade_stats[1] or 0
                 failed_trades = trade_stats[2] or 0
                 pending_trades = trade_stats[3] or 0
-                total_volume = Decimal(str(trade_stats[4] or 0))
-                avg_trade_size = Decimal(str(trade_stats[5] or 0))
+                total_volume = safe_decimal(str(trade_stats[4] or 0))
+                avg_trade_size = safe_decimal(str(trade_stats[5] or 0))
                 
                 logger.info(f"Loaded trade statistics: {total_trades} total trades")
                 
@@ -822,8 +948,8 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                         token_out_symbol,
                         COUNT(*) as count,
                         SUM(CASE WHEN amount_in_usd IS NULL THEN 0 ELSE CAST(amount_in_usd AS REAL) END) as total_volume,
-                        SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as success,
-                        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed
+                        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success,
+                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
                     FROM paper_trading_papertrade
                     WHERE account_id = %s
                         AND created_at >= %s
@@ -837,7 +963,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                 for row in cursor.fetchall():
                     token_stats[row[0]] = {
                         'count': row[1],
-                        'volume': Decimal(str(row[2])) if row[2] else Decimal('0'),
+                        'volume': safe_decimal(str(row[2])) if row[2] else Decimal('0'),
                         'success': row[3],
                         'failed': row[4]
                     }
@@ -919,7 +1045,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             today_trades_count = 0
             week_trades_count = 0
         
-        # Prepare context for template
+        # Prepare context for template with safe decimal values
         context = {
             'page_title': 'Paper Trading Analytics',
             'has_data': total_trades > 0,
@@ -928,12 +1054,12 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'date_to': end_date.date(),
             'user': user,
             
-            # Key metrics
+            # Key metrics with safe decimals
             'win_rate': float(win_rate),
             'profit_factor': 1.5 if win_rate > 50 else 0.8,
             'total_trades': total_trades,
-            'avg_profit': float(account.total_pnl_usd / completed_trades) if completed_trades > 0 else 0,
-            'avg_loss': float(abs(account.total_pnl_usd) / failed_trades) if failed_trades > 0 else 0,
+            'avg_profit': float(safe_decimal(account.total_pnl_usd) / completed_trades) if completed_trades > 0 else 0,
+            'avg_loss': float(abs(safe_decimal(account.total_pnl_usd)) / failed_trades) if failed_trades > 0 else 0,
             'max_drawdown': 15.5,  # Placeholder
             
             # Period performance
@@ -941,7 +1067,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'today_trades': today_trades_count,
             'week_pnl': 0,
             'week_trades': week_trades_count,
-            'month_pnl': float(account.total_pnl_usd or 0),
+            'month_pnl': float(safe_decimal(account.total_pnl_usd or 0)),
             'month_trades': total_trades,
             
             # Chart data
@@ -966,9 +1092,9 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'sharpe_ratio': float(latest_metrics.sharpe_ratio) if latest_metrics and latest_metrics.sharpe_ratio else 0,
             'best_hours': [],
             
-            # Account metrics
-            'account_pnl': float(account.total_pnl_usd or 0),
-            'account_return': float(account.total_return_percent or 0),
+            # Account metrics with safe decimals
+            'account_pnl': float(safe_decimal(account.total_pnl_usd or 0)),
+            'account_return': float(safe_decimal(account.total_return_percent or 0)),
         }
         
         logger.info(f"Successfully loaded analytics for account {account.account_id}")
@@ -998,7 +1124,7 @@ def api_analytics_data(request: HttpRequest) -> JsonResponse:
             cursor.execute("""
                 SELECT 
                     COUNT(*) as total_trades,
-                    SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
                 FROM paper_trading_papertrade
                 WHERE account_id = %s
             """, [str(account.account_id)])
@@ -1100,8 +1226,8 @@ def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
             cursor.execute("""
                 SELECT 
                     COUNT(*) as total_trades,
-                    SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as winning_trades,
-                    SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as losing_trades
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as winning_trades,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as losing_trades
                 FROM paper_trading_papertrade
                 WHERE account_id = %s
             """, [str(account.account_id)])
