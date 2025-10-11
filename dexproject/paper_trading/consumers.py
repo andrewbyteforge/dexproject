@@ -47,22 +47,20 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
         """
         Handle WebSocket connection.
         
-        Authenticates user and joins their personal paper trading channel.
+        Auto-creates or retrieves default paper trading account for single-user setup.
         """
         try:
             # Get user from scope
             self.user = self.scope.get("user")
             
-            # Only allow authenticated users
-            if not self.user or not self.user.is_authenticated:
-                logger.warning("Unauthenticated WebSocket connection attempt")
-                await self.close(code=4001)
-                return
+            # For single-user setup, use default account
+            # No authentication required
+            logger.info("WebSocket connection attempt (single-user mode)")
             
-            # Get user's paper trading account
-            account = await self.get_user_account()
+            # Get or create default paper trading account
+            account = await self.get_or_create_default_account()
             if not account:
-                logger.error(f"No paper trading account for user {self.user.username}")
+                logger.error("Failed to create/get default paper trading account")
                 await self.close(code=4004)
                 return
             
@@ -82,8 +80,8 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             await self.accept()
             
             logger.info(
-                f"Paper trading WebSocket connected: user={self.user.username}, "
-                f"account={self.account_id}"
+                f"Paper trading WebSocket connected: "
+                f"account={self.account_id} (single-user mode)"
             )
             
             # Send connection confirmation with initial data
@@ -113,7 +111,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             
             logger.info(
                 f"Paper trading WebSocket disconnected: "
-                f"user={getattr(self, 'user', 'unknown')}, "
+                f"account={getattr(self, 'account_id', 'unknown')}, "
                 f"code={close_code}"
             )
             
@@ -422,16 +420,59 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
     # =========================================================================
     
     @database_sync_to_async
+    def get_or_create_default_account(self) -> Optional[PaperTradingAccount]:
+        """
+        Get or create default paper trading account for single-user setup.
+        
+        Returns:
+            PaperTradingAccount or None if error
+        """
+        try:
+            # Try to get existing default account
+            account = PaperTradingAccount.objects.filter(
+                name="Default Paper Trading Account"
+            ).first()
+            
+            if not account:
+                # Create default user if needed
+                user, _ = User.objects.get_or_create(
+                    username='default_trader',
+                    defaults={
+                        'email': 'trader@localhost',
+                        'first_name': 'Default',
+                        'last_name': 'Trader'
+                    }
+                )
+                
+                # Create default paper trading account
+                account = PaperTradingAccount.objects.create(
+                    user=user,
+                    name="Default Paper Trading Account",
+                    initial_balance_usd=Decimal('10000.00'),
+                    current_balance_usd=Decimal('10000.00'),
+                    is_active=True
+                )
+                logger.info(f"Created default paper trading account: {account.account_id}")
+            
+            return account
+            
+        except Exception as e:
+            logger.error(f"Error getting/creating default account: {e}", exc_info=True)
+            return None
+    
+    @database_sync_to_async
     def get_user_account(self) -> Optional[PaperTradingAccount]:
         """
         Get user's active paper trading account.
+        For single-user mode, this method is not used.
         
         Returns:
             PaperTradingAccount or None if not found
         """
         try:
+            # In single-user mode, get default account
             return PaperTradingAccount.objects.filter(
-                user=self.user,
+                name="Default Paper Trading Account",
                 is_active=True
             ).first()
         except Exception as e:

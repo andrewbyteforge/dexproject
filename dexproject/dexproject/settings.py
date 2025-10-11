@@ -192,7 +192,7 @@ REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 REDIS_AVAILABLE = False
 try:
     import redis
-    r = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=1)
+    r = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=2, socket_timeout=2)
     r.ping()
     REDIS_AVAILABLE = True
     logger.info("Redis connection successful for Channel Layer")

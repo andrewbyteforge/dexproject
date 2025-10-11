@@ -133,6 +133,30 @@ function handleWebSocketMessage(event) {
                 console.log('WebSocket connection confirmed by server');
                 break;
 
+            case 'initial_snapshot':
+                // Handle initial data snapshot
+                if (message.account) {
+                    handlePortfolioUpdate(message.account);
+                }
+                if (message.session && message.session.status === 'ACTIVE') {
+                    handleBotStatusUpdate({ status: 'RUNNING' });
+                }
+                console.log('Initial snapshot loaded');
+                break;
+
+            case 'error':
+                // Handle error messages from server
+                console.error('Server error:', message.message);
+                if (message.message) {
+                    showToast(`Server error: ${message.message}`, 'warning');
+                }
+                break;
+
+            case 'pong':
+                // Handle pong response from server
+                console.log('Pong received from server');
+                break;
+
             default:
                 console.log('Unknown message type:', message.type);
         }
@@ -286,6 +310,27 @@ function handlePortfolioUpdate(data) {
     if (data.total_value !== undefined) {
         updateElementText('portfolio-value', `$${parseFloat(data.total_value).toFixed(2)}`);
     }
+
+    // Update balance if provided
+    if (data.current_balance_usd !== undefined) {
+        updateElementText('portfolio-value', `$${parseFloat(data.current_balance_usd).toFixed(2)}`);
+    }
+
+    // Update P&L if provided
+    if (data.total_pnl_usd !== undefined) {
+        const pnlElement = document.getElementById('total-pnl');
+        if (pnlElement) {
+            const pnlValue = parseFloat(data.total_pnl_usd);
+            const prefix = pnlValue >= 0 ? '+' : '';
+            const colorClass = pnlValue >= 0 ? 'text-success' : 'text-danger';
+            pnlElement.innerHTML = `<span class="${colorClass}">${prefix}$${pnlValue.toFixed(2)}</span>`;
+        }
+    }
+
+    // Update win rate if provided
+    if (data.win_rate !== undefined) {
+        updateElementText('win-rate', `${parseFloat(data.win_rate).toFixed(1)}%`);
+    }
 }
 
 /**
@@ -308,7 +353,7 @@ function handleBotStatusUpdate(data) {
     const statusDot = document.querySelector('.status-dot');
     const statusText = document.getElementById('bot-status-text');
 
-    if (data.status === 'RUNNING') {
+    if (data.status === 'RUNNING' || data.status === 'ACTIVE') {
         if (statusDot) statusDot.className = 'status-dot status-active';
         if (statusText) statusText.textContent = 'RUNNING';
     } else {
