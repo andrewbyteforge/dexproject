@@ -5,6 +5,8 @@ This module provides all dashboard and page views for the paper trading system.
 Includes portfolio display, trade history, and configuration management pages.
 API endpoints have been moved to api_views.py
 
+UPDATED: Centralized account management to prevent duplicate accounts
+
 File: dexproject/paper_trading/views.py
 """
 
@@ -12,7 +14,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -40,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# HELPER FUNCTION TO GET DEFAULT USER
+# CENTRALIZED ACCOUNT MANAGEMENT
 # =============================================================================
 
 def get_default_user():
@@ -52,16 +54,70 @@ def get_default_user():
         User: The default user instance
     """
     user, created = User.objects.get_or_create(
-        username='default_user',
+        username='demo_user',  # Using demo_user to match the bot
         defaults={
-            'email': 'user@localhost',
-            'first_name': 'Default',
+            'email': 'demo@example.com',
+            'first_name': 'Demo',
             'last_name': 'User'
         }
     )
     if created:
-        logger.info("Created default user for paper trading")
+        logger.info("Created demo_user for paper trading")
     return user
+
+
+def get_single_trading_account(user: Optional[User] = None) -> PaperTradingAccount:
+    """
+    Get or create the single paper trading account for the application.
+    
+    This ensures only one account exists and is consistently used across
+    the entire application (bot, API, dashboard, WebSocket).
+    
+    Args:
+        user: The user to get account for. If None, uses demo_user.
+        
+    Returns:
+        PaperTradingAccount: The single account for this user
+    """
+    if user is None:
+        user = get_default_user()
+    
+    # Get all accounts for this user
+    accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
+    
+    if accounts.exists():
+        # Use the first (oldest) account
+        account = accounts.first()
+        
+        # Clean up any duplicates
+        if accounts.count() > 1:
+            logger.warning(f"Found {accounts.count()} accounts, cleaning duplicates")
+            # Keep the first account, delete others
+            for duplicate in accounts[1:]:
+                logger.info(f"Removing duplicate account: {duplicate.name} ({duplicate.account_id})")
+                duplicate.delete()
+        
+        # Ensure the account is active and has the consistent name
+        if not account.is_active or account.name != 'My_Trading_Account':
+            account.is_active = True
+            account.name = 'My_Trading_Account'  # Use consistent name with bot
+            account.save()
+            logger.info(f"Updated account to standard name: {account.name}")
+        
+        logger.debug(f"Using existing account: {account.name} ({account.account_id})")
+        
+    else:
+        # No account exists, create the single account
+        account = PaperTradingAccount.objects.create(
+            user=user,
+            name='My_Trading_Account',  # Consistent name with bot
+            initial_balance_usd=Decimal('10000.00'),
+            current_balance_usd=Decimal('10000.00'),
+            is_active=True
+        )
+        logger.info(f"Created new paper trading account: {account.name} ({account.account_id})")
+    
+    return account
 
 
 # =============================================================================
@@ -82,46 +138,11 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         Rendered dashboard template with context data
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        logger.debug(f"Loading paper trading dashboard for default user")
+        # Get the single account
+        account = get_single_trading_account()
+        user = account.user
         
-        # Get the single account for the default user
-        # Always look for the first account, don't create duplicates
-        accounts = PaperTradingAccount.objects.filter(
-            user=user
-        ).order_by('created_at')
-        
-        if accounts.exists():
-            # Use the first (oldest) account
-            account = accounts.first()
-            
-            # Clean up any duplicates if they exist
-            if accounts.count() > 1:
-                logger.warning(f"Found {accounts.count()} accounts, using first and cleaning duplicates")
-                # Keep the first account, delete others
-                for duplicate in accounts[1:]:
-                    logger.info(f"Removing duplicate account: {duplicate.name} ({duplicate.account_id})")
-                    # Optional: Migrate data before deletion
-                    # You could migrate trades, positions, sessions here if needed
-                    duplicate.delete()
-            
-            # Ensure the account is active
-            if not account.is_active:
-                account.is_active = True
-                account.save()
-                
-            logger.info(f"Using existing account: {account.name} ({account.account_id})")
-        else:
-            # No account exists, create the single account
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',  # Use consistent name with bot
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.name} ({account.account_id})")
+        logger.debug(f"Loading paper trading dashboard for account {account.account_id}")
         
         # Get active session if exists (check for today's session)
         today = timezone.now().date()
@@ -199,7 +220,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         context = {
             'page_title': 'Paper Trading Dashboard',
             'account': account,
-            'account_id': str(account.account_id),  # Ensure account_id is in context
+            'account_id': str(account.account_id),
             'active_session': active_session,
             'recent_trades': recent_trades,
             'open_positions': open_positions,
@@ -237,26 +258,11 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         Rendered trade history template
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        logger.debug(f"Loading trade history page")
+        # Get the single account
+        account = get_single_trading_account()
+        user = account.user
         
-        # Get active account for default user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My Paper Trading Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        logger.debug(f"Loading trade history for account {account.account_id}")
         
         # Build query with filters
         trades_query = PaperTrade.objects.filter(account=account)
@@ -362,26 +368,11 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
         Rendered portfolio template
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        logger.debug(f"Loading portfolio view")
+        # Get the single account
+        account = get_single_trading_account()
+        user = account.user
         
-        # Get active account for default user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My Paper Trading Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        logger.debug(f"Loading portfolio view for account {account.account_id}")
         
         # Get positions with error handling
         try:
@@ -475,26 +466,11 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         Rendered configuration template or redirect after action
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        logger.debug(f"Loading configuration view")
+        # Get the single account
+        account = get_single_trading_account()
+        user = account.user
         
-        # Get active account for default user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My Paper Trading Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        logger.debug(f"Loading configuration view for account {account.account_id}")
         
         # Handle delete action if requested
         if request.method == 'POST' and request.POST.get('action') == 'delete':
@@ -771,26 +747,11 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
         Rendered analytics template
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        logger.debug(f"Loading analytics view")
+        # Get the single account
+        account = get_single_trading_account()
+        user = account.user
         
-        # Get active account for default user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My Paper Trading Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        logger.debug(f"Loading analytics view for account {account.account_id}")
         
         # Date range for analytics (default to last 30 days)
         end_date = timezone.now()
@@ -1027,18 +988,10 @@ def api_analytics_data(request: HttpRequest) -> JsonResponse:
     Returns JSON data for updating charts without page refresh.
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        logger.debug(f"API call for analytics data")
+        # Get the single account
+        account = get_single_trading_account()
         
-        # Get active account for default user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'success': False, 'error': 'No active account found'}, status=404)
+        logger.debug(f"API call for analytics data for account {account.account_id}")
         
         # Get metrics using raw SQL to avoid decimal issues
         with connection.cursor() as cursor:
@@ -1080,9 +1033,10 @@ def api_analytics_export(request: HttpRequest) -> HttpResponse:
     import csv
     
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        logger.info(f"Exporting analytics data to CSV")
+        # Get the single account
+        account = get_single_trading_account()
+        
+        logger.info(f"Exporting analytics data to CSV for account {account.account_id}")
         
         # Create CSV response
         response = HttpResponse(content_type='text/csv')
@@ -1092,15 +1046,6 @@ def api_analytics_export(request: HttpRequest) -> HttpResponse:
         
         # Write header
         writer.writerow(['Date', 'Trade ID', 'Token In', 'Token Out', 'Type', 'Amount USD', 'Status'])
-        
-        # Get active account for default user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
         
         with connection.cursor() as cursor:
             cursor.execute("""

@@ -1,3 +1,64 @@
+// ========================================
+// WebSocket Debug Interceptor - MUST BE FIRST
+// ========================================
+(function () {
+    console.log('🔍 Installing WebSocket interceptor...');
+
+    // Store original WebSocket
+    const OriginalWebSocket = window.WebSocket;
+
+    // Track all WebSocket connections
+    window.__wsConnections = [];
+
+    // Override WebSocket constructor
+    window.WebSocket = function (url, protocols) {
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('🚨 NEW WEBSOCKET CONNECTION:');
+        console.log('📍 URL:', url);
+        console.log('🕐 Time:', new Date().toISOString());
+
+        // Get stack trace
+        const stack = new Error().stack;
+        console.log('📞 Stack trace:', stack);
+
+        // Check for the problematic connection
+        if (url.includes('dashboard/charts')) {
+            console.error('❌❌❌ FOUND THE PHANTOM CHARTS WEBSOCKET! ❌❌❌');
+            console.error('This is trying to connect to:', url);
+            console.error('Stack trace will show where it\'s coming from!');
+
+            // Create a fake WebSocket that does nothing
+            return {
+                send: () => { },
+                close: () => { },
+                addEventListener: () => { },
+                removeEventListener: () => { },
+                readyState: 3,
+                url: url,
+                CONNECTING: 0,
+                OPEN: 1,
+                CLOSING: 2,
+                CLOSED: 3
+            };
+        }
+
+        // Create real WebSocket for valid connections
+        const ws = new OriginalWebSocket(url, protocols);
+        window.__wsConnections.push({ url, ws, createdAt: new Date() });
+
+        console.log('✅ WebSocket created successfully');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        return ws;
+    };
+
+    // Copy WebSocket properties
+    Object.setPrototypeOf(window.WebSocket, OriginalWebSocket);
+    window.WebSocket.prototype = OriginalWebSocket.prototype;
+
+    console.log('✅ Interceptor installed! Now waiting for WebSocket connections...');
+})();
+
 /**
  * Paper Trading Dashboard JavaScript
  * Location: dexproject/static/js/paper_trading_dashboard.js
@@ -580,6 +641,9 @@ function showToast(message, type = 'info') {
 /**
  * Fetch recent trades
  */
+/**
+ * Fetch recent trades with abort controller to prevent race conditions
+ */
 async function fetchRecentTrades() {
     const { config, state } = window.paperTradingDashboard;
 
@@ -589,7 +653,15 @@ async function fetchRecentTrades() {
             url += `&since=${state.lastTradeUpdate}`;
         }
 
-        const response = await fetch(url);
+        // Create abort controller if it doesn't exist
+        if (!window.paperTradingDashboard.abortController) {
+            window.paperTradingDashboard.abortController = new AbortController();
+        }
+
+        const response = await fetch(url, {
+            signal: window.paperTradingDashboard.abortController.signal
+        });
+
         if (response.ok) {
             const trades = await response.json();
             if (trades.length > 0) {
@@ -598,6 +670,11 @@ async function fetchRecentTrades() {
             }
         }
     } catch (error) {
+        // Handle abort errors silently
+        if (error.name === 'AbortError') {
+            console.log('Fetch request for trades was aborted');
+            return;
+        }
         console.error('Error fetching trades:', error);
     }
 }
