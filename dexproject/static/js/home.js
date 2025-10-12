@@ -697,7 +697,7 @@ function updateChartTimestamp(elementId, timestamp) {
  */
 function initializeWebSocketForCharts() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws/dashboard/charts/`;
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws/dashboard/metrics/`;
 
     try {
         wsConnection = new WebSocket(wsUrl);

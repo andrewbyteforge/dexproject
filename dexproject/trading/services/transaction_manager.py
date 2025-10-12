@@ -1,18 +1,15 @@
 """
-Transaction Manager Service - Phase 6B Core Component
+Transaction Manager Service - Phase 6B Core Component (ENHANCED)
 
-Central coordinator for all trading transaction operations, integrating gas optimization,
-DEX routing, circuit breaker protection, and real-time status tracking into a unified 
-transaction lifecycle manager.
+Central coordinator for all trading transaction operations with production-ready
+retry logic, exponential backoff, and mempool drop detection.
 
-This service bridges the excellent Phase 6A gas optimizer with DEX execution and provides
-real-time WebSocket updates for transaction status monitoring.
-
-UPDATED: Added circuit breaker integration for production hardening
-- Pre-trade circuit breaker validation
-- Automatic breaker triggering on failures
-- WebSocket notifications for breaker events
-- Portfolio-based breaker checks
+Key Enhancements:
+- Exponential backoff retry mechanism
+- Mempool drop detection and recovery
+- Gas escalation on retries
+- Differentiated paper vs real trading retry strategies
+- Smart failure pattern detection
 
 File: dexproject/trading/services/transaction_manager.py
 """
@@ -21,11 +18,13 @@ import logging
 import asyncio
 import json
 import time
-from typing import Dict, Any, Optional, Callable, List, Tuple
+import random
+from typing import Dict, Any, Optional, Callable, List, Tuple, TypeVar, Coroutine
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from enum import Enum
+from functools import wraps
 
 from django.contrib.auth.models import User
 from django.conf import settings
@@ -38,6 +37,7 @@ except ImportError:
     get_channel_layer = None
 from eth_typing import ChecksumAddress, HexStr
 from web3.types import TxReceipt
+from web3.exceptions import TransactionNotFound
 
 from engine.config import ChainConfig
 from engine.web3_client import Web3Client
@@ -94,6 +94,26 @@ class TransactionStatus(Enum):
     RETRYING = "retrying"            # Retrying with higher gas
     CANCELLED = "cancelled"          # User cancelled
     BLOCKED_BY_CIRCUIT_BREAKER = "blocked_by_circuit_breaker"  # Blocked by circuit breaker
+    MEMPOOL_DROPPED = "mempool_dropped"  # Transaction dropped from mempool
+    GAS_ESCALATED = "gas_escalated"  # Gas price increased for retry
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry mechanism."""
+    max_retries: int = 3
+    initial_delay_ms: int = 1000  # 1 second
+    max_delay_ms: int = 30000  # 30 seconds
+    exponential_base: float = 2.0  # Double delay each retry
+    jitter_factor: float = 0.1  # Add 10% randomness to prevent thundering herd
+    gas_escalation_factor: Decimal = Decimal('1.15')  # Increase gas by 15% each retry
+    mempool_check_interval_ms: int = 5000  # Check mempool every 5 seconds
+    mempool_timeout_ms: int = 60000  # Consider dropped after 60 seconds
+    
+    # Paper trading specific settings
+    paper_mode_fast_retry: bool = True  # Use faster retries in paper mode
+    paper_initial_delay_ms: int = 100  # 100ms for paper mode
+    paper_max_delay_ms: int = 5000  # 5 seconds max for paper mode
 
 
 @dataclass
@@ -122,6 +142,15 @@ class TransactionState:
     circuit_breaker_status: Optional[str] = None
     blocked_by_breakers: Optional[List[str]] = None
     
+    # Retry tracking
+    retry_count: int = 0
+    max_retries: int = 3
+    consecutive_failures: int = 0
+    retry_delays_ms: List[int] = field(default_factory=list)  # Track actual delays used
+    gas_escalations: List[Decimal] = field(default_factory=list)  # Track gas increases
+    last_retry_at: Optional[datetime] = None
+    mempool_checks: int = 0
+    
     # Timing and metrics
     created_at: datetime = None
     submitted_at: Optional[datetime] = None
@@ -130,9 +159,10 @@ class TransactionState:
     
     # Error handling
     error_message: Optional[str] = None
-    retry_count: int = 0
-    max_retries: int = 3
-    consecutive_failures: int = 0
+    error_history: List[Dict[str, Any]] = field(default_factory=list)  # Track all errors
+    
+    # Mode tracking
+    is_paper_mode: bool = False
     
     def __post_init__(self):
         """Initialize default values."""
@@ -151,6 +181,7 @@ class TransactionSubmissionRequest:
     callback_url: Optional[str] = None
     priority: str = "normal"  # normal, high, emergency
     bypass_circuit_breaker: bool = False  # For emergency overrides only
+    retry_config: Optional[RetryConfig] = None  # Custom retry configuration
 
 
 @dataclass
@@ -163,21 +194,106 @@ class TransactionManagerResult:
     gas_savings_achieved: Optional[Decimal] = None
     circuit_breaker_triggered: bool = False
     circuit_breaker_reasons: Optional[List[str]] = None
+    retries_performed: int = 0
+    final_gas_price_gwei: Optional[Decimal] = None
+
+
+# Type variable for retry decorator
+T = TypeVar('T')
+
+
+def exponential_backoff_retry(retry_config: RetryConfig, is_paper_mode: bool = False):
+    """
+    Decorator for adding exponential backoff retry logic to async functions.
+    
+    Args:
+        retry_config: Retry configuration settings
+        is_paper_mode: Whether this is paper trading mode
+    """
+    def decorator(func: Callable[..., Coroutine[Any, Any, T]]) -> Callable[..., Coroutine[Any, Any, T]]:
+        @wraps(func)
+        async def wrapper(*args, **kwargs) -> T:
+            """
+            Wrapper function with exponential backoff retry logic.
+            
+            Implements progressive delay with jitter to prevent thundering herd.
+            """
+            last_exception = None
+            retry_count = 0
+            
+            # Use paper mode settings if applicable
+            initial_delay = (
+                retry_config.paper_initial_delay_ms if is_paper_mode and retry_config.paper_mode_fast_retry
+                else retry_config.initial_delay_ms
+            )
+            max_delay = (
+                retry_config.paper_max_delay_ms if is_paper_mode and retry_config.paper_mode_fast_retry
+                else retry_config.max_delay_ms
+            )
+            
+            while retry_count <= retry_config.max_retries:
+                try:
+                    # Log attempt
+                    logger.info(f"🔄 Attempt {retry_count + 1}/{retry_config.max_retries + 1} for {func.__name__}")
+                    
+                    # Try to execute the function
+                    result = await func(*args, **kwargs)
+                    
+                    # Success - return result
+                    if retry_count > 0:
+                        logger.info(f"✅ Succeeded after {retry_count} retries")
+                    return result
+                    
+                except Exception as e:
+                    last_exception = e
+                    retry_count += 1
+                    
+                    # Check if we should retry
+                    if retry_count > retry_config.max_retries:
+                        logger.error(f"❌ Max retries ({retry_config.max_retries}) exceeded: {e}")
+                        raise last_exception
+                    
+                    # Calculate delay with exponential backoff and jitter
+                    base_delay = min(
+                        initial_delay * (retry_config.exponential_base ** (retry_count - 1)),
+                        max_delay
+                    )
+                    
+                    # Add jitter to prevent thundering herd
+                    jitter = base_delay * retry_config.jitter_factor * random.random()
+                    delay_ms = int(base_delay + jitter)
+                    
+                    logger.warning(
+                        f"⚠️ Attempt {retry_count} failed: {e}. "
+                        f"Retrying in {delay_ms}ms..."
+                    )
+                    
+                    # Wait before retry
+                    await asyncio.sleep(delay_ms / 1000.0)
+            
+            # Should never reach here, but for safety
+            raise last_exception if last_exception else Exception("Retry logic error")
+        
+        return wrapper
+    return decorator
 
 
 class TransactionManager:
     """
     Central coordinator for trading transaction lifecycle management.
     
-    Features:
+    Enhanced Features:
+    - Production-ready exponential backoff retry logic
+    - Mempool drop detection and recovery
+    - Gas escalation on retries
+    - Differentiated paper vs real trading strategies
+    - Smart failure pattern detection
     - Integration with Phase 6A gas optimizer for 23.1% cost savings
     - Circuit breaker protection for risk management
     - DEX router service integration for swap execution
     - Real-time transaction status monitoring
     - WebSocket broadcasts for live UI updates
-    - Retry logic with gas escalation
     - Portfolio tracking integration
-    - Paper trading simulation support
     """
     
     def __init__(self, chain_config: ChainConfig):
@@ -210,6 +326,10 @@ class TransactionManager:
         self._active_transactions: Dict[str, TransactionState] = {}
         self._transaction_callbacks: Dict[str, List[Callable]] = {}
         self._user_failure_counts: Dict[int, int] = {}  # Track failures per user
+        self._mempool_monitor_tasks: Dict[str, asyncio.Task] = {}  # Track monitoring tasks
+        
+        # Default retry configuration
+        self.default_retry_config = RetryConfig()
         
         # Performance metrics
         self.total_transactions = 0
@@ -217,6 +337,8 @@ class TransactionManager:
         self.circuit_breaker_blocks = 0
         self.gas_savings_total = Decimal('0')
         self.average_execution_time_ms = 0.0
+        self.total_retries_performed = 0
+        self.mempool_drops_detected = 0
         
         # Configuration
         self.max_concurrent_transactions = getattr(settings, 'TRADING_MAX_CONCURRENT_TX', 10)
@@ -296,8 +418,8 @@ class TransactionManager:
         1. Circuit breaker validation
         2. Gas optimization (Phase 6A integration)
         3. Transaction preparation
-        4. DEX router execution
-        5. Status monitoring
+        4. DEX router execution with retry logic
+        5. Status monitoring with mempool detection
         6. Portfolio tracking
         7. WebSocket updates
         
@@ -310,10 +432,14 @@ class TransactionManager:
         # Generate unique transaction ID
         transaction_id = f"tx_{int(time.time() * 1000)}_{request.user.id}"
         
+        # Use custom retry config or default
+        retry_config = request.retry_config or self.default_retry_config
+        
         try:
             self.logger.info(
                 f"🚀 Starting transaction submission: {transaction_id} "
-                f"({request.swap_params.swap_type.value})"
+                f"({request.swap_params.swap_type.value}) "
+                f"Mode: {'PAPER' if request.is_paper_trade else 'REAL'}"
             )
             
             # Create initial transaction state
@@ -322,7 +448,9 @@ class TransactionManager:
                 user_id=request.user.id,
                 chain_id=request.chain_id,
                 status=TransactionStatus.PREPARING,
-                swap_params=request.swap_params
+                swap_params=request.swap_params,
+                is_paper_mode=request.is_paper_trade,
+                max_retries=retry_config.max_retries
             )
             
             # Store transaction state
@@ -347,8 +475,12 @@ class TransactionManager:
             # Step 2: Gas Optimization (Phase 6A Integration)
             await self._optimize_transaction_gas(transaction_state, request)
             
-            # Step 3: Execute transaction through DEX router with circuit breaker protection
-            swap_result = await self._execute_swap_with_circuit_breaker(transaction_state, request)
+            # Step 3: Execute transaction with retry logic
+            swap_result = await self._execute_swap_with_retry(
+                transaction_state, 
+                request,
+                retry_config
+            )
             
             # Step 4: Update transaction state with results
             transaction_state.swap_result = swap_result
@@ -358,14 +490,19 @@ class TransactionManager:
             transaction_state.gas_price_gwei = swap_result.gas_price_gwei
             transaction_state.execution_time_ms = swap_result.execution_time_ms
             
-            # Step 5: Start transaction monitoring
-            asyncio.create_task(self._monitor_transaction_status(transaction_id))
+            # Step 5: Start enhanced transaction monitoring with mempool detection
+            monitor_task = asyncio.create_task(
+                self._monitor_transaction_with_mempool_detection(transaction_id, retry_config)
+            )
+            self._mempool_monitor_tasks[transaction_id] = monitor_task
             
             # Step 6: Calculate gas savings achieved
             gas_savings = self._calculate_gas_savings(transaction_state)
             
             # Update performance metrics
             self.total_transactions += 1
+            self.total_retries_performed += transaction_state.retry_count
+            
             if swap_result.success:
                 self.successful_transactions += 1
                 self._user_failure_counts[request.user.id] = 0  # Reset failure count on success
@@ -378,14 +515,17 @@ class TransactionManager:
             
             self.logger.info(
                 f"✅ Transaction submitted successfully: {transaction_id} "
-                f"(Hash: {swap_result.transaction_hash[:10] if swap_result.transaction_hash else 'N/A'}...)"
+                f"(Hash: {swap_result.transaction_hash[:10] if swap_result.transaction_hash else 'N/A'}...) "
+                f"Retries: {transaction_state.retry_count}"
             )
             
             return TransactionManagerResult(
                 success=True,
                 transaction_id=transaction_id,
                 transaction_state=transaction_state,
-                gas_savings_achieved=gas_savings
+                gas_savings_achieved=gas_savings,
+                retries_performed=transaction_state.retry_count,
+                final_gas_price_gwei=transaction_state.gas_price_gwei
             )
             
         except CircuitBreakerOpenError as e:
@@ -423,6 +563,405 @@ class TransactionManager:
                 transaction_id=transaction_id,
                 error_message=str(e)
             )
+    
+    async def _execute_swap_with_retry(
+        self,
+        transaction_state: TransactionState,
+        request: TransactionSubmissionRequest,
+        retry_config: RetryConfig
+    ) -> SwapResult:
+        """
+        Execute swap transaction with exponential backoff retry logic.
+        
+        Args:
+            transaction_state: Current transaction state
+            request: Transaction submission request
+            retry_config: Retry configuration
+            
+        Returns:
+            SwapResult from execution
+        """
+        last_exception = None
+        retry_count = 0
+        
+        # Determine delay settings based on mode
+        initial_delay = (
+            retry_config.paper_initial_delay_ms if request.is_paper_trade and retry_config.paper_mode_fast_retry
+            else retry_config.initial_delay_ms
+        )
+        max_delay = (
+            retry_config.paper_max_delay_ms if request.is_paper_trade and retry_config.paper_mode_fast_retry
+            else retry_config.max_delay_ms
+        )
+        
+        while retry_count <= retry_config.max_retries:
+            try:
+                # Update retry count in state
+                transaction_state.retry_count = retry_count
+                
+                # If this is a retry, escalate gas price
+                if retry_count > 0:
+                    await self._escalate_gas_price(transaction_state, retry_config)
+                    transaction_state.status = TransactionStatus.RETRYING
+                    await self._broadcast_transaction_update(transaction_state)
+                
+                self.logger.info(
+                    f"🔄 Swap execution attempt {retry_count + 1}/{retry_config.max_retries + 1} "
+                    f"for {transaction_state.transaction_id}"
+                )
+                
+                # Execute swap (with or without circuit breaker)
+                if self._dex_circuit_breaker and self.circuit_breaker_enabled:
+                    swap_result = await self._dex_circuit_breaker.call(
+                        self._execute_swap_transaction,
+                        transaction_state,
+                        request
+                    )
+                else:
+                    swap_result = await self._execute_swap_transaction(
+                        transaction_state,
+                        request
+                    )
+                
+                # Check if successful
+                if swap_result.success:
+                    if retry_count > 0:
+                        self.logger.info(
+                            f"✅ Swap succeeded after {retry_count} retries: "
+                            f"{transaction_state.transaction_id}"
+                        )
+                    return swap_result
+                
+                # Failed but might be retriable
+                last_exception = Exception(swap_result.error_message or "Swap failed")
+                
+                # Add error to history
+                transaction_state.error_history.append({
+                    'attempt': retry_count + 1,
+                    'error': str(last_exception),
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                })
+                
+            except CircuitBreakerOpenError as e:
+                # Circuit breaker is open, don't retry
+                self.logger.error(f"⚡ DEX circuit breaker open: {transaction_state.transaction_id}")
+                raise e
+                
+            except Exception as e:
+                last_exception = e
+                
+                # Add error to history
+                transaction_state.error_history.append({
+                    'attempt': retry_count + 1,
+                    'error': str(e),
+                    'timestamp': datetime.now(timezone.utc).isoformat()
+                })
+            
+            # Check if we should retry
+            retry_count += 1
+            if retry_count > retry_config.max_retries:
+                self.logger.error(
+                    f"❌ Max retries ({retry_config.max_retries}) exceeded for "
+                    f"{transaction_state.transaction_id}: {last_exception}"
+                )
+                break
+            
+            # Calculate delay with exponential backoff and jitter
+            base_delay = min(
+                initial_delay * (retry_config.exponential_base ** (retry_count - 1)),
+                max_delay
+            )
+            
+            # Add jitter to prevent thundering herd
+            jitter = base_delay * retry_config.jitter_factor * random.random()
+            delay_ms = int(base_delay + jitter)
+            
+            # Track delay used
+            transaction_state.retry_delays_ms.append(delay_ms)
+            transaction_state.last_retry_at = datetime.now(timezone.utc)
+            
+            self.logger.warning(
+                f"⚠️ Swap attempt {retry_count} failed for {transaction_state.transaction_id}: "
+                f"{last_exception}. Retrying in {delay_ms}ms..."
+            )
+            
+            # Wait before retry
+            await asyncio.sleep(delay_ms / 1000.0)
+        
+        # All retries exhausted - return failed result
+        return SwapResult(
+            transaction_hash="0x",
+            block_number=None,
+            gas_used=None,
+            gas_price_gwei=Decimal('0'),
+            amount_in=transaction_state.swap_params.amount_in,
+            amount_out=0,
+            actual_slippage_percent=Decimal('0'),
+            execution_time_ms=0.0,
+            dex_version=transaction_state.swap_params.dex_version,
+            success=False,
+            error_message=f"All retries exhausted: {last_exception}"
+        )
+    
+    async def _escalate_gas_price(
+        self,
+        transaction_state: TransactionState,
+        retry_config: RetryConfig
+    ) -> None:
+        """
+        Escalate gas price for retry attempt.
+        
+        Args:
+            transaction_state: Transaction state to update
+            retry_config: Retry configuration with escalation factor
+        """
+        try:
+            current_gas_price = transaction_state.swap_params.gas_price_gwei or Decimal('30')
+            
+            # Calculate new gas price with escalation
+            new_gas_price = current_gas_price * retry_config.gas_escalation_factor
+            
+            # Cap at reasonable maximum (e.g., 500 Gwei)
+            max_gas_price = Decimal('500')
+            new_gas_price = min(new_gas_price, max_gas_price)
+            
+            # Track escalation
+            transaction_state.gas_escalations.append(new_gas_price)
+            
+            # Update swap params
+            transaction_state.swap_params.gas_price_gwei = new_gas_price
+            transaction_state.status = TransactionStatus.GAS_ESCALATED
+            
+            self.logger.info(
+                f"⬆️ Gas escalated for {transaction_state.transaction_id}: "
+                f"{current_gas_price:.2f} → {new_gas_price:.2f} Gwei "
+                f"(+{((new_gas_price - current_gas_price) / current_gas_price * 100):.1f}%)"
+            )
+            
+            await self._broadcast_transaction_update(transaction_state)
+            
+        except Exception as e:
+            self.logger.error(f"Error escalating gas price: {e}")
+    
+    async def _monitor_transaction_with_mempool_detection(
+        self,
+        transaction_id: str,
+        retry_config: RetryConfig
+    ) -> None:
+        """
+        Enhanced transaction monitoring with mempool drop detection.
+        
+        Args:
+            transaction_id: ID of transaction to monitor
+            retry_config: Retry configuration for mempool checking
+        """
+        try:
+            if transaction_id not in self._active_transactions:
+                return
+            
+            transaction_state = self._active_transactions[transaction_id]
+            
+            if not transaction_state.transaction_hash:
+                return
+            
+            self.logger.info(f"📊 Starting enhanced monitoring: {transaction_id}")
+            
+            start_time = time.time()
+            timeout_seconds = self.default_timeout_seconds
+            check_interval_ms = retry_config.mempool_check_interval_ms
+            mempool_timeout_ms = retry_config.mempool_timeout_ms
+            
+            last_mempool_check = start_time
+            mempool_not_found_count = 0
+            max_mempool_not_found = 3  # Consider dropped after 3 consecutive not-founds
+            
+            while time.time() - start_time < timeout_seconds:
+                try:
+                    # Check for transaction receipt
+                    receipt = await self._web3_client.web3.eth.get_transaction_receipt(
+                        transaction_state.transaction_hash
+                    )
+                    
+                    if receipt:
+                        # Transaction confirmed
+                        transaction_state.status = TransactionStatus.CONFIRMED
+                        transaction_state.confirmed_at = datetime.now(timezone.utc)
+                        transaction_state.block_number = receipt.blockNumber
+                        transaction_state.gas_used = receipt.gasUsed
+                        
+                        await self._broadcast_transaction_update(transaction_state)
+                        
+                        # Update portfolio tracking
+                        await self._update_portfolio_tracking(transaction_state)
+                        
+                        # Mark as completed
+                        transaction_state.status = TransactionStatus.COMPLETED
+                        await self._broadcast_transaction_update(transaction_state)
+                        
+                        self.logger.info(
+                            f"✅ Transaction completed: {transaction_id} "
+                            f"(Block: {receipt.blockNumber}, Gas: {receipt.gasUsed})"
+                        )
+                        return
+                    
+                except TransactionNotFound:
+                    # Transaction not in mempool - might be dropped
+                    mempool_not_found_count += 1
+                    transaction_state.mempool_checks += 1
+                    
+                    if mempool_not_found_count >= max_mempool_not_found:
+                        # Check if enough time has passed to consider it dropped
+                        elapsed_ms = (time.time() - last_mempool_check) * 1000
+                        
+                        if elapsed_ms >= mempool_timeout_ms:
+                            # Transaction likely dropped from mempool
+                            transaction_state.status = TransactionStatus.MEMPOOL_DROPPED
+                            await self._broadcast_transaction_update(transaction_state)
+                            
+                            self.mempool_drops_detected += 1
+                            
+                            self.logger.warning(
+                                f"🔄 Transaction dropped from mempool: {transaction_id}. "
+                                f"Initiating recovery..."
+                            )
+                            
+                            # Attempt to resubmit transaction
+                            await self._handle_mempool_drop(transaction_state, retry_config)
+                            return
+                    
+                except Exception as e:
+                    # Other error - log but continue monitoring
+                    self.logger.debug(f"Monitor check error (continuing): {e}")
+                    mempool_not_found_count = 0  # Reset counter on successful check
+                
+                # Wait before next check
+                await asyncio.sleep(check_interval_ms / 1000.0)
+                
+                # Update last check time
+                last_mempool_check = time.time()
+            
+            # Timeout reached
+            transaction_state.status = TransactionStatus.FAILED
+            transaction_state.error_message = f"Transaction monitoring timeout after {timeout_seconds}s"
+            await self._broadcast_transaction_update(transaction_state)
+            
+            self.logger.warning(f"⏰ Transaction monitoring timeout: {transaction_id}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Enhanced monitoring error: {transaction_id} - {e}")
+            if transaction_id in self._active_transactions:
+                transaction_state = self._active_transactions[transaction_id]
+                transaction_state.status = TransactionStatus.FAILED
+                transaction_state.error_message = f"Monitoring error: {e}"
+                await self._broadcast_transaction_update(transaction_state)
+        
+        finally:
+            # Clean up monitoring task
+            if transaction_id in self._mempool_monitor_tasks:
+                del self._mempool_monitor_tasks[transaction_id]
+    
+    async def _handle_mempool_drop(
+        self,
+        transaction_state: TransactionState,
+        retry_config: RetryConfig
+    ) -> None:
+        """
+        Handle transaction that was dropped from mempool.
+        
+        Args:
+            transaction_state: Transaction that was dropped
+            retry_config: Retry configuration
+        """
+        try:
+            self.logger.info(
+                f"🔧 Handling mempool drop for {transaction_state.transaction_id}"
+            )
+            
+            # Check if we have retries remaining
+            if transaction_state.retry_count >= transaction_state.max_retries:
+                self.logger.error(
+                    f"❌ Cannot recover dropped transaction - max retries exhausted: "
+                    f"{transaction_state.transaction_id}"
+                )
+                transaction_state.status = TransactionStatus.FAILED
+                transaction_state.error_message = "Transaction dropped from mempool after max retries"
+                await self._broadcast_transaction_update(transaction_state)
+                return
+            
+            # Escalate gas significantly for mempool drop recovery
+            if transaction_state.swap_params.gas_price_gwei:
+                # Increase gas by 50% for mempool drop recovery
+                recovery_gas_price = transaction_state.swap_params.gas_price_gwei * Decimal('1.5')
+                transaction_state.swap_params.gas_price_gwei = recovery_gas_price
+                transaction_state.gas_escalations.append(recovery_gas_price)
+                
+                self.logger.info(
+                    f"⬆️ Gas escalated for mempool recovery: {recovery_gas_price:.2f} Gwei"
+                )
+            
+            # Increment retry count
+            transaction_state.retry_count += 1
+            transaction_state.last_retry_at = datetime.now(timezone.utc)
+            
+            # Update status
+            transaction_state.status = TransactionStatus.RETRYING
+            await self._broadcast_transaction_update(transaction_state)
+            
+            # Get user and create new submission request
+            from django.contrib.auth.models import User
+            user = User.objects.get(id=transaction_state.user_id)
+            
+            # Resubmit transaction with escalated gas
+            resubmit_request = TransactionSubmissionRequest(
+                user=user,
+                chain_id=transaction_state.chain_id,
+                swap_params=transaction_state.swap_params,
+                is_paper_trade=transaction_state.is_paper_mode,
+                retry_config=retry_config,
+                bypass_circuit_breaker=True  # Bypass for recovery
+            )
+            
+            # Execute swap again
+            swap_result = await self._execute_swap_transaction(
+                transaction_state,
+                resubmit_request
+            )
+            
+            if swap_result.success:
+                self.logger.info(
+                    f"✅ Successfully recovered dropped transaction: "
+                    f"{transaction_state.transaction_id}"
+                )
+                
+                # Update state with new transaction details
+                transaction_state.transaction_hash = swap_result.transaction_hash
+                transaction_state.swap_result = swap_result
+                transaction_state.status = TransactionStatus.PENDING
+                
+                # Resume monitoring
+                monitor_task = asyncio.create_task(
+                    self._monitor_transaction_with_mempool_detection(
+                        transaction_state.transaction_id,
+                        retry_config
+                    )
+                )
+                self._mempool_monitor_tasks[transaction_state.transaction_id] = monitor_task
+            else:
+                self.logger.error(
+                    f"❌ Failed to recover dropped transaction: "
+                    f"{transaction_state.transaction_id} - {swap_result.error_message}"
+                )
+                transaction_state.status = TransactionStatus.FAILED
+                transaction_state.error_message = f"Recovery failed: {swap_result.error_message}"
+                await self._broadcast_transaction_update(transaction_state)
+            
+        except Exception as e:
+            self.logger.error(
+                f"❌ Error handling mempool drop: {transaction_state.transaction_id} - {e}"
+            )
+            transaction_state.status = TransactionStatus.FAILED
+            transaction_state.error_message = f"Mempool recovery error: {e}"
+            await self._broadcast_transaction_update(transaction_state)
     
     async def _check_circuit_breakers(
         self, 
@@ -530,50 +1069,6 @@ class TransactionManager:
         except Exception as e:
             self.logger.error(f"Error getting portfolio state for circuit breakers: {e}")
             return {}
-    
-    async def _execute_swap_with_circuit_breaker(
-        self, 
-        transaction_state: TransactionState,
-        request: TransactionSubmissionRequest
-    ) -> SwapResult:
-        """
-        Execute swap transaction with circuit breaker protection.
-        
-        Args:
-            transaction_state: Current transaction state
-            request: Transaction submission request
-            
-        Returns:
-            SwapResult from execution
-        """
-        try:
-            # Use DEX circuit breaker for swap execution
-            if self._dex_circuit_breaker and self.circuit_breaker_enabled:
-                return await self._dex_circuit_breaker.call(
-                    self._execute_swap_transaction,
-                    transaction_state,
-                    request
-                )
-            else:
-                # Execute without circuit breaker if disabled
-                return await self._execute_swap_transaction(transaction_state, request)
-                
-        except CircuitBreakerOpenError as e:
-            # Circuit breaker is open, create failed result
-            self.logger.error(f"⚡ DEX circuit breaker open: {transaction_state.transaction_id}")
-            return SwapResult(
-                transaction_hash="0x",
-                block_number=None,
-                gas_used=None,
-                gas_price_gwei=Decimal('0'),
-                amount_in=transaction_state.swap_params.amount_in,
-                amount_out=0,
-                actual_slippage_percent=Decimal('0'),
-                execution_time_ms=0.0,
-                dex_version=transaction_state.swap_params.dex_version,
-                success=False,
-                error_message=f"Circuit breaker open: {e}"
-            )
     
     async def _optimize_transaction_gas(
         self, 
@@ -847,80 +1342,6 @@ class TransactionManager:
         
         return status
     
-    # [Previous methods remain the same: _monitor_transaction_status, _update_portfolio_tracking, etc.]
-    async def _monitor_transaction_status(self, transaction_id: str) -> None:
-        """
-        Monitor transaction status until completion or failure.
-        
-        Args:
-            transaction_id: ID of transaction to monitor
-        """
-        try:
-            if transaction_id not in self._active_transactions:
-                return
-            
-            transaction_state = self._active_transactions[transaction_id]
-            
-            if not transaction_state.transaction_hash:
-                return
-            
-            self.logger.info(f"📊 Starting status monitoring: {transaction_id}")
-            
-            start_time = time.time()
-            timeout_seconds = self.default_timeout_seconds
-            check_interval = 5  # Check every 5 seconds
-            
-            while time.time() - start_time < timeout_seconds:
-                try:
-                    # Get transaction receipt
-                    receipt = await self._web3_client.web3.eth.get_transaction_receipt(
-                        transaction_state.transaction_hash
-                    )
-                    
-                    if receipt:
-                        # Transaction confirmed
-                        transaction_state.status = TransactionStatus.CONFIRMED
-                        transaction_state.confirmed_at = datetime.now(timezone.utc)
-                        transaction_state.block_number = receipt.blockNumber
-                        transaction_state.gas_used = receipt.gasUsed
-                        
-                        await self._broadcast_transaction_update(transaction_state)
-                        
-                        # Update portfolio tracking
-                        await self._update_portfolio_tracking(transaction_state)
-                        
-                        # Mark as completed
-                        transaction_state.status = TransactionStatus.COMPLETED
-                        await self._broadcast_transaction_update(transaction_state)
-                        
-                        self.logger.info(
-                            f"✅ Transaction completed: {transaction_id} "
-                            f"(Block: {receipt.blockNumber}, Gas: {receipt.gasUsed})"
-                        )
-                        return
-                    
-                except Exception as receipt_error:
-                    # Transaction not yet mined, continue monitoring
-                    pass
-                
-                # Wait before next check
-                await asyncio.sleep(check_interval)
-            
-            # Timeout reached
-            transaction_state.status = TransactionStatus.FAILED
-            transaction_state.error_message = f"Transaction monitoring timeout after {timeout_seconds}s"
-            await self._broadcast_transaction_update(transaction_state)
-            
-            self.logger.warning(f"⏰ Transaction monitoring timeout: {transaction_id}")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Transaction monitoring error: {transaction_id} - {e}")
-            if transaction_id in self._active_transactions:
-                transaction_state = self._active_transactions[transaction_id]
-                transaction_state.status = TransactionStatus.FAILED
-                transaction_state.error_message = f"Monitoring error: {e}"
-                await self._broadcast_transaction_update(transaction_state)
-    
     async def _update_portfolio_tracking(self, transaction_state: TransactionState) -> None:
         """
         Update portfolio tracking with completed transaction.
@@ -988,6 +1409,7 @@ class TransactionManager:
                 'gas_savings_percent': str(transaction_state.gas_savings_percent) if transaction_state.gas_savings_percent else None,
                 'circuit_breaker_status': transaction_state.circuit_breaker_status,
                 'error_message': transaction_state.error_message,
+                'retry_count': transaction_state.retry_count,
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
             
@@ -1175,6 +1597,107 @@ class TransactionManager:
         except Exception as e:
             self.logger.error(f"❌ Transaction cleanup error: {e}")
             return 0
+    
+    def get_enhanced_performance_metrics(self) -> Dict[str, Any]:
+        """
+        Get enhanced performance metrics including retry statistics.
+        
+        Returns:
+            Dictionary with enhanced performance statistics
+        """
+        base_metrics = self.get_performance_metrics()
+        
+        # Calculate retry statistics
+        avg_retries_per_tx = (
+            self.total_retries_performed / self.total_transactions
+            if self.total_transactions > 0 else 0.0
+        )
+        
+        mempool_drop_rate = (
+            (self.mempool_drops_detected / self.total_transactions * 100)
+            if self.total_transactions > 0 else 0.0
+        )
+        
+        # Add enhanced metrics
+        base_metrics.update({
+            'total_retries_performed': self.total_retries_performed,
+            'average_retries_per_transaction': round(avg_retries_per_tx, 2),
+            'mempool_drops_detected': self.mempool_drops_detected,
+            'mempool_drop_rate_percent': round(mempool_drop_rate, 2),
+            'active_monitoring_tasks': len(self._mempool_monitor_tasks)
+        })
+        
+        return base_metrics
+    
+    async def get_retry_statistics(self, user_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Get detailed retry statistics.
+        
+        Args:
+            user_id: Optional user ID to filter statistics
+            
+        Returns:
+            Dictionary with retry statistics
+        """
+        stats = {
+            'total_transactions': 0,
+            'transactions_with_retries': 0,
+            'total_retry_attempts': 0,
+            'average_retry_delay_ms': 0.0,
+            'average_gas_escalation_percent': 0.0,
+            'mempool_drops': 0,
+            'successful_recoveries': 0,
+            'retry_distribution': {}
+        }
+        
+        # Analyze active and recent transactions
+        relevant_txs = [
+            tx for tx in self._active_transactions.values()
+            if user_id is None or tx.user_id == user_id
+        ]
+        
+        total_delays = []
+        total_escalations = []
+        retry_counts = {}
+        
+        for tx in relevant_txs:
+            stats['total_transactions'] += 1
+            
+            if tx.retry_count > 0:
+                stats['transactions_with_retries'] += 1
+                stats['total_retry_attempts'] += tx.retry_count
+                
+                # Track retry distribution
+                retry_counts[tx.retry_count] = retry_counts.get(tx.retry_count, 0) + 1
+                
+                # Collect delays and escalations
+                total_delays.extend(tx.retry_delays_ms)
+                
+                if tx.gas_escalations:
+                    original_gas = tx.swap_params.gas_price_gwei or Decimal('30')
+                    for escalated_gas in tx.gas_escalations:
+                        escalation_percent = float(
+                            ((escalated_gas - original_gas) / original_gas) * 100
+                        )
+                        total_escalations.append(escalation_percent)
+            
+            if tx.status == TransactionStatus.MEMPOOL_DROPPED:
+                stats['mempool_drops'] += 1
+                if tx.status == TransactionStatus.COMPLETED:
+                    stats['successful_recoveries'] += 1
+        
+        # Calculate averages
+        if total_delays:
+            stats['average_retry_delay_ms'] = round(sum(total_delays) / len(total_delays), 2)
+        
+        if total_escalations:
+            stats['average_gas_escalation_percent'] = round(
+                sum(total_escalations) / len(total_escalations), 2
+            )
+        
+        stats['retry_distribution'] = retry_counts
+        
+        return stats
 
 
 # =============================================================================
@@ -1241,7 +1764,8 @@ async def create_transaction_submission_request(
     is_paper_trade: bool = False,
     slippage_tolerance: Decimal = Decimal('0.005'),
     deadline_minutes: int = 20,
-    bypass_circuit_breaker: bool = False
+    bypass_circuit_breaker: bool = False,
+    retry_config: Optional[RetryConfig] = None
 ) -> TransactionSubmissionRequest:
     """
     Create a transaction submission request with all required parameters.
@@ -1262,6 +1786,7 @@ async def create_transaction_submission_request(
         slippage_tolerance: Slippage tolerance (0.005 = 0.5%)
         deadline_minutes: Transaction deadline in minutes
         bypass_circuit_breaker: Whether to bypass circuit breaker checks (emergency only)
+        retry_config: Optional custom retry configuration
         
     Returns:
         Configured TransactionSubmissionRequest
@@ -1291,5 +1816,6 @@ async def create_transaction_submission_request(
         swap_params=swap_params,
         gas_strategy=gas_strategy,
         is_paper_trade=is_paper_trade,
-        bypass_circuit_breaker=bypass_circuit_breaker
+        bypass_circuit_breaker=bypass_circuit_breaker,
+        retry_config=retry_config
     )
