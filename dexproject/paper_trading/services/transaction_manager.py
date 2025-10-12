@@ -2,7 +2,8 @@
 Transaction Manager Service - Paper Trading App Core Component
 
 Central coordinator for all trading transaction operations, integrating gas optimization,
-DEX routing, real-time status tracking, and comprehensive retry logic with gas escalation.
+DEX routing, real-time status tracking, comprehensive retry logic with gas escalation,
+and production-hardened circuit breaker protection.
 
 This is the main TransactionManager class that coordinates all transaction operations
 using the base components and retry logic from the supporting modules.
@@ -71,6 +72,16 @@ from .portfolio_service import (
     create_portfolio_service
 )
 
+# Add enhanced circuit breaker imports
+from shared.circuit_breakers import (
+    EnhancedCircuitBreaker,
+    CircuitBreakerType,
+    CircuitBreakerConfig,
+    CircuitBreakerGroup,
+    get_manager as get_circuit_breaker_manager,
+    CircuitBreakerOpenError
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +96,7 @@ class TransactionManager:
     - WebSocket broadcasts for live UI updates
     - Comprehensive retry logic with gas escalation
     - Stuck transaction replacement
-    - Circuit breaker pattern for failure protection
+    - Production-hardened circuit breaker pattern for failure protection
     - Portfolio tracking integration
     - Paper trading simulation support
     """
@@ -109,6 +120,12 @@ class TransactionManager:
         self._wallet_manager: Optional[WalletManager] = None
         self._dex_router_service: Optional[DEXRouterService] = None
         self._portfolio_service: Optional[PortfolioTrackingService] = None
+        
+        # Circuit breaker management (enhanced)
+        self._circuit_breaker_manager = None
+        self._tx_circuit_breaker: Optional[EnhancedCircuitBreaker] = None
+        self._gas_circuit_breaker: Optional[EnhancedCircuitBreaker] = None
+        self._dex_circuit_breaker: Optional[EnhancedCircuitBreaker] = None
         
         # Retry and recovery managers
         self._retry_manager = TransactionRetryManager(self.chain_id, self.retry_config)
@@ -156,6 +173,9 @@ class TransactionManager:
                 self.logger.warning(f"⚠️ Portfolio service initialization failed (non-critical): {e}")
                 self._portfolio_service = None
             
+            # Initialize enhanced circuit breakers
+            await self._initialize_circuit_breakers()
+            
             # Set dependencies for retry manager and stuck monitor
             self._retry_manager.set_dependencies(self._web3_client, self._wallet_manager)
             self._stuck_monitor.set_dependencies(self._web3_client, self._wallet_manager)
@@ -171,6 +191,63 @@ class TransactionManager:
             self.logger.error(f"❌ Transaction Manager initialization failed: {e}")
             raise
     
+    async def _initialize_circuit_breakers(self) -> None:
+        """Initialize enhanced circuit breakers for transaction management."""
+        try:
+            # Get the circuit breaker manager
+            self._circuit_breaker_manager = await get_circuit_breaker_manager()
+            
+            # Create transaction failure circuit breaker
+            self._tx_circuit_breaker = await self._circuit_breaker_manager.create_breaker(
+                name=f"tx_{self.chain_config.name}_{self.chain_id}",
+                breaker_type=CircuitBreakerType.TRANSACTION_FAILURE,
+                config=CircuitBreakerConfig(
+                    breaker_type=CircuitBreakerType.TRANSACTION_FAILURE,
+                    failure_threshold=5,
+                    timeout_seconds=300,  # 5 minutes
+                    success_threshold=2,
+                    enable_jitter=True,
+                    escalation_multiplier=1.5
+                )
+            )
+            
+            # Create gas price spike circuit breaker
+            self._gas_circuit_breaker = await self._circuit_breaker_manager.create_breaker(
+                name=f"gas_{self.chain_config.name}_{self.chain_id}",
+                breaker_type=CircuitBreakerType.GAS_PRICE_SPIKE,
+                config=CircuitBreakerConfig(
+                    breaker_type=CircuitBreakerType.GAS_PRICE_SPIKE,
+                    failure_threshold=3,
+                    timeout_seconds=60,  # 1 minute
+                    success_threshold=1,
+                    custom_params={
+                        "max_gas_price_gwei": float(self.chain_config.max_gas_price_gwei),
+                        "spike_multiplier": 3.0
+                    }
+                )
+            )
+            
+            # Create DEX failure circuit breaker
+            self._dex_circuit_breaker = await self._circuit_breaker_manager.create_breaker(
+                name=f"dex_{self.chain_config.name}_{self.chain_id}",
+                breaker_type=CircuitBreakerType.DEX_FAILURE,
+                config=CircuitBreakerConfig(
+                    breaker_type=CircuitBreakerType.DEX_FAILURE,
+                    failure_threshold=3,
+                    timeout_seconds=180,  # 3 minutes
+                    success_threshold=1,
+                    half_open_max_calls=2
+                ),
+                chain_id=self.chain_id
+            )
+            
+            self.logger.info(f"✅ Circuit breakers initialized for {self.chain_config.name}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Circuit breaker initialization failed: {e}")
+            # Continue without circuit breakers - non-critical but log warning
+            self.logger.warning("⚠️ Operating without enhanced circuit breakers - reduced resilience")
+    
     async def submit_transaction(
         self, 
         request: TransactionSubmissionRequest
@@ -179,7 +256,7 @@ class TransactionManager:
         Submit a new transaction with automatic gas optimization and retry logic.
         
         This is the main entry point that coordinates all transaction operations:
-        1. Circuit breaker check
+        1. Enhanced circuit breaker check
         2. Gas optimization (Phase 6A integration)
         3. Transaction preparation
         4. DEX router execution
@@ -203,12 +280,32 @@ class TransactionManager:
                 error_message=str(e)
             )
         
-        # Check circuit breaker
+        # Check enhanced circuit breakers
+        if self._circuit_breaker_manager:
+            can_proceed, blocking_reasons = await self._circuit_breaker_manager.check_breakers(
+                breaker_types=[
+                    CircuitBreakerType.TRANSACTION_FAILURE,
+                    CircuitBreakerType.GAS_PRICE_SPIKE,
+                    CircuitBreakerType.DEX_FAILURE
+                ],
+                user_id=request.user.id,
+                chain_id=request.chain_id
+            )
+            
+            if not can_proceed:
+                self.logger.warning(f"⛔ Circuit breakers blocking transaction: {blocking_reasons}")
+                return TransactionManagerResult(
+                    success=False,
+                    transaction_id="",
+                    error_message=f"Circuit breakers active: {'; '.join(blocking_reasons)}"
+                )
+        
+        # Also check legacy circuit breaker for backward compatibility
         if self._retry_manager.is_circuit_open():
             return TransactionManagerResult(
                 success=False,
                 transaction_id="",
-                error_message="Transaction manager circuit breaker is open due to multiple failures"
+                error_message="Legacy circuit breaker is open due to multiple failures"
             )
         
         # Generate unique transaction ID
@@ -236,8 +333,20 @@ class TransactionManager:
             # Broadcast initial status
             await self._broadcast_transaction_update(transaction_state)
             
-            # Step 1: Gas Optimization
-            await self._optimize_transaction_gas(transaction_state, request)
+            # Step 1: Gas Optimization with circuit breaker protection
+            if self._gas_circuit_breaker:
+                try:
+                    await self._gas_circuit_breaker.call(
+                        self._optimize_transaction_gas,
+                        transaction_state,
+                        request
+                    )
+                except CircuitBreakerOpenError as e:
+                    self.logger.warning(f"⛔ Gas optimization circuit breaker open: {e}")
+                    # Continue with default gas settings
+                    transaction_state.status = TransactionStatus.READY_TO_SUBMIT
+            else:
+                await self._optimize_transaction_gas(transaction_state, request)
             
             # Step 2: Execute transaction through DEX router
             swap_result = await self._execute_swap_transaction(transaction_state, request)
@@ -342,6 +451,252 @@ class TransactionManager:
         transaction_id: str,
         gas_escalation_percent: Optional[Decimal] = None
     ) -> TransactionManagerResult:
+        """
+        Manually retry a failed transaction with gas escalation.
+        
+        Args:
+            transaction_id: ID of transaction to retry
+            gas_escalation_percent: Gas price increase percentage (default from config)
+            
+        Returns:
+            TransactionManagerResult with retry outcome
+        """
+        try:
+            # Get transaction state
+            transaction_state = self._active_transactions.get(transaction_id)
+            if not transaction_state:
+                return TransactionManagerResult(
+                    success=False,
+                    transaction_id=transaction_id,
+                    error_message="Transaction not found"
+                )
+            
+            # Check if already retrying
+            if transaction_state.status == TransactionStatus.RETRYING:
+                return TransactionManagerResult(
+                    success=False,
+                    transaction_id=transaction_id,
+                    error_message="Transaction is already being retried"
+                )
+            
+            # Check retry limit
+            if transaction_state.retry_count >= transaction_state.max_retries:
+                return TransactionManagerResult(
+                    success=False,
+                    transaction_id=transaction_id,
+                    error_message=f"Maximum retry limit ({transaction_state.max_retries}) reached"
+                )
+            
+            self.logger.info(
+                f"🔄 Manually retrying transaction: {transaction_id} "
+                f"(Attempt {transaction_state.retry_count + 1})"
+            )
+            
+            # Update status
+            transaction_state.status = TransactionStatus.RETRYING
+            transaction_state.retry_count += 1
+            transaction_state.last_retry_at = datetime.now(timezone.utc)
+            await self._broadcast_transaction_update(transaction_state)
+            
+            # Calculate new gas price with escalation
+            new_gas_price = self._retry_manager.calculate_retry_gas_price(transaction_state)
+            
+            # Update swap params with new gas price
+            if transaction_state.swap_params:
+                transaction_state.swap_params.gas_price_gwei = new_gas_price
+                transaction_state.gas_price_gwei = new_gas_price
+            
+            self.logger.info(
+                f"⛽ Retry gas price: {new_gas_price:.2f} gwei "
+                f"(+{((new_gas_price / (transaction_state.original_gas_price or Decimal('1'))) - 1) * 100:.1f}%)"
+            )
+            
+            # Re-execute swap with new parameters
+            swap_result = await self._execute_swap_transaction(
+                transaction_state,
+                TransactionSubmissionRequest(
+                    user=User.objects.get(id=transaction_state.user_id),
+                    chain_id=transaction_state.chain_id,
+                    swap_params=transaction_state.swap_params,
+                    is_paper_trade=False
+                )
+            )
+            
+            # Update transaction state with retry results
+            transaction_state.swap_result = swap_result
+            if swap_result.success:
+                transaction_state.status = TransactionStatus.PENDING
+                transaction_state.transaction_hash = swap_result.transaction_hash
+                self.metrics.retried_transactions += 1
+                
+                # Start monitoring
+                asyncio.create_task(self._monitor_transaction_status(transaction_id))
+                
+                self.logger.info(f"✅ Transaction retry successful: {transaction_id}")
+                
+                return TransactionManagerResult(
+                    success=True,
+                    transaction_id=transaction_id,
+                    transaction_state=transaction_state,
+                    was_retried=True,
+                    final_gas_price=new_gas_price
+                )
+            else:
+                # Retry failed
+                transaction_state.error_message = swap_result.error_message
+                
+                # Check if we should retry again
+                if transaction_state.retry_count < transaction_state.max_retries:
+                    # Schedule another retry with backoff
+                    backoff = self._retry_manager.calculate_backoff_delay(transaction_state.retry_count)
+                    self.logger.info(f"⏱️ Scheduling next retry in {backoff:.1f} seconds")
+                    
+                    await asyncio.sleep(backoff)
+                    return await self.retry_failed_transaction(transaction_id, gas_escalation_percent)
+                else:
+                    # Final failure
+                    transaction_state.status = TransactionStatus.FAILED
+                    await self._broadcast_transaction_update(transaction_state)
+                    
+                    self.logger.error(
+                        f"❌ Transaction retry failed after {transaction_state.retry_count} attempts: "
+                        f"{transaction_id}"
+                    )
+                    
+                    return TransactionManagerResult(
+                        success=False,
+                        transaction_id=transaction_id,
+                        transaction_state=transaction_state,
+                        error_message=f"Retry failed: {swap_result.error_message}",
+                        was_retried=True
+                    )
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error during transaction retry: {transaction_id} - {e}", exc_info=True)
+            
+            if transaction_id in self._active_transactions:
+                transaction_state = self._active_transactions[transaction_id]
+                transaction_state.status = TransactionStatus.FAILED
+                transaction_state.error_message = f"Retry error: {str(e)}"
+                await self._broadcast_transaction_update(transaction_state)
+            
+            return TransactionManagerResult(
+                success=False,
+                transaction_id=transaction_id,
+                error_message=str(e)
+            )
+    
+    async def replace_stuck_transaction(
+        self,
+        transaction_id: str,
+        gas_multiplier: Optional[Decimal] = None
+    ) -> TransactionManagerResult:
+        """
+        Replace a stuck transaction with a new one using the same nonce but higher gas.
+        
+        Args:
+            transaction_id: ID of stuck transaction to replace
+            gas_multiplier: Gas price multiplier (default from config)
+            
+        Returns:
+            TransactionManagerResult with replacement outcome
+        """
+        try:
+            # Get transaction state
+            transaction_state = self._active_transactions.get(transaction_id)
+            if not transaction_state:
+                return TransactionManagerResult(
+                    success=False,
+                    transaction_id=transaction_id,
+                    error_message="Transaction not found"
+                )
+            
+            # Check if transaction has a nonce
+            if transaction_state.nonce is None:
+                return TransactionManagerResult(
+                    success=False,
+                    transaction_id=transaction_id,
+                    error_message="Cannot replace transaction without nonce"
+                )
+            
+            self.logger.info(
+                f"🔄 Replacing stuck transaction: {transaction_id} "
+                f"(Nonce: {transaction_state.nonce})"
+            )
+            
+            # Update status
+            transaction_state.status = TransactionStatus.REPLACED
+            await self._broadcast_transaction_update(transaction_state)
+            
+            # Calculate replacement gas price
+            multiplier = gas_multiplier or self.retry_config.replacement_gas_multiplier
+            new_gas_price = (transaction_state.gas_price_gwei or Decimal('30')) * multiplier
+            
+            # Apply ceiling
+            if new_gas_price > self.retry_config.max_gas_price_gwei:
+                new_gas_price = self.retry_config.max_gas_price_gwei
+            
+            self.logger.info(
+                f"⛽ Replacement gas price: {new_gas_price:.2f} gwei "
+                f"(x{multiplier} multiplier)"
+            )
+            
+            # Create replacement transaction with same nonce
+            if transaction_state.swap_params:
+                transaction_state.swap_params.gas_price_gwei = new_gas_price
+                transaction_state.swap_params.nonce = transaction_state.nonce  # Use same nonce
+            
+            # Execute replacement
+            swap_result = await self._execute_swap_transaction(
+                transaction_state,
+                TransactionSubmissionRequest(
+                    user=User.objects.get(id=transaction_state.user_id),
+                    chain_id=transaction_state.chain_id,
+                    swap_params=transaction_state.swap_params,
+                    is_paper_trade=False
+                )
+            )
+            
+            if swap_result.success:
+                transaction_state.replacement_tx_hash = swap_result.transaction_hash
+                transaction_state.status = TransactionStatus.PENDING
+                self.metrics.replaced_transactions += 1
+                
+                # Start monitoring replacement
+                asyncio.create_task(self._monitor_transaction_status(transaction_id))
+                
+                self.logger.info(
+                    f"✅ Transaction replaced successfully: {transaction_id} "
+                    f"(New hash: {swap_result.transaction_hash[:10]}...)"
+                )
+                
+                return TransactionManagerResult(
+                    success=True,
+                    transaction_id=transaction_id,
+                    transaction_state=transaction_state,
+                    was_retried=True,
+                    final_gas_price=new_gas_price
+                )
+            else:
+                transaction_state.status = TransactionStatus.FAILED
+                transaction_state.error_message = f"Replacement failed: {swap_result.error_message}"
+                await self._broadcast_transaction_update(transaction_state)
+                
+                return TransactionManagerResult(
+                    success=False,
+                    transaction_id=transaction_id,
+                    error_message=swap_result.error_message
+                )
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error replacing transaction: {transaction_id} - {e}", exc_info=True)
+            return TransactionManagerResult(
+                success=False,
+                transaction_id=transaction_id,
+                error_message=str(e)
+            )
+    
+    async def _auto_retry_transaction(
         self,
         transaction_id: str,
         original_request: TransactionSubmissionRequest
@@ -478,7 +833,7 @@ class TransactionManager:
         request: TransactionSubmissionRequest
     ) -> SwapResult:
         """
-        Execute the swap transaction through DEX router service.
+        Execute the swap transaction through DEX router service with circuit breaker protection.
         
         Args:
             transaction_state: Current transaction state
@@ -502,11 +857,35 @@ class TransactionManager:
                 # Use a default address for paper trading
                 from_address = "0x0000000000000000000000000000000000000001"
             
-            # Execute swap through DEX router service
-            swap_result = await self._dex_router_service.execute_swap(
-                swap_params=transaction_state.swap_params,
-                from_address=from_address
-            )
+            # Execute swap through circuit breaker if available
+            if self._dex_circuit_breaker:
+                try:
+                    swap_result = await self._dex_circuit_breaker.call(
+                        self._dex_router_service.execute_swap,
+                        swap_params=transaction_state.swap_params,
+                        from_address=from_address
+                    )
+                except CircuitBreakerOpenError as e:
+                    self.logger.error(f"⛔ DEX circuit breaker open: {e}")
+                    return SwapResult(
+                        transaction_hash="0x",
+                        block_number=None,
+                        gas_used=None,
+                        gas_price_gwei=Decimal('0'),
+                        amount_in=transaction_state.swap_params.amount_in,
+                        amount_out=0,
+                        actual_slippage_percent=Decimal('0'),
+                        execution_time_ms=0.0,
+                        dex_version=transaction_state.swap_params.dex_version,
+                        success=False,
+                        error_message=f"DEX temporarily unavailable: {e.message}"
+                    )
+            else:
+                # Fallback to direct execution
+                swap_result = await self._dex_router_service.execute_swap(
+                    swap_params=transaction_state.swap_params,
+                    from_address=from_address
+                )
             
             # Extract nonce if available
             if hasattr(swap_result, 'nonce'):
@@ -859,7 +1238,7 @@ class TransactionManager:
     
     def get_performance_metrics(self) -> Dict[str, Any]:
         """
-        Get performance metrics for this transaction manager.
+        Get performance metrics for this transaction manager with enhanced circuit breaker status.
         
         Returns:
             Dictionary with performance statistics
@@ -873,6 +1252,27 @@ class TransactionManager:
             'circuit_breaker_open': self._retry_manager.is_circuit_open(),
             'consecutive_failures': self._retry_manager._consecutive_failures
         })
+        
+        # Add enhanced circuit breaker status
+        if self._circuit_breaker_manager:
+            cb_status = self._circuit_breaker_manager.get_status()
+            metrics_dict['circuit_breakers'] = {
+                'total': cb_status.get('total_breakers', 0),
+                'blocking': len(cb_status.get('blocking_breakers', [])),
+                'can_trade': cb_status.get('can_trade', True),
+                'cascade_risk': cb_status.get('cascade_detection_enabled', False)
+            }
+            
+            # Add individual breaker status
+            breaker_status = {}
+            if self._tx_circuit_breaker:
+                breaker_status['transaction'] = self._tx_circuit_breaker.state.value
+            if self._gas_circuit_breaker:
+                breaker_status['gas'] = self._gas_circuit_breaker.state.value
+            if self._dex_circuit_breaker:
+                breaker_status['dex'] = self._dex_circuit_breaker.state.value
+            
+            metrics_dict['circuit_breaker_states'] = breaker_status
         
         return metrics_dict
     
@@ -917,10 +1317,9 @@ class TransactionManager:
             self.logger.error(f"❌ Transaction cleanup error: {e}", exc_info=True)
             return 0
     
-    
     async def shutdown(self) -> None:
         """
-        Gracefully shutdown the transaction manager.
+        Gracefully shutdown the transaction manager with circuit breaker cleanup.
         
         Cancels all background tasks and cleans up resources.
         """
@@ -932,6 +1331,15 @@ class TransactionManager:
             
             # Cancel all retry tasks
             await self._retry_manager.cleanup_retry_tasks()
+            
+            # Reset circuit breakers if needed
+            if self._circuit_breaker_manager:
+                # Reset only execution-related breakers for this chain
+                await self._circuit_breaker_manager.reset_breaker(
+                    group=CircuitBreakerGroup.EXECUTION,
+                    chain_id=self.chain_id
+                )
+                self.logger.info("✅ Circuit breakers reset for shutdown")
             
             # Disconnect services
             if self._web3_client:
@@ -1138,402 +1546,4 @@ try:
     
 except ImportError:
     # Not in Django environment
-    pass_id=transaction_id,
-                transaction_state=transaction_state,
-                gas_savings_achieved=gas_savings
-            )
-        else:
-            # Handle failure with potential retry
-            self.logger.error(f"❌ Initial transaction submission failed: {transaction_id}")
-            
-            # Check if we should retry
-            if request.auto_retry and await self._retry_manager.should_retry_transaction(
-                transaction_state, 
-                swap_result.error_message
-            ):
-                self.logger.info(f"🔄 Scheduling automatic retry for transaction: {transaction_id}")
-                
-                await self._retry_manager.schedule_auto_retry(
-                    transaction_id,
-                    lambda: self._auto_retry_transaction(transaction_id, request)
-                )
-                
-                return TransactionManagerResult(
-                    success=False,
-                    transaction_id=transaction_id,
-                    transaction_state=transaction_state,
-                    error_message=f"Transaction failed, retry scheduled: {swap_result.error_message}"
-                )
-            else:
-                # No retry, mark as failed
-                transaction_state.status = TransactionStatus.FAILED
-                transaction_state.error_message = swap_result.error_message
-                await self._broadcast_transaction_update(transaction_state)
-                
-                # Record failure
-                self._retry_manager.record_failure()
-                
-                return TransactionManagerResult(
-                    success=False,
-                    transaction_id=transaction_id,
-                    transaction_state=transaction_state,
-                    error_message=swap_result.error_message
-                )
-        
-    except Exception as e:
-        self.logger.error(f"❌ Transaction submission failed: {transaction_id} - {e}", exc_info=True)
-        
-        # Update transaction state with error
-        if transaction_id in self._active_transactions:
-            transaction_state = self._active_transactions[transaction_id]
-            transaction_state.status = TransactionStatus.FAILED
-            transaction_state.error_message = str(e)
-            transaction_state.error_type = classify_error(str(e)).value
-            await self._broadcast_transaction_update(transaction_state)
-        
-        # Record failure
-        self._retry_manager.record_failure()
-        
-        return TransactionManagerResult(
-            success=False,
-            transaction_id=transaction_id,
-            error_message=str(e)
-        )
-
-async def retry_failed_transaction(
-    self,
-    transaction_id: str,
-    gas_escalation_percent: Optional[Decimal] = None
-) -> TransactionManagerResult:
-    """
-    Manually retry a failed transaction with gas escalation.
-    
-    Args:
-        transaction_id: ID of transaction to retry
-        gas_escalation_percent: Gas price increase percentage (default from config)
-        
-    Returns:
-        TransactionManagerResult with retry outcome
-    """
-    try:
-        # Get transaction state
-        transaction_state = self._active_transactions.get(transaction_id)
-        if not transaction_state:
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message="Transaction not found"
-            )
-        
-        # Check if already retrying
-        if transaction_state.status == TransactionStatus.RETRYING:
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message="Transaction is already being retried"
-            )
-        
-        # Check retry limit
-        if transaction_state.retry_count >= transaction_state.max_retries:
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message=f"Maximum retry limit ({transaction_state.max_retries}) reached"
-            )
-        
-        self.logger.info(
-            f"🔄 Manually retrying transaction: {transaction_id} "
-            f"(Attempt {transaction_state.retry_count + 1})"
-        )
-        
-        # Update status
-        transaction_state.status = TransactionStatus.RETRYING
-        transaction_state.retry_count += 1
-        transaction_state.last_retry_at = datetime.now(timezone.utc)
-        await self._broadcast_transaction_update(transaction_state)
-        
-        # Calculate new gas price with escalation
-        new_gas_price = self._retry_manager.calculate_retry_gas_price(transaction_state)
-        
-        # Update swap params with new gas price
-        if transaction_state.swap_params:
-            transaction_state.swap_params.gas_price_gwei = new_gas_price
-            transaction_state.gas_price_gwei = new_gas_price
-        
-        self.logger.info(
-            f"⛽ Retry gas price: {new_gas_price:.2f} gwei "
-            f"(+{((new_gas_price / (transaction_state.original_gas_price or Decimal('1'))) - 1) * 100:.1f}%)"
-        )
-        
-        # Re-execute swap with new parameters
-        swap_result = await self._execute_swap_transaction(
-            transaction_state,
-            TransactionSubmissionRequest(
-                user=User.objects.get(id=transaction_state.user_id),
-                chain_id=transaction_state.chain_id,
-                swap_params=transaction_state.swap_params,
-                is_paper_trade=False
-            )
-        )
-        
-        # Update transaction state with retry results
-        transaction_state.swap_result = swap_result
-        if swap_result.success:
-            transaction_state.status = TransactionStatus.PENDING
-            transaction_state.transaction_hash = swap_result.transaction_hash
-            self.metrics.retried_transactions += 1
-            
-            # Start monitoring
-            asyncio.create_task(self._monitor_transaction_status(transaction_id))
-            
-            self.logger.info(f"✅ Transaction retry successful: {transaction_id}")
-            
-            return TransactionManagerResult(
-                success=True,
-                transaction_id=transaction_id,
-                transaction_state=transaction_state,
-                was_retried=True,
-                final_gas_price=new_gas_price
-            )
-        else:
-            # Retry failed
-            transaction_state.error_message = swap_result.error_message
-            
-            # Check if we should retry again
-            if transaction_state.retry_count < transaction_state.max_retries:
-                # Schedule another retry with backoff
-                backoff = self._retry_manager.calculate_backoff_delay(transaction_state.retry_count)
-                self.logger.info(f"⏱️ Scheduling next retry in {backoff:.1f} seconds")
-                
-                await asyncio.sleep(backoff)
-                return await self.retry_failed_transaction(transaction_id, gas_escalation_percent)
-            else:
-                # Final failure
-                transaction_state.status = TransactionStatus.FAILED
-                await self._broadcast_transaction_update(transaction_state)
-                
-                self.logger.error(
-                    f"❌ Transaction retry failed after {transaction_state.retry_count} attempts: "
-                    f"{transaction_id}"
-                )
-                
-                return TransactionManagerResult(
-                    success=False,
-                    transaction_id=transaction_id,
-                    transaction_state=transaction_state,
-                    error_message=f"Retry failed: {swap_result.error_message}",
-                    was_retried=True
-                )
-        
-    except Exception as e:
-        self.logger.error(f"❌ Error during transaction retry: {transaction_id} - {e}", exc_info=True)
-        
-        if transaction_id in self._active_transactions:
-            transaction_state = self._active_transactions[transaction_id]
-            transaction_state.status = TransactionStatus.FAILED
-            transaction_state.error_message = f"Retry error: {str(e)}"
-            await self._broadcast_transaction_update(transaction_state)
-        
-        return TransactionManagerResult(
-            success=False,
-            transaction_id=transaction_id,
-            error_message=str(e)
-        )
-
-async def replace_stuck_transaction(
-    self,
-    transaction_id: str,
-    gas_multiplier: Optional[Decimal] = None
-) -> TransactionManagerResult:
-    """
-    Replace a stuck transaction with a new one using the same nonce but higher gas.
-    
-    Args:
-        transaction_id: ID of stuck transaction to replace
-        gas_multiplier: Gas price multiplier (default from config)
-        
-    Returns:
-        TransactionManagerResult with replacement outcome
-    """
-    try:
-        # Get transaction state
-        transaction_state = self._active_transactions.get(transaction_id)
-        if not transaction_state:
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message="Transaction not found"
-            )
-        
-        # Check if transaction has a nonce
-        if transaction_state.nonce is None:
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message="Cannot replace transaction without nonce"
-            )
-        
-        self.logger.info(
-            f"🔄 Replacing stuck transaction: {transaction_id} "
-            f"(Nonce: {transaction_state.nonce})"
-        )
-        
-        # Update status
-        transaction_state.status = TransactionStatus.REPLACED
-        await self._broadcast_transaction_update(transaction_state)
-        
-        # Calculate replacement gas price
-        multiplier = gas_multiplier or self.retry_config.replacement_gas_multiplier
-        new_gas_price = (transaction_state.gas_price_gwei or Decimal('30')) * multiplier
-        
-        # Apply ceiling
-        if new_gas_price > self.retry_config.max_gas_price_gwei:
-            new_gas_price = self.retry_config.max_gas_price_gwei
-        
-        self.logger.info(
-            f"⛽ Replacement gas price: {new_gas_price:.2f} gwei "
-            f"(x{multiplier} multiplier)"
-        )
-        
-        # Create replacement transaction with same nonce
-        if transaction_state.swap_params:
-            transaction_state.swap_params.gas_price_gwei = new_gas_price
-            transaction_state.swap_params.nonce = transaction_state.nonce  # Use same nonce
-        
-        # Execute replacement
-        swap_result = await self._execute_swap_transaction(
-            transaction_state,
-            TransactionSubmissionRequest(
-                user=User.objects.get(id=transaction_state.user_id),
-                chain_id=transaction_state.chain_id,
-                swap_params=transaction_state.swap_params,
-                is_paper_trade=False
-            )
-        )
-        
-        if swap_result.success:
-            transaction_state.replacement_tx_hash = swap_result.transaction_hash
-            transaction_state.status = TransactionStatus.PENDING
-            self.metrics.replaced_transactions += 1
-            
-            # Start monitoring replacement
-            asyncio.create_task(self._monitor_transaction_status(transaction_id))
-            
-            self.logger.info(
-                f"✅ Transaction replaced successfully: {transaction_id} "
-                f"(New hash: {swap_result.transaction_hash[:10]}...)"
-            )
-            
-            return TransactionManagerResult(
-                success=True,
-                transaction_id=transaction_id,
-                transaction_state=transaction_state,
-                was_retried=True,
-                final_gas_price=new_gas_price
-            )
-        else:
-            transaction_state.status = TransactionStatus.FAILED
-            transaction_state.error_message = f"Replacement failed: {swap_result.error_message}"
-            await self._broadcast_transaction_update(transaction_state)
-            
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message=swap_result.error_message
-            )
-        
-    except Exception as e:
-        self.logger.error(f"❌ Error replacing transaction: {transaction_id} - {e}", exc_info=True)
-        return TransactionManagerResult(
-            success=False,
-            transaction_id=transaction_id,
-            error_message=str(e)
-        )
-
-async def _auto_retry_transaction(
-    self,
-    transaction_id: str,
-    original_request: TransactionSubmissionRequest
-) -> None:
-    """
-    Replace a stuck transaction with a new one using the same nonce but higher gas.
-    
-    Args:
-        transaction_id: ID of stuck transaction to replace
-        gas_multiplier: Gas price multiplier (default from config)
-        
-    Returns:
-        TransactionManagerResult with replacement outcome
-    """
-    try:
-        # Get transaction state
-        transaction_state = self._active_transactions.get(transaction_id)
-        if not transaction_state:
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message="Transaction not found"
-            )
-        
-        # Check if transaction has a nonce
-        if transaction_state.nonce is None:
-            return TransactionManagerResult(
-                success=False,
-                transaction_id=transaction_id,
-                error_message="Cannot replace transaction without nonce"
-            )
-        
-        self.logger.info(
-            f"🔄 Replacing stuck transaction: {transaction_id} "
-            f"(Nonce: {transaction_state.nonce})"
-        )
-        
-        # Update status
-        transaction_state.status = TransactionStatus.REPLACED
-        await self._broadcast_transaction_update(transaction_state)
-        
-        # Calculate replacement gas price
-        multiplier = gas_multiplier or self.retry_config.replacement_gas_multiplier
-        new_gas_price = (transaction_state.gas_price_gwei or Decimal('30')) * multiplier
-        
-        # Apply ceiling
-        if new_gas_price > self.retry_config.max_gas_price_gwei:
-            new_gas_price = self.retry_config.max_gas_price_gwei
-        
-        self.logger.info(
-            f"⛽ Replacement gas price: {new_gas_price:.2f} gwei "
-            f"(x{multiplier} multiplier)"
-        )
-        
-        # Create replacement transaction with same nonce
-        if transaction_state.swap_params:
-            transaction_state.swap_params.gas_price_gwei = new_gas_price
-            transaction_state.swap_params.nonce = transaction_state.nonce  # Use same nonce
-        
-        # Execute replacement
-        swap_result = await self._execute_swap_transaction(
-            transaction_state,
-            TransactionSubmissionRequest(
-                user=User.objects.get(id=transaction_state.user_id),
-                chain_id=transaction_state.chain_id,
-                swap_params=transaction_state.swap_params,
-                is_paper_trade=False
-            )
-        )
-        
-        if swap_result.success:
-            transaction_state.replacement_tx_hash = swap_result.transaction_hash
-            transaction_state.status = TransactionStatus.PENDING
-            self.metrics.replaced_transactions += 1
-            
-            # Start monitoring replacement
-            asyncio.create_task(self._monitor_transaction_status(transaction_id))
-            
-            self.logger.info(
-                f"✅ Transaction replaced successfully: {transaction_id} "
-                f"(New hash: {swap_result.transaction_hash[:10]}...)"
-            )
-            
-            return TransactionManagerResult(
-                success=True,
-                transaction
+    pass

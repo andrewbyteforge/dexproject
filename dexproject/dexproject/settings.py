@@ -120,6 +120,7 @@ LOCAL_APPS = [
     'wallet',
     'analytics',
     'paper_trading',
+    'shared.circuit_breakers',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
