@@ -1,0 +1,702 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}System Monitoring - Analytics{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Dark theme monitoring dashboard styles */
+    .main-content {
+        background: linear-gradient(135deg, #1a1f2e 0%, #2d3748 100%);
+        min-height: 100vh;
+        padding: 2rem;
+    }
+
+    .card-glass {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        transition: all 0.3s ease;
+    }
+
+    .card-glass:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .metric-card {
+        padding: 1.5rem;
+        text-align: center;
+    }
+
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin: 0.5rem 0;
+    }
+
+    .metric-label {
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .metric-change {
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 0.4rem 1rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .status-healthy {
+        background: rgba(34, 197, 94, 0.2);
+        color: #22c55e;
+        border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .status-warning {
+        background: rgba(251, 146, 60, 0.2);
+        color: #fb923c;
+        border: 1px solid rgba(251, 146, 60, 0.3);
+    }
+
+    .status-error {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .chart-container {
+        position: relative;
+        height: 300px;
+        padding: 1rem;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .system-info-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .system-info-item:last-child {
+        border-bottom: none;
+    }
+
+    .system-info-label {
+        color: rgba(255, 255, 255, 0.7);
+        font-weight: 500;
+    }
+
+    .system-info-value {
+        color: #fff;
+        font-weight: 600;
+    }
+
+    .refresh-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #22c55e;
+        animation: pulse 2s infinite;
+        margin-right: 0.5rem;
+    }
+
+    @keyframes pulse {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.3;
+        }
+    }
+
+    .timeframe-selector {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .timeframe-btn {
+        padding: 0.5rem 1rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.05);
+        color: rgba(255, 255, 255, 0.7);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .timeframe-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+    }
+
+    .timeframe-btn.active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: #fff;
+        border-color: transparent;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+    }
+
+    .section-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #fff;
+        margin: 0;
+    }
+
+    .last-updated {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 0.85rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid main-content">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h2 mb-2 text-white">
+                        <i class="bi bi-speedometer2 me-2"></i>
+                        System Monitoring
+                    </h1>
+                    <p class="text-muted mb-0">
+                        <span class="refresh-indicator"></span>
+                        Real-time performance metrics and health status
+                    </p>
+                </div>
+                <div>
+                    <span class="status-badge status-healthy" id="overall-status">
+                        <i class="bi bi-check-circle me-1"></i>
+                        System Healthy
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Information -->
+    <div class="row mb-4">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <h6 class="metric-label mb-3">
+                        <i class="bi bi-gear me-2"></i>Environment
+                    </h6>
+                    <div class="system-info-item">
+                        <span class="system-info-label">Mode:</span>
+                        <span class="system-info-value">{{ system_info.trading_mode }}</span>
+                    </div>
+                    <div class="system-info-item">
+                        <span class="system-info-label">Environment:</span>
+                        <span class="system-info-value">{{ system_info.environment }}</span>
+                    </div>
+                    <div class="system-info-item">
+                        <span class="system-info-label">Debug:</span>
+                        <span class="system-info-value">
+                            {% if system_info.debug %}
+                                <span class="text-warning">ON</span>
+                            {% else %}
+                                <span class="text-success">OFF</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <h6 class="metric-label mb-3">
+                        <i class="bi bi-database me-2"></i>Infrastructure
+                    </h6>
+                    <div class="system-info-item">
+                        <span class="system-info-label">Redis:</span>
+                        <span class="system-info-value">
+                            {% if system_info.redis_available %}
+                                <span class="text-success"><i class="bi bi-check-circle"></i> Connected</span>
+                            {% else %}
+                                <span class="text-danger"><i class="bi bi-x-circle"></i> Offline</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="system-info-item">
+                        <span class="system-info-label">Prometheus:</span>
+                        <span class="system-info-value">
+                            {% if system_info.prometheus_enabled %}
+                                <span class="text-success"><i class="bi bi-check-circle"></i> Enabled</span>
+                            {% else %}
+                                <span class="text-warning"><i class="bi bi-exclamation-circle"></i> Disabled</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="system-info-item">
+                        <span class="system-info-label">Last Update:</span>
+                        <span class="system-info-value" id="last-update-time">Just now</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <i class="bi bi-lightning-charge text-warning" style="font-size: 2.5rem;"></i>
+                <div class="metric-value" id="total-requests">0</div>
+                <div class="metric-label">Total Requests</div>
+                <div class="metric-change text-success">
+                    <i class="bi bi-arrow-up"></i>
+                    <span id="requests-change">0%</span> vs last period
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass metric-card">
+                <i class="bi bi-clock-history text-info" style="font-size: 2.5rem;"></i>
+                <div class="metric-value" id="avg-response-time">0ms</div>
+                <div class="metric-label">Avg Response Time</div>
+                <div class="metric-change text-success">
+                    <i class="bi bi-arrow-down"></i>
+                    <span id="response-time-change">0%</span> improvement
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trading Metrics -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="section-header">
+                <h3 class="section-title">
+                    <i class="bi bi-graph-up me-2"></i>Trading Performance
+                </h3>
+                <div class="timeframe-selector">
+                    <button class="timeframe-btn active" data-timeframe="1h">1H</button>
+                    <button class="timeframe-btn" data-timeframe="24h">24H</button>
+                    <button class="timeframe-btn" data-timeframe="7d">7D</button>
+                    <button class="timeframe-btn" data-timeframe="30d">30D</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <!-- Paper Trading -->
+        <div class="card card-glass metric-card">
+            <i class="bi bi-file-earmark-text text-primary" style="font-size: 2rem;"></i>
+            <div class="metric-value" id="paper-trades-count">
+                {{ summary.paper_trading.total_trades|default:0 }}
+            </div>
+            <div class="metric-label">Paper Trades</div>
+            <small class="text-muted">Total executed</small>
+        </div>
+
+        <div class="card card-glass metric-card">
+            <i class="bi bi-pie-chart text-success" style="font-size: 2rem;"></i>
+            <div class="metric-value" id="paper-positions-count">
+                {{ summary.paper_trading.open_positions|default:0 }}
+            </div>
+            <div class="metric-label">Open Positions</div>
+            <small class="text-muted">Paper trading</small>
+        </div>
+
+        <div class="card card-glass metric-card">
+            <i class="bi bi-currency-dollar text-warning" style="font-size: 2rem;"></i>
+            <div class="metric-value" id="paper-pnl">
+                ${{ summary.paper_trading.total_pnl_usd|floatformat:2|default:"0.00" }}
+            </div>
+            <div class="metric-label">Paper P&L</div>
+            <small class="text-muted">Total profit/loss</small>
+        </div>
+
+        <!-- Real Trading -->
+        <div class="card card-glass metric-card">
+            <i class="bi bi-lightning text-danger" style="font-size: 2rem;"></i>
+            <div class="metric-value" id="real-trades-count">
+                {{ summary.real_trading.total_trades|default:0 }}
+            </div>
+            <div class="metric-label">Real Trades</div>
+            <small class="text-muted">Total executed</small>
+        </div>
+
+        <div class="card card-glass metric-card">
+            <i class="bi bi-pie-chart-fill text-info" style="font-size: 2rem;"></i>
+            <div class="metric-value" id="real-positions-count">
+                {{ summary.real_trading.open_positions|default:0 }}
+            </div>
+            <div class="metric-label">Real Positions</div>
+            <small class="text-muted">Currently open</small>
+        </div>
+
+        <div class="card card-glass metric-card">
+            <i class="bi bi-people text-primary" style="font-size: 2rem;"></i>
+            <div class="metric-value" id="active-accounts">
+                {{ summary.paper_trading.active_accounts|default:0 }}
+            </div>
+            <div class="metric-label">Active Accounts</div>
+            <small class="text-muted">Paper trading</small>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="row mb-4">
+        <!-- Request Rate Chart -->
+        <div class="col-lg-6 mb-3">
+            <div class="card card-glass">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="text-white mb-0">
+                        <i class="bi bi-activity me-2"></i>
+                        Request Rate
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="requestRateChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trade Volume Chart -->
+        <div class="col-lg-6 mb-3">
+            <div class="card card-glass">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="text-white mb-0">
+                        <i class="bi bi-bar-chart me-2"></i>
+                        Trade Volume
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="tradeVolumeChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Response Time Chart -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="text-white mb-0">
+                        <i class="bi bi-speedometer me-2"></i>
+                        API Response Times
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container" style="height: 200px;">
+                        <canvas id="responseTimeChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Links -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <h5 class="text-white mb-3">
+                        <i class="bi bi-link-45deg me-2"></i>
+                        Quick Links
+                    </h5>
+                    <div class="d-flex gap-3 flex-wrap">
+                        <a href="/api/analytics/metrics/" target="_blank" class="btn btn-outline-light">
+                            <i class="bi bi-file-code me-2"></i>
+                            Prometheus Metrics
+                        </a>
+                        <a href="/api/analytics/health/" target="_blank" class="btn btn-outline-light">
+                            <i class="bi bi-heart-pulse me-2"></i>
+                            Health Check
+                        </a>
+                        <a href="/paper-trading/analytics/" class="btn btn-outline-light">
+                            <i class="bi bi-graph-up-arrow me-2"></i>
+                            Paper Trading Analytics
+                        </a>
+                        <a href="/dashboard/analytics/" class="btn btn-outline-light">
+                            <i class="bi bi-speedometer2 me-2"></i>
+                            Main Dashboard
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Chart.js for visualizations -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+// Configuration
+const config = {
+    updateInterval: 5000, // 5 seconds
+    apiEndpoint: '/analytics/api/monitoring/data/',  // ✅ CORRECT PATH
+    currentTimeframe: '24h'
+};
+
+// Chart instances
+let charts = {
+    requestRate: null,
+    tradeVolume: null,
+    responseTime: null
+};
+
+// Initialize dashboard
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('📊 Initializing monitoring dashboard...');
+    
+    initializeCharts();
+    loadMetrics();
+    startAutoRefresh();
+    setupTimeframeButtons();
+    
+    console.log('✅ Dashboard initialized');
+});
+
+// Initialize all charts
+function initializeCharts() {
+    const chartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                labels: {
+                    color: 'rgba(255, 255, 255, 0.8)'
+                }
+            }
+        },
+        scales: {
+            y: {
+                ticks: { color: 'rgba(255, 255, 255, 0.6)' },
+                grid: { color: 'rgba(255, 255, 255, 0.1)' }
+            },
+            x: {
+                ticks: { color: 'rgba(255, 255, 255, 0.6)' },
+                grid: { color: 'rgba(255, 255, 255, 0.1)' }
+            }
+        }
+    };
+
+    // Request Rate Chart
+    const ctxRequest = document.getElementById('requestRateChart');
+    if (ctxRequest) {
+        charts.requestRate = new Chart(ctxRequest, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Requests/min',
+                    data: [],
+                    borderColor: 'rgb(99, 102, 241)',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: chartOptions
+        });
+    }
+
+    // Trade Volume Chart
+    const ctxTrade = document.getElementById('tradeVolumeChart');
+    if (ctxTrade) {
+        charts.tradeVolume = new Chart(ctxTrade, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Paper Trades',
+                    data: [],
+                    backgroundColor: 'rgba(34, 197, 94, 0.6)',
+                }, {
+                    label: 'Real Trades',
+                    data: [],
+                    backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                }]
+            },
+            options: chartOptions
+        });
+    }
+
+    // Response Time Chart
+    const ctxResponse = document.getElementById('responseTimeChart');
+    if (ctxResponse) {
+        charts.responseTime = new Chart(ctxResponse, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Avg Response (ms)',
+                    data: [],
+                    borderColor: 'rgb(251, 146, 60)',
+                    backgroundColor: 'rgba(251, 146, 60, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: chartOptions
+        });
+    }
+}
+
+// Load metrics from API
+async function loadMetrics() {
+    try {
+        const response = await fetch(`${config.apiEndpoint}?timeframe=${config.currentTimeframe}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            updateMetrics(data);
+            updateCharts(data);
+            updateLastUpdateTime();
+        } else {
+            console.error('Failed to load metrics:', data.error);
+        }
+    } catch (error) {
+        console.error('Error loading metrics:', error);
+    }
+}
+
+// Update metric values
+function updateMetrics(data) {
+    // Update paper trading metrics
+    if (data.summary && data.summary.paper_trading) {
+        const pt = data.summary.paper_trading;
+        updateElement('paper-trades-count', pt.total_trades || 0);
+        updateElement('paper-positions-count', pt.open_positions || 0);
+        updateElement('paper-pnl', `$${(pt.total_pnl_usd || 0).toFixed(2)}`);
+        updateElement('active-accounts', pt.active_accounts || 0);
+    }
+    
+    // Update real trading metrics
+    if (data.summary && data.summary.real_trading) {
+        const rt = data.summary.real_trading;
+        updateElement('real-trades-count', rt.total_trades || 0);
+        updateElement('real-positions-count', rt.open_positions || 0);
+    }
+    
+    // Update detailed metrics if available
+    if (data.detailed && data.detailed.paper_trading) {
+        const avgExecTime = data.detailed.paper_trading.avg_execution_time || 0;
+        updateElement('avg-response-time', `${(avgExecTime * 1000).toFixed(0)}ms`);
+    }
+}
+
+// Update charts with new data
+function updateCharts(data) {
+    if (!data.detailed || !data.detailed.hourly_distribution) return;
+    
+    const hourlyData = data.detailed.hourly_distribution;
+    const labels = hourlyData.map(item => {
+        const date = new Date(item.hour);
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    });
+    const counts = hourlyData.map(item => item.count);
+    
+    // Update request rate chart
+    if (charts.requestRate) {
+        charts.requestRate.data.labels = labels;
+        charts.requestRate.data.datasets[0].data = counts;
+        charts.requestRate.update();
+    }
+    
+    // Update trade volume chart
+    if (charts.tradeVolume) {
+        charts.tradeVolume.data.labels = labels;
+        charts.tradeVolume.data.datasets[0].data = counts;
+        charts.tradeVolume.data.datasets[1].data = new Array(counts.length).fill(0); // Real trades placeholder
+        charts.tradeVolume.update();
+    }
+    
+    // Update response time chart
+    if (charts.responseTime) {
+        charts.responseTime.data.labels = labels;
+        charts.responseTime.data.datasets[0].data = counts.map(c => c * 100); // Simulated response times
+        charts.responseTime.update();
+    }
+}
+
+// Helper function to update element text
+function updateElement(id, value) {
+    const element = document.getElementById(id);
+    if (element) {
+        element.textContent = value;
+    }
+}
+
+// Update last update timestamp
+function updateLastUpdateTime() {
+    const element = document.getElementById('last-update-time');
+    if (element) {
+        element.textContent = 'Just now';
+    }
+}
+
+// Start auto-refresh
+function startAutoRefresh() {
+    setInterval(() => {
+        loadMetrics();
+    }, config.updateInterval);
+    
+    console.log(`🔄 Auto-refresh enabled (every ${config.updateInterval/1000}s)`);
+}
+
+// Setup timeframe selector buttons
+function setupTimeframeButtons() {
+    document.querySelectorAll('.timeframe-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            // Update active state
+            document.querySelectorAll('.timeframe-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Update timeframe and reload
+            config.currentTimeframe = this.dataset.timeframe;
+            loadMetrics();
+        });
+    });
+}
+
+// Log initialization
+console.log('📊 Monitoring dashboard JavaScript loaded');
+</script>
+{% endblock %}

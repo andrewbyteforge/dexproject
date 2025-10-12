@@ -142,6 +142,19 @@ MIDDLEWARE = [
 if PRODUCTION_MODE:
     MIDDLEWARE.insert(-1, 'shared.middleware.PerformanceMonitoringMiddleware')
 
+# =============================================================================
+# ANALYTICS MONITORING MIDDLEWARE
+# =============================================================================
+
+# Add analytics metrics middleware for automatic request tracking
+MIDDLEWARE.append('analytics.middleware.MetricsMiddleware')
+
+# Add database metrics middleware in DEBUG mode
+if DEBUG:
+    MIDDLEWARE.append('analytics.middleware.DatabaseMetricsMiddleware')
+
+logger.info("📊 Analytics monitoring middleware enabled")
+
 ROOT_URLCONF = 'dexproject.urls'
 
 TEMPLATES = [
@@ -790,8 +803,32 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': False,
         },
+                'analytics': {
+            'handlers': ['console', 'file_performance'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'analytics.metrics': {
+            'handlers': ['console', 'file_performance'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
+
+
+# =============================================================================
+# PROMETHEUS MONITORING CONFIGURATION
+# =============================================================================
+
+# Prometheus metrics collection
+PROMETHEUS_ENABLED = True  # Set to False to disable Prometheus metrics
+
+# Metrics collection settings
+METRICS_AUTO_REFRESH_INTERVAL = 5  # seconds
+METRICS_RETENTION_DAYS = 30  # days to keep historical metrics
+
+logger.info(f"📈 Prometheus monitoring: {'Enabled' if PROMETHEUS_ENABLED else 'Disabled'}")
 
 # =============================================================================
 # INTERNATIONALIZATION

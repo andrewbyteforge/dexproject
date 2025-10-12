@@ -3,7 +3,8 @@
 """
 URL configuration for dexproject project.
 
-Updated to include dashboard app URLs, paper trading URLs, and authentication.
+Updated to include dashboard app URLs, paper trading URLs, authentication,
+and analytics monitoring endpoints.
 
 File: dexproject/dexproject/urls.py
 """
@@ -25,11 +26,14 @@ urlpatterns = [
     # Paper Trading app
     path('paper-trading/', include('paper_trading.urls')),
     
+    # Analytics monitoring dashboard (includes both /analytics/ and /api/analytics/)
+    path('analytics/', include('analytics.urls')),
+    
+    
     # API endpoints
     path('api/trading/', include('trading.urls')),
     path('api/risk/', include('risk.urls')),
     path('api/wallet/', include('wallet.urls')),
-    path('api/analytics/', include('analytics.urls')),
     
     # Root redirect to dashboard
     path('', lambda request: redirect('dashboard:home')),
