@@ -5,7 +5,7 @@ This module provides all dashboard and page views for the paper trading system.
 Includes portfolio display, trade history, and configuration management pages.
 API endpoints have been moved to api_views.py
 
-UPDATED: Fixed decimal handling issues for large wei values
+UPDATED: Fixed decimal handling issues and trade history redirect bug
 
 File: dexproject/paper_trading/views.py
 """
@@ -64,12 +64,14 @@ def safe_decimal(value, default='0'):
         if isinstance(value, Decimal):
             # If it's a wei value (> 10^15), return 0 for display
             if value > Decimal('1000000000000000'):
+                logger.debug(f"Converting large wei value to {default}: {value}")
                 return Decimal(default)
             return value
             
         # Try to convert to Decimal
         return Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError):
+    except (InvalidOperation, ValueError, TypeError) as e:
+        logger.warning(f"Failed to convert value to decimal: {value}, error: {e}")
         return Decimal(default)
 
 
@@ -86,27 +88,51 @@ def format_trade_for_template(trade):
     Returns:
         Dictionary with formatted trade data
     """
-    return {
-        'trade_id': str(trade.trade_id),
-        'trade_type': trade.trade_type,
-        'token_in_symbol': trade.token_in_symbol,
-        'token_out_symbol': trade.token_out_symbol,
-        'amount_in_usd': safe_decimal(trade.amount_in_usd, '0'),
-        'amount_in_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD for display
-        'amount_out_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD approximation
-        'simulated_gas_cost_usd': safe_decimal(trade.simulated_gas_cost_usd, '0'),
-        'simulated_slippage_percent': safe_decimal(trade.simulated_slippage_percent, '0'),
-        'status': trade.status,
-        'created_at': trade.created_at,
-        'executed_at': trade.executed_at,
-        'execution_time_ms': trade.execution_time_ms or 0,
-        'mock_tx_hash': trade.mock_tx_hash,
-        'strategy_name': trade.strategy_name,
-        'simulated_gas_price_gwei': safe_decimal(trade.simulated_gas_price_gwei, '0'),
-        'simulated_gas_used': trade.simulated_gas_used or 0,
-        # Original trade object for other attributes
-        '_original': trade
-    }
+    try:
+        return {
+            'trade_id': str(trade.trade_id),
+            'trade_type': trade.trade_type or 'unknown',
+            'token_in_symbol': trade.token_in_symbol or 'Unknown',
+            'token_out_symbol': trade.token_out_symbol or 'Unknown',
+            'amount_in_usd': safe_decimal(trade.amount_in_usd, '0'),
+            'amount_in_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD for display
+            'amount_out_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD approximation
+            'simulated_gas_cost_usd': safe_decimal(trade.simulated_gas_cost_usd, '0'),
+            'simulated_slippage_percent': safe_decimal(trade.simulated_slippage_percent, '0'),
+            'status': trade.status or 'pending',
+            'created_at': trade.created_at,
+            'executed_at': trade.executed_at,
+            'execution_time_ms': trade.execution_time_ms or 0,
+            'mock_tx_hash': trade.mock_tx_hash or '',
+            'strategy_name': trade.strategy_name or 'Manual',
+            'simulated_gas_price_gwei': safe_decimal(trade.simulated_gas_price_gwei, '0'),
+            'simulated_gas_used': trade.simulated_gas_used or 0,
+            # Original trade object for other attributes
+            '_original': trade
+        }
+    except Exception as e:
+        logger.error(f"Error formatting trade {getattr(trade, 'trade_id', 'unknown')}: {e}")
+        # Return minimal safe data
+        return {
+            'trade_id': str(getattr(trade, 'trade_id', 'Unknown')),
+            'trade_type': 'unknown',
+            'token_in_symbol': 'Unknown',
+            'token_out_symbol': 'Unknown',
+            'amount_in_usd': Decimal('0'),
+            'amount_in_display': Decimal('0'),
+            'amount_out_display': Decimal('0'),
+            'simulated_gas_cost_usd': Decimal('0'),
+            'simulated_slippage_percent': Decimal('0'),
+            'status': 'error',
+            'created_at': timezone.now(),
+            'executed_at': None,
+            'execution_time_ms': 0,
+            'mock_tx_hash': '',
+            'strategy_name': 'Unknown',
+            'simulated_gas_price_gwei': Decimal('0'),
+            'simulated_gas_used': 0,
+            '_original': trade
+        }
 
 
 def format_position_for_template(position):
@@ -119,22 +145,41 @@ def format_position_for_template(position):
     Returns:
         Dictionary with formatted position data
     """
-    return {
-        'position_id': str(position.position_id),
-        'token_symbol': position.token_symbol,
-        'token_address': position.token_address,
-        'quantity': safe_decimal(position.quantity, '0'),
-        'average_entry_price_usd': safe_decimal(position.average_entry_price_usd, '0'),
-        'current_price_usd': safe_decimal(position.current_price_usd, '0'),
-        'total_invested_usd': safe_decimal(position.total_invested_usd, '0'),
-        'current_value_usd': safe_decimal(position.current_value_usd, '0'),
-        'unrealized_pnl_usd': safe_decimal(position.unrealized_pnl_usd, '0'),
-        'realized_pnl_usd': safe_decimal(position.realized_pnl_usd, '0'),
-        'is_open': position.is_open,
-        'opened_at': position.opened_at,
-        'closed_at': position.closed_at,
-        '_original': position
-    }
+    try:
+        return {
+            'position_id': str(position.position_id),
+            'token_symbol': position.token_symbol or 'Unknown',
+            'token_address': position.token_address or '',
+            'quantity': safe_decimal(position.quantity, '0'),
+            'average_entry_price_usd': safe_decimal(position.average_entry_price_usd, '0'),
+            'current_price_usd': safe_decimal(position.current_price_usd, '0'),
+            'total_invested_usd': safe_decimal(position.total_invested_usd, '0'),
+            'current_value_usd': safe_decimal(position.current_value_usd, '0'),
+            'unrealized_pnl_usd': safe_decimal(position.unrealized_pnl_usd, '0'),
+            'realized_pnl_usd': safe_decimal(position.realized_pnl_usd, '0'),
+            'is_open': position.is_open,
+            'opened_at': position.opened_at,
+            'closed_at': position.closed_at,
+            '_original': position
+        }
+    except Exception as e:
+        logger.error(f"Error formatting position: {e}")
+        return {
+            'position_id': str(getattr(position, 'position_id', 'Unknown')),
+            'token_symbol': 'Unknown',
+            'token_address': '',
+            'quantity': Decimal('0'),
+            'average_entry_price_usd': Decimal('0'),
+            'current_price_usd': Decimal('0'),
+            'total_invested_usd': Decimal('0'),
+            'current_value_usd': Decimal('0'),
+            'unrealized_pnl_usd': Decimal('0'),
+            'realized_pnl_usd': Decimal('0'),
+            'is_open': False,
+            'opened_at': None,
+            'closed_at': None,
+            '_original': position
+        }
 
 
 # =============================================================================
@@ -379,13 +424,15 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         trades_query = PaperTrade.objects.filter(account=account)
         
         # Apply filters with validation
-        status_filter = request.GET.get('status', '').lower()  # Convert to lowercase
+        status_filter = request.GET.get('status', '')
         if status_filter:
+            # Don't convert to lowercase - check the actual values in your database
             trades_query = trades_query.filter(status=status_filter)
             logger.debug(f"Applied status filter: {status_filter}")
         
-        trade_type_filter = request.GET.get('trade_type', '').lower()  # Convert to lowercase
+        trade_type_filter = request.GET.get('trade_type', '')
         if trade_type_filter:
+            # Don't convert to lowercase - check the actual values in your database
             trades_query = trades_query.filter(trade_type=trade_type_filter)
             logger.debug(f"Applied trade type filter: {trade_type_filter}")
         
@@ -417,33 +464,71 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         # Order by creation date
         trades_query = trades_query.order_by('-created_at')
         
-        # Pagination with formatted trades
-        paginator = Paginator(trades_query, 25)
+        # Format trades BEFORE pagination to avoid issues
+        formatted_trades = []
+        for trade in trades_query[:500]:  # Limit to avoid memory issues
+            try:
+                formatted_trades.append(format_trade_for_template(trade))
+            except Exception as e:
+                logger.error(f"Error formatting trade {trade.trade_id}: {e}")
+                continue
+        
+        # Paginate the formatted trades
+        paginator = Paginator(formatted_trades, 25)
         page_number = request.GET.get('page', 1)
+        
         try:
             page_obj = paginator.get_page(page_number)
-            # Format trades for template
-            formatted_page = []
-            for trade in page_obj:
-                formatted_page.append(format_trade_for_template(trade))
-            page_obj.object_list = formatted_page
         except Exception as e:
             logger.warning(f"Pagination error: {e}")
             page_obj = paginator.get_page(1)
         
         # Calculate summary stats with safe decimal handling
+        summary_stats = {
+            'total_trades': 0,
+            'total_volume': Decimal('0'),
+            'avg_trade_size': Decimal('0'),
+            'total_gas_cost': Decimal('0')
+        }
+        
         try:
             # Use raw SQL to avoid decimal issues
             with connection.cursor() as cursor:
-                cursor.execute("""
+                # Build WHERE clause for filters
+                where_clauses = ["account_id = %s"]
+                params = [str(account.account_id)]
+                
+                if status_filter:
+                    where_clauses.append("status = %s")
+                    params.append(status_filter)
+                
+                if trade_type_filter:
+                    where_clauses.append("trade_type = %s")
+                    params.append(trade_type_filter)
+                
+                if token_symbol:
+                    where_clauses.append("(token_in_symbol LIKE %s OR token_out_symbol LIKE %s)")
+                    params.extend([f'%{token_symbol}%', f'%{token_symbol}%'])
+                
+                if date_from:
+                    where_clauses.append("created_at >= %s")
+                    params.append(date_from)
+                
+                if date_to:
+                    where_clauses.append("created_at <= %s")
+                    params.append(date_to)
+                
+                where_sql = " AND ".join(where_clauses)
+                
+                cursor.execute(f"""
                     SELECT 
                         COUNT(*) as total_trades,
                         SUM(CASE WHEN amount_in_usd IS NOT NULL THEN CAST(amount_in_usd AS REAL) ELSE 0 END) as total_volume,
                         AVG(CASE WHEN amount_in_usd IS NOT NULL THEN CAST(amount_in_usd AS REAL) ELSE NULL END) as avg_trade_size,
                         SUM(CASE WHEN simulated_gas_cost_usd IS NOT NULL THEN CAST(simulated_gas_cost_usd AS REAL) ELSE 0 END) as total_gas_cost
                     FROM paper_trading_papertrade
-                    WHERE account_id = %s
-                """, [str(account.account_id)])
+                    WHERE {where_sql}
+                """, params)
                 
                 stats = cursor.fetchone()
                 summary_stats = {
@@ -452,14 +537,12 @@ def trade_history(request: HttpRequest) -> HttpResponse:
                     'avg_trade_size': safe_decimal(str(stats[2] or 0)),
                     'total_gas_cost': safe_decimal(str(stats[3] or 0))
                 }
+                
+                logger.info(f"Successfully calculated summary stats: {summary_stats['total_trades']} trades")
+                
         except Exception as e:
-            logger.error(f"Error calculating summary stats: {e}")
-            summary_stats = {
-                'total_trades': 0,
-                'total_volume': Decimal('0'),
-                'avg_trade_size': Decimal('0'),
-                'total_gas_cost': Decimal('0')
-            }
+            logger.error(f"Error calculating summary stats: {e}", exc_info=True)
+            # Keep default values
         
         context = {
             'page_title': 'Trade History',
@@ -468,19 +551,42 @@ def trade_history(request: HttpRequest) -> HttpResponse:
             'trades': page_obj,
             'status_filter': status_filter,
             'trade_type_filter': trade_type_filter,
+            'token_filter': token_symbol,
             'date_from': date_from,
             'date_to': date_to,
             'summary_stats': summary_stats,
             'user': user,
         }
         
-        logger.info(f"Successfully loaded trade history: {summary_stats['total_trades']} trades")
+        logger.info(f"Successfully loaded trade history page with {len(formatted_trades)} trades")
         return render(request, 'paper_trading/trade_history.html', context)
         
     except Exception as e:
-        logger.error(f"Error loading trade history: {e}", exc_info=True)
+        logger.error(f"Critical error loading trade history: {e}", exc_info=True)
         messages.error(request, f"Error loading trade history: {str(e)}")
-        return redirect('paper_trading:dashboard')
+        
+        # Instead of redirecting, render the trade history with no data
+        context = {
+            'page_title': 'Trade History',
+            'account': None,
+            'page_obj': None,
+            'trades': [],
+            'status_filter': '',
+            'trade_type_filter': '',
+            'token_filter': '',
+            'date_from': '',
+            'date_to': '',
+            'summary_stats': {
+                'total_trades': 0,
+                'total_volume': Decimal('0'),
+                'avg_trade_size': Decimal('0'),
+                'total_gas_cost': Decimal('0')
+            },
+            'user': None,
+            'error_message': f"Unable to load trade history: {str(e)}"
+        }
+        
+        return render(request, 'paper_trading/trade_history.html', context)
 
 
 def portfolio_view(request: HttpRequest) -> HttpResponse:
