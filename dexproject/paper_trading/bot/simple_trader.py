@@ -203,6 +203,8 @@ class EnhancedPaperTradingBot:
             log_msg += " (Circuit Breakers ENABLED - Risk Protection Active)"
         logger.info(log_msg)
     
+
+
     def initialize(self) -> bool:
         """
         Initialize bot components and connections.
@@ -216,6 +218,9 @@ class EnhancedPaperTradingBot:
             
             # Create trading session
             self._create_session()
+
+            # ✅ ADD THIS LINE - Clean up duplicates AFTER session is created
+            self._cleanup_duplicate_accounts()
             
             # Initialize intelligence engine
             self._initialize_intelligence()
@@ -395,17 +400,14 @@ class EnhancedPaperTradingBot:
             self.account = existing_accounts.first()
             logger.info(f"[ACCOUNT] Using existing account: {self.account.name} (ID: {self.account.account_id})")
             
-            # Optional: Clean up any duplicate accounts
+            # ✅ FIXED: Only log duplicates, don't delete them yet
+            # They will be cleaned up after the session is created successfully
             if existing_accounts.count() > 1:
-                duplicates = existing_accounts[1:]
-                for dup in duplicates:
-                    logger.warning(f"[ACCOUNT] Removing duplicate account: {dup.name} (ID: {dup.account_id})")
-                    dup.delete()
-                logger.info(f"[ACCOUNT] Cleaned up {len(duplicates)} duplicate accounts")
+                logger.info(f"[ACCOUNT] Found {existing_accounts.count() - 1} duplicate accounts (will clean up later)")
         else:
             # Create the one and only account
             self.account = PaperTradingAccount.objects.create(
-                name='My_Trading_Bot',
+                name='My_Trading_Account',  # ✅ Use consistent name
                 user=user,
                 current_balance_usd=Decimal('10000'),
                 initial_balance_usd=Decimal('10000')
@@ -416,6 +418,34 @@ class EnhancedPaperTradingBot:
         
         # Override the account_name to match what we're actually using
         self.account_name = self.account.name
+
+
+
+    def _cleanup_duplicate_accounts(self):
+        """Clean up duplicate accounts AFTER session is created successfully."""
+        try:
+            from django.contrib.auth.models import User
+            user = User.objects.get(username='demo_user')
+            
+            existing_accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
+            
+            if existing_accounts.count() > 1:
+                # Keep the first (oldest) account, delete the rest
+                duplicates = existing_accounts[1:]
+                for dup in duplicates:
+                    # Make sure it's not the active account
+                    if dup.account_id != self.account.account_id:
+                        logger.warning(f"[ACCOUNT] Cleaning up duplicate account: {dup.name} (ID: {dup.account_id})")
+                        dup.delete()
+                logger.info(f"[ACCOUNT] Cleaned up {len(duplicates)} duplicate accounts")
+        except Exception as e:
+            logger.error(f"[ACCOUNT] Error cleaning up duplicates: {e}")
+
+
+
+
+
+
 
     def _create_session(self) -> None:
         """
@@ -515,11 +545,29 @@ class EnhancedPaperTradingBot:
 
     def _initialize_intelligence(self):
         """Initialize the intelligence engine."""
+        active_config = PaperStrategyConfiguration.objects.filter(
+            account=self.account,
+            is_active=True
+        ).first()
+
         self.intelligence_engine = IntelSliderEngine(
             intel_level=self.intel_level,
-            account_id=str(self.account.account_id)
+            account_id=str(self.account.account_id),
+            strategy_config=active_config  # ✅ PASS CONFIG TO ENGINE
         )
         logger.info(f"[INTEL] Intelligence Engine initialized at Level {self.intel_level}")
+    
+
+
+
+
+
+
+
+
+
+
+
     
     def _load_positions(self):
         """Load existing open positions."""
@@ -684,6 +732,10 @@ class EnhancedPaperTradingBot:
                 
                 # Still update market prices for tracking
                 self._update_market_prices()
+                self._update_position_prices()
+                
+                # ✅ ADD THIS: Check for auto-close even when circuit breakers active
+                self._check_auto_close_positions()
                 
                 # Send status update
                 self._send_bot_status_update('circuit_breaker_active')
@@ -691,6 +743,10 @@ class EnhancedPaperTradingBot:
         
         # Normal tick processing
         self._update_market_prices()
+        self._update_position_prices()
+        
+        # ✅ ADD THIS: Check for positions to auto-close
+        self._check_auto_close_positions()
         
         # Analyze each token
         for token_data in self.token_list:
@@ -698,28 +754,98 @@ class EnhancedPaperTradingBot:
         
         # Update performance metrics
         self._update_performance_metrics()
-    
-    def _update_market_prices(self):
-        """Simulate market price changes."""
-        for token in self.token_list:
-            # Simulate price movement (-5% to +5%)
-            change = Decimal(random.uniform(-0.05, 0.05))
-            old_price = token['price']
-            token['price'] = old_price * (Decimal('1') + change)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def _update_position_prices(self):
+        """
+        Update all open position prices with current market prices.
+        
+        This method should be called on every tick to keep position
+        values current in the database for dashboard display.
+        """
+        try:
+            if not self.positions:
+                return
             
-            # Update price history
-            if token['symbol'] not in self.price_history:
-                self.price_history[token['symbol']] = []
-            self.price_history[token['symbol']].append(token['price'])
+            updated_count = 0
             
-            # Keep only last 100 prices
-            if len(self.price_history[token['symbol']]) > 100:
-                self.price_history[token['symbol']].pop(0)
+            for token_symbol, position in self.positions.items():
+                # Get current price from token list
+                current_token = next(
+                    (t for t in self.token_list if t['symbol'] == token_symbol),
+                    None
+                )
+                
+                if not current_token:
+                    continue
+                
+                # Update position with current price
+                old_price = position.current_price_usd
+                new_price = current_token['price']
+                
+                position.current_price_usd = new_price
+                position.current_value_usd = position.quantity * new_price
+                position.unrealized_pnl_usd = position.current_value_usd - position.total_invested_usd
+                position.last_updated = timezone.now()
+                position.save(update_fields=[
+                    'current_price_usd',
+                    'current_value_usd', 
+                    'unrealized_pnl_usd',
+                    'last_updated'
+                ])
+                
+                updated_count += 1
+                
+                # Log significant price changes
+                if old_price and old_price > 0:
+                    price_change_pct = ((new_price - old_price) / old_price) * 100
+                    if abs(price_change_pct) > 1:  # Log if >1% change
+                        logger.debug(
+                            f"[PRICE UPDATE] {token_symbol}: "
+                            f"${old_price:.2f} -> ${new_price:.2f} "
+                            f"({price_change_pct:+.2f}%), "
+                            f"Position value: ${position.current_value_usd:.2f}, "
+                            f"P&L: ${position.unrealized_pnl_usd:+.2f}"
+                        )
             
-            # Log significant changes
-            if abs(change) > Decimal('0.02'):
-                logger.info(f"[PRICE] {token['symbol']}: ${old_price:.2f} -> ${token['price']:.2f} ({change*100:.2f}%)")
-    
+            if updated_count > 0:
+                logger.debug(f"[POSITIONS] Updated prices for {updated_count} positions")
+                
+                # Update account's total P&L after price updates
+                self._update_account_pnl()
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to update position prices: {e}", exc_info=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _analyze_token(self, token_data: Dict[str, Any]):
         """Analyze a single token for trading opportunities."""
         try:
@@ -887,15 +1013,19 @@ class EnhancedPaperTradingBot:
                         'daily_trades': self.daily_trades_count
                     }
                 )
-                return False
+                return False            
             
             # Check daily trade limit
             current_date = timezone.now().date()
             if self.last_trade_date != current_date:
                 self.daily_trades_count = 0
                 self.last_trade_date = current_date
-            
-            max_daily_trades = getattr(self.strategy_config, 'max_daily_trades', 20)
+
+            # ✅ SAFE ACCESS - Check if strategy_config exists first
+            if hasattr(self, 'strategy_config') and self.strategy_config:
+                max_daily_trades = getattr(self.strategy_config, 'max_daily_trades', 20)
+            else:
+                max_daily_trades = 20  # Default fallback
             if self.daily_trades_count >= max_daily_trades:
                 logger.warning(f"[CB] Daily trade limit reached: {self.daily_trades_count}/{max_daily_trades}")
                 return False
@@ -971,107 +1101,191 @@ class EnhancedPaperTradingBot:
                     self.circuit_breaker_manager.check_circuit_breakers(portfolio_state)
                     
         except Exception as e:
-            logger.error(f"[ERROR] {decision.action} execution failed: {e}")
+            logger.error(f"[ERROR] {decision.action} execution failed: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()  # Print full traceback to console
             self.consecutive_failures += 1
     
-    def _execute_trade_with_tx_manager(self, decision: TradingDecision, 
-                                       token_symbol: str, current_price: Decimal) -> bool:
+    def _execute_trade_with_tx_manager(
+        self,
+        decision: TradingDecision,
+        token_symbol: str,
+        current_price: Decimal
+    ) -> bool:
         """
         Execute trade using Transaction Manager for gas optimization.
-        
+
+        IMPORTANT:
+            Transaction Manager requires real blockchain wallets and is not
+            compatible with paper trading mode. This method will automatically
+            fall back to legacy mode for paper trading.
+
+        Args:
+            decision: Trading decision from intelligence engine
+            token_symbol: Token to trade
+            current_price: Current token price
+
         Returns:
             True if trade was successful, False otherwise
         """
-        logger.info(f"[TX MANAGER] Executing {decision.action} via Transaction Manager")
-        
-        async def execute_with_tx_manager():
-            try:
-                # Determine swap parameters based on decision
-                if decision.action == 'BUY':
-                    token_in = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
-                    token_out = decision.token_address
-                    swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
-                else:  # SELL
-                    token_in = decision.token_address
-                    token_out = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'  # USDC
-                    swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
-                
-                # Calculate amounts (in wei units for simulation)
-                amount_in = int(decision.position_size_usd * 10**6)  # USDC has 6 decimals
-                amount_out_min = int(amount_in * 0.99)  # 1% slippage tolerance
-                
-                # Determine gas strategy based on intel level
-                if self.intel_level <= 3:
-                    gas_strategy = TradingGasStrategy.COST_EFFICIENT
-                elif self.intel_level >= 7:
-                    gas_strategy = TradingGasStrategy.AGGRESSIVE
-                else:
-                    gas_strategy = TradingGasStrategy.BALANCED
-                
-                # Create transaction submission request
-                tx_request = await create_transaction_submission_request(
-                    user=self.account.user,
-                    chain_id=self.chain_id,
-                    token_in=token_in,
-                    token_out=token_out,
-                    amount_in=amount_in,
-                    amount_out_minimum=amount_out_min,
-                    swap_type=swap_type,
-                    gas_strategy=gas_strategy,
-                    is_paper_trade=True,  # Always paper trade
-                    slippage_tolerance=Decimal('0.01')
+        try:
+            logger.info(
+                f"[TX MANAGER] Executing {decision.action} via Transaction Manager"
+            )
+
+            # ✅ PAPER TRADING COMPATIBILITY CHECK
+            if not hasattr(self.account.user, "wallet") or self.account.user.wallet is None:
+                logger.warning(
+                    "[TX MANAGER] Paper trading mode detected - Transaction Manager "
+                    "requires a real wallet. Falling back to legacy mode."
                 )
-                
-                # Submit transaction through Transaction Manager
-                result = await self.tx_manager.submit_transaction(tx_request)
-                
-                if result.success:
-                    # Check if circuit breaker was triggered
-                    if result.circuit_breaker_triggered:
-                        logger.warning(f"[CB] Trade blocked by TX Manager circuit breaker")
+                return self._execute_trade_legacy(decision, token_symbol, current_price)
+
+            async def execute_with_tx_manager() -> bool:
+                """Async wrapper to handle transaction submission."""
+                try:
+                    # Determine swap parameters
+                    if decision.action == "BUY":
+                        token_in = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+                        token_out = decision.token_address
+                    else:  # SELL
+                        token_in = decision.token_address
+                        token_out = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+
+                    swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
+
+                    # Calculate amounts (in wei)
+                    amount_in = int(decision.position_size_usd * 10**6)  # USDC = 6 decimals
+                    amount_out_min = int(amount_in * 0.99)  # 1% slippage tolerance
+
+                    # Gas strategy selection
+                    if self.intel_level <= 3:
+                        gas_strategy = TradingGasStrategy.COST_EFFICIENT
+                    elif self.intel_level >= 7:
+                        gas_strategy = TradingGasStrategy.AGGRESSIVE
+                    else:
+                        gas_strategy = TradingGasStrategy.BALANCED
+
+                    logger.debug(
+                        f"[TX MANAGER] Preparing TX: {decision.action} {token_symbol}, "
+                        f"Amount: ${decision.position_size_usd:.2f}, Gas: "
+                        f"{gas_strategy.value}"
+                    )
+
+                    # Create transaction request
+                    tx_request = await create_transaction_submission_request(
+                        user=self.account.user,
+                        chain_id=self.chain_id,
+                        token_in=token_in,
+                        token_out=token_out,
+                        amount_in=amount_in,
+                        amount_out_minimum=amount_out_min,
+                        swap_type=swap_type,
+                        gas_strategy=gas_strategy,
+                        is_paper_trade=True,
+                        slippage_tolerance=Decimal("0.01"),
+                    )
+
+                    logger.info("[TX MANAGER] Submitting transaction...")
+
+                    # Submit via Transaction Manager
+                    result = await self.tx_manager.submit_transaction(tx_request)
+
+                    if not result.success:
+                        logger.error(
+                            f"[TX MANAGER] Transaction failed: "
+                            f"{result.error_message or 'Unknown error'}"
+                        )
                         return False
-                    
-                    logger.info(f"[TX MANAGER] Transaction submitted: {result.transaction_id}")
-                    
+
+                    # Circuit breaker check
+                    if result.circuit_breaker_triggered:
+                        logger.warning(
+                            f"[CB] Trade blocked: "
+                            f"{', '.join(result.circuit_breaker_reasons or ['Unknown'])}"
+                        )
+                        return False
+
+                    logger.info(
+                        f"[TX MANAGER] Transaction submitted successfully: "
+                        f"{result.transaction_id}"
+                    )
+
                     # Track pending transaction
                     self.pending_transactions[result.transaction_id] = {
-                        'token_symbol': token_symbol,
-                        'action': decision.action,
-                        'amount': decision.position_size_usd,
-                        'submitted_at': timezone.now()
+                        "token_symbol": token_symbol,
+                        "action": decision.action,
+                        "amount": decision.position_size_usd,
+                        "submitted_at": timezone.now(),
                     }
-                    
+
                     # Update gas savings tracking
                     if result.gas_savings_achieved:
                         self.total_gas_savings += result.gas_savings_achieved
                         self.trades_with_tx_manager += 1
-                        avg_savings = self.total_gas_savings / self.trades_with_tx_manager
-                        logger.info(f"[TX MANAGER] Gas saved: {result.gas_savings_achieved:.2f}% "
-                                  f"(Average: {avg_savings:.2f}%)")
-                    
+                        avg_savings = (
+                            self.total_gas_savings / self.trades_with_tx_manager
+                        )
+                        logger.info(
+                            f"[TX MANAGER] Gas saved: {result.gas_savings_achieved:.2f}% "
+                            f"(Average: {avg_savings:.2f}%)"
+                        )
+
                     # Create paper trade record
-                    self._create_paper_trade_record(
-                        decision, token_symbol, current_price,
+                    trade = self._create_paper_trade_record(
+                        decision,
+                        token_symbol,
+                        current_price,
                         transaction_id=result.transaction_id,
-                        gas_savings=result.gas_savings_achieved
+                        gas_savings=result.gas_savings_achieved,
                     )
-                    
+
+                    if not trade:
+                        logger.error("[TX MANAGER] Failed to create paper trade record")
+                        return False
+
                     # Update positions
-                    self._update_positions_after_trade(decision, token_symbol, current_price)
-                    
+                    self._update_positions_after_trade(
+                        decision, token_symbol, current_price
+                    )
+
+                    logger.info(
+                        f"[TX MANAGER] Trade completed successfully: "
+                        f"{decision.action} {token_symbol} "
+                        f"${decision.position_size_usd:.2f}"
+                    )
                     return True
-                    
-                else:
-                    logger.error(f"[TX MANAGER] Transaction failed: {result.error_message}")
+
+                except Exception as e:
+                    logger.error(
+                        f"[TX MANAGER] Error during transaction execution: {e}",
+                        exc_info=True,
+                    )
                     return False
-                    
-            except Exception as e:
-                logger.error(f"[TX MANAGER] Error: {e}")
-                return False
-        
-        # Execute async function and return result
-        return async_to_sync(execute_with_tx_manager)()
-    
+
+            # Execute async function synchronously
+            return async_to_sync(execute_with_tx_manager)()
+
+        except Exception as e:
+            logger.error(
+                f"[TX MANAGER] Fatal error in _execute_trade_with_tx_manager: {e}",
+                exc_info=True,
+            )
+
+            # ✅ FALLBACK: Legacy mode on any fatal error
+            logger.warning("[TX MANAGER] Falling back to legacy mode due to error")
+            return self._execute_trade_legacy(decision, token_symbol, current_price)
+
+
+
+
+
+
+
+
+
+
+
     def _execute_trade_legacy(self, decision: TradingDecision, 
                              token_symbol: str, current_price: Decimal) -> bool:
         """
@@ -1097,12 +1311,23 @@ class EnhancedPaperTradingBot:
             return False
     
     def _create_paper_trade_record(self, decision: TradingDecision, token_symbol: str, 
-                                   current_price: Decimal, transaction_id: str = None,
-                                   gas_savings: Decimal = None):
+                                current_price: Decimal, transaction_id: str = None,
+                                gas_savings: Decimal = None):
         """
         Create paper trade record in database with proper lowercase status values.
         
         This method creates and saves PaperTrade records that will appear in the dashboard.
+        Updates account statistics including successful/failed trade counts.
+        
+        Args:
+            decision: Trading decision from intelligence engine
+            token_symbol: Symbol of token being traded
+            current_price: Current price of the token
+            transaction_id: Optional transaction ID from TX Manager
+            gas_savings: Optional gas savings percentage from TX Manager
+            
+        Returns:
+            PaperTrade: Created trade record or None if failed
         """
         try:
             # Map decision action to trade type (lowercase)
@@ -1194,7 +1419,7 @@ class EnhancedPaperTradingBot:
                 execution_time_ms=random.randint(500, 2000),
                 mock_tx_hash='0x' + uuid.uuid4().hex,
                 mock_block_number=random.randint(18000000, 18100000),
-                strategy_name=self.strategy_config.name if hasattr(self, 'strategy_config') else f'Intel_{self.intel_level}',
+                strategy_name=self.strategy_config.name if hasattr(self, 'strategy_config') and self.strategy_config else f'Intel_{self.intel_level}',
                 metadata={
                     'intel_level': self.intel_level,
                     'confidence_percent': float(decision.confidence_percent) if hasattr(decision, 'confidence_percent') else 75,
@@ -1216,13 +1441,20 @@ class EnhancedPaperTradingBot:
                 f"gas=${gas_cost_usd:.2f}, status=completed"
             )
             
-            # Create AI thought log for this trade
-            self._create_ai_thought_log(
-                paper_trade=trade,
-                decision=decision,
-                token_symbol=token_symbol,
-                token_address=token_out_address if trade_type == 'buy' else token_in_address
-            )
+            # ✅ UPDATE ACCOUNT STATISTICS
+            # Refresh account data from database to prevent race conditions
+            self.account.refresh_from_db()
+            
+            # Update trade counts based on status
+            if trade.status == 'completed':
+                self.account.successful_trades += 1
+                logger.debug(f"[ACCOUNT STATS] Successful trade count: {self.account.successful_trades}")
+            elif trade.status == 'failed':
+                self.account.failed_trades += 1
+                logger.debug(f"[ACCOUNT STATS] Failed trade count: {self.account.failed_trades}")
+            
+            # Update total trades counter
+            self.account.total_trades += 1
             
             # Update account balance
             if trade_type == 'buy':
@@ -1232,8 +1464,27 @@ class EnhancedPaperTradingBot:
                 # Add USDC minus gas
                 self.account.current_balance_usd += (actual_amount_out - gas_cost_usd)
             
-            self.account.total_trades += 1
-            self.account.save()
+            # Save all account updates
+            self.account.save(update_fields=[
+                'total_trades', 
+                'successful_trades', 
+                'failed_trades', 
+                'current_balance_usd'
+            ])
+            
+            logger.debug(
+                f"[ACCOUNT STATS] Updated: Total={self.account.total_trades}, "
+                f"Successful={self.account.successful_trades}, Failed={self.account.failed_trades}, "
+                f"Balance=${self.account.current_balance_usd:.2f}"
+            )
+            
+            # Create AI thought log for this trade
+            self._create_ai_thought_log(
+                paper_trade=trade,
+                decision=decision,
+                token_symbol=token_symbol,
+                token_address=token_out_address if trade_type == 'buy' else token_in_address
+            )
             
             # Send WebSocket update
             try:
@@ -1257,11 +1508,30 @@ class EnhancedPaperTradingBot:
             
         except Exception as e:
             logger.error(f"[ERROR] Failed to create trade record: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
             return None
-    
+
+
+
+
+
+
+
     def _create_ai_thought_log(self, paper_trade: PaperTrade, decision: TradingDecision,
-                               token_symbol: str, token_address: str):
-        """Create AI thought log for the trade."""
+                            token_symbol: str, token_address: str):
+        """
+        Create AI thought log for the trade.
+        
+        Args:
+            paper_trade: The paper trade record
+            decision: Trading decision that was made
+            token_symbol: Token symbol
+            token_address: Token address
+            
+        Returns:
+            PaperAIThoughtLog: Created thought log or None if failed
+        """
         try:
             # Map confidence to level
             confidence = float(getattr(decision, 'confidence_percent', 75))
@@ -1276,6 +1546,7 @@ class EnhancedPaperTradingBot:
             else:
                 confidence_level = 'VERY_LOW'
             
+            # ✅ ONLY USE FIELDS THAT EXIST IN THE MODEL
             thought_log = PaperAIThoughtLog.objects.create(
                 account=self.account,
                 paper_trade=paper_trade,
@@ -1286,21 +1557,30 @@ class EnhancedPaperTradingBot:
                 confidence_percent=Decimal(str(confidence)),
                 risk_score=Decimal(str(getattr(decision, 'risk_score', 50))),
                 opportunity_score=Decimal('70'),  # Default opportunity score
-                primary_reasoning=getattr(decision, 'primary_reasoning', 'Market analysis suggests favorable conditions')[:500],
-                supporting_factors=getattr(decision, 'supporting_factors', [])[:3] if hasattr(decision, 'supporting_factors') else [],
-                risk_factors=getattr(decision, 'risk_factors', [])[:3] if hasattr(decision, 'risk_factors') else [],
-                market_conditions={
-                    'volatility': 'medium',
-                    'trend': 'bullish' if decision.action == 'BUY' else 'bearish'
-                },
-                lane_used='SMART' if self.intel_level >= 5 else 'FAST',
-                strategy_name=self.strategy_config.name if hasattr(self, 'strategy_config') else f'Intel_{self.intel_level}',
-                intelligence_level=self.intel_level,
-                metadata={
+                primary_reasoning=getattr(
+                    decision, 
+                    'primary_reasoning', 
+                    'Market analysis suggests favorable conditions'
+                )[:500],
+                key_factors=[
+                    f"Intel Level: {self.intel_level}",
+                    f"Action: {decision.action}",
+                    f"Confidence: {confidence:.1f}%"
+                ],
+                positive_signals=[],
+                negative_signals=[],
+                market_data={
+                    'intel_level': self.intel_level,
                     'position_size_usd': float(decision.position_size_usd),
-                    'stop_loss': float(decision.stop_loss) if hasattr(decision, 'stop_loss') else None,
-                    'take_profit': float(decision.take_profit) if hasattr(decision, 'take_profit') else None,
-                }
+                    'risk_score': float(getattr(decision, 'risk_score', 50))
+                },
+                strategy_name=(
+                    self.strategy_config.name 
+                    if hasattr(self, 'strategy_config') and self.strategy_config 
+                    else f'Intel_{self.intel_level}'
+                ),
+                lane_used='SMART' if self.intel_level >= 5 else 'FAST',
+                analysis_time_ms=100
             )
             
             logger.info(
@@ -1308,29 +1588,28 @@ class EnhancedPaperTradingBot:
                 f"risk={getattr(decision, 'risk_score', 50):.1f}, decision={decision.action}"
             )
             
-            # Send WebSocket update for AI thought
-            try:
-                thought_data = {
-                    'thought_id': str(thought_log.thought_id),
-                    'decision_type': decision.action,
-                    'token_symbol': token_symbol,
-                    'confidence_percent': float(confidence),
-                    'reasoning': getattr(decision, 'primary_reasoning', 'Market analysis')[:200],
-                    'created_at': thought_log.created_at.isoformat()
-                }
-                websocket_service.send_ai_thought_update(
-                    account_id=str(self.account.account_id),
-                    thought_data=thought_data
-                )
-            except Exception as e:
-                logger.error(f"Failed to send AI thought WebSocket update: {e}")
+            # TODO: WebSocket notification will be added in future update
+            logger.debug(
+                f"[AI THOUGHT] Thought log created successfully: {thought_log.thought_id}"
+            )
             
             return thought_log
             
         except Exception as e:
-            logger.error(f"[ERROR] Failed to create AI thought log: {e}", exc_info=True)
+            logger.error(
+                f"[ERROR] Failed to create AI thought log: {e}",
+                exc_info=True
+            )
             return None
-    
+
+
+
+
+
+
+
+
+
     def _update_positions_after_trade(self, decision: TradingDecision, 
                                       token_symbol: str, current_price: Decimal):
         """Update positions after trade execution."""
@@ -1339,8 +1618,15 @@ class EnhancedPaperTradingBot:
         else:
             self._close_or_reduce_position(token_symbol, decision, current_price)
     
+
+
+
+
+
+
+
     def _open_or_add_position(self, token_symbol: str, decision: TradingDecision, 
-                              current_price: Decimal):
+                            current_price: Decimal):
         """Open new position or add to existing."""
         if token_symbol in self.positions:
             position = self.positions[token_symbol]
@@ -1365,9 +1651,24 @@ class EnhancedPaperTradingBot:
                 is_open=True
             )
             self.positions[token_symbol] = position
-    
+        
+        # ✅ UPDATE ACCOUNT P&L
+        self._update_account_pnl()
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _close_or_reduce_position(self, token_symbol: str, decision: TradingDecision,
-                                  current_price: Decimal):
+                                current_price: Decimal):
         """Close or reduce existing position."""
         if token_symbol in self.positions:
             position = self.positions[token_symbol]
@@ -1383,7 +1684,59 @@ class EnhancedPaperTradingBot:
                 del self.positions[token_symbol]
             
             position.save()
-    
+            
+            # ✅ UPDATE ACCOUNT P&L
+            self._update_account_pnl()
+
+
+
+
+    def _update_account_pnl(self):
+        """
+        Update account's total P&L from all positions.
+        
+        This should be called after any position update to keep
+        the account's total_pnl_usd in sync with position data.
+        """
+        try:
+            # Calculate total unrealized P&L from all open positions
+            total_unrealized_pnl = sum(
+                pos.unrealized_pnl_usd 
+                for pos in self.positions.values()
+            )
+            
+            # Calculate total realized P&L from closed positions
+            closed_positions = PaperPosition.objects.filter(
+                account=self.account,
+                is_open=False
+            )
+            total_realized_pnl = sum(
+                pos.realized_pnl_usd 
+                for pos in closed_positions
+            )
+            
+            # Update account's total P&L
+            self.account.total_pnl_usd = total_unrealized_pnl + total_realized_pnl
+            self.account.save(update_fields=['total_pnl_usd'])
+            
+            logger.debug(
+                f"[ACCOUNT P&L] Updated: Unrealized=${total_unrealized_pnl:.2f}, "
+                f"Realized=${total_realized_pnl:.2f}, Total=${self.account.total_pnl_usd:.2f}"
+            )
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to update account P&L: {e}", exc_info=True)
+
+
+
+
+
+
+
+
+
+
+
     def reset_circuit_breakers(self, breaker_type: Optional[str] = None):
         """
         Reset circuit breakers for the bot.

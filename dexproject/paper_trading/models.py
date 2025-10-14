@@ -119,18 +119,44 @@ class PaperTradingAccount(models.Model):
     
     @property
     def win_rate(self):
-        """Calculate win rate percentage."""
+        """
+        Calculate win rate percentage.
+        
+        Returns:
+            float: Win rate as percentage (0-100)
+        """
         if self.total_trades == 0:
-            return 0
-        return (self.successful_trades / self.total_trades) * 100
+            return Decimal('0')
+        
+        # Ensure we return a Decimal for consistency
+        return (Decimal(str(self.successful_trades)) / Decimal(str(self.total_trades))) * Decimal('100')
     
     @property
     def total_return_percent(self):
-        """Calculate total return percentage."""
+        """
+        Calculate total return percentage based on portfolio value.
+        
+        Returns the percentage change from initial balance considering
+        both cash and open position values.
+        
+        Returns:
+            float: Return percentage (-100 to infinity)
+        """
         if self.initial_balance_usd == 0:
             return 0
-        return ((self.current_balance_usd - self.initial_balance_usd) / 
-                self.initial_balance_usd * 100)
+        
+        # Calculate total portfolio value (cash + positions)
+        from decimal import Decimal
+        positions_value = sum(
+            pos.current_value_usd or Decimal('0') 
+            for pos in self.positions.filter(is_open=True)
+        )
+        portfolio_value = self.current_balance_usd + positions_value
+        
+        # Calculate return based on total portfolio value
+        return float(
+            ((portfolio_value - self.initial_balance_usd) / self.initial_balance_usd * 100)
+        )
 
 
 class PaperTrade(models.Model):

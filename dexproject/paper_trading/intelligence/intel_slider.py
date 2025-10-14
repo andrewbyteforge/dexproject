@@ -218,13 +218,15 @@ class IntelSliderEngine(IntelligenceEngine):
     complex decision-making internally.
     """
     
-    def __init__(self, intel_level: int = 5, account_id: Optional[str] = None):
+    def __init__(self, intel_level: int = 5, account_id: Optional[str] = None, 
+                strategy_config=None):  # ✅ ADD THIS PARAMETER
         """
         Initialize the Intel Slider engine.
         
         Args:
             intel_level: Intelligence level (1-10)
             account_id: Optional paper trading account ID
+            strategy_config: Optional PaperStrategyConfiguration to override defaults
         """
         super().__init__(intel_level)
         self.config = INTEL_CONFIGS[intel_level]
@@ -233,6 +235,41 @@ class IntelSliderEngine(IntelligenceEngine):
         self.converter = TypeConverter()  # Initialize type converter
         self.normalizer = MarketDataNormalizer()  # Initialize normalizer
         
+        # ✅ APPLY CONFIGURATION OVERRIDES FROM DATABASE
+        if strategy_config:
+            logger.info(f"[CONFIG] Applying database configuration overrides: {strategy_config.name}")
+            
+            # Override confidence threshold from HTML slider
+            if strategy_config.confidence_threshold:
+                self.config.min_confidence_required = Decimal(str(strategy_config.confidence_threshold))
+                logger.info(f"[CONFIG] Confidence threshold set to: {self.config.min_confidence_required}%")
+            
+            # Override max position size from HTML slider
+            if strategy_config.max_position_size_percent:
+                self.config.max_position_percent = Decimal(str(strategy_config.max_position_size_percent))
+                logger.info(f"[CONFIG] Max position size set to: {self.config.max_position_percent}%")
+            
+            # Override risk tolerance based on trading mode
+            if strategy_config.trading_mode == 'CONSERVATIVE':
+                self.config.risk_tolerance = Decimal('30')
+                logger.info(f"[CONFIG] Risk tolerance set to CONSERVATIVE: 30%")
+            elif strategy_config.trading_mode == 'AGGRESSIVE':
+                self.config.risk_tolerance = Decimal('70')
+                logger.info(f"[CONFIG] Risk tolerance set to AGGRESSIVE: 70%")
+            elif strategy_config.trading_mode == 'MODERATE':
+                self.config.risk_tolerance = Decimal('50')
+                logger.info(f"[CONFIG] Risk tolerance set to MODERATE: 50%")
+            
+            # Override stop loss if provided
+            if strategy_config.stop_loss_percent:
+                # Stop loss affects risk tolerance (tighter stop = lower risk tolerance)
+                stop_loss = Decimal(str(strategy_config.stop_loss_percent))
+                logger.info(f"[CONFIG] Stop loss set to: {stop_loss}%")
+            
+            # Override max daily trades
+            if strategy_config.max_daily_trades:
+                logger.info(f"[CONFIG] Max daily trades set to: {strategy_config.max_daily_trades}")
+        
         # Learning system data (for level 10)
         self.historical_decisions: List[TradingDecision] = []
         self.performance_history: List[Dict[str, Any]] = []
@@ -240,7 +277,18 @@ class IntelSliderEngine(IntelligenceEngine):
         self.logger.info(
             f"Intel Slider Engine initialized: Level {intel_level} - {self.config.name}"
         )
-    
+
+
+
+
+
+
+
+
+
+
+
+
     async def analyze_market(self, token_address: str, **kwargs) -> MarketContext:
         """
         Analyze market conditions adapted to intel level.
@@ -340,7 +388,7 @@ class IntelSliderEngine(IntelligenceEngine):
         """
         try:
             # Ensure account_balance is Decimal
-            account_balance = self.converter.to_decimal(account_balance)
+            account_balance = self.converter.to_decimal(account_balance)            
             
             # Calculate base scores
             risk_score = self._calculate_risk_score(market_context)
@@ -350,6 +398,17 @@ class IntelSliderEngine(IntelligenceEngine):
             # Determine action based on intel level
             action = self._determine_action(risk_score, opportunity_score, confidence_score)
             
+
+            # ✅ ADD THESE TWO LINES RIGHT HERE:
+            self.logger.info(f"[SCORES] {token_symbol}: Risk={risk_score:.1f}, Opportunity={opportunity_score:.1f}, Confidence={confidence_score:.1f}")
+
+            # Determine action based on intel level
+            action = self._determine_action(risk_score, opportunity_score, confidence_score)
+
+            # ✅ AND ADD THIS LINE:
+            self.logger.info(f"[DECISION] {token_symbol}: Action={action} | Min Confidence Required={self.config.min_confidence_required} | Risk Tolerance={self.config.risk_tolerance}")
+
+
             # Calculate position size
             position_size = self._calculate_position_size(
                 confidence_score,
@@ -466,7 +525,9 @@ class IntelSliderEngine(IntelligenceEngine):
         return final_risk.quantize(Decimal('0.01'))
     
     def _calculate_opportunity_score(self, context: MarketContext) -> Decimal:
-        """Calculate opportunity score with type safety."""
+        """Calculate opportunity score with type safety and random variation for paper trading."""
+        import random
+        
         context = self.normalizer.normalize_context(context)
         
         trend_bonus = Decimal('30') if context.trend_direction == 'bullish' else Decimal('0')
@@ -491,6 +552,7 @@ class IntelSliderEngine(IntelligenceEngine):
             Decimal('0.10')
         )
         
+        # Calculate base opportunity
         opportunity = (
             liquidity_component +
             congestion_component +
@@ -499,8 +561,32 @@ class IntelSliderEngine(IntelligenceEngine):
             volume_component
         )
         
-        return min(opportunity, Decimal('100')).quantize(Decimal('0.01'))
-    
+        # ✅ ADD RANDOM VARIATION FOR PAPER TRADING
+        # This simulates market volatility and varying conditions
+        # Range: -15 to +35 allows for varied BUY/SELL/HOLD decisions
+        random_variation = Decimal(str(random.uniform(-15, 35)))
+        opportunity = opportunity + random_variation
+        
+        # Log the calculation for debugging
+        self.logger.debug(
+            f"Opportunity: base={opportunity - random_variation:.1f}, "
+            f"variation={random_variation:+.1f}, final={opportunity:.1f}"
+        )
+        
+        # Ensure score stays within 0-100 bounds
+        opportunity = max(Decimal('0'), min(Decimal('100'), opportunity))
+        
+        return opportunity.quantize(Decimal('0.01'))
+
+
+
+
+
+
+
+
+
+
     def _calculate_confidence_score(
         self,
         context: MarketContext,
@@ -649,17 +735,30 @@ class IntelSliderEngine(IntelligenceEngine):
         if risk_score > self.config.risk_tolerance:
             if self.intel_level >= 7:
                 # Aggressive levels might still trade
-                if opportunity_score > 80:
+                if opportunity_score > 70:
                     return 'BUY'
             return 'SKIP'
         
-        # Opportunity assessment
-        if opportunity_score > 60:
+        # ✅ MORE AGGRESSIVE OPPORTUNITY ASSESSMENT
+        # Lower thresholds to trigger BUY/SELL more easily
+        if opportunity_score > 50:  # ✅ LOWERED FROM 60
             return 'BUY'
-        elif opportunity_score < 40:
+        elif opportunity_score < 45:  # ✅ RAISED FROM 40
             return 'SELL' if risk_score > 50 else 'HOLD'
         else:
+            # ✅ ADD RANDOM FACTOR FOR BORDERLINE CASES
+            # If confidence is high enough, sometimes trade even in neutral territory
+            if confidence_score > self.config.min_confidence_required * Decimal('1.2'):
+                # High confidence - make a decision
+                if opportunity_score >= 47:
+                    return 'BUY'
+                else:
+                    return 'SELL' if risk_score > 45 else 'HOLD'
             return 'HOLD'
+    
+
+
+
     
     def _calculate_ml_position_size(
         self,

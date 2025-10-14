@@ -52,7 +52,7 @@ def get_default_user():
         User: The default user instance
     """
     user, created = User.objects.get_or_create(
-        username='default_user',
+        username='demo_user',
         defaults={
             'email': 'user@localhost',
             'first_name': 'Default',
@@ -96,7 +96,7 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -171,7 +171,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -270,7 +270,7 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -352,7 +352,7 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -441,7 +441,7 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -548,12 +548,23 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
             )
             logger.info(f"Created new paper trading account: {account.account_id}")
+        
+        # ✅ CALCULATE POSITIONS VALUE
+        open_positions = PaperPosition.objects.filter(account=account, is_open=True)
+        positions_value = sum(pos.current_value_usd or Decimal('0') for pos in open_positions)
+        portfolio_value = account.current_balance_usd + positions_value
+        
+        # ✅ CALCULATE CORRECT RETURN PERCENTAGE
+        return_percent = float(
+            ((portfolio_value - account.initial_balance_usd) / account.initial_balance_usd * 100)
+            if account.initial_balance_usd > 0 else 0
+        )
         
         # Get 24h stats
         time_24h_ago = timezone.now() - timedelta(hours=24)
@@ -565,15 +576,14 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             total_volume=Sum('amount_in_usd')
         )
         
-        # Calculate return percentage
-        return_percent = float(account.total_return_percent) if account.total_return_percent else 0
-        
         metrics = {
             'success': True,
             'current_balance': float(account.current_balance_usd),
             'initial_balance': float(account.initial_balance_usd),
+            'positions_value': float(positions_value),        # ✅ ADD THIS
+            'portfolio_value': float(portfolio_value),         # ✅ ADD THIS
             'total_pnl': float(account.total_pnl_usd),
-            'return_percent': return_percent,
+            'return_percent': return_percent,                  # ✅ NOW CORRECT
             'win_rate': float(account.win_rate) if account.win_rate else 0,
             'trades_24h': trades_24h_data['count'] or 0,
             'volume_24h': float(trades_24h_data['total_volume']) if trades_24h_data['total_volume'] else 0,
@@ -583,7 +593,7 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             'timestamp': timezone.now().isoformat()
         }
         
-        logger.debug(f"Metrics fetched")
+        logger.debug(f"Metrics fetched: portfolio=${portfolio_value:.2f}, pnl=${account.total_pnl_usd:.2f}")
         return JsonResponse(metrics)
         
     except Exception as e:
@@ -592,7 +602,6 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             'success': False,
             'error': 'Failed to fetch metrics'
         }, status=500)
-
 
 # =============================================================================
 # CONFIGURATION API
@@ -624,7 +633,7 @@ def api_configuration(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -756,7 +765,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
             # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name='My Paper Trading Account',
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
@@ -878,7 +887,7 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
             # Create default account if none exists
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name="My Paper Trading Account",
+                name="My_Trading_Account",
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True

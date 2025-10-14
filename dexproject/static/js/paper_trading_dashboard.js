@@ -579,6 +579,7 @@ function updateTotalPnL(value) {
     }
 }
 
+
 /**
  * Update return percentage
  */
@@ -991,19 +992,25 @@ function removePositionFromTable(positionId) {
  * Update metrics display
  */
 function updateMetrics(metrics) {
-    // Update portfolio value
-    if (metrics.portfolio_value !== undefined) {
+    console.log('Updating metrics:', metrics);
+
+    // ✅ Update portfolio value (FIXED)
+    if (metrics.portfolio_value !== undefined && !isNaN(metrics.portfolio_value)) {
         updatePortfolioValue(metrics.portfolio_value);
+    } else if (metrics.current_balance !== undefined) {
+        // Fallback: if portfolio_value missing, at least show balance
+        console.warn('portfolio_value missing, showing current_balance');
+        updatePortfolioValue(metrics.current_balance);
     }
 
-    // Update P&L
-    if (metrics.total_pnl !== undefined) {
+    // ✅ Update P&L
+    if (metrics.total_pnl !== undefined && !isNaN(metrics.total_pnl)) {
         updateTotalPnL(metrics.total_pnl);
     }
 
-    // Update return percentage
-    if (metrics.return_percentage !== undefined) {
-        updateReturnPercentage(metrics.return_percentage);
+    // ✅ Update return percentage (FIXED)
+    if (metrics.return_percent !== undefined && !isNaN(metrics.return_percent)) {
+        updateReturnPercentage(metrics.return_percent);
     }
 
     // Update win rate

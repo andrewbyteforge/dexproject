@@ -662,12 +662,8 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             
         except Exception as e:
             logger.error(f"Error getting performance metrics: {e}", exc_info=True)
-            return None
-        
+            return None      
 
-
-
-    # Add this method to your PaperTradingConsumer class in paper_trading/consumers.py
     async def performance_update(self, event):
         """
         Handle performance update messages from the bot.
@@ -680,7 +676,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             performance_data = event.get('data', {})
             
             # Log the update for debugging
-            logger.info(f"[WS] Broadcasting performance update to client")
+            logger.info("[WS] Broadcasting performance update to client")
             
             # Send the performance update to the WebSocket client
             await self.send(text_data=json.dumps({
@@ -697,3 +693,18 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
                 'message': 'Failed to process performance update',
                 'timestamp': timezone.now().isoformat()
             }))
+
+    async def session_update(self, event):
+        """Handle session update messages."""
+        await self.send(text_data=json.dumps(event))
+
+    async def strategy_config_updated(self, event):
+        """Handle strategy config update messages."""
+        await self.send(text_data=json.dumps(event))
+
+    async def portfolio_update(self, event):
+        """Handle portfolio update messages."""
+        await self.send(text_data=json.dumps(event))
+
+
+
