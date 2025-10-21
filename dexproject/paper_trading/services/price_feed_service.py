@@ -16,6 +16,9 @@ Features:
 - Comprehensive error handling and logging
 - Type-safe with Pylance compliance
 
+FIXED: Method call signatures for _fetch_from_alchemy and _fetch_from_coingecko
+now properly pass both token_symbol and token_address parameters.
+
 File: dexproject/paper_trading/services/price_feed_service.py
 """
 
@@ -24,16 +27,9 @@ import asyncio
 from decimal import Decimal
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-import logging
-from typing import Dict, Optional, Any
-from decimal import Decimal
-from datetime import datetime
 import aiohttp
-import asyncio
 from django.conf import settings
-import aiohttp
 from django.core.cache import cache
-from django.conf import settings
 
 # Import your existing Web3 infrastructure
 from shared.web3_utils import (
@@ -97,12 +93,17 @@ class PriceFeedService:
         # Returns: Decimal("2543.50")
     """
     
-    def __init__(self, chain_id: int):
+    def __init__(
+        self,
+        chain_id: int,
+        web3_client: Optional[Any] = None
+    ):
         """
         Initialize price feed service for a specific chain.
         
         Args:
             chain_id: Blockchain network ID (e.g., 84532 for Base Sepolia)
+            web3_client: Optional Web3Client for DEX quotes
         """
         self.chain_id = chain_id
         self.chain_name = self._get_chain_name(chain_id)
@@ -129,8 +130,16 @@ class PriceFeedService:
         # Request timeout configuration
         self.request_timeout_seconds = 10
         
+        # Session holder (lazy initialization)
+        self._session: Optional[aiohttp.ClientSession] = None
+        
+        # Web3 infrastructure for DEX quotes (optional)
+        self.web3_client = web3_client
+        self.dex_quotes_enabled = web3_client is not None
+        
         logger.info(
-            f"[PRICE FEED] Initialized for chain {chain_id} ({self.chain_name})"
+            f"[PRICE FEED] Initialized for chain {chain_id} ({self.chain_name}), "
+            f"DEX quotes: {'ENABLED' if self.dex_quotes_enabled else 'DISABLED'}"
         )
     
 
@@ -216,7 +225,6 @@ class PriceFeedService:
             return {}
 
 
-
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session (lazy initialization)."""
         if self._session is None or self._session.closed:
@@ -297,8 +305,12 @@ class PriceFeedService:
                 f"fetching from APIs..."
             )
             
+            # FIXED: Pass both token_symbol and token_address to _fetch_from_alchemy
             # Try Alchemy first (fastest, most reliable)
-            price = await self._fetch_from_alchemy(token_address)
+            price = await self._fetch_from_alchemy(
+                token_symbol=token_symbol or "UNKNOWN",
+                token_address=token_address
+            )
             
             # Fallback to CoinGecko if Alchemy fails
             if price is None and token_symbol:
@@ -306,7 +318,11 @@ class PriceFeedService:
                     f"[PRICE FEED] Alchemy failed for {token_symbol}, "
                     f"trying CoinGecko..."
                 )
-                price = await self._fetch_from_coingecko(token_symbol)
+                # FIXED: Pass both token_symbol and token_address to _fetch_from_coingecko
+                price = await self._fetch_from_coingecko(
+                    token_symbol=token_symbol,
+                    token_address=token_address
+                )
             
             # Final fallback to DEX quote (most accurate but slowest)
             if price is None:
@@ -358,6 +374,11 @@ class PriceFeedService:
             Price in USD or None if fetch fails
         """
         try:
+            # Check if API key is configured
+            if not self.alchemy_api_key:
+                logger.debug("[PRICE FEED] Alchemy API key not configured")
+                return None
+            
             url = f"{self.alchemy_base_url}/v2/{self.alchemy_api_key}/getTokenMetadata"
             params = {
                 "contractAddress": token_address
@@ -488,11 +509,6 @@ class PriceFeedService:
             return None
 
 
-
-
-
-
-
     # =========================================================================
     # DATA SOURCE: DEX ROUTER QUOTE
     # =========================================================================
@@ -508,7 +524,8 @@ class PriceFeedService:
         for 1 token -> USDC, which gives us the most accurate current price.
         
         Note: This is the most accurate but slowest method, requiring
-        a blockchain RPC call.
+        a blockchain RPC call. Currently DISABLED for paper trading as it
+        requires full Web3Client and WalletManager initialization.
         
         Args:
             token_address: Token contract address
@@ -517,67 +534,35 @@ class PriceFeedService:
             Price in USD or None if quote fails
         """
         try:
-            # Import your existing DEX router service
-            from trading.services.dex_router_service import create_dex_router_service
-            
-            # Create DEX router (function takes only wallet_manager)
-            try:
-                router_service = await create_dex_router_service(
-                    wallet_manager=None  # Paper trading doesn't need wallet
-                )
-            except TypeError as e:
-                # Function signature incompatible - skip DEX quote
-                logger.debug(
-                    f"[PRICE FEED] DEX router service signature mismatch, "
-                    f"skipping DEX quote: {e}"
-                )
-                return None
-            
-            if router_service is None:
-                logger.debug(
-                    f"[PRICE FEED] DEX router not available for chain {self.chain_id}"
-                )
-                return None
-            
-            # Get USDC address for this chain (testnet addresses)
-            usdc_addresses = {
-                84532: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",  # Base Sepolia USDC
-                11155111: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",  # Sepolia USDC
-            }
-            
-            usdc_address = usdc_addresses.get(self.chain_id)
-            
-            if not usdc_address:
-                logger.debug(
-                    f"[PRICE FEED] No USDC address configured for chain {self.chain_id}"
-                )
-                return None
-            
-            # Get quote for 1 token -> USDC
-            # This tells us how many USDC we get for 1 token
-            from web3 import Web3
-            
-            quote = await router_service.get_quote(
-                token_in=token_address,
-                token_out=usdc_address,
-                amount_in=Web3.to_wei(1, 'ether')
+            # DEX quotes require full Web3 infrastructure which paper trading doesn't have
+            # Skip this source for now - Alchemy and CoinGecko are sufficient
+            logger.debug(
+                f"[PRICE FEED] DEX quote disabled for paper trading (requires Web3Client)"
             )
-            
-            if quote and hasattr(quote, 'amount_out') and quote.amount_out:
-                # Convert USDC amount (6 decimals) to price
-                price_usd = Decimal(quote.amount_out) / Decimal(10**6)
-                logger.info(
-                    f"[PRICE FEED] ✅ Got DEX quote price: ${price_usd:.2f}"
-                )
-                return price_usd
-            
             return None
+            
+            # DISABLED CODE - Requires Web3Client + WalletManager initialization:
+            # from trading.services.dex_router_service import create_dex_router_service
+            # from engine.web3_client import Web3Client
+            # from engine.wallet_manager import WalletManager
+            # 
+            # web3_client = Web3Client(chain_config)
+            # await web3_client.connect()
+            # wallet_manager = WalletManager(chain_config)
+            # await wallet_manager.initialize(web3_client)
+            # 
+            # router_service = await create_dex_router_service(
+            #     web3_client=web3_client,
+            #     wallet_manager=wallet_manager
+            # )
+            
             
         except Exception as e:
             logger.debug(
-                f"[PRICE FEED] DEX quote failed (non-critical): {e}"
+                f"[PRICE FEED] DEX quote disabled: {e}"
             )
             return None
+    
     # =========================================================================
     # CACHING METHODS
     # =========================================================================

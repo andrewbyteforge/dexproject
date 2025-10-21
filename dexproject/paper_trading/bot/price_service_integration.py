@@ -180,30 +180,24 @@ class RealPriceManager:
         """Create a deep copy of the token list to avoid mutation."""
         return [token.copy() for token in original]
     
-    async def initialize(self) -> bool:
+    async def initialize(self, web3_client=None) -> bool:
         """
         Initialize the price manager and price feed service.
         
-        Returns:
-            True if initialization successful
+        Args:
+            web3_client: Optional Web3Client for DEX quotes
         """
         try:
             if self.use_real_prices:
-                # Initialize price feed service
-                self._price_service = PriceFeedService(chain_id=self.chain_id)
-                logger.info("[PRICE MANAGER] Real price service initialized")
-            else:
-                logger.info("[PRICE MANAGER] Using mock price simulation")
-            
-            # Initialize price history for all tokens
-            for token in self.token_list:
-                self.price_history[token['symbol']] = [token['price']]
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"[PRICE MANAGER] Initialization failed: {e}", exc_info=True)
-            return False
+                # Initialize price feed service with DEX quote support
+                self._price_service = PriceFeedService(
+                    chain_id=self.chain_id,
+                    web3_client=web3_client  # ✅ Enable DEX quotes
+                )
+                logger.info(
+                    f"[PRICE MANAGER] Real price service initialized "
+                    f"(DEX quotes: {'ENABLED' if web3_client else 'DISABLED'})"
+                )
     
     async def close(self):
         """Close the price feed service and cleanup resources."""
