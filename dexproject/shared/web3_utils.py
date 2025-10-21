@@ -39,7 +39,7 @@ _POA_MIDDLEWARE_IMPORT_PATHS_TRIED: List[str] = []
 def check_web3_availability() -> Tuple[bool, Optional[str]]:
     """
     Check Web3 package availability with caching.
-    Enhanced with comprehensive POA middleware detection.
+    Enhanced with comprehensive POA middleware detection for Web3.py v7+.
     
     Returns:
         Tuple[bool, Optional[str]]: (is_available, error_message)
@@ -58,12 +58,14 @@ def check_web3_availability() -> Tuple[bool, Optional[str]]:
         # Try multiple import paths for POA middleware (Web3.py v6/v7 compatibility)
         _geth_poa_middleware = None
         poa_import_paths = [
-            # Web3.py v7+ path
+            # Web3.py v7+ correct path and class name
+            ('web3.middleware.proof_of_authority', 'ExtraDataToPOAMiddleware'),
+            # Alternative v7+ path
+            ('web3.middleware', 'ExtraDataToPOAMiddleware'),
+            # Web3.py v6 legacy path (backward compatibility)
             ('web3.middleware.geth_poa', 'geth_poa_middleware'),
-            # Web3.py v6 path
+            # Web3.py v6 alternative path
             ('web3.middleware', 'geth_poa_middleware'),
-            # Alternative v7 path
-            ('web3.middleware.geth_poa', 'async_geth_poa_middleware'),
             # Fallback for older versions
             ('web3.middleware.geth_poa_middleware', 'geth_poa_middleware'),
         ]
@@ -76,7 +78,7 @@ def check_web3_availability() -> Tuple[bool, Optional[str]]:
                 _geth_poa_middleware = getattr(module, attr_name, None)
                 if _geth_poa_middleware is not None:
                     _POA_MIDDLEWARE_AVAILABLE = True
-                    logger.debug(f"POA middleware loaded from: {module_path}.{attr_name}")
+                    logger.info(f"POA middleware loaded from: {module_path}.{attr_name}")
                     break
             except (ImportError, AttributeError) as e:
                 logger.debug(f"POA middleware not found at {module_path}.{attr_name}: {e}")
@@ -251,8 +253,11 @@ def inject_poa_middleware(w3_instance: Any, layer: int = 0) -> bool:
     
     try:
         # Check if middleware is already injected
-        middleware_names = [m[0] for m in w3_instance.middleware_onion]
-        if 'geth_poa' in middleware_names:
+        middleware_names = [m[0] if isinstance(m, tuple) else str(m) for m in w3_instance.middleware_onion]
+        
+        # Check for various POA middleware names (v6 vs v7 compatibility)
+        poa_names = ['geth_poa', 'ExtraDataToPOAMiddleware', 'proof_of_authority']
+        if any(name in str(middleware_names) for name in poa_names):
             logger.debug("POA middleware already injected")
             return True
         
