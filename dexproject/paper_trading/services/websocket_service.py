@@ -464,3 +464,4 @@ def notify_alert(account_id: Union[str, uuid.UUID], message: str, severity: str 
 def is_websocket_available() -> bool:
     """Check if WebSocket service is available."""
     return websocket_service.is_available()
+

@@ -1,472 +1,472 @@
-"""
-Enhanced Paper Trading Bot with Intel Slider System, Transaction Manager, and Circuit Breakers
+# """
+# Enhanced Paper Trading Bot with Intel Slider System, Transaction Manager, and Circuit Breakers
 
-This is the complete paper trading bot that integrates:
-- Intel Slider (1-10) system for intelligent decision making
-- Phase 6B Transaction Manager for gas optimization (23.1% savings)
-- Circuit breaker protection for risk management
-- Real-time transaction status tracking
-- WebSocket updates for transaction lifecycle
-- Comprehensive thought logging
+# This is the complete paper trading bot that integrates:
+# - Intel Slider (1-10) system for intelligent decision making
+# - Phase 6B Transaction Manager for gas optimization (23.1% savings)
+# - Circuit breaker protection for risk management
+# - Real-time transaction status tracking
+# - WebSocket updates for transaction lifecycle
+# - Comprehensive thought logging
 
-File: dexproject/paper_trading/bot/simple_trader.py
-"""
-"""
-Enhanced Paper Trading Bot with Intel Slider System...
-"""
+# File: dexproject/paper_trading/bot/simple_trader.py
+# """
+# """
+# Enhanced Paper Trading Bot with Intel Slider System...
+# """
 
-# ============================================================================
-# WINDOWS CONSOLE ENCODING FIX
-# ============================================================================
-import sys
-import io
+# # ============================================================================
+# # WINDOWS CONSOLE ENCODING FIX
+# # ============================================================================
+# import sys
+# import io
 
-# Force UTF-8 encoding for Windows console to support emoji logging
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(
-        sys.stdout.buffer,
-        encoding='utf-8',
-        errors='replace',
-        line_buffering=True
-    )
-    sys.stderr = io.TextIOWrapper(
-        sys.stderr.buffer,
-        encoding='utf-8',
-        errors='replace',
-        line_buffering=True
-    )
+# # Force UTF-8 encoding for Windows console to support emoji logging
+# if sys.platform == 'win32':
+#     sys.stdout = io.TextIOWrapper(
+#         sys.stdout.buffer,
+#         encoding='utf-8',
+#         errors='replace',
+#         line_buffering=True
+#     )
+#     sys.stderr = io.TextIOWrapper(
+#         sys.stderr.buffer,
+#         encoding='utf-8',
+#         errors='replace',
+#         line_buffering=True
+#     )
 
-import os
-# ... rest of imports continue ...
+# import os
+# # ... rest of imports continue ...
 
-import os
-import sys
-import time
-import signal
-import logging
-import asyncio
-from decimal import Decimal
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Tuple
-import random
-import uuid
+# import os
+# import sys
+# import time
+# import signal
+# import logging
+# import asyncio
+# from decimal import Decimal
+# from datetime import datetime, timedelta
+# from typing import Dict, Any, Optional, List, Tuple
+# import random
+# import uuid
 
-# ============================================================================
-# DJANGO SETUP
-# ============================================================================
-# Add project root to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# # ============================================================================
+# # DJANGO SETUP
+# # ============================================================================
+# # Add project root to path for imports
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# Django setup
-import django
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'dexproject.settings')
-django.setup()
+# # Django setup
+# import django
+# os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'dexproject.settings')
+# django.setup()
 
-from django.utils import timezone
-from django.db import transaction
-from asgiref.sync import async_to_sync
+# from django.utils import timezone
+# from django.db import transaction
+# from asgiref.sync import async_to_sync
 
-# ============================================================================
-# MODEL IMPORTS
-# ============================================================================
-from paper_trading.models import (
-    PaperTradingAccount,
-    PaperTrade,
-    PaperPosition,
-    PaperTradingSession,
-    PaperAIThoughtLog,
-    PaperStrategyConfiguration,
-    PaperPerformanceMetrics
-)
+# # ============================================================================
+# # MODEL IMPORTS
+# # ============================================================================
+# from paper_trading.models import (
+#     PaperTradingAccount,
+#     PaperTrade,
+#     PaperPosition,
+#     PaperTradingSession,
+#     PaperAIThoughtLog,
+#     PaperStrategyConfiguration,
+#     PaperPerformanceMetrics
+# )
 
-# ============================================================================
-# INTELLIGENCE SYSTEM IMPORTS
-# ============================================================================
-from paper_trading.intelligence.intel_slider import IntelSliderEngine
-from paper_trading.intelligence.base import (
-    IntelligenceLevel,
-    MarketContext,
-    TradingDecision
-)
+# # ============================================================================
+# # INTELLIGENCE SYSTEM IMPORTS
+# # ============================================================================
+# from paper_trading.intelligence.intel_slider import IntelSliderEngine
+# from paper_trading.intelligence.base import (
+#     IntelligenceLevel,
+#     MarketContext,
+#     TradingDecision
+# )
 
-# ============================================================================
-# CIRCUIT BREAKER IMPORTS
-# ============================================================================
-try:
-    from engine.portfolio import (
-        CircuitBreakerManager,
-        CircuitBreakerType,
-        CircuitBreakerEvent
-    )
-    from trading.services.portfolio_service import create_portfolio_service
-    CIRCUIT_BREAKER_AVAILABLE = True
-except ImportError:
-    CIRCUIT_BREAKER_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning("Circuit breaker components not available - running without protection")
+# # ============================================================================
+# # CIRCUIT BREAKER IMPORTS
+# # ============================================================================
+# try:
+#     from engine.portfolio import (
+#         CircuitBreakerManager,
+#         CircuitBreakerType,
+#         CircuitBreakerEvent
+#     )
+#     from trading.services.portfolio_service import create_portfolio_service
+#     CIRCUIT_BREAKER_AVAILABLE = True
+# except ImportError:
+#     CIRCUIT_BREAKER_AVAILABLE = False
+#     logger = logging.getLogger(__name__)
+#     logger.warning("Circuit breaker components not available - running without protection")
 
-# ============================================================================
-# SERVICE IMPORTS
-# ============================================================================
-from paper_trading.services.websocket_service import websocket_service
+# # ============================================================================
+# # SERVICE IMPORTS
+# # ============================================================================
+# from paper_trading.services.websocket_service import websocket_service
 
-# ============================================================================
-# TRANSACTION MANAGER IMPORTS (Phase 6B Integration)
-# ============================================================================
-try:
-    from trading.services.transaction_manager import (
-        get_transaction_manager,
-        create_transaction_submission_request,
-        TransactionStatus,
-        TransactionSubmissionRequest,
-        TransactionManagerResult
-    )
-    from trading.services.dex_router_service import (
-        SwapType, 
-        DEXVersion, 
-        TradingGasStrategy,
-        SwapParams
-    )
-    TRANSACTION_MANAGER_AVAILABLE = True
-except ImportError:
-    TRANSACTION_MANAGER_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning("Transaction Manager not available - running in legacy mode")
+# # ============================================================================
+# # TRANSACTION MANAGER IMPORTS (Phase 6B Integration)
+# # ============================================================================
+# try:
+#     from trading.services.transaction_manager import (
+#         get_transaction_manager,
+#         create_transaction_submission_request,
+#         TransactionStatus,
+#         TransactionSubmissionRequest,
+#         TransactionManagerResult
+#     )
+#     from trading.services.dex_router_service import (
+#         SwapType, 
+#         DEXVersion, 
+#         TradingGasStrategy,
+#         SwapParams
+#     )
+#     TRANSACTION_MANAGER_AVAILABLE = True
+# except ImportError:
+#     TRANSACTION_MANAGER_AVAILABLE = False
+#     logger = logging.getLogger(__name__)
+#     logger.warning("Transaction Manager not available - running in legacy mode")
 
-# ============================================================================
-# LEGACY AI ENGINE IMPORT (for backward compatibility)
-# ============================================================================
-from paper_trading.bot.ai_engine import (
-    TradingSignal as LegacyTradingSignal,
-    MarketCondition
-)
+# # ============================================================================
+# # LEGACY AI ENGINE IMPORT (for backward compatibility)
+# # ============================================================================
+# from paper_trading.bot.ai_engine import (
+#     TradingSignal as LegacyTradingSignal,
+#     MarketCondition
+# )
 
-# ============================================================================
-# LOGGING CONFIGURATION
-# ============================================================================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('paper_trading_bot.log')
-    ]
-)
-logger = logging.getLogger(__name__)
+# # ============================================================================
+# # LOGGING CONFIGURATION
+# # ============================================================================
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+#     handlers=[
+#         logging.StreamHandler(),
+#         logging.FileHandler('paper_trading_bot.log')
+#     ]
+# )
+# logger = logging.getLogger(__name__)
 
 
-class EnhancedPaperTradingBot:
-    """
-    Unified Paper Trading Bot with Intel Slider System, Transaction Manager, and Circuit Breakers.
+# class EnhancedPaperTradingBot:
+#     """
+#     Unified Paper Trading Bot with Intel Slider System, Transaction Manager, and Circuit Breakers.
     
-    This bot integrates:
-    - Intel Slider (1-10) for intelligent decision making
-    - Transaction Manager for gas optimization (Phase 6B)
-    - Circuit breaker protection for risk management
-    - Real-time WebSocket updates
-    - Comprehensive thought logging
-    """
+#     This bot integrates:
+#     - Intel Slider (1-10) for intelligent decision making
+#     - Transaction Manager for gas optimization (Phase 6B)
+#     - Circuit breaker protection for risk management
+#     - Real-time WebSocket updates
+#     - Comprehensive thought logging
+#     """
     
-    def __init__(self, account_name: str, intel_level: int = 5):
-        """
-        Initialize the enhanced paper trading bot.
+#     def __init__(self, account_name: str, intel_level: int = 5):
+#         """
+#         Initialize the enhanced paper trading bot.
         
-        Args:
-            account_name: Name of the paper trading account
-            intel_level: Intelligence level (1-10)
-        """
-        self.account_name = account_name
-        self.intel_level = intel_level
-        self.use_tx_manager = TRANSACTION_MANAGER_AVAILABLE  # Always use if available
-        self.account = None
-        self.session = None
-        self.intelligence_engine = None
+#         Args:
+#             account_name: Name of the paper trading account
+#             intel_level: Intelligence level (1-10)
+#         """
+#         self.account_name = account_name
+#         self.intel_level = intel_level
+#         self.use_tx_manager = TRANSACTION_MANAGER_AVAILABLE  # Always use if available
+#         self.account = None
+#         self.session = None
+#         self.intelligence_engine = None
         
-        # Circuit breaker components
-        self.circuit_breaker_manager = None
-        self.circuit_breaker_enabled = CIRCUIT_BREAKER_AVAILABLE
-        self.consecutive_failures = 0
-        self.daily_trades_count = 0
-        self.last_trade_date = None
+#         # Circuit breaker components
+#         self.circuit_breaker_manager = None
+#         self.circuit_breaker_enabled = CIRCUIT_BREAKER_AVAILABLE
+#         self.consecutive_failures = 0
+#         self.daily_trades_count = 0
+#         self.last_trade_date = None
         
-        # Transaction Manager instance (initialized later if needed)
-        self.tx_manager = None
-        self.chain_id = 1  # Default to Ethereum mainnet
+#         # Transaction Manager instance (initialized later if needed)
+#         self.tx_manager = None
+#         self.chain_id = 1  # Default to Ethereum mainnet
         
-        # Performance tracking for Transaction Manager
-        self.total_gas_savings = Decimal('0')
-        self.trades_with_tx_manager = 0
-        self.pending_transactions = {}  # Track pending TX manager transactions
+#         # Performance tracking for Transaction Manager
+#         self.total_gas_savings = Decimal('0')
+#         self.trades_with_tx_manager = 0
+#         self.pending_transactions = {}  # Track pending TX manager transactions
         
-        # Market tracking
-        self.token_list = [
-            {'symbol': 'WETH', 'address': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'price': Decimal('2500')},
-            {'symbol': 'USDC', 'address': '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'price': Decimal('1')},
-            {'symbol': 'USDT', 'address': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'price': Decimal('1')},
-            {'symbol': 'DAI', 'address': '0x6b175474e89094c44da98b954eedeac495271d0f', 'price': Decimal('1')},
-            {'symbol': 'WBTC', 'address': '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 'price': Decimal('45000')},
-            {'symbol': 'UNI', 'address': '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'price': Decimal('6.50')},
-            {'symbol': 'AAVE', 'address': '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'price': Decimal('95')},
-            {'symbol': 'LINK', 'address': '0x514910771af9ca656af840dff83e8264ecf986ca', 'price': Decimal('15')},
-            {'symbol': 'MATIC', 'address': '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', 'price': Decimal('0.85')},
-            {'symbol': 'ARB', 'address': '0xb50721bcf8d664c30412cfbc6cf7a15145234ad1', 'price': Decimal('1.20')}
-        ]
+#         # Market tracking
+#         self.token_list = [
+#             {'symbol': 'WETH', 'address': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'price': Decimal('2500')},
+#             {'symbol': 'USDC', 'address': '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'price': Decimal('1')},
+#             {'symbol': 'USDT', 'address': '0xdac17f958d2ee523a2206206994597c13d831ec7', 'price': Decimal('1')},
+#             {'symbol': 'DAI', 'address': '0x6b175474e89094c44da98b954eedeac495271d0f', 'price': Decimal('1')},
+#             {'symbol': 'WBTC', 'address': '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 'price': Decimal('45000')},
+#             {'symbol': 'UNI', 'address': '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'price': Decimal('6.50')},
+#             {'symbol': 'AAVE', 'address': '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'price': Decimal('95')},
+#             {'symbol': 'LINK', 'address': '0x514910771af9ca656af840dff83e8264ecf986ca', 'price': Decimal('15')},
+#             {'symbol': 'MATIC', 'address': '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', 'price': Decimal('0.85')},
+#             {'symbol': 'ARB', 'address': '0xb50721bcf8d664c30412cfbc6cf7a15145234ad1', 'price': Decimal('1.20')}
+#         ]
         
-        self.price_history = {}
-        self.positions = {}
-        self.last_decisions = {}
+#         self.price_history = {}
+#         self.positions = {}
+#         self.last_decisions = {}
         
-        # Control flags
-        self.running = False
-        self.tick_interval = 15  # seconds between market checks
-        self.tick_count = 0
+#         # Control flags
+#         self.running = False
+#         self.tick_interval = 15  # seconds between market checks
+#         self.tick_count = 0
         
-        log_msg = f"[BOT] Enhanced Paper Trading Bot initialized with Intel Level {intel_level}"
-        if self.use_tx_manager:
-            log_msg += " (Transaction Manager ENABLED - Gas Optimization Active)"
-        else:
-            log_msg += " (Transaction Manager DISABLED - Legacy Mode)"
-        if self.circuit_breaker_enabled:
-            log_msg += " (Circuit Breakers ENABLED - Risk Protection Active)"
-        logger.info(log_msg)
+#         log_msg = f"[BOT] Enhanced Paper Trading Bot initialized with Intel Level {intel_level}"
+#         if self.use_tx_manager:
+#             log_msg += " (Transaction Manager ENABLED - Gas Optimization Active)"
+#         else:
+#             log_msg += " (Transaction Manager DISABLED - Legacy Mode)"
+#         if self.circuit_breaker_enabled:
+#             log_msg += " (Circuit Breakers ENABLED - Risk Protection Active)"
+#         logger.info(log_msg)
     
 
 
-    def initialize(self) -> bool:
-        """
-        Initialize bot components and connections.
+#     def initialize(self) -> bool:
+#         """
+#         Initialize bot components and connections.
         
-        Returns:
-            True if initialization successful
-        """
-        try:
-            # Load or create account
-            self._load_account()
+#         Returns:
+#             True if initialization successful
+#         """
+#         try:
+#             # Load or create account
+#             self._load_account()
             
-            # Create trading session
-            self._create_session()
+#             # Create trading session
+#             self._create_session()
 
-            # ✅ ADD THIS LINE - Clean up duplicates AFTER session is created
-            self._cleanup_duplicate_accounts()
+#             # ✅ ADD THIS LINE - Clean up duplicates AFTER session is created
+#             self._cleanup_duplicate_accounts()
             
-            # Initialize intelligence engine
-            self._initialize_intelligence()
+#             # Initialize intelligence engine
+#             self._initialize_intelligence()
             
-            # Initialize circuit breaker manager
-            self._initialize_circuit_breaker()
+#             # Initialize circuit breaker manager
+#             self._initialize_circuit_breaker()
             
-            # Setup strategy configuration
-            self._setup_strategy_configuration()
+#             # Setup strategy configuration
+#             self._setup_strategy_configuration()
             
-            # Initialize Transaction Manager if enabled
-            if self.use_tx_manager:
-                self._initialize_transaction_manager()
+#             # Initialize Transaction Manager if enabled
+#             if self.use_tx_manager:
+#                 self._initialize_transaction_manager()
             
-            # Load existing positions
-            self._load_positions()
+#             # Load existing positions
+#             self._load_positions()
             
-            # Initialize price history
-            self._initialize_price_history()
+#             # Initialize price history
+#             self._initialize_price_history()
             
-            # Send initialization notification
-            self._send_bot_status_update('initialized')
+#             # Send initialization notification
+#             self._send_bot_status_update('initialized')
             
-            # Log initial thought
-            self._log_thought(
-                action="STARTUP",
-                reasoning=f"Bot initialized with Intel Level {self.intel_level}. "
-                         f"Strategy: {self.intelligence_engine.config.name}. "
-                         f"Risk tolerance: {self.intelligence_engine.config.risk_tolerance}%. "
-                         f"Transaction Manager: {'ENABLED' if self.use_tx_manager else 'DISABLED'}. "
-                         f"Circuit Breakers: {'ENABLED' if self.circuit_breaker_enabled else 'DISABLED'}. "
-                         f"Starting balance: ${self.account.current_balance_usd:.2f}",
-                confidence=100,
-                decision_type="SYSTEM"
-            )
+#             # Log initial thought
+#             self._log_thought(
+#                 action="STARTUP",
+#                 reasoning=f"Bot initialized with Intel Level {self.intel_level}. "
+#                          f"Strategy: {self.intelligence_engine.config.name}. "
+#                          f"Risk tolerance: {self.intelligence_engine.config.risk_tolerance}%. "
+#                          f"Transaction Manager: {'ENABLED' if self.use_tx_manager else 'DISABLED'}. "
+#                          f"Circuit Breakers: {'ENABLED' if self.circuit_breaker_enabled else 'DISABLED'}. "
+#                          f"Starting balance: ${self.account.current_balance_usd:.2f}",
+#                 confidence=100,
+#                 decision_type="SYSTEM"
+#             )
             
-            return True
+#             return True
             
-        except Exception as e:
-            logger.error(f"[ERROR] Initialization failed: {e}", exc_info=True)
-            return False
+#         except Exception as e:
+#             logger.error(f"[ERROR] Initialization failed: {e}", exc_info=True)
+#             return False
     
-    def _initialize_circuit_breaker(self):
-        """Initialize circuit breaker manager for risk management."""
-        if not CIRCUIT_BREAKER_AVAILABLE:
-            self.circuit_breaker_enabled = False
-            return
+#     def _initialize_circuit_breaker(self):
+#         """Initialize circuit breaker manager for risk management."""
+#         if not CIRCUIT_BREAKER_AVAILABLE:
+#             self.circuit_breaker_enabled = False
+#             return
             
-        try:
-            from engine.portfolio import CircuitBreakerManager
+#         try:
+#             from engine.portfolio import CircuitBreakerManager
             
-            self.circuit_breaker_manager = CircuitBreakerManager()
-            logger.info("[CB] Circuit breaker manager initialized for bot")
+#             self.circuit_breaker_manager = CircuitBreakerManager()
+#             logger.info("[CB] Circuit breaker manager initialized for bot")
             
-            # Log initial circuit breaker status
-            can_trade, reasons = self.circuit_breaker_manager.can_trade()
-            if can_trade:
-                logger.info("[CB] Circuit breakers clear - trading enabled")
-            else:
-                logger.warning(f"[CB] Circuit breakers active: {', '.join(reasons)}")
+#             # Log initial circuit breaker status
+#             can_trade, reasons = self.circuit_breaker_manager.can_trade()
+#             if can_trade:
+#                 logger.info("[CB] Circuit breakers clear - trading enabled")
+#             else:
+#                 logger.warning(f"[CB] Circuit breakers active: {', '.join(reasons)}")
                 
-        except Exception as e:
-            logger.error(f"[CB] Failed to initialize circuit breaker: {e}")
-            self.circuit_breaker_enabled = False
+#         except Exception as e:
+#             logger.error(f"[CB] Failed to initialize circuit breaker: {e}")
+#             self.circuit_breaker_enabled = False
     
-    def _initialize_transaction_manager(self):
-        """Initialize the Transaction Manager for gas optimization."""
-        try:
-            # Run async initialization in sync context
-            async def init_tx_manager():
-                self.tx_manager = await get_transaction_manager(self.chain_id)
-                return self.tx_manager is not None
+#     def _initialize_transaction_manager(self):
+#         """Initialize the Transaction Manager for gas optimization."""
+#         try:
+#             # Run async initialization in sync context
+#             async def init_tx_manager():
+#                 self.tx_manager = await get_transaction_manager(self.chain_id)
+#                 return self.tx_manager is not None
             
-            success = async_to_sync(init_tx_manager)()
+#             success = async_to_sync(init_tx_manager)()
             
-            if success:
-                logger.info("[TX MANAGER] Transaction Manager initialized successfully")
-                logger.info("[TX MANAGER] Gas optimization enabled - targeting 23.1% savings")
-            else:
-                logger.warning("[TX MANAGER] Failed to initialize - falling back to legacy mode")
-                self.use_tx_manager = False
+#             if success:
+#                 logger.info("[TX MANAGER] Transaction Manager initialized successfully")
+#                 logger.info("[TX MANAGER] Gas optimization enabled - targeting 23.1% savings")
+#             else:
+#                 logger.warning("[TX MANAGER] Failed to initialize - falling back to legacy mode")
+#                 self.use_tx_manager = False
                 
-        except Exception as e:
-            logger.error(f"[TX MANAGER] Initialization error: {e}")
-            self.use_tx_manager = False
+#         except Exception as e:
+#             logger.error(f"[TX MANAGER] Initialization error: {e}")
+#             self.use_tx_manager = False
     
-    def _setup_strategy_configuration(self):
-        """
-        Set up or load a valid PaperStrategyConfiguration for this account.
-        """
-        from decimal import Decimal
-        from paper_trading.models import PaperStrategyConfiguration
+#     def _setup_strategy_configuration(self):
+#         """
+#         Set up or load a valid PaperStrategyConfiguration for this account.
+#         """
+#         from decimal import Decimal
+#         from paper_trading.models import PaperStrategyConfiguration
 
-        def json_safe(value):
-            """Convert Decimals and other non-JSON types to serializable types."""
-            if isinstance(value, Decimal):
-                return float(value)
-            if isinstance(value, dict):
-                return {k: json_safe(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [json_safe(v) for v in value]
-            return value
+#         def json_safe(value):
+#             """Convert Decimals and other non-JSON types to serializable types."""
+#             if isinstance(value, Decimal):
+#                 return float(value)
+#             if isinstance(value, dict):
+#                 return {k: json_safe(v) for k, v in value.items()}
+#             if isinstance(value, list):
+#                 return [json_safe(v) for v in value]
+#             return value
 
-        try:
-            config = self.intelligence_engine.config
+#         try:
+#             config = self.intelligence_engine.config
 
-            max_pos_size = getattr(config, "max_position_size", getattr(config, "max_position_size_percent", 10))
-            confidence_threshold = getattr(config, "confidence_threshold", 60)
-            risk_tolerance = getattr(config, "risk_tolerance", 50)
-            trade_freq = getattr(getattr(config, "trade_frequency", None), "value", "Moderate")
+#             max_pos_size = getattr(config, "max_position_size", getattr(config, "max_position_size_percent", 10))
+#             confidence_threshold = getattr(config, "confidence_threshold", 60)
+#             risk_tolerance = getattr(config, "risk_tolerance", 50)
+#             trade_freq = getattr(getattr(config, "trade_frequency", None), "value", "Moderate")
 
-            custom_parameters = {
-                "intel_level": self.intel_level,
-                "use_tx_manager": self.use_tx_manager,
-                "circuit_breaker_enabled": self.circuit_breaker_enabled,
-                "intel_config_summary": {
-                    "risk_tolerance": risk_tolerance,
-                    "trade_frequency": trade_freq,
-                    "max_position_size": float(max_pos_size),
-                    "confidence_threshold": float(confidence_threshold),
-                },
-            }
+#             custom_parameters = {
+#                 "intel_level": self.intel_level,
+#                 "use_tx_manager": self.use_tx_manager,
+#                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
+#                 "intel_config_summary": {
+#                     "risk_tolerance": risk_tolerance,
+#                     "trade_frequency": trade_freq,
+#                     "max_position_size": float(max_pos_size),
+#                     "confidence_threshold": float(confidence_threshold),
+#                 },
+#             }
 
-            custom_parameters = json_safe(custom_parameters)
+#             custom_parameters = json_safe(custom_parameters)
 
-            strategy_config, created = PaperStrategyConfiguration.objects.get_or_create(
-                account=self.account,
-                name=f"Intel_Level_{self.intel_level}_Strategy",
-                defaults={
-                    "trading_mode": "MODERATE",
-                    "use_fast_lane": True,
-                    "use_smart_lane": False,
-                    "fast_lane_threshold_usd": Decimal("100"),
-                    "max_position_size_percent": Decimal(str(max_pos_size)),
-                    "stop_loss_percent": Decimal("5.0"),
-                    "take_profit_percent": Decimal("10.0"),
-                    "max_daily_trades": 20,
-                    "max_concurrent_positions": 5,
-                    "min_liquidity_usd": Decimal("10000"),
-                    "max_slippage_percent": Decimal("1.0"),
-                    "confidence_threshold": Decimal(str(confidence_threshold)),
-                    "allowed_tokens": self._get_allowed_tokens(),
-                    "blocked_tokens": [],
-                    "custom_parameters": custom_parameters,
-                },
-            )
+#             strategy_config, created = PaperStrategyConfiguration.objects.get_or_create(
+#                 account=self.account,
+#                 name=f"Intel_Level_{self.intel_level}_Strategy",
+#                 defaults={
+#                     "trading_mode": "MODERATE",
+#                     "use_fast_lane": True,
+#                     "use_smart_lane": False,
+#                     "fast_lane_threshold_usd": Decimal("100"),
+#                     "max_position_size_percent": Decimal(str(max_pos_size)),
+#                     "stop_loss_percent": Decimal("5.0"),
+#                     "take_profit_percent": Decimal("10.0"),
+#                     "max_daily_trades": 20,
+#                     "max_concurrent_positions": 5,
+#                     "min_liquidity_usd": Decimal("10000"),
+#                     "max_slippage_percent": Decimal("1.0"),
+#                     "confidence_threshold": Decimal(str(confidence_threshold)),
+#                     "allowed_tokens": self._get_allowed_tokens(),
+#                     "blocked_tokens": [],
+#                     "custom_parameters": custom_parameters,
+#                 },
+#             )
 
-            if not created:
-                strategy_config.custom_parameters = custom_parameters
-                strategy_config.save()
+#             if not created:
+#                 strategy_config.custom_parameters = custom_parameters
+#                 strategy_config.save()
 
-            logger.info("[CONFIG] Strategy configuration %s", "created" if created else "updated")
-            self.strategy_config = strategy_config
+#             logger.info("[CONFIG] Strategy configuration %s", "created" if created else "updated")
+#             self.strategy_config = strategy_config
 
-        except Exception as e:
-            logger.error("[ERROR] Failed to setup strategy configuration: %s", e, exc_info=True)
-            raise
+#         except Exception as e:
+#             logger.error("[ERROR] Failed to setup strategy configuration: %s", e, exc_info=True)
+#             raise
 
-    def _load_account(self):
-        """
-        Load the single paper trading account for this user.
-        Always uses the same account regardless of parameters.
-        """
-        from django.contrib.auth.models import User
+#     def _load_account(self):
+#         """
+#         Load the single paper trading account for this user.
+#         Always uses the same account regardless of parameters.
+#         """
+#         from django.contrib.auth.models import User
         
-        # Always use the same user
-        user, _ = User.objects.get_or_create(
-            username='demo_user',
-            defaults={'email': 'demo@example.com'}
-        )
+#         # Always use the same user
+#         user, _ = User.objects.get_or_create(
+#             username='demo_user',
+#             defaults={'email': 'demo@example.com'}
+#         )
         
-        # Get the first existing account for this user, or create one
-        existing_accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
+#         # Get the first existing account for this user, or create one
+#         existing_accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
         
-        if existing_accounts.exists():
-            # Always use the first (oldest) account
-            self.account = existing_accounts.first()
-            logger.info(f"[ACCOUNT] Using existing account: {self.account.name} (ID: {self.account.account_id})")
+#         if existing_accounts.exists():
+#             # Always use the first (oldest) account
+#             self.account = existing_accounts.first()
+#             logger.info(f"[ACCOUNT] Using existing account: {self.account.name} (ID: {self.account.account_id})")
             
-            # ✅ FIXED: Only log duplicates, don't delete them yet
-            # They will be cleaned up after the session is created successfully
-            if existing_accounts.count() > 1:
-                logger.info(f"[ACCOUNT] Found {existing_accounts.count() - 1} duplicate accounts (will clean up later)")
-        else:
-            # Create the one and only account
-            self.account = PaperTradingAccount.objects.create(
-                name='My_Trading_Account',  # ✅ Use consistent name
-                user=user,
-                current_balance_usd=Decimal('10000'),
-                initial_balance_usd=Decimal('10000')
-            )
-            logger.info(f"[ACCOUNT] Created new account: {self.account.name} (ID: {self.account.account_id})")
+#             # ✅ FIXED: Only log duplicates, don't delete them yet
+#             # They will be cleaned up after the session is created successfully
+#             if existing_accounts.count() > 1:
+#                 logger.info(f"[ACCOUNT] Found {existing_accounts.count() - 1} duplicate accounts (will clean up later)")
+#         else:
+#             # Create the one and only account
+#             self.account = PaperTradingAccount.objects.create(
+#                 name='My_Trading_Account',  # ✅ Use consistent name
+#                 user=user,
+#                 current_balance_usd=Decimal('10000'),
+#                 initial_balance_usd=Decimal('10000')
+#             )
+#             logger.info(f"[ACCOUNT] Created new account: {self.account.name} (ID: {self.account.account_id})")
         
-        logger.info(f"[ACCOUNT] Balance: ${self.account.current_balance_usd:,.2f}")
+#         logger.info(f"[ACCOUNT] Balance: ${self.account.current_balance_usd:,.2f}")
         
-        # Override the account_name to match what we're actually using
-        self.account_name = self.account.name
+#         # Override the account_name to match what we're actually using
+#         self.account_name = self.account.name
 
 
 
-    def _cleanup_duplicate_accounts(self):
-        """Clean up duplicate accounts AFTER session is created successfully."""
-        try:
-            from django.contrib.auth.models import User
-            user = User.objects.get(username='demo_user')
+#     def _cleanup_duplicate_accounts(self):
+#         """Clean up duplicate accounts AFTER session is created successfully."""
+#         try:
+#             from django.contrib.auth.models import User
+#             user = User.objects.get(username='demo_user')
             
-            existing_accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
+#             existing_accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
             
-            if existing_accounts.count() > 1:
-                # Keep the first (oldest) account, delete the rest
-                duplicates = existing_accounts[1:]
-                for dup in duplicates:
-                    # Make sure it's not the active account
-                    if dup.account_id != self.account.account_id:
-                        logger.warning(f"[ACCOUNT] Cleaning up duplicate account: {dup.name} (ID: {dup.account_id})")
-                        dup.delete()
-                logger.info(f"[ACCOUNT] Cleaned up {len(duplicates)} duplicate accounts")
-        except Exception as e:
-            logger.error(f"[ACCOUNT] Error cleaning up duplicates: {e}")
+#             if existing_accounts.count() > 1:
+#                 # Keep the first (oldest) account, delete the rest
+#                 duplicates = existing_accounts[1:]
+#                 for dup in duplicates:
+#                     # Make sure it's not the active account
+#                     if dup.account_id != self.account.account_id:
+#                         logger.warning(f"[ACCOUNT] Cleaning up duplicate account: {dup.name} (ID: {dup.account_id})")
+#                         dup.delete()
+#                 logger.info(f"[ACCOUNT] Cleaned up {len(duplicates)} duplicate accounts")
+#         except Exception as e:
+#             logger.error(f"[ACCOUNT] Error cleaning up duplicates: {e}")
 
 
 
@@ -474,115 +474,115 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _create_session(self) -> None:
-        """
-        Create or resume a trading session for today.
-        Only one active session per day is allowed.
-        """
-        import json
-        from uuid import UUID
-        from datetime import date
+#     def _create_session(self) -> None:
+#         """
+#         Create or resume a trading session for today.
+#         Only one active session per day is allowed.
+#         """
+#         import json
+#         from uuid import UUID
+#         from datetime import date
 
-        def json_safe(data):
-            """Recursively convert non-serializable types to safe formats."""
-            if isinstance(data, dict):
-                return {k: json_safe(v) for k, v in data.items()}
-            if isinstance(data, list):
-                return [json_safe(v) for v in data]
-            if isinstance(data, UUID):
-                return str(data)
-            if isinstance(data, Decimal):
-                return float(data)
-            if isinstance(data, datetime):
-                return data.isoformat()
-            return data
+#         def json_safe(data):
+#             """Recursively convert non-serializable types to safe formats."""
+#             if isinstance(data, dict):
+#                 return {k: json_safe(v) for k, v in data.items()}
+#             if isinstance(data, list):
+#                 return [json_safe(v) for v in data]
+#             if isinstance(data, UUID):
+#                 return str(data)
+#             if isinstance(data, Decimal):
+#                 return float(data)
+#             if isinstance(data, datetime):
+#                 return data.isoformat()
+#             return data
 
-        today = timezone.now().date()
+#         today = timezone.now().date()
         
-        # Check for existing session today
-        existing_sessions = PaperTradingSession.objects.filter(
-            account=self.account,
-            started_at__date=today,
-            status='RUNNING'
-        ).order_by('-started_at')
+#         # Check for existing session today
+#         existing_sessions = PaperTradingSession.objects.filter(
+#             account=self.account,
+#             started_at__date=today,
+#             status='RUNNING'
+#         ).order_by('-started_at')
         
-        if existing_sessions.exists():
-            # Resume the most recent session from today
-            self.session = existing_sessions.first()
-            logger.info(f"[SESSION] Resuming existing session from today: {self.session.session_id}")
-            logger.info(f"[SESSION] Session started at: {self.session.started_at.strftime('%H:%M:%S')}")
+#         if existing_sessions.exists():
+#             # Resume the most recent session from today
+#             self.session = existing_sessions.first()
+#             logger.info(f"[SESSION] Resuming existing session from today: {self.session.session_id}")
+#             logger.info(f"[SESSION] Session started at: {self.session.started_at.strftime('%H:%M:%S')}")
             
-            # Update session config to reflect current bot settings
-            config_snapshot = {
-                "bot_version": "2.2.0",
-                "intel_level": self.intel_level,
-                "account_name": self.account_name,
-                "account_id": str(self.account.account_id),
-                "session_uuid": str(self.session.session_id),
-                "user_id": str(self.account.user.id),
-                "transaction_manager_enabled": self.use_tx_manager,
-                "circuit_breaker_enabled": self.circuit_breaker_enabled,
-                "resumed_at": timezone.now().isoformat()
-            }
+#             # Update session config to reflect current bot settings
+#             config_snapshot = {
+#                 "bot_version": "2.2.0",
+#                 "intel_level": self.intel_level,
+#                 "account_name": self.account_name,
+#                 "account_id": str(self.account.account_id),
+#                 "session_uuid": str(self.session.session_id),
+#                 "user_id": str(self.account.user.id),
+#                 "transaction_manager_enabled": self.use_tx_manager,
+#                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
+#                 "resumed_at": timezone.now().isoformat()
+#             }
             
-            self.session.config_snapshot = json_safe(config_snapshot)
-            self.session.save()
+#             self.session.config_snapshot = json_safe(config_snapshot)
+#             self.session.save()
             
-        else:
-            # Close any old running sessions from previous days
-            old_sessions = PaperTradingSession.objects.filter(
-                account=self.account,
-                status='RUNNING',
-                started_at__date__lt=today
-            )
+#         else:
+#             # Close any old running sessions from previous days
+#             old_sessions = PaperTradingSession.objects.filter(
+#                 account=self.account,
+#                 status='RUNNING',
+#                 started_at__date__lt=today
+#             )
             
-            for old_session in old_sessions:
-                old_session.status = 'STOPPED'
-                old_session.ended_at = timezone.now()
-                old_session.ending_balance_usd = self.account.current_balance_usd
-                old_session.session_pnl_usd = self.account.current_balance_usd - old_session.starting_balance_usd
-                old_session.save()
-                logger.info(f"[SESSION] Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
+#             for old_session in old_sessions:
+#                 old_session.status = 'STOPPED'
+#                 old_session.ended_at = timezone.now()
+#                 old_session.ending_balance_usd = self.account.current_balance_usd
+#                 old_session.session_pnl_usd = self.account.current_balance_usd - old_session.starting_balance_usd
+#                 old_session.save()
+#                 logger.info(f"[SESSION] Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
             
-            # Create new session for today
-            config_snapshot = {
-                "bot_version": "2.2.0",
-                "intel_level": self.intel_level,
-                "account_name": self.account_name,
-                "account_id": str(self.account.account_id),
-                "session_uuid": str(uuid.uuid4()),
-                "user_id": str(self.account.user.id),
-                "transaction_manager_enabled": self.use_tx_manager,
-                "circuit_breaker_enabled": self.circuit_breaker_enabled,
-            }
+#             # Create new session for today
+#             config_snapshot = {
+#                 "bot_version": "2.2.0",
+#                 "intel_level": self.intel_level,
+#                 "account_name": self.account_name,
+#                 "account_id": str(self.account.account_id),
+#                 "session_uuid": str(uuid.uuid4()),
+#                 "user_id": str(self.account.user.id),
+#                 "transaction_manager_enabled": self.use_tx_manager,
+#                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
+#             }
 
-            safe_snapshot = json_safe(config_snapshot)
+#             safe_snapshot = json_safe(config_snapshot)
             
-            session_name = f"Bot_Session_{today.strftime('%Y%m%d')}_Intel_{self.intel_level}"
+#             session_name = f"Bot_Session_{today.strftime('%Y%m%d')}_Intel_{self.intel_level}"
 
-            self.session = PaperTradingSession.objects.create(
-                account=self.account,
-                status="RUNNING",
-                starting_balance_usd=self.account.current_balance_usd,
-                name=session_name,
-                config_snapshot=safe_snapshot,
-            )
-            logger.info(f"[SESSION] Created new session for today: {self.session.session_id}")
-            logger.info(f"[SESSION] Session name: {session_name}")
+#             self.session = PaperTradingSession.objects.create(
+#                 account=self.account,
+#                 status="RUNNING",
+#                 starting_balance_usd=self.account.current_balance_usd,
+#                 name=session_name,
+#                 config_snapshot=safe_snapshot,
+#             )
+#             logger.info(f"[SESSION] Created new session for today: {self.session.session_id}")
+#             logger.info(f"[SESSION] Session name: {session_name}")
 
-    def _initialize_intelligence(self):
-        """Initialize the intelligence engine."""
-        active_config = PaperStrategyConfiguration.objects.filter(
-            account=self.account,
-            is_active=True
-        ).first()
+#     def _initialize_intelligence(self):
+#         """Initialize the intelligence engine."""
+#         active_config = PaperStrategyConfiguration.objects.filter(
+#             account=self.account,
+#             is_active=True
+#         ).first()
 
-        self.intelligence_engine = IntelSliderEngine(
-            intel_level=self.intel_level,
-            account_id=str(self.account.account_id),
-            strategy_config=active_config  # ✅ PASS CONFIG TO ENGINE
-        )
-        logger.info(f"[INTEL] Intelligence Engine initialized at Level {self.intel_level}")
+#         self.intelligence_engine = IntelSliderEngine(
+#             intel_level=self.intel_level,
+#             account_id=str(self.account.account_id),
+#             strategy_config=active_config  # ✅ PASS CONFIG TO ENGINE
+#         )
+#         logger.info(f"[INTEL] Intelligence Engine initialized at Level {self.intel_level}")
     
 
 
@@ -596,148 +596,148 @@ class EnhancedPaperTradingBot:
 
 
     
-    def _load_positions(self):
-        """Load existing open positions."""
-        try:
-            positions = PaperPosition.objects.filter(
-                account=self.account,
-                is_open=True
-            )
+#     def _load_positions(self):
+#         """Load existing open positions."""
+#         try:
+#             positions = PaperPosition.objects.filter(
+#                 account=self.account,
+#                 is_open=True
+#             )
             
-            for position in positions:
-                self.positions[position.token_symbol] = position
+#             for position in positions:
+#                 self.positions[position.token_symbol] = position
             
-            logger.info(f"[POSITIONS] Loaded {len(self.positions)} open positions")
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to load positions: {e}")
+#             logger.info(f"[POSITIONS] Loaded {len(self.positions)} open positions")
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to load positions: {e}")
     
-    def _initialize_price_history(self):
-        """Initialize price history for all tokens."""
-        for token in self.token_list:
-            self.price_history[token['symbol']] = [token['price']]
+#     def _initialize_price_history(self):
+#         """Initialize price history for all tokens."""
+#         for token in self.token_list:
+#             self.price_history[token['symbol']] = [token['price']]
     
-    def _get_allowed_tokens(self) -> List[str]:
-        """Get list of allowed token addresses."""
-        return [token['address'] for token in self.token_list]
+#     def _get_allowed_tokens(self) -> List[str]:
+#         """Get list of allowed token addresses."""
+#         return [token['address'] for token in self.token_list]
     
-    def _get_portfolio_state(self) -> Dict[str, Any]:
-        """
-        Get current portfolio state for circuit breaker evaluation.
+#     def _get_portfolio_state(self) -> Dict[str, Any]:
+#         """
+#         Get current portfolio state for circuit breaker evaluation.
         
-        Returns:
-            Dictionary with portfolio metrics
-        """
-        try:
-            # Calculate current P&L
-            current_balance = self.account.current_balance_usd
-            starting_balance = self.session.starting_balance_usd if self.session else current_balance
-            total_pnl = current_balance - starting_balance
+#         Returns:
+#             Dictionary with portfolio metrics
+#         """
+#         try:
+#             # Calculate current P&L
+#             current_balance = self.account.current_balance_usd
+#             starting_balance = self.session.starting_balance_usd if self.session else current_balance
+#             total_pnl = current_balance - starting_balance
             
-            # Calculate daily P&L (simplified - in production would track properly)
-            daily_pnl = total_pnl  # Simplified for paper trading
+#             # Calculate daily P&L (simplified - in production would track properly)
+#             daily_pnl = total_pnl  # Simplified for paper trading
             
-            # Count open positions value
-            positions_value = sum(
-                pos.current_value_usd for pos in self.positions.values()
-            )
+#             # Count open positions value
+#             positions_value = sum(
+#                 pos.current_value_usd for pos in self.positions.values()
+#             )
             
-            portfolio_state = {
-                'daily_pnl': daily_pnl,
-                'total_pnl': total_pnl,
-                'consecutive_losses': self.consecutive_failures,
-                'portfolio_value': current_balance + positions_value,
-                'cash_balance': current_balance,
-                'positions_count': len(self.positions),
-                'daily_trades': self.daily_trades_count
-            }
+#             portfolio_state = {
+#                 'daily_pnl': daily_pnl,
+#                 'total_pnl': total_pnl,
+#                 'consecutive_losses': self.consecutive_failures,
+#                 'portfolio_value': current_balance + positions_value,
+#                 'cash_balance': current_balance,
+#                 'positions_count': len(self.positions),
+#                 'daily_trades': self.daily_trades_count
+#             }
             
-            return portfolio_state
+#             return portfolio_state
             
-        except Exception as e:
-            logger.error(f"[CB] Error getting portfolio state: {e}")
-            return {
-                'daily_pnl': Decimal('0'),
-                'total_pnl': Decimal('0'),
-                'consecutive_losses': 0,
-                'portfolio_value': Decimal('10000')
-            }
+#         except Exception as e:
+#             logger.error(f"[CB] Error getting portfolio state: {e}")
+#             return {
+#                 'daily_pnl': Decimal('0'),
+#                 'total_pnl': Decimal('0'),
+#                 'consecutive_losses': 0,
+#                 'portfolio_value': Decimal('10000')
+#             }
     
-    def _send_bot_status_update(self, status: str):
-        """Send bot status update via WebSocket."""
-        try:
-            websocket_service.send_portfolio_update(
-                account_id=str(self.account.account_id),
-                portfolio_data={
-                    'bot_status': status,
-                    'intel_level': self.intel_level,
-                    'tx_manager_enabled': self.use_tx_manager,
-                    'circuit_breaker_enabled': self.circuit_breaker_enabled,
-                    'account_balance': float(self.account.current_balance_usd),
-                    'open_positions': len(self.positions),
-                    'tick_count': self.tick_count,
-                    'total_gas_savings': float(self.total_gas_savings) if self.use_tx_manager else 0,
-                    'pending_transactions': len(self.pending_transactions),
-                    'consecutive_failures': self.consecutive_failures,
-                    'daily_trades': self.daily_trades_count
-                }
-            )
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to send status update: {e}")
+#     def _send_bot_status_update(self, status: str):
+#         """Send bot status update via WebSocket."""
+#         try:
+#             websocket_service.send_portfolio_update(
+#                 account_id=str(self.account.account_id),
+#                 portfolio_data={
+#                     'bot_status': status,
+#                     'intel_level': self.intel_level,
+#                     'tx_manager_enabled': self.use_tx_manager,
+#                     'circuit_breaker_enabled': self.circuit_breaker_enabled,
+#                     'account_balance': float(self.account.current_balance_usd),
+#                     'open_positions': len(self.positions),
+#                     'tick_count': self.tick_count,
+#                     'total_gas_savings': float(self.total_gas_savings) if self.use_tx_manager else 0,
+#                     'pending_transactions': len(self.pending_transactions),
+#                     'consecutive_failures': self.consecutive_failures,
+#                     'daily_trades': self.daily_trades_count
+#                 }
+#             )
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to send status update: {e}")
     
-    def run(self):
-        """Main bot execution loop with interruptible sleep and stop signal detection."""
-        logger.info("[START] Bot starting main execution loop...")
+#     def run(self):
+#         """Main bot execution loop with interruptible sleep and stop signal detection."""
+#         logger.info("[START] Bot starting main execution loop...")
         
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
+#         # Setup signal handlers
+#         signal.signal(signal.SIGINT, self._handle_shutdown)
+#         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
-        self.running = True
+#         self.running = True
         
-        try:
-            while self.running:
-                try:
-                    # ✅ CHECK FOR DASHBOARD STOP SIGNAL
-                    if self._check_stop_signal():
-                        logger.info("[SHUTDOWN] Dashboard stop detected")
-                        break
+#         try:
+#             while self.running:
+#                 try:
+#                     # ✅ CHECK FOR DASHBOARD STOP SIGNAL
+#                     if self._check_stop_signal():
+#                         logger.info("[SHUTDOWN] Dashboard stop detected")
+#                         break
                     
-                    # Check pending transactions if TX Manager is enabled
-                    if self.use_tx_manager and self.pending_transactions:
-                        self._check_pending_transactions()
+#                     # Check pending transactions if TX Manager is enabled
+#                     if self.use_tx_manager and self.pending_transactions:
+#                         self._check_pending_transactions()
                     
-                    # Market analysis tick
-                    self._tick()
+#                     # Market analysis tick
+#                     self._tick()
                     
-                    # ✅ INTERRUPTIBLE SLEEP - Check every 0.5 seconds
-                    sleep_remaining = self.tick_interval
-                    while sleep_remaining > 0 and self.running:
-                        # Check stop signal during sleep
-                        if self._check_stop_signal():
-                            logger.info("[SHUTDOWN] Stop signal during sleep")
-                            self.running = False
-                            break
+#                     # ✅ INTERRUPTIBLE SLEEP - Check every 0.5 seconds
+#                     sleep_remaining = self.tick_interval
+#                     while sleep_remaining > 0 and self.running:
+#                         # Check stop signal during sleep
+#                         if self._check_stop_signal():
+#                             logger.info("[SHUTDOWN] Stop signal during sleep")
+#                             self.running = False
+#                             break
                         
-                        # Sleep in 0.5s chunks for responsiveness
-                        sleep_time = min(0.5, sleep_remaining)
-                        time.sleep(sleep_time)
-                        sleep_remaining -= sleep_time
+#                         # Sleep in 0.5s chunks for responsiveness
+#                         sleep_time = min(0.5, sleep_remaining)
+#                         time.sleep(sleep_time)
+#                         sleep_remaining -= sleep_time
                     
-                except KeyboardInterrupt:
-                    logger.info("[SHUTDOWN] Keyboard interrupt received")
-                    break
-                except Exception as e:
-                    logger.error(f"[ERROR] Tick failed: {e}", exc_info=True)
-                    # Continue running even if one tick fails
-                    if not self.running:
-                        break
+#                 except KeyboardInterrupt:
+#                     logger.info("[SHUTDOWN] Keyboard interrupt received")
+#                     break
+#                 except Exception as e:
+#                     logger.error(f"[ERROR] Tick failed: {e}", exc_info=True)
+#                     # Continue running even if one tick fails
+#                     if not self.running:
+#                         break
                     
-        except Exception as e:
-            logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
-        finally:
-            logger.info("[SHUTDOWN] Starting cleanup...")
-            self._cleanup()
-            logger.info("[SHUTDOWN] Cleanup complete - bot stopped")
+#         except Exception as e:
+#             logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
+#         finally:
+#             logger.info("[SHUTDOWN] Starting cleanup...")
+#             self._cleanup()
+#             logger.info("[SHUTDOWN] Cleanup complete - bot stopped")
 
 
 
@@ -750,76 +750,76 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _check_pending_transactions(self):
-        """Check status of pending transactions from Transaction Manager."""
-        if not self.use_tx_manager or not self.tx_manager:
-            return
+#     def _check_pending_transactions(self):
+#         """Check status of pending transactions from Transaction Manager."""
+#         if not self.use_tx_manager or not self.tx_manager:
+#             return
         
-        async def check_transactions():
-            completed = []
-            for tx_id, tx_info in self.pending_transactions.items():
-                try:
-                    tx_state = await self.tx_manager.get_transaction_status(tx_id)
-                    if tx_state:
-                        if tx_state.status == TransactionStatus.COMPLETED:
-                            logger.info(f"[TX MANAGER] Transaction completed: {tx_id}")
-                            if tx_state.gas_savings_percent:
-                                self.total_gas_savings += tx_state.gas_savings_percent
-                                logger.info(f"[TX MANAGER] Gas saved: {tx_state.gas_savings_percent:.2f}%")
-                            completed.append(tx_id)
-                        elif tx_state.status == TransactionStatus.FAILED:
-                            logger.error(f"[TX MANAGER] Transaction failed: {tx_id}")
-                            completed.append(tx_id)
-                            self.consecutive_failures += 1
-                        elif tx_state.status == TransactionStatus.BLOCKED_BY_CIRCUIT_BREAKER:
-                            logger.warning(f"[TX MANAGER] Transaction blocked by circuit breaker: {tx_id}")
-                            completed.append(tx_id)
-                except Exception as e:
-                    logger.error(f"[TX MANAGER] Error checking transaction {tx_id}: {e}")
+#         async def check_transactions():
+#             completed = []
+#             for tx_id, tx_info in self.pending_transactions.items():
+#                 try:
+#                     tx_state = await self.tx_manager.get_transaction_status(tx_id)
+#                     if tx_state:
+#                         if tx_state.status == TransactionStatus.COMPLETED:
+#                             logger.info(f"[TX MANAGER] Transaction completed: {tx_id}")
+#                             if tx_state.gas_savings_percent:
+#                                 self.total_gas_savings += tx_state.gas_savings_percent
+#                                 logger.info(f"[TX MANAGER] Gas saved: {tx_state.gas_savings_percent:.2f}%")
+#                             completed.append(tx_id)
+#                         elif tx_state.status == TransactionStatus.FAILED:
+#                             logger.error(f"[TX MANAGER] Transaction failed: {tx_id}")
+#                             completed.append(tx_id)
+#                             self.consecutive_failures += 1
+#                         elif tx_state.status == TransactionStatus.BLOCKED_BY_CIRCUIT_BREAKER:
+#                             logger.warning(f"[TX MANAGER] Transaction blocked by circuit breaker: {tx_id}")
+#                             completed.append(tx_id)
+#                 except Exception as e:
+#                     logger.error(f"[TX MANAGER] Error checking transaction {tx_id}: {e}")
             
-            # Remove completed transactions
-            for tx_id in completed:
-                del self.pending_transactions[tx_id]
+#             # Remove completed transactions
+#             for tx_id in completed:
+#                 del self.pending_transactions[tx_id]
         
-        async_to_sync(check_transactions)()
+#         async_to_sync(check_transactions)()
     
-    def _tick(self):
-        """Single market analysis tick with circuit breaker monitoring."""
-        self.tick_count += 1
-        logger.info("\n" + "=" * 60)
-        logger.info(f"[TICK] Market tick #{self.tick_count}")
+#     def _tick(self):
+#         """Single market analysis tick with circuit breaker monitoring."""
+#         self.tick_count += 1
+#         logger.info("\n" + "=" * 60)
+#         logger.info(f"[TICK] Market tick #{self.tick_count}")
         
-        # Check circuit breaker status
-        if self.circuit_breaker_enabled and self.circuit_breaker_manager:
-            can_trade, reasons = self.circuit_breaker_manager.can_trade()
-            if not can_trade:
-                logger.warning(f"[CB] Circuit breakers active: {', '.join(reasons)}")
-                logger.info("[CB] Skipping trading analysis due to circuit breakers")
+#         # Check circuit breaker status
+#         if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+#             can_trade, reasons = self.circuit_breaker_manager.can_trade()
+#             if not can_trade:
+#                 logger.warning(f"[CB] Circuit breakers active: {', '.join(reasons)}")
+#                 logger.info("[CB] Skipping trading analysis due to circuit breakers")
                 
-                # Still update market prices for tracking
-                self._update_market_prices()
-                self._update_position_prices()
+#                 # Still update market prices for tracking
+#                 self._update_market_prices()
+#                 self._update_position_prices()
                 
-                # ✅ ADD THIS: Check for auto-close even when circuit breakers active
-                self._check_auto_close_positions()
+#                 # ✅ ADD THIS: Check for auto-close even when circuit breakers active
+#                 self._check_auto_close_positions()
                 
-                # Send status update
-                self._send_bot_status_update('circuit_breaker_active')
-                return
+#                 # Send status update
+#                 self._send_bot_status_update('circuit_breaker_active')
+#                 return
         
-        # Normal tick processing
-        self._update_market_prices()
-        self._update_position_prices()
+#         # Normal tick processing
+#         self._update_market_prices()
+#         self._update_position_prices()
         
-        # ✅ ADD THIS: Check for positions to auto-close
-        self._check_auto_close_positions()
+#         # ✅ ADD THIS: Check for positions to auto-close
+#         self._check_auto_close_positions()
         
-        # Analyze each token
-        for token_data in self.token_list:
-            self._analyze_token(token_data)
+#         # Analyze each token
+#         for token_data in self.token_list:
+#             self._analyze_token(token_data)
         
-        # Update performance metrics
-        self._update_performance_metrics()
+#         # Update performance metrics
+#         self._update_performance_metrics()
 
 
 
@@ -835,276 +835,276 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _update_position_prices(self):
-        """
-        Update all open position prices with current market prices.
+#     def _update_position_prices(self):
+#         """
+#         Update all open position prices with current market prices.
         
-        This method should be called on every tick to keep position
-        values current in the database for dashboard display.
-        """
-        try:
-            if not self.positions:
-                return
+#         This method should be called on every tick to keep position
+#         values current in the database for dashboard display.
+#         """
+#         try:
+#             if not self.positions:
+#                 return
             
-            updated_count = 0
+#             updated_count = 0
             
-            for token_symbol, position in self.positions.items():
-                # Get current price from token list
-                current_token = next(
-                    (t for t in self.token_list if t['symbol'] == token_symbol),
-                    None
-                )
+#             for token_symbol, position in self.positions.items():
+#                 # Get current price from token list
+#                 current_token = next(
+#                     (t for t in self.token_list if t['symbol'] == token_symbol),
+#                     None
+#                 )
                 
-                if not current_token:
-                    continue
+#                 if not current_token:
+#                     continue
                 
-                # Update position with current price
-                old_price = position.current_price_usd
-                new_price = current_token['price']
+#                 # Update position with current price
+#                 old_price = position.current_price_usd
+#                 new_price = current_token['price']
                 
-                position.current_price_usd = new_price
-                position.current_value_usd = position.quantity * new_price
-                position.unrealized_pnl_usd = position.current_value_usd - position.total_invested_usd
-                position.last_updated = timezone.now()
-                position.save(update_fields=[
-                    'current_price_usd',
-                    'current_value_usd', 
-                    'unrealized_pnl_usd',
-                    'last_updated'
-                ])
+#                 position.current_price_usd = new_price
+#                 position.current_value_usd = position.quantity * new_price
+#                 position.unrealized_pnl_usd = position.current_value_usd - position.total_invested_usd
+#                 position.last_updated = timezone.now()
+#                 position.save(update_fields=[
+#                     'current_price_usd',
+#                     'current_value_usd', 
+#                     'unrealized_pnl_usd',
+#                     'last_updated'
+#                 ])
                 
-                updated_count += 1
+#                 updated_count += 1
                 
-                # Log significant price changes
-                if old_price and old_price > 0:
-                    price_change_pct = ((new_price - old_price) / old_price) * 100
-                    if abs(price_change_pct) > 1:  # Log if >1% change
-                        logger.debug(
-                            f"[PRICE UPDATE] {token_symbol}: "
-                            f"${old_price:.2f} -> ${new_price:.2f} "
-                            f"({price_change_pct:+.2f}%), "
-                            f"Position value: ${position.current_value_usd:.2f}, "
-                            f"P&L: ${position.unrealized_pnl_usd:+.2f}"
-                        )
+#                 # Log significant price changes
+#                 if old_price and old_price > 0:
+#                     price_change_pct = ((new_price - old_price) / old_price) * 100
+#                     if abs(price_change_pct) > 1:  # Log if >1% change
+#                         logger.debug(
+#                             f"[PRICE UPDATE] {token_symbol}: "
+#                             f"${old_price:.2f} -> ${new_price:.2f} "
+#                             f"({price_change_pct:+.2f}%), "
+#                             f"Position value: ${position.current_value_usd:.2f}, "
+#                             f"P&L: ${position.unrealized_pnl_usd:+.2f}"
+#                         )
             
-            if updated_count > 0:
-                logger.debug(f"[POSITIONS] Updated prices for {updated_count} positions")
+#             if updated_count > 0:
+#                 logger.debug(f"[POSITIONS] Updated prices for {updated_count} positions")
                 
-                # Update account's total P&L after price updates
-                self._update_account_pnl()
+#                 # Update account's total P&L after price updates
+#                 self._update_account_pnl()
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to update position prices: {e}", exc_info=True)
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to update position prices: {e}", exc_info=True)
 
 
 
 
-    def _update_market_prices(self):
-        """
-        Simulate market price changes for all tracked tokens.
+#     def _update_market_prices(self):
+#         """
+#         Simulate market price changes for all tracked tokens.
         
-        Updates prices with random movements between -5% and +5%,
-        maintains price history for trend analysis, and logs
-        significant price changes.
-        """
-        try:
-            for token in self.token_list:
-                # Simulate price movement (-5% to +5%)
-                change = Decimal(str(random.uniform(-0.05, 0.05)))
-                old_price = token['price']
-                token['price'] = old_price * (Decimal('1') + change)
+#         Updates prices with random movements between -5% and +5%,
+#         maintains price history for trend analysis, and logs
+#         significant price changes.
+#         """
+#         try:
+#             for token in self.token_list:
+#                 # Simulate price movement (-5% to +5%)
+#                 change = Decimal(str(random.uniform(-0.05, 0.05)))
+#                 old_price = token['price']
+#                 token['price'] = old_price * (Decimal('1') + change)
                 
-                # Update price history
-                if token['symbol'] not in self.price_history:
-                    self.price_history[token['symbol']] = []
-                self.price_history[token['symbol']].append(token['price'])
+#                 # Update price history
+#                 if token['symbol'] not in self.price_history:
+#                     self.price_history[token['symbol']] = []
+#                 self.price_history[token['symbol']].append(token['price'])
                 
-                # Keep only last 100 prices for memory efficiency
-                if len(self.price_history[token['symbol']]) > 100:
-                    self.price_history[token['symbol']].pop(0)
+#                 # Keep only last 100 prices for memory efficiency
+#                 if len(self.price_history[token['symbol']]) > 100:
+#                     self.price_history[token['symbol']].pop(0)
                 
-                # Log significant changes (> 2%)
-                if abs(change) > Decimal('0.02'):
-                    logger.info(
-                        f"[PRICE] {token['symbol']}: "
-                        f"${old_price:.2f} -> ${token['price']:.2f} "
-                        f"({change*100:+.2f}%)"
-                    )
+#                 # Log significant changes (> 2%)
+#                 if abs(change) > Decimal('0.02'):
+#                     logger.info(
+#                         f"[PRICE] {token['symbol']}: "
+#                         f"${old_price:.2f} -> ${token['price']:.2f} "
+#                         f"({change*100:+.2f}%)"
+#                     )
             
-            logger.debug(f"[MARKET] Updated prices for {len(self.token_list)} tokens")
+#             logger.debug(f"[MARKET] Updated prices for {len(self.token_list)} tokens")
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to update market prices: {e}", exc_info=True)
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to update market prices: {e}", exc_info=True)
 
 
 
-    def _check_auto_close_positions(self):
-        """
-        Check all open positions for auto-close conditions.
+#     def _check_auto_close_positions(self):
+#         """
+#         Check all open positions for auto-close conditions.
         
-        Automatically closes positions that have:
-        - Hit stop-loss threshold (e.g., -5% loss)
-        - Hit take-profit threshold (e.g., +10% gain)
-        - Exceeded maximum hold time
+#         Automatically closes positions that have:
+#         - Hit stop-loss threshold (e.g., -5% loss)
+#         - Hit take-profit threshold (e.g., +10% gain)
+#         - Exceeded maximum hold time
         
-        This ensures risk management rules are enforced even
-        when circuit breakers are active.
-        """
-        try:
-            if not self.positions:
-                return
+#         This ensures risk management rules are enforced even
+#         when circuit breakers are active.
+#         """
+#         try:
+#             if not self.positions:
+#                 return
             
-            positions_to_close = []
+#             positions_to_close = []
             
-            for token_symbol, position in self.positions.items():
-                # Calculate current P&L percentage
-                if position.total_invested_usd > 0:
-                    pnl_percent = (
-                        (position.current_value_usd - position.total_invested_usd) 
-                        / position.total_invested_usd 
-                        * 100
-                    )
-                else:
-                    continue
+#             for token_symbol, position in self.positions.items():
+#                 # Calculate current P&L percentage
+#                 if position.total_invested_usd > 0:
+#                     pnl_percent = (
+#                         (position.current_value_usd - position.total_invested_usd) 
+#                         / position.total_invested_usd 
+#                         * 100
+#                     )
+#                 else:
+#                     continue
                 
-                # Get stop-loss and take-profit thresholds from strategy config
-                stop_loss_threshold = -5.0  # Default -5%
-                take_profit_threshold = 10.0  # Default +10%
+#                 # Get stop-loss and take-profit thresholds from strategy config
+#                 stop_loss_threshold = -5.0  # Default -5%
+#                 take_profit_threshold = 10.0  # Default +10%
                 
-                if hasattr(self, 'strategy_config') and self.strategy_config:
-                    stop_loss_threshold = -float(
-                        getattr(self.strategy_config, 'stop_loss_percent', 5)
-                    )
-                    take_profit_threshold = float(
-                        getattr(self.strategy_config, 'take_profit_percent', 10)
-                    )
+#                 if hasattr(self, 'strategy_config') and self.strategy_config:
+#                     stop_loss_threshold = -float(
+#                         getattr(self.strategy_config, 'stop_loss_percent', 5)
+#                     )
+#                     take_profit_threshold = float(
+#                         getattr(self.strategy_config, 'take_profit_percent', 10)
+#                     )
                 
-                # Check stop-loss condition
-                if pnl_percent <= stop_loss_threshold:
-                    logger.warning(
-                        f"[AUTO-CLOSE] Stop-loss triggered for {token_symbol}: "
-                        f"P&L={pnl_percent:.2f}% (threshold={stop_loss_threshold:.2f}%)"
-                    )
-                    positions_to_close.append((token_symbol, 'STOP_LOSS', pnl_percent))
+#                 # Check stop-loss condition
+#                 if pnl_percent <= stop_loss_threshold:
+#                     logger.warning(
+#                         f"[AUTO-CLOSE] Stop-loss triggered for {token_symbol}: "
+#                         f"P&L={pnl_percent:.2f}% (threshold={stop_loss_threshold:.2f}%)"
+#                     )
+#                     positions_to_close.append((token_symbol, 'STOP_LOSS', pnl_percent))
                     
-                # Check take-profit condition
-                elif pnl_percent >= take_profit_threshold:
-                    logger.info(
-                        f"[AUTO-CLOSE] Take-profit triggered for {token_symbol}: "
-                        f"P&L={pnl_percent:.2f}% (threshold={take_profit_threshold:.2f}%)"
-                    )
-                    positions_to_close.append((token_symbol, 'TAKE_PROFIT', pnl_percent))
+#                 # Check take-profit condition
+#                 elif pnl_percent >= take_profit_threshold:
+#                     logger.info(
+#                         f"[AUTO-CLOSE] Take-profit triggered for {token_symbol}: "
+#                         f"P&L={pnl_percent:.2f}% (threshold={take_profit_threshold:.2f}%)"
+#                     )
+#                     positions_to_close.append((token_symbol, 'TAKE_PROFIT', pnl_percent))
                 
-                # Check maximum hold time (24 hours default)
-                if position.opened_at:
-                    hold_duration = timezone.now() - position.opened_at
-                    max_hold_hours = 24  # Default 24 hours
+#                 # Check maximum hold time (24 hours default)
+#                 if position.opened_at:
+#                     hold_duration = timezone.now() - position.opened_at
+#                     max_hold_hours = 24  # Default 24 hours
                     
-                    if hold_duration.total_seconds() > (max_hold_hours * 3600):
-                        logger.info(
-                            f"[AUTO-CLOSE] Max hold time exceeded for {token_symbol}: "
-                            f"Held for {hold_duration.total_seconds()/3600:.1f} hours"
-                        )
-                        positions_to_close.append((token_symbol, 'MAX_HOLD_TIME', pnl_percent))
+#                     if hold_duration.total_seconds() > (max_hold_hours * 3600):
+#                         logger.info(
+#                             f"[AUTO-CLOSE] Max hold time exceeded for {token_symbol}: "
+#                             f"Held for {hold_duration.total_seconds()/3600:.1f} hours"
+#                         )
+#                         positions_to_close.append((token_symbol, 'MAX_HOLD_TIME', pnl_percent))
             
-            # Execute auto-closes
-            for token_symbol, reason, pnl_percent in positions_to_close:
-                self._execute_auto_close(token_symbol, reason, pnl_percent)
+#             # Execute auto-closes
+#             for token_symbol, reason, pnl_percent in positions_to_close:
+#                 self._execute_auto_close(token_symbol, reason, pnl_percent)
             
-            if positions_to_close:
-                logger.info(
-                    f"[AUTO-CLOSE] Closed {len(positions_to_close)} positions automatically"
-                )
+#             if positions_to_close:
+#                 logger.info(
+#                     f"[AUTO-CLOSE] Closed {len(positions_to_close)} positions automatically"
+#                 )
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to check auto-close positions: {e}", exc_info=True)
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to check auto-close positions: {e}", exc_info=True)
 
 
-    def _execute_auto_close(self, token_symbol: str, reason: str, pnl_percent: float):
-        """
-        Execute an automatic position close.
+#     def _execute_auto_close(self, token_symbol: str, reason: str, pnl_percent: float):
+#         """
+#         Execute an automatic position close.
         
-        Args:
-            token_symbol: Token symbol to close
-            reason: Reason for auto-close (STOP_LOSS, TAKE_PROFIT, MAX_HOLD_TIME)
-            pnl_percent: Current P&L percentage
-        """
-        try:
-            if token_symbol not in self.positions:
-                logger.warning(f"[AUTO-CLOSE] Position {token_symbol} not found")
-                return
+#         Args:
+#             token_symbol: Token symbol to close
+#             reason: Reason for auto-close (STOP_LOSS, TAKE_PROFIT, MAX_HOLD_TIME)
+#             pnl_percent: Current P&L percentage
+#         """
+#         try:
+#             if token_symbol not in self.positions:
+#                 logger.warning(f"[AUTO-CLOSE] Position {token_symbol} not found")
+#                 return
             
-            position = self.positions[token_symbol]
+#             position = self.positions[token_symbol]
             
-            # Get current token price
-            current_token = next(
-                (t for t in self.token_list if t['symbol'] == token_symbol),
-                None
-            )
+#             # Get current token price
+#             current_token = next(
+#                 (t for t in self.token_list if t['symbol'] == token_symbol),
+#                 None
+#             )
             
-            if not current_token:
-                logger.error(f"[AUTO-CLOSE] Token {token_symbol} not found in token list")
-                return
+#             if not current_token:
+#                 logger.error(f"[AUTO-CLOSE] Token {token_symbol} not found in token list")
+#                 return
             
-            current_price = current_token['price']
+#             current_price = current_token['price']
             
-            # ✅ Create a sell decision with CORRECT parameters
-            decision = TradingDecision(
-                action='SELL',
-                token_address=position.token_address,
-                token_symbol=token_symbol,
-                position_size_percent=Decimal('100'),  # Close entire position
-                position_size_usd=position.current_value_usd,
-                stop_loss_percent=self.strategy_config.stop_loss_percent if hasattr(self, 'strategy_config') else Decimal('5'),
-                take_profit_targets=[],
-                execution_mode='IMMEDIATE',
-                use_private_relay=False,
-                gas_strategy='standard',
-                max_gas_price_gwei=Decimal('50'),
-                overall_confidence=Decimal('100'),  # ✅ CORRECT: overall_confidence, not confidence_percent
-                risk_score=Decimal('0'),
-                opportunity_score=Decimal('0'),
-                primary_reasoning=f"Auto-close triggered: {reason}. P&L: {pnl_percent:+.2f}%",
-                risk_factors=[f"Auto-close: {reason}"],
-                opportunity_factors=[],
-                mitigation_strategies=[],
-                intel_level_used=self.intel_level,
-                intel_adjustments={},
-                time_sensitivity='HIGH',
-                max_execution_time_ms=1000,
-                processing_time_ms=100
-            )            
+#             # ✅ Create a sell decision with CORRECT parameters
+#             decision = TradingDecision(
+#                 action='SELL',
+#                 token_address=position.token_address,
+#                 token_symbol=token_symbol,
+#                 position_size_percent=Decimal('100'),  # Close entire position
+#                 position_size_usd=position.current_value_usd,
+#                 stop_loss_percent=self.strategy_config.stop_loss_percent if hasattr(self, 'strategy_config') else Decimal('5'),
+#                 take_profit_targets=[],
+#                 execution_mode='IMMEDIATE',
+#                 use_private_relay=False,
+#                 gas_strategy='standard',
+#                 max_gas_price_gwei=Decimal('50'),
+#                 overall_confidence=Decimal('100'),  # ✅ CORRECT: overall_confidence, not confidence_percent
+#                 risk_score=Decimal('0'),
+#                 opportunity_score=Decimal('0'),
+#                 primary_reasoning=f"Auto-close triggered: {reason}. P&L: {pnl_percent:+.2f}%",
+#                 risk_factors=[f"Auto-close: {reason}"],
+#                 opportunity_factors=[],
+#                 mitigation_strategies=[],
+#                 intel_level_used=self.intel_level,
+#                 intel_adjustments={},
+#                 time_sensitivity='HIGH',
+#                 max_execution_time_ms=1000,
+#                 processing_time_ms=100
+#             )            
             
-            # Log the auto-close decision
-            self._log_thought(
-                action="SELL",
-                reasoning=f"Auto-close: {reason}. Position P&L: {pnl_percent:+.2f}%. "
-                        f"Closing entire position of {position.quantity:.4f} {token_symbol}.",
-                confidence=100,
-                decision_type="RISK_MANAGEMENT",
-                metadata={
-                    'token': token_symbol,
-                    'token_address': position.token_address,
-                    'reason': reason,
-                    'pnl_percent': float(pnl_percent),  # ✅ Convert to float
-                    'position_size': float(position.current_value_usd),
-                    'auto_close': True
-                }
-            )
+#             # Log the auto-close decision
+#             self._log_thought(
+#                 action="SELL",
+#                 reasoning=f"Auto-close: {reason}. Position P&L: {pnl_percent:+.2f}%. "
+#                         f"Closing entire position of {position.quantity:.4f} {token_symbol}.",
+#                 confidence=100,
+#                 decision_type="RISK_MANAGEMENT",
+#                 metadata={
+#                     'token': token_symbol,
+#                     'token_address': position.token_address,
+#                     'reason': reason,
+#                     'pnl_percent': float(pnl_percent),  # ✅ Convert to float
+#                     'position_size': float(position.current_value_usd),
+#                     'auto_close': True
+#                 }
+#             )
             
-            # Execute the close
-            self._execute_trade_legacy(decision, token_symbol, current_price)
+#             # Execute the close
+#             self._execute_trade_legacy(decision, token_symbol, current_price)
             
-            logger.info(
-                f"[AUTO-CLOSE] Successfully closed {token_symbol} position: "
-                f"Reason={reason}, P&L={pnl_percent:+.2f}%"
-            )
+#             logger.info(
+#                 f"[AUTO-CLOSE] Successfully closed {token_symbol} position: "
+#                 f"Reason={reason}, P&L={pnl_percent:+.2f}%"
+#             )
             
-        except Exception as e:
-            logger.error(
-                f"[ERROR] Failed to execute auto-close for {token_symbol}: {e}",
-                exc_info=True
-            )
+#         except Exception as e:
+#             logger.error(
+#                 f"[ERROR] Failed to execute auto-close for {token_symbol}: {e}",
+#                 exc_info=True
+#             )
 
 
 
@@ -1112,35 +1112,35 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _check_stop_signal(self) -> bool:
-        """
-        Check if a stop signal has been sent from the dashboard.
+#     def _check_stop_signal(self) -> bool:
+#         """
+#         Check if a stop signal has been sent from the dashboard.
         
-        Returns:
-            True if bot should stop, False otherwise
-        """
-        try:
-            # Refresh session from database to check for stop signals
-            if self.session:
-                self.session.refresh_from_db()
+#         Returns:
+#             True if bot should stop, False otherwise
+#         """
+#         try:
+#             # Refresh session from database to check for stop signals
+#             if self.session:
+#                 self.session.refresh_from_db()
                 
-                # Check if session status was changed to STOPPED
-                if self.session.status == 'STOPPED':
-                    logger.info("[SHUTDOWN] Stop signal received from dashboard")
-                    return True
+#                 # Check if session status was changed to STOPPED
+#                 if self.session.status == 'STOPPED':
+#                     logger.info("[SHUTDOWN] Stop signal received from dashboard")
+#                     return True
             
-            # Check account status
-            if self.account:
-                self.account.refresh_from_db()
-                if not self.account.is_active:
-                    logger.info("[SHUTDOWN] Account deactivated - stopping bot")
-                    return True
+#             # Check account status
+#             if self.account:
+#                 self.account.refresh_from_db()
+#                 if not self.account.is_active:
+#                     logger.info("[SHUTDOWN] Account deactivated - stopping bot")
+#                     return True
             
-            return False
+#             return False
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to check stop signal: {e}")
-            return False
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to check stop signal: {e}")
+#             return False
 
 
 
@@ -1148,437 +1148,435 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _analyze_token(self, token_data: Dict[str, Any]):
-        """Analyze a single token for trading opportunities."""
-        try:
-            token_symbol = token_data['symbol']
-            current_price = token_data['price']
+#     def _analyze_token(self, token_data: Dict[str, Any]):
+#         """Analyze a single token for trading opportunities."""
+#         try:
+#             token_symbol = token_data['symbol']
+#             current_price = token_data['price']
             
-            # Prepare market context
-            market_context = MarketContext(
-                token_address=token_data['address'],
-                token_symbol=token_symbol,
-                current_price=current_price,
-                price_24h_ago=self.price_history[token_symbol][0] if self.price_history[token_symbol] else current_price,
-                volume_24h=Decimal('1000000'),  # Simulated
-                liquidity_usd=Decimal('5000000'),  # Simulated
-                holder_count=1000,  # Simulated
-                market_cap=Decimal('50000000'),  # Simulated
-                volatility=Decimal('0.15'),  # Simulated
-                trend='neutral',
-                momentum=Decimal('0'),
-                support_levels=[],
-                resistance_levels=[],
-                timestamp=timezone.now()
-            )
+#             # Prepare market context
+#             market_context = MarketContext(
+#                 token_address=token_data['address'],
+#                 token_symbol=token_symbol,
+#                 current_price=current_price,
+#                 price_24h_ago=self.price_history[token_symbol][0] if self.price_history[token_symbol] else current_price,
+#                 volume_24h=Decimal('1000000'),  # Simulated
+#                 liquidity_usd=Decimal('5000000'),  # Simulated
+#                 holder_count=1000,  # Simulated
+#                 market_cap=Decimal('50000000'),  # Simulated
+#                 volatility=Decimal('0.15'),  # Simulated
+#                 trend='neutral',
+#                 momentum=Decimal('0'),
+#                 support_levels=[],
+#                 resistance_levels=[],
+#                 timestamp=timezone.now()
+#             )
             
-            # Make trading decision
-            existing_positions = [
-                {
-                    'token_symbol': pos.token_symbol,
-                    'quantity': float(pos.quantity),
-                    'invested_usd': float(pos.total_invested_usd)
-                }
-                for pos in self.positions.values()
-            ]
+#             # Make trading decision
+#             existing_positions = [
+#                 {
+#                     'token_symbol': pos.token_symbol,
+#                     'quantity': float(pos.quantity),
+#                     'invested_usd': float(pos.total_invested_usd)
+#                 }
+#                 for pos in self.positions.values()
+#             ]
             
-            decision = async_to_sync(self.intelligence_engine.make_decision)(
-                market_context=market_context,
-                account_balance=self.account.current_balance_usd,
-                existing_positions=existing_positions,
-                token_address=token_data['address'],
-                token_symbol=token_symbol
-            )
+#             decision = async_to_sync(self.intelligence_engine.make_decision)(
+#                 market_context=market_context,
+#                 account_balance=self.account.current_balance_usd,
+#                 existing_positions=existing_positions,
+#                 token_address=token_data['address'],
+#                 token_symbol=token_symbol
+#             )
             
-            # Log thought process
-            thought_log = self.intelligence_engine.generate_thought_log(decision)
-            self._log_thought(
-                action=decision.action,
-                reasoning=thought_log,
-                confidence=float(decision.overall_confidence),
-                decision_type="TRADE_DECISION",
-                metadata={
-                    'token': token_symbol,
-                    'token_address': token_data['address'],
-                    'intel_level': self.intel_level,
-                    'risk_score': float(decision.risk_score),
-                    'opportunity_score': float(decision.opportunity_score),
-                    'current_price': float(current_price),
-                    'tx_manager_enabled': self.use_tx_manager,
-                    'circuit_breaker_enabled': self.circuit_breaker_enabled
-                }
-            )
+#             # Log thought process
+#             thought_log = self.intelligence_engine.generate_thought_log(decision)
+#             self._log_thought(
+#                 action=decision.action,
+#                 reasoning=thought_log,
+#                 confidence=float(decision.overall_confidence),
+#                 decision_type="TRADE_DECISION",
+#                 metadata={
+#                     'token': token_symbol,
+#                     'token_address': token_data['address'],
+#                     'intel_level': self.intel_level,
+#                     'risk_score': float(decision.risk_score),
+#                     'opportunity_score': float(decision.opportunity_score),
+#                     'current_price': float(current_price),
+#                     'tx_manager_enabled': self.use_tx_manager,
+#                     'circuit_breaker_enabled': self.circuit_breaker_enabled
+#                 }
+#             )
             
-            # Execute trade if decided
-            if decision.action in ['BUY', 'SELL']:
-                self._execute_trade(decision, token_symbol, current_price)
+#             # Execute trade if decided
+#             if decision.action in ['BUY', 'SELL']:
+#                 self._execute_trade(decision, token_symbol, current_price)
             
-            # Store decision for tracking
-            self.last_decisions[token_symbol] = decision
+#             # Store decision for tracking
+#             self.last_decisions[token_symbol] = decision
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to analyze {token_symbol}: {e}", exc_info=True)
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to analyze {token_symbol}: {e}", exc_info=True)
     
-    def _log_thought(self, action: str, reasoning: str, confidence: float, 
-                     decision_type: str = "ANALYSIS", metadata: Dict[str, Any] = None):
-        """Log AI thought process to database."""
-        try:
-            metadata = metadata or {}
+#     def _log_thought(self, action: str, reasoning: str, confidence: float, 
+#                      decision_type: str = "ANALYSIS", metadata: Dict[str, Any] = None):
+#         """Log AI thought process to database."""
+#         try:
+#             metadata = metadata or {}
             
-            # Map action to decision type
-            decision_type_map = {
-                'BUY': 'BUY',
-                'SELL': 'SELL',
-                'HOLD': 'HOLD',
-                'SKIP': 'SKIP',
-                'STARTUP': 'SKIP',
-                'TRADE_DECISION': 'HOLD',
-                'BLOCKED': 'SKIP',
-                'CB_RESET': 'SKIP'
-            }
+#             # Map action to decision type
+#             decision_type_map = {
+#                 'BUY': 'BUY',
+#                 'SELL': 'SELL',
+#                 'HOLD': 'HOLD',
+#                 'SKIP': 'SKIP',
+#                 'STARTUP': 'SKIP',
+#                 'TRADE_DECISION': 'HOLD',
+#                 'BLOCKED': 'SKIP',
+#                 'CB_RESET': 'SKIP'
+#             }
             
-            # Get token info from metadata
-            token_symbol = metadata.get('token', 'SYSTEM')
-            token_address = metadata.get('token_address', '0x' + '0' * 40)
+#             # Get token info from metadata
+#             token_symbol = metadata.get('token', 'SYSTEM')
+#             token_address = metadata.get('token_address', '0x' + '0' * 40)
             
-            # Create thought log record
-            thought_log = PaperAIThoughtLog.objects.create(
-                account=self.account,
-                paper_trade=None,
-                decision_type=decision_type_map.get(action, 'SKIP'),
-                token_address=token_address,
-                token_symbol=token_symbol,
-                confidence_level=self._get_confidence_level(confidence),
-                confidence_percent=Decimal(str(confidence)),
-                risk_score=Decimal(str(metadata.get('risk_score', 50))),
-                opportunity_score=Decimal(str(metadata.get('opportunity_score', 50))),
-                primary_reasoning=reasoning[:500],
-                key_factors=[
-                    f"Intel Level: {metadata.get('intel_level', self.intel_level)}",
-                    f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event",
-                    f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}",
-                    f"Circuit Breaker: {'Enabled' if metadata.get('circuit_breaker_enabled', False) else 'Disabled'}"
-                ],
-                positive_signals=[],
-                negative_signals=[],
-                market_data=metadata,
-                strategy_name=f"Intel_{self.intel_level}",
-                lane_used='SMART',
-                analysis_time_ms=100
-            )
+#             # Create thought log record
+#             thought_log = PaperAIThoughtLog.objects.create(
+#                 account=self.account,
+#                 paper_trade=None,
+#                 decision_type=decision_type_map.get(action, 'SKIP'),
+#                 token_address=token_address,
+#                 token_symbol=token_symbol,
+#                 confidence_level=self._get_confidence_level(confidence),
+#                 confidence_percent=Decimal(str(confidence)),
+#                 risk_score=Decimal(str(metadata.get('risk_score', 50))),
+#                 opportunity_score=Decimal(str(metadata.get('opportunity_score', 50))),
+#                 primary_reasoning=reasoning[:500],
+#                 key_factors=[
+#                     f"Intel Level: {metadata.get('intel_level', self.intel_level)}",
+#                     f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event",
+#                     f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}",
+#                     f"Circuit Breaker: {'Enabled' if metadata.get('circuit_breaker_enabled', False) else 'Disabled'}"
+#                 ],
+#                 positive_signals=[],
+#                 negative_signals=[],
+#                 market_data=metadata,
+#                 strategy_name=f"Intel_{self.intel_level}",
+#                 lane_used='SMART',
+#                 analysis_time_ms=100
+#             )
             
-            logger.info(f"[THOUGHT] Logged: {action} for {token_symbol} ({confidence:.0f}% confidence)")
+#             logger.info(f"[THOUGHT] Logged: {action} for {token_symbol} ({confidence:.0f}% confidence)")
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to log thought: {e}")
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to log thought: {e}")
     
-    def _get_confidence_level(self, confidence: float) -> str:
-        """Convert confidence percentage to level category."""
-        if confidence >= 90:
-            return 'VERY_HIGH'
-        elif confidence >= 70:
-            return 'HIGH'
-        elif confidence >= 50:
-            return 'MEDIUM'
-        elif confidence >= 30:
-            return 'LOW'
-        else:
-            return 'VERY_LOW'
+#     def _get_confidence_level(self, confidence: float) -> str:
+#         """Convert confidence percentage to level category."""
+#         if confidence >= 90:
+#             return 'VERY_HIGH'
+#         elif confidence >= 70:
+#             return 'HIGH'
+#         elif confidence >= 50:
+#             return 'MEDIUM'
+#         elif confidence >= 30:
+#             return 'LOW'
+#         else:
+#             return 'VERY_LOW'
     
-    def _can_trade(self) -> bool:
-        """
-        Check if bot can execute a trade based on circuit breakers and limits.
+#     def _can_trade(self) -> bool:
+#         """
+#         Check if bot can execute a trade based on circuit breakers and limits.
         
-        Returns:
-            True if trading is allowed, False otherwise
-        """
-        try:
-            # Check if circuit breaker is enabled
-            if not self.circuit_breaker_enabled or not self.circuit_breaker_manager:
-                return True
+#         Returns:
+#             True if trading is allowed, False otherwise
+#         """
+#         try:
+#             # Check if circuit breaker is enabled
+#             if not self.circuit_breaker_enabled or not self.circuit_breaker_manager:
+#                 return True
             
-            # Check portfolio circuit breakers
-            can_trade, reasons = self.circuit_breaker_manager.can_trade()
-            if not can_trade:
-                logger.warning(f"[CB] Trading blocked by circuit breaker: {', '.join(reasons)}")
+#             # Check portfolio circuit breakers
+#             can_trade, reasons = self.circuit_breaker_manager.can_trade()
+#             if not can_trade:
+#                 logger.warning(f"[CB] Trading blocked by circuit breaker: {', '.join(reasons)}")
                 
-                # Log blocked trade attempt
-                self._log_thought(
-                    action="BLOCKED",
-                    reasoning=f"Trade blocked by circuit breaker: {', '.join(reasons)}. "
-                             f"Safety mechanisms have triggered to protect the portfolio.",
-                    confidence=100,
-                    decision_type="RISK_MANAGEMENT",
-                    metadata={
-                        'circuit_breaker_reasons': reasons,
-                        'consecutive_failures': self.consecutive_failures,
-                        'daily_trades': self.daily_trades_count
-                    }
-                )
-                return False            
+#                 # Log blocked trade attempt
+#                 self._log_thought(
+#                     action="BLOCKED",
+#                     reasoning=f"Trade blocked by circuit breaker: {', '.join(reasons)}. "
+#                              f"Safety mechanisms have triggered to protect the portfolio.",
+#                     confidence=100,
+#                     decision_type="RISK_MANAGEMENT",
+#                     metadata={
+#                         'circuit_breaker_reasons': reasons,
+#                         'consecutive_failures': self.consecutive_failures,
+#                         'daily_trades': self.daily_trades_count
+#                     }
+#                 )
+#                 return False            
             
-            # Check daily trade limit
-            current_date = timezone.now().date()
-            if self.last_trade_date != current_date:
-                self.daily_trades_count = 0
-                self.last_trade_date = current_date
+#             # Check daily trade limit
+#             current_date = timezone.now().date()
+#             if self.last_trade_date != current_date:
+#                 self.daily_trades_count = 0
+#                 self.last_trade_date = current_date
 
-            # ✅ SAFE ACCESS - Check if strategy_config exists first
-            if hasattr(self, 'strategy_config') and self.strategy_config:
-                max_daily_trades = getattr(self.strategy_config, 'max_daily_trades', 20)
-            else:
-                max_daily_trades = 20  # Default fallback
-            if self.daily_trades_count >= max_daily_trades:
-                logger.warning(f"[CB] Daily trade limit reached: {self.daily_trades_count}/{max_daily_trades}")
-                return False
+#             # ✅ SAFE ACCESS - Check if strategy_config exists first
+#             if hasattr(self, 'strategy_config') and self.strategy_config:
+#                 max_daily_trades = getattr(self.strategy_config, 'max_daily_trades', 20)
+#             else:
+#                 max_daily_trades = 20  # Default fallback
+#             if self.daily_trades_count >= max_daily_trades:
+#                 logger.warning(f"[CB] Daily trade limit reached: {self.daily_trades_count}/{max_daily_trades}")
+#                 return False
             
-            # Check consecutive failures (bot-specific)
-            max_consecutive_failures = 5
-            if self.consecutive_failures >= max_consecutive_failures:
-                logger.warning(f"[CB] Too many consecutive failures: {self.consecutive_failures}")
-                return False
+#             # Check consecutive failures (bot-specific)
+#             max_consecutive_failures = 5
+#             if self.consecutive_failures >= max_consecutive_failures:
+#                 logger.warning(f"[CB] Too many consecutive failures: {self.consecutive_failures}")
+#                 return False
             
-            # Check account balance minimum
-            min_balance = Decimal('100')  # Minimum $100 to trade
-            if self.account.current_balance_usd < min_balance:
-                logger.warning(f"[CB] Insufficient balance: ${self.account.current_balance_usd:.2f}")
-                return False
+#             # Check account balance minimum
+#             min_balance = Decimal('100')  # Minimum $100 to trade
+#             if self.account.current_balance_usd < min_balance:
+#                 logger.warning(f"[CB] Insufficient balance: ${self.account.current_balance_usd:.2f}")
+#                 return False
             
-            return True
+#             return True
             
-        except Exception as e:
-            logger.error(f"[CB] Error checking trade permission: {e}")
-            return True  # Fail open if circuit breaker check fails
+#         except Exception as e:
+#             logger.error(f"[CB] Error checking trade permission: {e}")
+#             return True  # Fail open if circuit breaker check fails
     
-    def _execute_trade(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
-        """
-        Execute a paper trade with circuit breaker and Transaction Manager integration.
+#     def _execute_trade(self, decision: TradingDecision, token_symbol: str, current_price: Decimal):
+#         """
+#         Execute a paper trade with circuit breaker and Transaction Manager integration.
         
-        Args:
-            decision: Trading decision from intelligence engine
-            token_symbol: Token to trade
-            current_price: Current token price
-        """
-        try:
-            # Check circuit breakers before executing
-            if not self._can_trade():
-                logger.info(f"[TRADE] Trade blocked for {token_symbol} - circuit breaker active")
-                return
+#         Args:
+#             decision: Trading decision from intelligence engine
+#             token_symbol: Token to trade
+#             current_price: Current token price
+#         """
+#         try:
+#             # Check circuit breakers before executing
+#             if not self._can_trade():
+#                 logger.info(f"[TRADE] Trade blocked for {token_symbol} - circuit breaker active")
+#                 return
             
-            # Check portfolio state for circuit breaker updates
-            if self.circuit_breaker_enabled and self.circuit_breaker_manager:
-                portfolio_state = self._get_portfolio_state()
-                new_breakers = self.circuit_breaker_manager.check_circuit_breakers(portfolio_state)
+#             # Check portfolio state for circuit breaker updates
+#             if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+#                 portfolio_state = self._get_portfolio_state()
+#                 new_breakers = self.circuit_breaker_manager.check_circuit_breakers(portfolio_state)
                 
-                if new_breakers:
-                    for breaker in new_breakers:
-                        logger.warning(f"[CB] New circuit breaker triggered: {breaker.breaker_type.value}")
-                        logger.warning(f"[CB] Reason: {breaker.description}")
+#                 if new_breakers:
+#                     for breaker in new_breakers:
+#                         logger.warning(f"[CB] New circuit breaker triggered: {breaker.breaker_type.value}")
+#                         logger.warning(f"[CB] Reason: {breaker.description}")
                     
-                    # Stop trading if new breakers triggered
-                    return
+#                     # Stop trading if new breakers triggered
+#                     return
             
-            # Execute trade (existing logic)
-            trade_success = False
+#             # Execute trade (existing logic)
+#             trade_success = False
             
-            # Use Transaction Manager if enabled
-            if self.use_tx_manager and self.tx_manager:
-                trade_success = self._execute_trade_with_tx_manager(decision, token_symbol, current_price)
-            else:
-                trade_success = self._execute_trade_legacy(decision, token_symbol, current_price)
+#             # Use Transaction Manager if enabled
+#             if self.use_tx_manager and self.tx_manager:
+#                 trade_success = self._execute_trade_with_tx_manager(decision, token_symbol, current_price)
+#             else:
+#                 trade_success = self._execute_trade_legacy(decision, token_symbol, current_price)
             
-            # Update failure tracking
-            if trade_success:
-                self.consecutive_failures = 0
-                self.daily_trades_count += 1
-                logger.info(f"[TRADE] Successfully executed {decision.action} for {token_symbol}")
-            else:
-                self.consecutive_failures += 1
-                logger.warning(f"[TRADE] Failed to execute {decision.action} for {token_symbol} "
-                              f"(Consecutive failures: {self.consecutive_failures})")
+#             # Update failure tracking
+#             if trade_success:
+#                 self.consecutive_failures = 0
+#                 self.daily_trades_count += 1
+#                 logger.info(f"[TRADE] Successfully executed {decision.action} for {token_symbol}")
+#             else:
+#                 self.consecutive_failures += 1
+#                 logger.warning(f"[TRADE] Failed to execute {decision.action} for {token_symbol} "
+#                               f"(Consecutive failures: {self.consecutive_failures})")
                 
-                # Check if circuit breakers should trigger after failure
-                if self.circuit_breaker_enabled and self.circuit_breaker_manager:
-                    portfolio_state = self._get_portfolio_state()
-                    self.circuit_breaker_manager.check_circuit_breakers(portfolio_state)
+#                 # Check if circuit breakers should trigger after failure
+#                 if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+#                     portfolio_state = self._get_portfolio_state()
+#                     self.circuit_breaker_manager.check_circuit_breakers(portfolio_state)
                     
-        except Exception as e:
-            logger.error(f"[ERROR] {decision.action} execution failed: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()  # Print full traceback to console
-            self.consecutive_failures += 1
+#         except Exception as e:
+#             logger.error(f"[ERROR] {decision.action} execution failed: {e}", exc_info=True)
+#             import traceback
+#             traceback.print_exc()  # Print full traceback to console
+#             self.consecutive_failures += 1
     
-    def _execute_trade_with_tx_manager(
-        self,
-        decision: TradingDecision,
-        token_symbol: str,
-        current_price: Decimal
-    ) -> bool:
-        """
-        Execute trade using Transaction Manager for gas optimization.
+#     def _execute_trade_with_tx_manager(
+#         self,
+#         decision: TradingDecision,
+#         token_symbol: str,
+#         current_price: Decimal
+#     ) -> bool:
+#         """
+#         Execute trade using Transaction Manager for gas optimization.
 
-        IMPORTANT:
-            Transaction Manager requires real blockchain wallets and is not
-            compatible with paper trading mode. This method will automatically
-            fall back to legacy mode for paper trading.
+#         IMPORTANT:
+#             Transaction Manager requires real blockchain wallets and is not
+#             compatible with paper trading mode. This method will automatically
+#             fall back to legacy mode for paper trading.
 
-        Args:
-            decision: Trading decision from intelligence engine
-            token_symbol: Token to trade
-            current_price: Current token price
+#         Args:
+#             decision: Trading decision from intelligence engine
+#             token_symbol: Token to trade
+#             current_price: Current token price
 
-        Returns:
-            True if trade was successful, False otherwise
-        """
-        try:
-            logger.info(
-                f"[TX MANAGER] Executing {decision.action} via Transaction Manager"
-            )
+#         Returns:
+#             True if trade was successful, False otherwise
+#         """
+#         try:
+#             logger.info(
+#                 f"[TX MANAGER] Executing {decision.action} via Transaction Manager"
+#             )
 
-            # ✅ PAPER TRADING COMPATIBILITY CHECK
-            if not hasattr(self.account.user, "wallet") or self.account.user.wallet is None:
-                logger.warning(
-                    "[TX MANAGER] Paper trading mode detected - Transaction Manager "
-                    "requires a real wallet. Falling back to legacy mode."
-                )
-                return self._execute_trade_legacy(decision, token_symbol, current_price)
+#             # ✅ PAPER TRADING COMPATIBILITY CHECK
+#             if not hasattr(self.account.user, "wallet") or self.account.user.wallet is None:
+#                 logger.warning(
+#                     "[TX MANAGER] Paper trading mode detected - Transaction Manager "
+#                     "requires a real wallet. Falling back to legacy mode."
+#                 )
+#                 return self._execute_trade_legacy(decision, token_symbol, current_price)
 
-            async def execute_with_tx_manager() -> bool:
-                """Async wrapper to handle transaction submission."""
-                try:
-                    # Determine swap parameters
-                    if decision.action == "BUY":
-                        token_in = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
-                        token_out = decision.token_address
-                    else:  # SELL
-                        token_in = decision.token_address
-                        token_out = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+#             async def execute_with_tx_manager() -> bool:
+#                 """Async wrapper to handle transaction submission."""
+#                 try:
+#                     # Determine swap parameters
+#                     if decision.action == "BUY":
+#                         token_in = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
+#                         token_out = decision.token_address
+#                     else:  # SELL
+#                         token_in = decision.token_address
+#                         token_out = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
 
-                    swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
+#                     swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
 
-                    # Calculate amounts (in wei)
-                    amount_in = int(decision.position_size_usd * 10**6)  # USDC = 6 decimals
-                    amount_out_min = int(amount_in * 0.99)  # 1% slippage tolerance
+#                     # Calculate amounts (in wei)
+#                     amount_in = int(decision.position_size_usd * 10**6)  # USDC = 6 decimals
+#                     amount_out_min = int(amount_in * 0.99)  # 1% slippage tolerance
 
-                    # Gas strategy selection
-                    if self.intel_level <= 3:
-                        gas_strategy = TradingGasStrategy.COST_EFFICIENT
-                    elif self.intel_level >= 7:
-                        gas_strategy = TradingGasStrategy.AGGRESSIVE
-                    else:
-                        gas_strategy = TradingGasStrategy.BALANCED
+#                     # Gas strategy selection
+#                     if self.intel_level <= 3:
+#                         gas_strategy = TradingGasStrategy.COST_EFFICIENT
+#                     elif self.intel_level >= 7:
+#                         gas_strategy = TradingGasStrategy.AGGRESSIVE
+#                     else:
+#                         gas_strategy = TradingGasStrategy.BALANCED
 
-                    logger.debug(
-                        f"[TX MANAGER] Preparing TX: {decision.action} {token_symbol}, "
-                        f"Amount: ${decision.position_size_usd:.2f}, Gas: "
-                        f"{gas_strategy.value}"
-                    )
+#                     logger.debug(
+#                         f"[TX MANAGER] Preparing TX: {decision.action} {token_symbol}, "
+#                         f"Amount: ${decision.position_size_usd:.2f}, Gas: "
+#                         f"{gas_strategy.value}"
+#                     )
 
-                    # Create transaction request
-                    tx_request = await create_transaction_submission_request(
-                        user=self.account.user,
-                        chain_id=self.chain_id,
-                        token_in=token_in,
-                        token_out=token_out,
-                        amount_in=amount_in,
-                        amount_out_minimum=amount_out_min,
-                        swap_type=swap_type,
-                        gas_strategy=gas_strategy,
-                        is_paper_trade=True,
-                        slippage_tolerance=Decimal("0.01"),
-                    )
+#                     # Create transaction request
+#                     tx_request = await create_transaction_submission_request(
+#                         user=self.account.user,
+#                         chain_id=self.chain_id,
+#                         token_in=token_in,
+#                         token_out=token_out,
+#                         amount_in=amount_in,
+#                         amount_out_minimum=amount_out_min,
+#                         swap_type=swap_type,
+#                         gas_strategy=gas_strategy,
+#                         is_paper_trade=True,
+#                         slippage_tolerance=Decimal("0.01"),
+#                     )
 
-                    logger.info("[TX MANAGER] Submitting transaction...")
+#                     logger.info("[TX MANAGER] Submitting transaction...")
 
-                    # Submit via Transaction Manager
-                    result = await self.tx_manager.submit_transaction(tx_request)
+#                     # Submit via Transaction Manager
+#                     result = await self.tx_manager.submit_transaction(tx_request)
 
-                    if not result.success:
-                        logger.error(
-                            f"[TX MANAGER] Transaction failed: "
-                            f"{result.error_message or 'Unknown error'}"
-                        )
-                        return False
+#                     if not result.success:
+#                         logger.error(
+#                             f"[TX MANAGER] Transaction failed: "
+#                             f"{result.error_message or 'Unknown error'}"
+#                         )
+#                         return False
 
-                    # Circuit breaker check
-                    if result.circuit_breaker_triggered:
-                        logger.warning(
-                            f"[CB] Trade blocked: "
-                            f"{', '.join(result.circuit_breaker_reasons or ['Unknown'])}"
-                        )
-                        return False
+#                     # Circuit breaker check
+#                     if result.circuit_breaker_triggered:
+#                         logger.warning(
+#                             f"[CB] Trade blocked: "
+#                             f"{', '.join(result.circuit_breaker_reasons or ['Unknown'])}"
+#                         )
+#                         return False
 
-                    logger.info(
-                        f"[TX MANAGER] Transaction submitted successfully: "
-                        f"{result.transaction_id}"
-                    )
+#                     logger.info(
+#                         f"[TX MANAGER] Transaction submitted successfully: "
+#                         f"{result.transaction_id}"
+#                     )
 
-                    # Track pending transaction
-                    self.pending_transactions[result.transaction_id] = {
-                        "token_symbol": token_symbol,
-                        "action": decision.action,
-                        "amount": decision.position_size_usd,
-                        "submitted_at": timezone.now(),
-                    }
+#                     # Track pending transaction
+#                     self.pending_transactions[result.transaction_id] = {
+#                         "token_symbol": token_symbol,
+#                         "action": decision.action,
+#                         "amount": decision.position_size_usd,
+#                         "submitted_at": timezone.now(),
+#                     }
 
-                    # Update gas savings tracking
-                    if result.gas_savings_achieved:
-                        self.total_gas_savings += result.gas_savings_achieved
-                        self.trades_with_tx_manager += 1
-                        avg_savings = (
-                            self.total_gas_savings / self.trades_with_tx_manager
-                        )
-                        logger.info(
-                            f"[TX MANAGER] Gas saved: {result.gas_savings_achieved:.2f}% "
-                            f"(Average: {avg_savings:.2f}%)"
-                        )
+#                     # Update gas savings tracking
+#                     if result.gas_savings_achieved:
+#                         self.total_gas_savings += result.gas_savings_achieved
+#                         self.trades_with_tx_manager += 1
+#                         avg_savings = (
+#                             self.total_gas_savings / self.trades_with_tx_manager
+#                         )
+#                         logger.info(
+#                             f"[TX MANAGER] Gas saved: {result.gas_savings_achieved:.2f}% "
+#                             f"(Average: {avg_savings:.2f}%)"
+#                         )
 
-                    # Create paper trade record
-                    trade = self._create_paper_trade_record(
-                        decision,
-                        token_symbol,
-                        current_price,
-                        transaction_id=result.transaction_id,
-                        gas_savings=result.gas_savings_achieved,
-                    )
+#                     # Create paper trade record
+#                     trade = self._create_paper_trade_record(
+#                         decision,
+#                         token_symbol,
+#                         current_price,
+#                         transaction_id=result.transaction_id,
+#                         gas_savings=result.gas_savings_achieved,
+#                     )
 
-                    if not trade:
-                        logger.error("[TX MANAGER] Failed to create paper trade record")
-                        return False
+#                     if not trade:
+#                         logger.error("[TX MANAGER] Failed to create paper trade record")
+#                         return False
 
-                    # Update positions
-                    self._update_positions_after_trade(
-                        decision, token_symbol, current_price
-                    )
+#                     # Update positions
+#                     self._update_positions_after_trade(
+#                         decision, token_symbol, current_price
+#                     )
 
-                    logger.info(
-                        f"[TX MANAGER] Trade completed successfully: "
-                        f"{decision.action} {token_symbol} "
-                        f"${decision.position_size_usd:.2f}"
-                    )
-                    return True
+#                     logger.info(
+#                         f"[TX MANAGER] Trade completed successfully: "
+#                         f"{decision.action} {token_symbol} "
+#                         f"${decision.position_size_usd:.2f}"
+#                     )
+#                     return True
 
-                except Exception as e:
-                    logger.error(
-                        f"[TX MANAGER] Error during transaction execution: {e}",
-                        exc_info=True,
-                    )
-                    return False
+#                 except Exception as e:
+#                     logger.error(
+#                         f"[TX MANAGER] Error during transaction execution: {e}",
+#                         exc_info=True,
+#                     )
+#                     return False
 
-            # Execute async function synchronously
-            return async_to_sync(execute_with_tx_manager)()
+#             # Execute async function synchronously
+#             return async_to_sync(execute_with_tx_manager)()
 
-        except Exception as e:
-            logger.error(
-                f"[TX MANAGER] Fatal error in _execute_trade_with_tx_manager: {e}",
-                exc_info=True,
-            )
+#         except Exception as e:
+#             logger.error(
+#                 f"[TX MANAGER] Fatal error in _execute_trade_with_tx_manager: {e}",
+#                 exc_info=True,
+#             )
 
-            # ✅ FALLBACK: Legacy mode on any fatal error
-            logger.warning("[TX MANAGER] Falling back to legacy mode due to error")
-            return self._execute_trade_legacy(decision, token_symbol, current_price)
-
-
+#             # ✅ FALLBACK: Legacy mode on any fatal error
+#             logger.warning("[TX MANAGER] Falling back to legacy mode due to error")
+#             return self._execute_trade_legacy(decision, token_symbol, current_price)
 
 
 
@@ -1588,231 +1586,233 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _execute_trade_legacy(self, decision: TradingDecision, 
-                             token_symbol: str, current_price: Decimal) -> bool:
-        """
-        Legacy trade execution without Transaction Manager.
+
+
+#     def _execute_trade_legacy(self, decision: TradingDecision, 
+#                              token_symbol: str, current_price: Decimal) -> bool:
+#         """
+#         Legacy trade execution without Transaction Manager.
         
-        Returns:
-            True if trade was successful, False otherwise
-        """
-        try:
-            logger.info(f"[LEGACY] Executing {decision.action} without Transaction Manager")
+#         Returns:
+#             True if trade was successful, False otherwise
+#         """
+#         try:
+#             logger.info(f"[LEGACY] Executing {decision.action} without Transaction Manager")
             
-            # Create paper trade record
-            self._create_paper_trade_record(decision, token_symbol, current_price)
+#             # Create paper trade record
+#             self._create_paper_trade_record(decision, token_symbol, current_price)
             
-            # Update positions
-            self._update_positions_after_trade(decision, token_symbol, current_price)
+#             # Update positions
+#             self._update_positions_after_trade(decision, token_symbol, current_price)
             
-            logger.info(f"[TRADE] Executed {decision.action} for {token_symbol}: ${decision.position_size_usd:.2f}")
-            return True
+#             logger.info(f"[TRADE] Executed {decision.action} for {token_symbol}: ${decision.position_size_usd:.2f}")
+#             return True
             
-        except Exception as e:
-            logger.error(f"[LEGACY] Trade execution failed: {e}")
-            return False
+#         except Exception as e:
+#             logger.error(f"[LEGACY] Trade execution failed: {e}")
+#             return False
     
-    def _create_paper_trade_record(self, decision: TradingDecision, token_symbol: str, 
-                                current_price: Decimal, transaction_id: str = None,
-                                gas_savings: Decimal = None):
-        """
-        Create paper trade record in database with proper lowercase status values.
+#     def _create_paper_trade_record(self, decision: TradingDecision, token_symbol: str, 
+#                                 current_price: Decimal, transaction_id: str = None,
+#                                 gas_savings: Decimal = None):
+#         """
+#         Create paper trade record in database with proper lowercase status values.
         
-        This method creates and saves PaperTrade records that will appear in the dashboard.
-        Updates account statistics including successful/failed trade counts.
+#         This method creates and saves PaperTrade records that will appear in the dashboard.
+#         Updates account statistics including successful/failed trade counts.
         
-        Args:
-            decision: Trading decision from intelligence engine
-            token_symbol: Symbol of token being traded
-            current_price: Current price of the token
-            transaction_id: Optional transaction ID from TX Manager
-            gas_savings: Optional gas savings percentage from TX Manager
+#         Args:
+#             decision: Trading decision from intelligence engine
+#             token_symbol: Symbol of token being traded
+#             current_price: Current price of the token
+#             transaction_id: Optional transaction ID from TX Manager
+#             gas_savings: Optional gas savings percentage from TX Manager
             
-        Returns:
-            PaperTrade: Created trade record or None if failed
-        """
-        try:
-            # Map decision action to trade type (lowercase)
-            trade_type_map = {
-                'BUY': 'buy',
-                'SELL': 'sell',
-                'HOLD': None,  # Don't create trade for HOLD
-            }
+#         Returns:
+#             PaperTrade: Created trade record or None if failed
+#         """
+#         try:
+#             # Map decision action to trade type (lowercase)
+#             trade_type_map = {
+#                 'BUY': 'buy',
+#                 'SELL': 'sell',
+#                 'HOLD': None,  # Don't create trade for HOLD
+#             }
             
-            trade_type = trade_type_map.get(decision.action)
-            if not trade_type:
-                logger.info(f"[TRADE] No trade created for HOLD action")
-                return None
+#             trade_type = trade_type_map.get(decision.action)
+#             if not trade_type:
+#                 logger.info(f"[TRADE] No trade created for HOLD action")
+#                 return None
             
-            # Token addresses mapping
-            token_address_map = {
-                'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-                'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-                'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-                'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-                'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
-                'UNI': '0x1f9840a85d5aF5bf1D1762F925BDADdc4201F984',
-                'AAVE': '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',
-                'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',
-                'MATIC': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0',
-                'ARB': '0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1'
-            }
+#             # Token addresses mapping
+#             token_address_map = {
+#                 'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+#                 'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+#                 'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+#                 'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+#                 'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+#                 'UNI': '0x1f9840a85d5aF5bf1D1762F925BDADdc4201F984',
+#                 'AAVE': '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',
+#                 'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',
+#                 'MATIC': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0',
+#                 'ARB': '0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1'
+#             }
             
-            # For BUY: USDC -> Token, For SELL: Token -> USDC
-            if trade_type == 'buy':
-                token_in_symbol = 'USDC'
-                token_in_address = token_address_map['USDC']
-                token_out_symbol = token_symbol
-                token_out_address = token_address_map.get(token_symbol, decision.token_address)
-            else:  # sell
-                token_in_symbol = token_symbol
-                token_in_address = token_address_map.get(token_symbol, decision.token_address)
-                token_out_symbol = 'USDC'
-                token_out_address = token_address_map['USDC']
+#             # For BUY: USDC -> Token, For SELL: Token -> USDC
+#             if trade_type == 'buy':
+#                 token_in_symbol = 'USDC'
+#                 token_in_address = token_address_map['USDC']
+#                 token_out_symbol = token_symbol
+#                 token_out_address = token_address_map.get(token_symbol, decision.token_address)
+#             else:  # sell
+#                 token_in_symbol = token_symbol
+#                 token_in_address = token_address_map.get(token_symbol, decision.token_address)
+#                 token_out_symbol = 'USDC'
+#                 token_out_address = token_address_map['USDC']
             
-            # Calculate amounts
-            amount_in_usd = decision.position_size_usd
+#             # Calculate amounts
+#             amount_in_usd = decision.position_size_usd
             
-            # Simulate slippage
-            base_slippage = Decimal('0.5')
-            volatility_slippage = Decimal(str(random.uniform(0, 1.5)))
-            total_slippage = base_slippage + volatility_slippage
+#             # Simulate slippage
+#             base_slippage = Decimal('0.5')
+#             volatility_slippage = Decimal(str(random.uniform(0, 1.5)))
+#             total_slippage = base_slippage + volatility_slippage
             
-            # Calculate expected output
-            if trade_type == 'buy':
-                # Buying token with USDC
-                token_quantity = amount_in_usd / current_price
-                expected_amount_out = token_quantity * (Decimal('1') - total_slippage / Decimal('100'))
-                actual_amount_out = expected_amount_out  # For paper trading, actual equals expected
-            else:
-                # Selling token for USDC
-                token_quantity = amount_in_usd / current_price
-                expected_amount_out = amount_in_usd * (Decimal('1') - total_slippage / Decimal('100'))
-                actual_amount_out = expected_amount_out
+#             # Calculate expected output
+#             if trade_type == 'buy':
+#                 # Buying token with USDC
+#                 token_quantity = amount_in_usd / current_price
+#                 expected_amount_out = token_quantity * (Decimal('1') - total_slippage / Decimal('100'))
+#                 actual_amount_out = expected_amount_out  # For paper trading, actual equals expected
+#             else:
+#                 # Selling token for USDC
+#                 token_quantity = amount_in_usd / current_price
+#                 expected_amount_out = amount_in_usd * (Decimal('1') - total_slippage / Decimal('100'))
+#                 actual_amount_out = expected_amount_out
             
-            # Simulate gas costs
-            gas_price_gwei = Decimal(str(random.uniform(20, 40)))
-            gas_used = random.randint(120000, 200000)
-            gas_cost_eth = (gas_price_gwei * gas_used) / Decimal('1e9')
-            gas_cost_usd = gas_cost_eth * Decimal('3000')  # Assume ETH = $3000
+#             # Simulate gas costs
+#             gas_price_gwei = Decimal(str(random.uniform(20, 40)))
+#             gas_used = random.randint(120000, 200000)
+#             gas_cost_eth = (gas_price_gwei * gas_used) / Decimal('1e9')
+#             gas_cost_usd = gas_cost_eth * Decimal('3000')  # Assume ETH = $3000
             
-            # Apply gas savings if using TX Manager
-            if gas_savings and gas_savings > 0:
-                gas_cost_usd = gas_cost_usd * (Decimal('1') - gas_savings / Decimal('100'))
+#             # Apply gas savings if using TX Manager
+#             if gas_savings and gas_savings > 0:
+#                 gas_cost_usd = gas_cost_usd * (Decimal('1') - gas_savings / Decimal('100'))
             
-            # Create trade record with lowercase status
-            trade = PaperTrade.objects.create(
-                account=self.account,
-                trade_type=trade_type,  # lowercase: 'buy' or 'sell'
-                token_in_address=token_in_address,
-                token_in_symbol=token_in_symbol,
-                token_out_address=token_out_address,
-                token_out_symbol=token_out_symbol,
-                amount_in=amount_in_usd * Decimal('1e18'),  # Convert to wei
-                amount_in_usd=amount_in_usd,
-                expected_amount_out=expected_amount_out * Decimal('1e18'),
-                actual_amount_out=actual_amount_out * Decimal('1e18'),
-                simulated_gas_price_gwei=gas_price_gwei,
-                simulated_gas_used=gas_used,
-                simulated_gas_cost_usd=gas_cost_usd,
-                simulated_slippage_percent=total_slippage,
-                status='completed',  # IMPORTANT: Use lowercase 'completed'
-                executed_at=timezone.now(),
-                execution_time_ms=random.randint(500, 2000),
-                mock_tx_hash='0x' + uuid.uuid4().hex,
-                mock_block_number=random.randint(18000000, 18100000),
-                strategy_name=self.strategy_config.name if hasattr(self, 'strategy_config') and self.strategy_config else f'Intel_{self.intel_level}',
-                metadata={
-                    'intel_level': self.intel_level,
-                    'confidence_percent': float(decision.confidence_percent) if hasattr(decision, 'confidence_percent') else 75,
-                    'transaction_id': transaction_id,
-                    'gas_savings': float(gas_savings) if gas_savings else None,
-                    'decision_data': {
-                        'action': decision.action,
-                        'position_size_usd': float(decision.position_size_usd),
-                        'risk_score': float(decision.risk_score) if hasattr(decision, 'risk_score') else 50,
-                        'primary_reasoning': getattr(decision, 'primary_reasoning', 'Market opportunity detected')[:200]
-                    }
-                }
-            )
+#             # Create trade record with lowercase status
+#             trade = PaperTrade.objects.create(
+#                 account=self.account,
+#                 trade_type=trade_type,  # lowercase: 'buy' or 'sell'
+#                 token_in_address=token_in_address,
+#                 token_in_symbol=token_in_symbol,
+#                 token_out_address=token_out_address,
+#                 token_out_symbol=token_out_symbol,
+#                 amount_in=amount_in_usd * Decimal('1e18'),  # Convert to wei
+#                 amount_in_usd=amount_in_usd,
+#                 expected_amount_out=expected_amount_out * Decimal('1e18'),
+#                 actual_amount_out=actual_amount_out * Decimal('1e18'),
+#                 simulated_gas_price_gwei=gas_price_gwei,
+#                 simulated_gas_used=gas_used,
+#                 simulated_gas_cost_usd=gas_cost_usd,
+#                 simulated_slippage_percent=total_slippage,
+#                 status='completed',  # IMPORTANT: Use lowercase 'completed'
+#                 executed_at=timezone.now(),
+#                 execution_time_ms=random.randint(500, 2000),
+#                 mock_tx_hash='0x' + uuid.uuid4().hex,
+#                 mock_block_number=random.randint(18000000, 18100000),
+#                 strategy_name=self.strategy_config.name if hasattr(self, 'strategy_config') and self.strategy_config else f'Intel_{self.intel_level}',
+#                 metadata={
+#                     'intel_level': self.intel_level,
+#                     'confidence_percent': float(decision.confidence_percent) if hasattr(decision, 'confidence_percent') else 75,
+#                     'transaction_id': transaction_id,
+#                     'gas_savings': float(gas_savings) if gas_savings else None,
+#                     'decision_data': {
+#                         'action': decision.action,
+#                         'position_size_usd': float(decision.position_size_usd),
+#                         'risk_score': float(decision.risk_score) if hasattr(decision, 'risk_score') else 50,
+#                         'primary_reasoning': getattr(decision, 'primary_reasoning', 'Market opportunity detected')[:200]
+#                     }
+#                 }
+#             )
             
-            logger.info(
-                f"[TRADE SAVED] {trade_type.upper()} trade created: "
-                f"trade_id={trade.trade_id}, amount=${amount_in_usd:.2f}, "
-                f"token={token_symbol}, slippage={total_slippage:.2f}%, "
-                f"gas=${gas_cost_usd:.2f}, status=completed"
-            )
+#             logger.info(
+#                 f"[TRADE SAVED] {trade_type.upper()} trade created: "
+#                 f"trade_id={trade.trade_id}, amount=${amount_in_usd:.2f}, "
+#                 f"token={token_symbol}, slippage={total_slippage:.2f}%, "
+#                 f"gas=${gas_cost_usd:.2f}, status=completed"
+#             )
             
-            # ✅ UPDATE ACCOUNT STATISTICS
-            # Refresh account data from database to prevent race conditions
-            self.account.refresh_from_db()
+#             # ✅ UPDATE ACCOUNT STATISTICS
+#             # Refresh account data from database to prevent race conditions
+#             self.account.refresh_from_db()
             
-            # Update trade counts based on status
-            if trade.status == 'completed':
-                self.account.successful_trades += 1
-                logger.debug(f"[ACCOUNT STATS] Successful trade count: {self.account.successful_trades}")
-            elif trade.status == 'failed':
-                self.account.failed_trades += 1
-                logger.debug(f"[ACCOUNT STATS] Failed trade count: {self.account.failed_trades}")
+#             # Update trade counts based on status
+#             if trade.status == 'completed':
+#                 self.account.successful_trades += 1
+#                 logger.debug(f"[ACCOUNT STATS] Successful trade count: {self.account.successful_trades}")
+#             elif trade.status == 'failed':
+#                 self.account.failed_trades += 1
+#                 logger.debug(f"[ACCOUNT STATS] Failed trade count: {self.account.failed_trades}")
             
-            # Update total trades counter
-            self.account.total_trades += 1
+#             # Update total trades counter
+#             self.account.total_trades += 1
             
-            # Update account balance
-            if trade_type == 'buy':
-                # Deduct USDC and gas
-                self.account.current_balance_usd -= (amount_in_usd + gas_cost_usd)
-            else:  # sell
-                # Add USDC minus gas
-                self.account.current_balance_usd += (actual_amount_out - gas_cost_usd)
+#             # Update account balance
+#             if trade_type == 'buy':
+#                 # Deduct USDC and gas
+#                 self.account.current_balance_usd -= (amount_in_usd + gas_cost_usd)
+#             else:  # sell
+#                 # Add USDC minus gas
+#                 self.account.current_balance_usd += (actual_amount_out - gas_cost_usd)
             
-            # Save all account updates
-            self.account.save(update_fields=[
-                'total_trades', 
-                'successful_trades', 
-                'failed_trades', 
-                'current_balance_usd'
-            ])
+#             # Save all account updates
+#             self.account.save(update_fields=[
+#                 'total_trades', 
+#                 'successful_trades', 
+#                 'failed_trades', 
+#                 'current_balance_usd'
+#             ])
             
-            logger.debug(
-                f"[ACCOUNT STATS] Updated: Total={self.account.total_trades}, "
-                f"Successful={self.account.successful_trades}, Failed={self.account.failed_trades}, "
-                f"Balance=${self.account.current_balance_usd:.2f}"
-            )
+#             logger.debug(
+#                 f"[ACCOUNT STATS] Updated: Total={self.account.total_trades}, "
+#                 f"Successful={self.account.successful_trades}, Failed={self.account.failed_trades}, "
+#                 f"Balance=${self.account.current_balance_usd:.2f}"
+#             )
             
-            # Create AI thought log for this trade
-            self._create_ai_thought_log(
-                paper_trade=trade,
-                decision=decision,
-                token_symbol=token_symbol,
-                token_address=token_out_address if trade_type == 'buy' else token_in_address
-            )
+#             # Create AI thought log for this trade
+#             self._create_ai_thought_log(
+#                 paper_trade=trade,
+#                 decision=decision,
+#                 token_symbol=token_symbol,
+#                 token_address=token_out_address if trade_type == 'buy' else token_in_address
+#             )
             
-            # Send WebSocket update
-            try:
-                trade_data = {
-                    'trade_id': str(trade.trade_id),
-                    'trade_type': trade_type,
-                    'token_in_symbol': token_in_symbol,
-                    'token_out_symbol': token_out_symbol,
-                    'amount_in_usd': float(amount_in_usd),
-                    'status': 'completed',
-                    'created_at': trade.created_at.isoformat()
-                }
-                websocket_service.send_trade_update(
-                    account_id=str(self.account.account_id),
-                    trade_data=trade_data
-                )
-            except Exception as e:
-                logger.error(f"Failed to send WebSocket update: {e}")
+#             # Send WebSocket update
+#             try:
+#                 trade_data = {
+#                     'trade_id': str(trade.trade_id),
+#                     'trade_type': trade_type,
+#                     'token_in_symbol': token_in_symbol,
+#                     'token_out_symbol': token_out_symbol,
+#                     'amount_in_usd': float(amount_in_usd),
+#                     'status': 'completed',
+#                     'created_at': trade.created_at.isoformat()
+#                 }
+#                 websocket_service.send_trade_update(
+#                     account_id=str(self.account.account_id),
+#                     trade_data=trade_data
+#                 )
+#             except Exception as e:
+#                 logger.error(f"Failed to send WebSocket update: {e}")
             
-            return trade
+#             return trade
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to create trade record: {e}", exc_info=True)
-            import traceback
-            traceback.print_exc()
-            return None
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to create trade record: {e}", exc_info=True)
+#             import traceback
+#             traceback.print_exc()
+#             return None
 
 
 
@@ -1820,89 +1820,89 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _create_ai_thought_log(self, paper_trade: PaperTrade, decision: TradingDecision,
-                            token_symbol: str, token_address: str):
-        """
-        Create AI thought log for the trade.
+#     def _create_ai_thought_log(self, paper_trade: PaperTrade, decision: TradingDecision,
+#                             token_symbol: str, token_address: str):
+#         """
+#         Create AI thought log for the trade.
         
-        Args:
-            paper_trade: The paper trade record
-            decision: Trading decision that was made
-            token_symbol: Token symbol
-            token_address: Token address
+#         Args:
+#             paper_trade: The paper trade record
+#             decision: Trading decision that was made
+#             token_symbol: Token symbol
+#             token_address: Token address
             
-        Returns:
-            PaperAIThoughtLog: Created thought log or None if failed
-        """
-        try:
-            # Map confidence to level
-            confidence = float(getattr(decision, 'confidence_percent', 75))
-            if confidence >= 90:
-                confidence_level = 'VERY_HIGH'
-            elif confidence >= 70:
-                confidence_level = 'HIGH'
-            elif confidence >= 50:
-                confidence_level = 'MEDIUM'
-            elif confidence >= 30:
-                confidence_level = 'LOW'
-            else:
-                confidence_level = 'VERY_LOW'
+#         Returns:
+#             PaperAIThoughtLog: Created thought log or None if failed
+#         """
+#         try:
+#             # Map confidence to level
+#             confidence = float(getattr(decision, 'confidence_percent', 75))
+#             if confidence >= 90:
+#                 confidence_level = 'VERY_HIGH'
+#             elif confidence >= 70:
+#                 confidence_level = 'HIGH'
+#             elif confidence >= 50:
+#                 confidence_level = 'MEDIUM'
+#             elif confidence >= 30:
+#                 confidence_level = 'LOW'
+#             else:
+#                 confidence_level = 'VERY_LOW'
             
-            # ✅ ONLY USE FIELDS THAT EXIST IN THE MODEL
-            thought_log = PaperAIThoughtLog.objects.create(
-                account=self.account,
-                paper_trade=paper_trade,
-                decision_type=decision.action,
-                token_address=token_address,
-                token_symbol=token_symbol,
-                confidence_level=confidence_level,
-                confidence_percent=Decimal(str(confidence)),
-                risk_score=Decimal(str(getattr(decision, 'risk_score', 50))),
-                opportunity_score=Decimal('70'),  # Default opportunity score
-                primary_reasoning=getattr(
-                    decision, 
-                    'primary_reasoning', 
-                    'Market analysis suggests favorable conditions'
-                )[:500],
-                key_factors=[
-                    f"Intel Level: {self.intel_level}",
-                    f"Action: {decision.action}",
-                    f"Confidence: {confidence:.1f}%"
-                ],
-                positive_signals=[],
-                negative_signals=[],
-                market_data={
-                    'intel_level': self.intel_level,
-                    'position_size_usd': float(decision.position_size_usd),
-                    'risk_score': float(getattr(decision, 'risk_score', 50))
-                },
-                strategy_name=(
-                    self.strategy_config.name 
-                    if hasattr(self, 'strategy_config') and self.strategy_config 
-                    else f'Intel_{self.intel_level}'
-                ),
-                lane_used='SMART' if self.intel_level >= 5 else 'FAST',
-                analysis_time_ms=100
-            )
+#             # ✅ ONLY USE FIELDS THAT EXIST IN THE MODEL
+#             thought_log = PaperAIThoughtLog.objects.create(
+#                 account=self.account,
+#                 paper_trade=paper_trade,
+#                 decision_type=decision.action,
+#                 token_address=token_address,
+#                 token_symbol=token_symbol,
+#                 confidence_level=confidence_level,
+#                 confidence_percent=Decimal(str(confidence)),
+#                 risk_score=Decimal(str(getattr(decision, 'risk_score', 50))),
+#                 opportunity_score=Decimal('70'),  # Default opportunity score
+#                 primary_reasoning=getattr(
+#                     decision, 
+#                     'primary_reasoning', 
+#                     'Market analysis suggests favorable conditions'
+#                 )[:500],
+#                 key_factors=[
+#                     f"Intel Level: {self.intel_level}",
+#                     f"Action: {decision.action}",
+#                     f"Confidence: {confidence:.1f}%"
+#                 ],
+#                 positive_signals=[],
+#                 negative_signals=[],
+#                 market_data={
+#                     'intel_level': self.intel_level,
+#                     'position_size_usd': float(decision.position_size_usd),
+#                     'risk_score': float(getattr(decision, 'risk_score', 50))
+#                 },
+#                 strategy_name=(
+#                     self.strategy_config.name 
+#                     if hasattr(self, 'strategy_config') and self.strategy_config 
+#                     else f'Intel_{self.intel_level}'
+#                 ),
+#                 lane_used='SMART' if self.intel_level >= 5 else 'FAST',
+#                 analysis_time_ms=100
+#             )
             
-            logger.info(
-                f"[AI THOUGHT] Created thought log: confidence={confidence:.1f}%, "
-                f"risk={getattr(decision, 'risk_score', 50):.1f}, decision={decision.action}"
-            )
+#             logger.info(
+#                 f"[AI THOUGHT] Created thought log: confidence={confidence:.1f}%, "
+#                 f"risk={getattr(decision, 'risk_score', 50):.1f}, decision={decision.action}"
+#             )
             
-            # TODO: WebSocket notification will be added in future update
-            logger.debug(
-                f"[AI THOUGHT] Thought log created successfully: {thought_log.thought_id}"
-            )
+#             # TODO: WebSocket notification will be added in future update
+#             logger.debug(
+#                 f"[AI THOUGHT] Thought log created successfully: {thought_log.thought_id}"
+#             )
             
-            return thought_log
+#             return thought_log
             
-        except Exception as e:
-            logger.error(
-                f"[ERROR] Failed to create AI thought log: {e}",
-                exc_info=True
-            )
-            return None
+#         except Exception as e:
+#             logger.error(
+#                 f"[ERROR] Failed to create AI thought log: {e}",
+#                 exc_info=True
+#             )
+#             return None
 
 
 
@@ -1912,13 +1912,13 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _update_positions_after_trade(self, decision: TradingDecision, 
-                                      token_symbol: str, current_price: Decimal):
-        """Update positions after trade execution."""
-        if decision.action == 'BUY':
-            self._open_or_add_position(token_symbol, decision, current_price)
-        else:
-            self._close_or_reduce_position(token_symbol, decision, current_price)
+#     def _update_positions_after_trade(self, decision: TradingDecision, 
+#                                       token_symbol: str, current_price: Decimal):
+#         """Update positions after trade execution."""
+#         if decision.action == 'BUY':
+#             self._open_or_add_position(token_symbol, decision, current_price)
+#         else:
+#             self._close_or_reduce_position(token_symbol, decision, current_price)
     
 
 
@@ -1927,35 +1927,35 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _open_or_add_position(self, token_symbol: str, decision: TradingDecision, 
-                            current_price: Decimal):
-        """Open new position or add to existing."""
-        if token_symbol in self.positions:
-            position = self.positions[token_symbol]
-            position.quantity += decision.position_size_usd / current_price
-            position.total_invested_usd += decision.position_size_usd
-            position.average_entry_price_usd = position.total_invested_usd / position.quantity
-            position.current_price_usd = current_price
-            position.current_value_usd = position.quantity * current_price
-            position.unrealized_pnl_usd = position.current_value_usd - position.total_invested_usd
-            position.save()
-        else:
-            position = PaperPosition.objects.create(
-                account=self.account,
-                token_address=decision.token_address,
-                token_symbol=token_symbol,
-                quantity=decision.position_size_usd / current_price,
-                average_entry_price_usd=current_price,
-                current_price_usd=current_price,
-                total_invested_usd=decision.position_size_usd,
-                current_value_usd=decision.position_size_usd,
-                unrealized_pnl_usd=Decimal('0'),
-                is_open=True
-            )
-            self.positions[token_symbol] = position
+#     def _open_or_add_position(self, token_symbol: str, decision: TradingDecision, 
+#                             current_price: Decimal):
+#         """Open new position or add to existing."""
+#         if token_symbol in self.positions:
+#             position = self.positions[token_symbol]
+#             position.quantity += decision.position_size_usd / current_price
+#             position.total_invested_usd += decision.position_size_usd
+#             position.average_entry_price_usd = position.total_invested_usd / position.quantity
+#             position.current_price_usd = current_price
+#             position.current_value_usd = position.quantity * current_price
+#             position.unrealized_pnl_usd = position.current_value_usd - position.total_invested_usd
+#             position.save()
+#         else:
+#             position = PaperPosition.objects.create(
+#                 account=self.account,
+#                 token_address=decision.token_address,
+#                 token_symbol=token_symbol,
+#                 quantity=decision.position_size_usd / current_price,
+#                 average_entry_price_usd=current_price,
+#                 current_price_usd=current_price,
+#                 total_invested_usd=decision.position_size_usd,
+#                 current_value_usd=decision.position_size_usd,
+#                 unrealized_pnl_usd=Decimal('0'),
+#                 is_open=True
+#             )
+#             self.positions[token_symbol] = position
         
-        # ✅ UPDATE ACCOUNT P&L
-        self._update_account_pnl()
+#         # ✅ UPDATE ACCOUNT P&L
+#         self._update_account_pnl()
 
 
 
@@ -1969,65 +1969,65 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _close_or_reduce_position(self, token_symbol: str, decision: TradingDecision,
-                                current_price: Decimal):
-        """Close or reduce existing position."""
-        if token_symbol in self.positions:
-            position = self.positions[token_symbol]
-            sell_quantity = min(position.quantity, decision.position_size_usd / current_price)
+#     def _close_or_reduce_position(self, token_symbol: str, decision: TradingDecision,
+#                                 current_price: Decimal):
+#         """Close or reduce existing position."""
+#         if token_symbol in self.positions:
+#             position = self.positions[token_symbol]
+#             sell_quantity = min(position.quantity, decision.position_size_usd / current_price)
             
-            position.quantity -= sell_quantity
-            position.current_value_usd = position.quantity * current_price
-            position.realized_pnl_usd += (sell_quantity * current_price) - (sell_quantity * position.average_entry_price_usd)
+#             position.quantity -= sell_quantity
+#             position.current_value_usd = position.quantity * current_price
+#             position.realized_pnl_usd += (sell_quantity * current_price) - (sell_quantity * position.average_entry_price_usd)
             
-            if position.quantity <= 0:
-                position.is_open = False
-                position.closed_at = timezone.now()
-                del self.positions[token_symbol]
+#             if position.quantity <= 0:
+#                 position.is_open = False
+#                 position.closed_at = timezone.now()
+#                 del self.positions[token_symbol]
             
-            position.save()
+#             position.save()
             
-            # ✅ UPDATE ACCOUNT P&L
-            self._update_account_pnl()
+#             # ✅ UPDATE ACCOUNT P&L
+#             self._update_account_pnl()
 
 
 
 
-    def _update_account_pnl(self):
-        """
-        Update account's total P&L from all positions.
+#     def _update_account_pnl(self):
+#         """
+#         Update account's total P&L from all positions.
         
-        This should be called after any position update to keep
-        the account's total_pnl_usd in sync with position data.
-        """
-        try:
-            # Calculate total unrealized P&L from all open positions
-            total_unrealized_pnl = sum(
-                pos.unrealized_pnl_usd 
-                for pos in self.positions.values()
-            )
+#         This should be called after any position update to keep
+#         the account's total_pnl_usd in sync with position data.
+#         """
+#         try:
+#             # Calculate total unrealized P&L from all open positions
+#             total_unrealized_pnl = sum(
+#                 pos.unrealized_pnl_usd 
+#                 for pos in self.positions.values()
+#             )
             
-            # Calculate total realized P&L from closed positions
-            closed_positions = PaperPosition.objects.filter(
-                account=self.account,
-                is_open=False
-            )
-            total_realized_pnl = sum(
-                pos.realized_pnl_usd 
-                for pos in closed_positions
-            )
+#             # Calculate total realized P&L from closed positions
+#             closed_positions = PaperPosition.objects.filter(
+#                 account=self.account,
+#                 is_open=False
+#             )
+#             total_realized_pnl = sum(
+#                 pos.realized_pnl_usd 
+#                 for pos in closed_positions
+#             )
             
-            # Update account's total P&L
-            self.account.total_pnl_usd = total_unrealized_pnl + total_realized_pnl
-            self.account.save(update_fields=['total_pnl_usd'])
+#             # Update account's total P&L
+#             self.account.total_pnl_usd = total_unrealized_pnl + total_realized_pnl
+#             self.account.save(update_fields=['total_pnl_usd'])
             
-            logger.debug(
-                f"[ACCOUNT P&L] Updated: Unrealized=${total_unrealized_pnl:.2f}, "
-                f"Realized=${total_realized_pnl:.2f}, Total=${self.account.total_pnl_usd:.2f}"
-            )
+#             logger.debug(
+#                 f"[ACCOUNT P&L] Updated: Unrealized=${total_unrealized_pnl:.2f}, "
+#                 f"Realized=${total_realized_pnl:.2f}, Total=${self.account.total_pnl_usd:.2f}"
+#             )
             
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to update account P&L: {e}", exc_info=True)
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to update account P&L: {e}", exc_info=True)
 
 
 
@@ -2039,121 +2039,121 @@ class EnhancedPaperTradingBot:
 
 
 
-    def reset_circuit_breakers(self, breaker_type: Optional[str] = None):
-        """
-        Reset circuit breakers for the bot.
+#     def reset_circuit_breakers(self, breaker_type: Optional[str] = None):
+#         """
+#         Reset circuit breakers for the bot.
         
-        Args:
-            breaker_type: Specific breaker type to reset, or None for all
-        """
-        try:
-            if self.circuit_breaker_manager:
-                if breaker_type:
-                    from engine.portfolio import CircuitBreakerType
-                    breaker_enum = CircuitBreakerType[breaker_type.upper()]
-                    success = self.circuit_breaker_manager.manual_reset(breaker_enum)
-                else:
-                    success = self.circuit_breaker_manager.manual_reset()
+#         Args:
+#             breaker_type: Specific breaker type to reset, or None for all
+#         """
+#         try:
+#             if self.circuit_breaker_manager:
+#                 if breaker_type:
+#                     from engine.portfolio import CircuitBreakerType
+#                     breaker_enum = CircuitBreakerType[breaker_type.upper()]
+#                     success = self.circuit_breaker_manager.manual_reset(breaker_enum)
+#                 else:
+#                     success = self.circuit_breaker_manager.manual_reset()
                 
-                if success:
-                    logger.info(f"[CB] Circuit breakers reset successfully")
-                    self.consecutive_failures = 0
+#                 if success:
+#                     logger.info(f"[CB] Circuit breakers reset successfully")
+#                     self.consecutive_failures = 0
                     
-                    # Log reset event
-                    self._log_thought(
-                        action="CB_RESET",
-                        reasoning=f"Circuit breakers manually reset. Trading can resume normally.",
-                        confidence=100,
-                        decision_type="SYSTEM"
-                    )
+#                     # Log reset event
+#                     self._log_thought(
+#                         action="CB_RESET",
+#                         reasoning=f"Circuit breakers manually reset. Trading can resume normally.",
+#                         confidence=100,
+#                         decision_type="SYSTEM"
+#                     )
             
-        except Exception as e:
-            logger.error(f"[CB] Failed to reset circuit breakers: {e}")
+#         except Exception as e:
+#             logger.error(f"[CB] Failed to reset circuit breakers: {e}")
     
-    def _update_performance_metrics(self):
-        """Update performance metrics for the session."""
-        try:
-            # Calculate metrics
-            total_trades = PaperTrade.objects.filter(
-                account=self.account,
-                created_at__gte=self.session.started_at
-            ).count()
+#     def _update_performance_metrics(self):
+#         """Update performance metrics for the session."""
+#         try:
+#             # Calculate metrics
+#             total_trades = PaperTrade.objects.filter(
+#                 account=self.account,
+#                 created_at__gte=self.session.started_at
+#             ).count()
             
-            winning_trades = int(total_trades * 0.6)  # Simulated win rate
-            win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+#             winning_trades = int(total_trades * 0.6)  # Simulated win rate
+#             win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
             
-            # Calculate gas savings metrics if TX Manager is used
-            avg_gas_savings = (self.total_gas_savings / self.trades_with_tx_manager 
-                              if self.trades_with_tx_manager > 0 else Decimal('0'))
+#             # Calculate gas savings metrics if TX Manager is used
+#             avg_gas_savings = (self.total_gas_savings / self.trades_with_tx_manager 
+#                               if self.trades_with_tx_manager > 0 else Decimal('0'))
             
-            # Create or update metrics
-            metrics, created = PaperPerformanceMetrics.objects.get_or_create(
-                session=self.session,
-                period_start=self.session.started_at,
-                period_end=timezone.now(),
-                defaults={
-                    'total_trades': total_trades,
-                    'winning_trades': winning_trades,
-                    'losing_trades': total_trades - winning_trades,
-                    'win_rate': Decimal(str(win_rate)),
-                    'total_pnl_usd': self.account.current_balance_usd - self.session.starting_balance_usd,
-                    'total_pnl_percent': ((self.account.current_balance_usd / self.session.starting_balance_usd) - 1) * 100 if self.session.starting_balance_usd > 0 else 0,
-                    'avg_win_usd': Decimal('0'),
-                    'avg_loss_usd': Decimal('0'),
-                    'largest_win_usd': Decimal('0'),
-                    'largest_loss_usd': Decimal('0'),
-                    'sharpe_ratio': None,
-                    'max_drawdown_percent': Decimal('0'),
-                    'profit_factor': None,
-                    'avg_execution_time_ms': 100,
-                    'total_gas_fees_usd': Decimal('5') * total_trades * (Decimal('1') - avg_gas_savings / 100),
-                    'avg_slippage_percent': Decimal('1'),
-                    'fast_lane_trades': 0,
-                    'smart_lane_trades': total_trades,
-                    'fast_lane_win_rate': Decimal('0'),
-                    'smart_lane_win_rate': Decimal(str(win_rate))
-                }
-            )
+#             # Create or update metrics
+#             metrics, created = PaperPerformanceMetrics.objects.get_or_create(
+#                 session=self.session,
+#                 period_start=self.session.started_at,
+#                 period_end=timezone.now(),
+#                 defaults={
+#                     'total_trades': total_trades,
+#                     'winning_trades': winning_trades,
+#                     'losing_trades': total_trades - winning_trades,
+#                     'win_rate': Decimal(str(win_rate)),
+#                     'total_pnl_usd': self.account.current_balance_usd - self.session.starting_balance_usd,
+#                     'total_pnl_percent': ((self.account.current_balance_usd / self.session.starting_balance_usd) - 1) * 100 if self.session.starting_balance_usd > 0 else 0,
+#                     'avg_win_usd': Decimal('0'),
+#                     'avg_loss_usd': Decimal('0'),
+#                     'largest_win_usd': Decimal('0'),
+#                     'largest_loss_usd': Decimal('0'),
+#                     'sharpe_ratio': None,
+#                     'max_drawdown_percent': Decimal('0'),
+#                     'profit_factor': None,
+#                     'avg_execution_time_ms': 100,
+#                     'total_gas_fees_usd': Decimal('5') * total_trades * (Decimal('1') - avg_gas_savings / 100),
+#                     'avg_slippage_percent': Decimal('1'),
+#                     'fast_lane_trades': 0,
+#                     'smart_lane_trades': total_trades,
+#                     'fast_lane_win_rate': Decimal('0'),
+#                     'smart_lane_win_rate': Decimal(str(win_rate))
+#                 }
+#             )
             
-            if not created:
-                metrics.total_trades = total_trades
-                metrics.winning_trades = winning_trades
-                metrics.losing_trades = total_trades - winning_trades
-                metrics.win_rate = Decimal(str(win_rate))
-                metrics.total_pnl_usd = self.account.current_balance_usd - self.session.starting_balance_usd
-                metrics.total_pnl_percent = ((self.account.current_balance_usd / self.session.starting_balance_usd) - 1) * 100 if self.session.starting_balance_usd > 0 else 0
-                metrics.total_gas_fees_usd = Decimal('5') * total_trades * (Decimal('1') - avg_gas_savings / 100)
-                metrics.save()
+#             if not created:
+#                 metrics.total_trades = total_trades
+#                 metrics.winning_trades = winning_trades
+#                 metrics.losing_trades = total_trades - winning_trades
+#                 metrics.win_rate = Decimal(str(win_rate))
+#                 metrics.total_pnl_usd = self.account.current_balance_usd - self.session.starting_balance_usd
+#                 metrics.total_pnl_percent = ((self.account.current_balance_usd / self.session.starting_balance_usd) - 1) * 100 if self.session.starting_balance_usd > 0 else 0
+#                 metrics.total_gas_fees_usd = Decimal('5') * total_trades * (Decimal('1') - avg_gas_savings / 100)
+#                 metrics.save()
             
-            # Log TX Manager performance if enabled
-            if self.use_tx_manager and self.trades_with_tx_manager > 0:
-                logger.info(f"[TX MANAGER] Performance: {self.trades_with_tx_manager} trades, "
-                          f"Avg gas savings: {avg_gas_savings:.2f}%")
+#             # Log TX Manager performance if enabled
+#             if self.use_tx_manager and self.trades_with_tx_manager > 0:
+#                 logger.info(f"[TX MANAGER] Performance: {self.trades_with_tx_manager} trades, "
+#                           f"Avg gas savings: {avg_gas_savings:.2f}%")
                 
-        except Exception as e:
-            logger.error(f"[ERROR] Failed to update performance metrics: {e}")
+#         except Exception as e:
+#             logger.error(f"[ERROR] Failed to update performance metrics: {e}")
     
-    def _handle_shutdown(self, signum, frame):
-        """
-        Handle shutdown signals immediately with force-exit timeout.
+#     def _handle_shutdown(self, signum, frame):
+#         """
+#         Handle shutdown signals immediately with force-exit timeout.
         
-        Args:
-            signum: Signal number
-            frame: Current stack frame
-        """
-        logger.info(f"[SHUTDOWN] Received signal {signum} - stopping bot immediately")
-        self.running = False
+#         Args:
+#             signum: Signal number
+#             frame: Current stack frame
+#         """
+#         logger.info(f"[SHUTDOWN] Received signal {signum} - stopping bot immediately")
+#         self.running = False
         
-        # Force exit after 3 seconds if cleanup hangs
-        import threading
-        def force_exit():
-            time.sleep(3)
-            if self.running is False:  # Still shutting down after 3 seconds
-                logger.warning("[SHUTDOWN] Force exit after 3 second timeout")
-                import os
-                os._exit(0)
+#         # Force exit after 3 seconds if cleanup hangs
+#         import threading
+#         def force_exit():
+#             time.sleep(3)
+#             if self.running is False:  # Still shutting down after 3 seconds
+#                 logger.warning("[SHUTDOWN] Force exit after 3 second timeout")
+#                 import os
+#                 os._exit(0)
         
-        threading.Thread(target=force_exit, daemon=True).start()
+#         threading.Thread(target=force_exit, daemon=True).start()
 
 
 
@@ -2167,134 +2167,134 @@ class EnhancedPaperTradingBot:
 
 
 
-    def _cleanup(self):
-        """Clean up on exit."""
-        try:
-            if self.session:
-                self.session.status = 'STOPPED'
-                self.session.ended_at = timezone.now()
-                self.session.ending_balance_usd = self.account.current_balance_usd
-                self.session.session_pnl_usd = self.account.current_balance_usd - self.session.starting_balance_usd
-                self.session.save()
+#     def _cleanup(self):
+#         """Clean up on exit."""
+#         try:
+#             if self.session:
+#                 self.session.status = 'STOPPED'
+#                 self.session.ended_at = timezone.now()
+#                 self.session.ending_balance_usd = self.account.current_balance_usd
+#                 self.session.session_pnl_usd = self.account.current_balance_usd - self.session.starting_balance_usd
+#                 self.session.save()
             
-            # Log final TX Manager stats if enabled
-            if self.use_tx_manager and self.trades_with_tx_manager > 0:
-                avg_savings = self.total_gas_savings / self.trades_with_tx_manager
-                logger.info(f"[TX MANAGER] Final Stats: {self.trades_with_tx_manager} trades executed")
-                logger.info(f"[TX MANAGER] Total gas savings: {self.total_gas_savings:.2f}%")
-                logger.info(f"[TX MANAGER] Average gas savings per trade: {avg_savings:.2f}%")
+#             # Log final TX Manager stats if enabled
+#             if self.use_tx_manager and self.trades_with_tx_manager > 0:
+#                 avg_savings = self.total_gas_savings / self.trades_with_tx_manager
+#                 logger.info(f"[TX MANAGER] Final Stats: {self.trades_with_tx_manager} trades executed")
+#                 logger.info(f"[TX MANAGER] Total gas savings: {self.total_gas_savings:.2f}%")
+#                 logger.info(f"[TX MANAGER] Average gas savings per trade: {avg_savings:.2f}%")
             
-            # Log final circuit breaker stats if enabled
-            if self.circuit_breaker_enabled:
-                logger.info(f"[CB] Final Stats: {self.daily_trades_count} trades today")
-                logger.info(f"[CB] Consecutive failures at shutdown: {self.consecutive_failures}")
+#             # Log final circuit breaker stats if enabled
+#             if self.circuit_breaker_enabled:
+#                 logger.info(f"[CB] Final Stats: {self.daily_trades_count} trades today")
+#                 logger.info(f"[CB] Consecutive failures at shutdown: {self.consecutive_failures}")
                 
-            logger.info("[CLEANUP] Bot shutdown complete")
-        except Exception as e:
-            logger.error(f"[ERROR] Cleanup failed: {e}")
+#             logger.info("[CLEANUP] Bot shutdown complete")
+#         except Exception as e:
+#             logger.error(f"[ERROR] Cleanup failed: {e}")
 
 
-def main():
-    """Main entry point for the bot."""
-    import argparse
+# def main():
+#     """Main entry point for the bot."""
+#     import argparse
     
-    parser = argparse.ArgumentParser(description='Enhanced Paper Trading Bot with TX Manager and Circuit Breakers')
-    parser.add_argument('--account', default='AI_Paper_Bot', help='Account name (default: AI_Paper_Bot)')
-    parser.add_argument('--intel', type=int, default=5, choices=range(1, 11), help='Intelligence level 1-10 (default: 5 - Balanced)')
-    parser.add_argument('--tick-interval', type=int, default=15, help='Seconds between market ticks (default: 15)')
-    parser.add_argument('--disable-circuit-breaker', action='store_true', help='Disable circuit breaker protection')
+#     parser = argparse.ArgumentParser(description='Enhanced Paper Trading Bot with TX Manager and Circuit Breakers')
+#     parser.add_argument('--account', default='AI_Paper_Bot', help='Account name (default: AI_Paper_Bot)')
+#     parser.add_argument('--intel', type=int, default=5, choices=range(1, 11), help='Intelligence level 1-10 (default: 5 - Balanced)')
+#     parser.add_argument('--tick-interval', type=int, default=15, help='Seconds between market ticks (default: 15)')
+#     parser.add_argument('--disable-circuit-breaker', action='store_true', help='Disable circuit breaker protection')
     
-    args = parser.parse_args()
+#     args = parser.parse_args()
     
-    print("\n╔════════════════════════════════════════════════════════════════════╗")
-    print("║  ENHANCED PAPER TRADING BOT - INTEL + TX MANAGER + CIRCUIT BREAKERS ║")
-    print("╚════════════════════════════════════════════════════════════════════╝\n")
+#     print("\n╔════════════════════════════════════════════════════════════════════╗")
+#     print("║  ENHANCED PAPER TRADING BOT - INTEL + TX MANAGER + CIRCUIT BREAKERS ║")
+#     print("╚════════════════════════════════════════════════════════════════════╝\n")
     
-    # Intelligence level descriptions
-    intel_descriptions = {
-        1: "ULTRA CONSERVATIVE - Maximum caution",
-        2: "VERY CONSERVATIVE - High caution",
-        3: "CONSERVATIVE - Careful approach",
-        4: "CAUTIOUS - Below average risk",
-        5: "BALANCED - Equal risk/reward consideration",
-        6: "MODERATE - Slightly aggressive",
-        7: "AGGRESSIVE - Higher risk tolerance",
-        8: "VERY AGGRESSIVE - Significant risks",
-        9: "ULTRA AGGRESSIVE - Maximum risk",
-        10: "YOLO MODE - No risk limits"
-    }
+#     # Intelligence level descriptions
+#     intel_descriptions = {
+#         1: "ULTRA CONSERVATIVE - Maximum caution",
+#         2: "VERY CONSERVATIVE - High caution",
+#         3: "CONSERVATIVE - Careful approach",
+#         4: "CAUTIOUS - Below average risk",
+#         5: "BALANCED - Equal risk/reward consideration",
+#         6: "MODERATE - Slightly aggressive",
+#         7: "AGGRESSIVE - Higher risk tolerance",
+#         8: "VERY AGGRESSIVE - Significant risks",
+#         9: "ULTRA AGGRESSIVE - Maximum risk",
+#         10: "YOLO MODE - No risk limits"
+#     }
     
-    print(f"INTELLIGENCE LEVEL: ⚖️  Level {args.intel}: {intel_descriptions[args.intel].upper()}")
-    print(f"✅ Using account: {args.account}")
+#     print(f"INTELLIGENCE LEVEL: ⚖️  Level {args.intel}: {intel_descriptions[args.intel].upper()}")
+#     print(f"✅ Using account: {args.account}")
     
-    # Transaction Manager is always enabled when available
-    if TRANSACTION_MANAGER_AVAILABLE:
-        print("⚡ TRANSACTION MANAGER: ENABLED - Gas optimization active (targeting 23.1% savings)")
-    else:
-        print("⚠️  TRANSACTION MANAGER: NOT AVAILABLE - Required modules not installed")
+#     # Transaction Manager is always enabled when available
+#     if TRANSACTION_MANAGER_AVAILABLE:
+#         print("⚡ TRANSACTION MANAGER: ENABLED - Gas optimization active (targeting 23.1% savings)")
+#     else:
+#         print("⚠️  TRANSACTION MANAGER: NOT AVAILABLE - Required modules not installed")
     
-    # Circuit Breaker status
-    if not args.disable_circuit_breaker and CIRCUIT_BREAKER_AVAILABLE:
-        print("🛡️  CIRCUIT BREAKERS: ENABLED - Risk protection active")
-    else:
-        print("⚠️  CIRCUIT BREAKERS: DISABLED - Trading without protection")
+#     # Circuit Breaker status
+#     if not args.disable_circuit_breaker and CIRCUIT_BREAKER_AVAILABLE:
+#         print("🛡️  CIRCUIT BREAKERS: ENABLED - Risk protection active")
+#     else:
+#         print("⚠️  CIRCUIT BREAKERS: DISABLED - Trading without protection")
     
-    print("")
+#     print("")
     
-    bot = EnhancedPaperTradingBot(
-        account_name=args.account,
-        intel_level=args.intel
-    )
+#     bot = EnhancedPaperTradingBot(
+#         account_name=args.account,
+#         intel_level=args.intel
+#     )
     
-    if args.disable_circuit_breaker:
-        bot.circuit_breaker_enabled = False
+#     if args.disable_circuit_breaker:
+#         bot.circuit_breaker_enabled = False
     
-    bot.tick_interval = args.tick_interval
+#     bot.tick_interval = args.tick_interval
     
-    print("=" * 60)
-    print("📋 BOT CONFIGURATION")
-    print("=" * 60)
-    print(f"  Account         : {args.account}")
+#     print("=" * 60)
+#     print("📋 BOT CONFIGURATION")
+#     print("=" * 60)
+#     print(f"  Account         : {args.account}")
     
-    if bot.initialize():
-        print(f"  User            : {bot.account.user.username}")
-        print(f"  Balance         : ${bot.account.current_balance_usd:,.2f}")
-        print(f"  Tick Interval   : {args.tick_interval} seconds\n")
-        print(f"  INTELLIGENCE    : Level {args.intel}/10")
-        print("  Controlled by Intel Level:")
-        print(f"    • Risk Tolerance    : {bot.intelligence_engine.config.risk_tolerance}%")
-        print(f"    • Max Position Size : {bot.intelligence_engine.config.max_position_size:.1f}%")
-        print(f"    • Trade Frequency   : {bot.intelligence_engine.config.trade_frequency.value}")
-        print(f"    • Gas Strategy      : {bot.intelligence_engine.config.gas_strategy.value}")
-        print(f"    • MEV Protection    : {'Always On' if bot.intelligence_engine.config.use_mev_protection else 'Off'}")
-        print(f"    • Decision Speed    : {bot.intelligence_engine.config.decision_speed.value}")
+#     if bot.initialize():
+#         print(f"  User            : {bot.account.user.username}")
+#         print(f"  Balance         : ${bot.account.current_balance_usd:,.2f}")
+#         print(f"  Tick Interval   : {args.tick_interval} seconds\n")
+#         print(f"  INTELLIGENCE    : Level {args.intel}/10")
+#         print("  Controlled by Intel Level:")
+#         print(f"    • Risk Tolerance    : {bot.intelligence_engine.config.risk_tolerance}%")
+#         print(f"    • Max Position Size : {bot.intelligence_engine.config.max_position_size:.1f}%")
+#         print(f"    • Trade Frequency   : {bot.intelligence_engine.config.trade_frequency.value}")
+#         print(f"    • Gas Strategy      : {bot.intelligence_engine.config.gas_strategy.value}")
+#         print(f"    • MEV Protection    : {'Always On' if bot.intelligence_engine.config.use_mev_protection else 'Off'}")
+#         print(f"    • Decision Speed    : {bot.intelligence_engine.config.decision_speed.value}")
         
-        if bot.use_tx_manager:
-            print("\n  TRANSACTION MANAGER:")
-            print("    • Gas Optimization  : ACTIVE")
-            print("    • Target Savings    : 23.1%")
-            print("    • Status Tracking   : REAL-TIME")
-            print("    • WebSocket Updates : ENABLED")
+#         if bot.use_tx_manager:
+#             print("\n  TRANSACTION MANAGER:")
+#             print("    • Gas Optimization  : ACTIVE")
+#             print("    • Target Savings    : 23.1%")
+#             print("    • Status Tracking   : REAL-TIME")
+#             print("    • WebSocket Updates : ENABLED")
         
-        if bot.circuit_breaker_enabled:
-            print("\n  CIRCUIT BREAKERS:")
-            print("    • Portfolio Loss    : ACTIVE")
-            print("    • Daily Loss Limit  : ACTIVE")
-            print("    • Consecutive Fails : ACTIVE (Max: 5)")
-            print("    • Daily Trade Limit : 20 trades")
-            print("    • Min Balance Check : $100")
+#         if bot.circuit_breaker_enabled:
+#             print("\n  CIRCUIT BREAKERS:")
+#             print("    • Portfolio Loss    : ACTIVE")
+#             print("    • Daily Loss Limit  : ACTIVE")
+#             print("    • Consecutive Fails : ACTIVE (Max: 5)")
+#             print("    • Daily Trade Limit : 20 trades")
+#             print("    • Min Balance Check : $100")
         
-        print("=" * 60)
+#         print("=" * 60)
         
-        print("\n🤖 Initializing bot for account:", args.account)
-        print("✅ Bot initialized successfully\n")
-        print("🏃 Bot is running... Press Ctrl+C to stop\n")
+#         print("\n🤖 Initializing bot for account:", args.account)
+#         print("✅ Bot initialized successfully\n")
+#         print("🏃 Bot is running... Press Ctrl+C to stop\n")
         
-        bot.run()
-    else:
-        print("❌ Failed to initialize bot")
-        sys.exit(1)
+#         bot.run()
+#     else:
+#         print("❌ Failed to initialize bot")
+#         sys.exit(1)
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

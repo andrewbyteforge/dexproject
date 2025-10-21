@@ -25,7 +25,9 @@ from paper_trading.models import (
     PaperAIThoughtLog,
     PaperPerformanceMetrics
 )
-from paper_trading.bot.simple_trader import EnhancedPaperTradingBot
+from paper_trading.bot import EnhancedPaperTradingBot
+# or alternatively:
+# from paper_trading.bot.enhanced_bot import EnhancedPaperTradingBot
 
 logger = logging.getLogger(__name__)
 
