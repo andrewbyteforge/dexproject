@@ -4,6 +4,8 @@ Paper Trading WebSocket Consumer
 Real-time WebSocket consumer for paper trading dashboard updates.
 Provides live notifications for trades, positions, and performance metrics.
 
+FIXED: Added trade_update() handler to fix "No handler for message type trade.update" error
+
 File: dexproject/paper_trading/consumers.py
 """
 
@@ -34,7 +36,7 @@ logger = logging.getLogger(__name__)
 class PaperTradingConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for real-time paper trading updates.
-    
+
     Features:
     - Real-time trade notifications
     - Position updates
@@ -42,34 +44,34 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
     - AI thought process streaming
     - Bot status updates
     """
-    
+
     async def connect(self) -> None:
         """
         Handle WebSocket connection.
-        
+
         Auto-creates or retrieves default paper trading account for single-user setup.
         """
         try:
             # Get user from scope
             self.user = self.scope.get("user")
-            
+
             # For single-user setup, use default account
             # No authentication required
             logger.info("WebSocket connection attempt (single-user mode)")
-            
+
             # Get or create default paper trading account
             account = await self.get_or_create_default_account()
             if not account:
                 logger.error("Failed to create/get default paper trading account")
                 await self.close(code=4004)
                 return
-            
+
             # Store account_id using the correct field name
             self.account_id = str(account.account_id)
-            
+
             # Create unique group name for this user's paper trading
             self.room_group_name = f"paper_trading_{self.account_id}"
-            
+
             # Join room group
             await self.channel_layer.group_add(
                 self.room_group_name,
@@ -94,12 +96,12 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             logger.error(f"Error in WebSocket connect: {e}", exc_info=True)
             await self.close(code=4500)
     
-    async def disconnect(self, close_code: int) -> None:
+    async def disconnect(self, code: int) -> None:
         """
         Handle WebSocket disconnection.
         
         Args:
-            close_code: WebSocket close code
+            code: WebSocket close code
         """
         try:
             # Leave room group
@@ -112,19 +114,25 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             logger.info(
                 f"Paper trading WebSocket disconnected: "
                 f"account={getattr(self, 'account_id', 'unknown')}, "
-                f"code={close_code}"
+                f"code={code}"
             )
             
         except Exception as e:
             logger.error(f"Error in WebSocket disconnect: {e}", exc_info=True)
     
-    async def receive(self, text_data: str) -> None:
+    async def receive(self, text_data: Optional[str] = None, bytes_data: Optional[bytes] = None) -> None:
         """
         Handle messages from WebSocket client.
         
         Args:
-            text_data: JSON string from client
+            text_data: JSON string from client (optional)
+            bytes_data: Binary data from client (optional)
         """
+        # We only handle text data (JSON messages)
+        if not text_data:
+            logger.warning("Received WebSocket message with no text data")
+            return
+        
         try:
             data = json.loads(text_data)
             message_type = data.get('type')
@@ -226,6 +234,20 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             
         except Exception as e:
             logger.error(f"Error sending trade_executed: {e}", exc_info=True)
+    
+    async def trade_update(self, event: Dict[str, Any]) -> None:
+        """
+        Handle trade_update event from channel layer.
+        
+        This is an alias for trade_executed to handle the 'trade.update' message type
+        sent by the WebSocket service signals.
+        
+        Args:
+            event: Event data containing trade information
+        """
+        # Delegate to trade_executed for consistency
+        logger.debug("Received trade.update message, delegating to trade_executed")
+        await self.trade_executed(event)
     
     async def position_updated(self, event: Dict[str, Any]) -> None:
         """
@@ -419,7 +441,6 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
     # DATABASE OPERATIONS - Async Wrapped
     # =========================================================================
     
-    
     @database_sync_to_async
     def get_or_create_default_account(self) -> Optional[PaperTradingAccount]:
         """
@@ -453,14 +474,6 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"Error getting account: {e}", exc_info=True)
             return None
-
-
-
-
-
-
-
-
 
     @database_sync_to_async
     def get_user_account(self) -> Optional[PaperTradingAccount]:
@@ -526,7 +539,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
         try:
             session = PaperTradingSession.objects.filter(
                 account__account_id=self.account_id,
-                status='ACTIVE'
+                status__in=['STARTING', 'RUNNING', 'PAUSED']
             ).first()
             
             if not session:
@@ -534,9 +547,12 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             
             return {
                 'session_id': str(session.session_id),
-                'start_time': session.start_time.isoformat(),
-                'trades_executed': session.trades_executed,
-                'strategy_name': session.strategy_name,
+                'started_at': session.started_at.isoformat(),
+                'total_trades_executed': session.total_trades_executed,
+                'strategy_name': (
+                    session.strategy_config.name 
+                    if session.strategy_config else 'Unknown'
+                ),
                 'status': session.status,
             }
             
@@ -593,7 +609,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             positions = PaperPosition.objects.filter(
                 account__account_id=self.account_id,
                 is_open=True
-            ).order_by('-created_at')
+            ).order_by('-opened_at')
             
             return [
                 {
@@ -607,7 +623,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
                         if position.current_value_usd else 0.0
                     ),
                     'unrealized_pnl_usd': float(position.unrealized_pnl_usd),
-                    'created_at': position.created_at.isoformat(),
+                    'opened_at': position.opened_at.isoformat(),
                 }
                 for position in positions
             ]
@@ -664,7 +680,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             logger.error(f"Error getting performance metrics: {e}", exc_info=True)
             return None      
 
-    async def performance_update(self, event):
+    async def performance_update(self, event: Dict[str, Any]) -> None:
         """
         Handle performance update messages from the bot.
         
@@ -694,17 +710,29 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
                 'timestamp': timezone.now().isoformat()
             }))
 
-    async def session_update(self, event):
-        """Handle session update messages."""
+    async def session_update(self, event: Dict[str, Any]) -> None:
+        """
+        Handle session update messages.
+        
+        Args:
+            event: Dictionary containing session data
+        """
         await self.send(text_data=json.dumps(event))
 
-    async def strategy_config_updated(self, event):
-        """Handle strategy config update messages."""
+    async def strategy_config_updated(self, event: Dict[str, Any]) -> None:
+        """
+        Handle strategy config update messages.
+        
+        Args:
+            event: Dictionary containing strategy configuration data
+        """
         await self.send(text_data=json.dumps(event))
 
-    async def portfolio_update(self, event):
-        """Handle portfolio update messages."""
+    async def portfolio_update(self, event: Dict[str, Any]) -> None:
+        """
+        Handle portfolio update messages.
+        
+        Args:
+            event: Dictionary containing portfolio data
+        """
         await self.send(text_data=json.dumps(event))
-
-
-

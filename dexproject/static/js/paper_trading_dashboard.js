@@ -1,70 +1,12 @@
-// ========================================
-// WebSocket Debug Interceptor - MUST BE FIRST
-// ========================================
-(function () {
-    console.log('🔍 Installing WebSocket interceptor...');
-
-    // Store original WebSocket
-    const OriginalWebSocket = window.WebSocket;
-
-    // Track all WebSocket connections
-    window.__wsConnections = [];
-
-    // Override WebSocket constructor
-    window.WebSocket = function (url, protocols) {
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('🚨 NEW WEBSOCKET CONNECTION:');
-        console.log('📍 URL:', url);
-        console.log('🕐 Time:', new Date().toISOString());
-
-        // Get stack trace
-        const stack = new Error().stack;
-        console.log('📞 Stack trace:', stack);
-
-        // Check for the problematic connection
-        if (url.includes('dashboard/charts')) {
-            console.error('❌❌❌ FOUND THE PHANTOM CHARTS WEBSOCKET! ❌❌❌');
-            console.error('This is trying to connect to:', url);
-            console.error('Stack trace will show where it\'s coming from!');
-
-            // Create a fake WebSocket that does nothing
-            return {
-                send: () => { },
-                close: () => { },
-                addEventListener: () => { },
-                removeEventListener: () => { },
-                readyState: 3,
-                url: url,
-                CONNECTING: 0,
-                OPEN: 1,
-                CLOSING: 2,
-                CLOSED: 3
-            };
-        }
-
-        // Create real WebSocket for valid connections
-        const ws = new OriginalWebSocket(url, protocols);
-        window.__wsConnections.push({ url, ws, createdAt: new Date() });
-
-        console.log('✅ WebSocket created successfully');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-        return ws;
-    };
-
-    // Copy WebSocket properties
-    Object.setPrototypeOf(window.WebSocket, OriginalWebSocket);
-    window.WebSocket.prototype = OriginalWebSocket.prototype;
-
-    console.log('✅ Interceptor installed! Now waiting for WebSocket connections...');
-})();
-
 /**
- * Paper Trading Dashboard JavaScript
+ * Paper Trading Dashboard JavaScript - WebSocket-First with 30s Backup Polling
  * Location: dexproject/static/js/paper_trading_dashboard.js
- * Description: Main JavaScript functionality for the paper trading dashboard
  * 
- * FIXED: Updated WebSocket message handlers to match backend message types
+ * UPDATES:
+ * - Added account_updated handler for real-time balance updates
+ * - Reduced polling: removed 3s trades/positions polling
+ * - Kept 30s metrics backup polling only
+ * - WebSocket is primary update method
  */
 
 // ========================================
@@ -74,9 +16,7 @@ window.paperTradingDashboard = {
     config: {
         apiBaseUrl: '/paper-trading/api/',
         wsUrl: null,  // Will be set dynamically
-        updateInterval: 5000,      // 5 seconds for AI thoughts (fallback)
-        tradesUpdateInterval: 3000, // 3 seconds for trades/positions
-        metricsUpdateInterval: 10000, // 10 seconds for metrics
+        metricsUpdateInterval: 30000, // 30 seconds for metrics backup
         maxThoughts: 3,            // Limit displayed thoughts
         autoScroll: false,         // Auto-scroll disabled by default
         useWebSocket: true,        // Enable WebSocket for real-time updates
@@ -146,13 +86,10 @@ function handleWebSocketOpen(event) {
     // Update UI to show WebSocket connection
     updateAIStatusIndicator('Live (WS)', 'success');
     showToast('Real-time updates connected', 'success');
-
-    // Remove the subscribe message - the backend doesn't support it
-    // The backend automatically subscribes you to the right channels
 }
 
 /**
- * Handle incoming WebSocket messages - FIXED VERSION
+ * Handle incoming WebSocket messages
  */
 function handleWebSocketMessage(event) {
     try {
@@ -171,9 +108,9 @@ function handleWebSocketMessage(event) {
                 handleInitialSnapshot(message);
                 break;
 
-            // Trade messages - FIXED NAMES
-            case 'trade_executed':  // Changed from 'trade_update'
-            case 'trade.executed':  // Support both formats
+            // Trade messages
+            case 'trade_executed':
+            case 'trade.executed':
                 console.log('Trade executed:', message.data);
                 handleTradeExecuted(message.data);
                 break;
@@ -189,6 +126,13 @@ function handleWebSocketMessage(event) {
             case 'position.closed':
                 console.log('Position closed:', message.data);
                 handlePositionClosed(message.data);
+                break;
+
+            // Account messages - NEW!
+            case 'account_updated':
+            case 'account.updated':
+                console.log('Account updated:', message.data);
+                handleAccountUpdated(message.data);
                 break;
 
             // AI Thought messages
@@ -314,10 +258,10 @@ function handleConnectionConfirmed(message) {
  */
 function handleInitialSnapshot(message) {
     if (message.account) {
-        updatePortfolioValue(message.account.current_balance);
+        updatePortfolioValue(message.account.current_balance_usd);
     }
     if (message.session) {
-        updateBotStatus(message.session.status === 'active');
+        updateBotStatus(message.session.status === 'RUNNING' || message.session.status === 'active');
     }
 }
 
@@ -327,8 +271,6 @@ function handleInitialSnapshot(message) {
 function handleWebSocketErrorMessage(message) {
     const errorMsg = message.message || message.data || 'Unknown error';
     console.error('WebSocket error message:', errorMsg);
-    // Optionally show toast to user
-    // showToast(`Connection error: ${errorMsg}`, 'danger');
 }
 
 /**
@@ -345,10 +287,10 @@ function handleTradeExecuted(data) {
     const symbol = data.token_out_symbol || data.symbol || 'Token';
     const amount = data.amount_in_usd || data.amount || 0;
 
-    showToast(`${side} ${symbol} - $${parseFloat(amount).toFixed(2)}`, 'info');
+    showToast(`${side.toUpperCase()} ${symbol} - $${parseFloat(amount).toFixed(2)}`, 'info');
 
-    // Refresh metrics
-    fetchMetrics();
+    // Fetch positions to update
+    fetchOpenPositions();
 }
 
 /**
@@ -359,9 +301,6 @@ function handlePositionUpdated(data) {
 
     // Update position in table
     updatePositionInTable(data);
-
-    // Refresh positions
-    fetchOpenPositions();
 }
 
 /**
@@ -380,8 +319,58 @@ function handlePositionClosed(data) {
 
     showToast(`Closed ${symbol} - P&L: $${parseFloat(pnl).toFixed(2)}`, pnlClass);
 
-    // Refresh metrics
-    fetchMetrics();
+    // Refresh positions
+    fetchOpenPositions();
+}
+
+/**
+ * Handle account updated event - NEW!
+ */
+function handleAccountUpdated(data) {
+    if (!data) return;
+
+    console.log('Processing account update:', data);
+
+    // Update portfolio value
+    if (data.current_balance_usd !== undefined) {
+        updatePortfolioValue(data.current_balance_usd);
+    }
+
+    // Update total P&L
+    if (data.total_pnl_usd !== undefined) {
+        updateTotalPnL(data.total_pnl_usd);
+    }
+
+    // Update win rate
+    if (data.win_rate !== undefined) {
+        const winRateElement = document.getElementById('win-rate');
+        if (winRateElement) {
+            winRateElement.textContent = `${data.win_rate.toFixed(1)}%`;
+        }
+    }
+
+    // Update trade counts
+    if (data.total_trades !== undefined) {
+        const totalTradesElement = document.getElementById('total-trades');
+        if (totalTradesElement) {
+            totalTradesElement.textContent = data.total_trades;
+        }
+    }
+
+    if (data.successful_trades !== undefined) {
+        const successfulTradesElement = document.getElementById('successful-trades');
+        if (successfulTradesElement) {
+            successfulTradesElement.textContent = data.successful_trades;
+        }
+    }
+
+    // Show subtle notification for significant changes
+    if (data.total_pnl_usd !== undefined) {
+        const pnlChange = parseFloat(data.total_pnl_usd);
+        if (Math.abs(pnlChange) > 10) { // Only notify for changes > $10
+            showToast(`Account updated: P&L ${pnlChange >= 0 ? '+' : ''}$${Math.abs(pnlChange).toFixed(2)}`, 'info');
+        }
+    }
 }
 
 /**
@@ -579,7 +568,6 @@ function updateTotalPnL(value) {
     }
 }
 
-
 /**
  * Update return percentage
  */
@@ -642,9 +630,6 @@ function showToast(message, type = 'info') {
 /**
  * Fetch recent trades
  */
-/**
- * Fetch recent trades with abort controller to prevent race conditions
- */
 async function fetchRecentTrades() {
     const { config, state } = window.paperTradingDashboard;
 
@@ -654,14 +639,7 @@ async function fetchRecentTrades() {
             url += `&since=${state.lastTradeUpdate}`;
         }
 
-        // Create abort controller if it doesn't exist
-        if (!window.paperTradingDashboard.abortController) {
-            window.paperTradingDashboard.abortController = new AbortController();
-        }
-
-        const response = await fetch(url, {
-            signal: window.paperTradingDashboard.abortController.signal
-        });
+        const response = await fetch(url);
 
         if (response.ok) {
             const trades = await response.json();
@@ -671,11 +649,6 @@ async function fetchRecentTrades() {
             }
         }
     } catch (error) {
-        // Handle abort errors silently
-        if (error.name === 'AbortError') {
-            console.log('Fetch request for trades was aborted');
-            return;
-        }
         console.error('Error fetching trades:', error);
     }
 }
@@ -696,18 +669,14 @@ async function fetchOpenPositions() {
             if (Array.isArray(data)) {
                 positions = data;
             } else if (data && typeof data === 'object') {
-                // If it's an object with a positions property
                 if (data.positions && Array.isArray(data.positions)) {
                     positions = data.positions;
                 } else if (data.results && Array.isArray(data.results)) {
                     positions = data.results;
                 } else if (data.data && Array.isArray(data.data)) {
                     positions = data.data;
-                } else {
-                    // If it's a single position object, wrap in array
-                    if (data.position_id || data.id) {
-                        positions = [data];
-                    }
+                } else if (data.position_id || data.id) {
+                    positions = [data];
                 }
             }
 
@@ -753,7 +722,7 @@ async function startBot() {
 
         if (response.ok) {
             showToast('Bot started successfully', 'success');
-            location.reload(); // Refresh to update status
+            location.reload();
         } else {
             const error = await response.json();
             showToast(`Failed to start bot: ${error.message || 'Unknown error'}`, 'danger');
@@ -782,7 +751,7 @@ async function stopBot() {
 
         if (response.ok) {
             showToast('Bot stopped successfully', 'warning');
-            location.reload(); // Refresh to update status
+            location.reload();
         } else {
             const error = await response.json();
             showToast(`Failed to stop bot: ${error.message || 'Unknown error'}`, 'danger');
@@ -849,8 +818,8 @@ function createTradeRow(trade) {
     const typeClass = tradeType.toUpperCase() === 'BUY' ? 'bg-success' : 'bg-danger';
 
     const status = trade.status || 'PENDING';
-    const statusClass = status === 'COMPLETED' ? 'bg-success' :
-        status === 'FAILED' ? 'bg-danger' : 'bg-warning';
+    const statusClass = status === 'completed' ? 'bg-success' :
+        status === 'failed' ? 'bg-danger' : 'bg-warning';
 
     const symbol = trade.token_out_symbol || trade.token_symbol || trade.symbol || 'N/A';
     const amount = trade.amount_in_usd || trade.amount || 0;
@@ -866,7 +835,7 @@ function createTradeRow(trade) {
         <td><small>$${parseFloat(amount).toFixed(2)}</small></td>
         <td>
             <span class="badge ${statusClass}">
-                ${status}
+                ${status.toUpperCase()}
             </span>
         </td>
     `;
@@ -994,21 +963,19 @@ function removePositionFromTable(positionId) {
 function updateMetrics(metrics) {
     console.log('Updating metrics:', metrics);
 
-    // ✅ Update portfolio value (FIXED)
+    // Update portfolio value
     if (metrics.portfolio_value !== undefined && !isNaN(metrics.portfolio_value)) {
         updatePortfolioValue(metrics.portfolio_value);
     } else if (metrics.current_balance !== undefined) {
-        // Fallback: if portfolio_value missing, at least show balance
-        console.warn('portfolio_value missing, showing current_balance');
         updatePortfolioValue(metrics.current_balance);
     }
 
-    // ✅ Update P&L
+    // Update P&L
     if (metrics.total_pnl !== undefined && !isNaN(metrics.total_pnl)) {
         updateTotalPnL(metrics.total_pnl);
     }
 
-    // ✅ Update return percentage (FIXED)
+    // Update return percentage
     if (metrics.return_percent !== undefined && !isNaN(metrics.return_percent)) {
         updateReturnPercentage(metrics.return_percent);
     }
@@ -1067,11 +1034,11 @@ function limitTableRows(tableBody, maxRows) {
 }
 
 // ========================================
-// Polling Functions (Fallback)
+// Polling Functions (Backup Only - 30s interval)
 // ========================================
 
 /**
- * Setup polling intervals for data updates
+ * Setup polling intervals for backup metrics refresh
  */
 function setupPollingIntervals() {
     const { config, state } = window.paperTradingDashboard;
@@ -1080,20 +1047,14 @@ function setupPollingIntervals() {
     state.updateIntervals.forEach(interval => clearInterval(interval));
     state.updateIntervals = [];
 
-    // Setup trades polling
-    const tradesInterval = setInterval(() => {
-        fetchRecentTrades();
-        fetchOpenPositions();
-    }, config.tradesUpdateInterval);
-    state.updateIntervals.push(tradesInterval);
-
-    // Setup metrics polling
+    // Setup 30-second metrics backup polling only
     const metricsInterval = setInterval(() => {
+        console.log('[Backup Polling] Fetching metrics (30s interval)');
         fetchMetrics();
     }, config.metricsUpdateInterval);
     state.updateIntervals.push(metricsInterval);
 
-    console.log('Polling intervals set up');
+    console.log('Backup polling enabled: 30s metrics refresh only');
 }
 
 // ========================================
@@ -1169,25 +1130,25 @@ function sendPing() {
  * Initialize the dashboard
  */
 function initializeDashboard() {
-    console.log('Initializing Paper Trading Dashboard');
+    console.log('🚀 Initializing Paper Trading Dashboard (WebSocket-First Mode)');
 
     // Initialize WebSocket connection
     initializeWebSocket();
 
-    // Setup initial data fetch
+    // Initial data fetch
     fetchRecentTrades();
     fetchOpenPositions();
     fetchMetrics();
 
-    // Setup polling as backup (or primary if WebSocket fails)
-    if (!window.paperTradingDashboard.config.useWebSocket) {
-        setupPollingIntervals();
-    }
+    // Setup 30-second backup polling for metrics
+    setupPollingIntervals();
 
     // Setup ping interval to keep WebSocket alive
     setInterval(sendPing, 30000); // Ping every 30 seconds
 
-    console.log('Dashboard initialization complete');
+    console.log('✅ Dashboard initialization complete');
+    console.log('📡 WebSocket: Primary update method');
+    console.log('🔄 Backup polling: 30s metrics refresh');
 }
 
 // Start when DOM is ready
