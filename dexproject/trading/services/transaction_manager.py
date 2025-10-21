@@ -457,7 +457,7 @@ class TransactionManager:
         
         try:
             self.logger.info(
-                f"🚀 Starting transaction submission: {transaction_id} "
+                f"Starting transaction submission: {transaction_id} "
                 f"({request.swap_params.swap_type.value}) "
                 f"Mode: {'PAPER' if request.is_paper_trade else 'REAL'}"
             )
@@ -534,7 +534,7 @@ class TransactionManager:
                 transaction_state.consecutive_failures = self._user_failure_counts[request.user.id]
             
             self.logger.info(
-                f"✅ Transaction submitted successfully: {transaction_id} "
+                f"Transaction submitted successfully: {transaction_id} "
                 f"(Hash: {swap_result.transaction_hash[:10] if swap_result.transaction_hash else 'N/A'}...) "
                 f"Retries: {transaction_state.retry_count}"
             )
@@ -550,7 +550,7 @@ class TransactionManager:
             
         except CircuitBreakerOpenError as e:
             # Circuit breaker prevented execution
-            self.logger.warning(f"⚡ Circuit breaker blocked transaction: {transaction_id} - {e}")
+            self.logger.warning(f"Circuit breaker blocked transaction: {transaction_id} - {e}")
             self.circuit_breaker_blocks += 1
             
             if transaction_id in self._active_transactions:
@@ -569,7 +569,7 @@ class TransactionManager:
             )
             
         except Exception as e:
-            self.logger.error(f"❌ Transaction submission failed: {transaction_id} - {e}")
+            self.logger.error(f"Transaction submission failed: {transaction_id} - {e}")
             
             # Update transaction state with error
             if transaction_id in self._active_transactions:
@@ -647,7 +647,7 @@ class TransactionManager:
                 if swap_result.success:
                     if retry_count > 0:
                         self.logger.info(
-                            f"✅ Swap succeeded after {retry_count} retries: "
+                            f"Swap succeeded after {retry_count} retries: "
                             f"{transaction_state.transaction_id}"
                         )
                     return swap_result
@@ -664,7 +664,7 @@ class TransactionManager:
                 
             except CircuitBreakerOpenError as e:
                 # Circuit breaker is open, don't retry
-                self.logger.error(f"⚡ DEX circuit breaker open: {transaction_state.transaction_id}")
+                self.logger.error(f"DEX circuit breaker open: {transaction_state.transaction_id}")
                 raise e
                 
             except Exception as e:
@@ -681,7 +681,7 @@ class TransactionManager:
             retry_count += 1
             if retry_count > retry_config.max_retries:
                 self.logger.error(
-                    f"❌ Max retries ({retry_config.max_retries}) exceeded for "
+                    f"Max retries ({retry_config.max_retries}) exceeded for "
                     f"{transaction_state.transaction_id}: {last_exception}"
                 )
                 break

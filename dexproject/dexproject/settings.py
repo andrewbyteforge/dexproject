@@ -629,7 +629,7 @@ if PRODUCTION_MODE:
     CELERY_TASK_REJECT_ON_WORKER_LOST = True
 
 # =============================================================================
-# LOGGING CONFIGURATION - ENHANCED FOR TRADING OPERATIONS
+# LOGGING CONFIGURATION - ENHANCED FOR TRADING OPERATIONS WITH UTF-8 SUPPORT
 # =============================================================================
 
 # Create logs directory structure
@@ -685,11 +685,13 @@ LOGGING = {
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'stream': sys.stdout,  # Explicit stdout with UTF-8 encoding
             'formatter': 'simple',
             'level': 'INFO',
         },
         'console_debug': {
             'class': 'logging.StreamHandler',
+            'stream': sys.stdout,  # Explicit stdout with UTF-8 encoding
             'formatter': 'verbose',
             'level': 'DEBUG',
             'filters': ['require_debug_true'],
@@ -701,6 +703,7 @@ LOGGING = {
             'backupCount': 10,
             'formatter': 'verbose',
             'level': 'DEBUG',
+            'encoding': 'utf-8',  # UTF-8 encoding for file
         },
         'file_trading': {
             'class': 'logging.handlers.RotatingFileHandler',
@@ -709,6 +712,7 @@ LOGGING = {
             'backupCount': 20,
             'formatter': 'trading',
             'level': 'INFO',
+            'encoding': 'utf-8',  # UTF-8 encoding for file
         },
         'file_websocket': {
             'class': 'logging.handlers.RotatingFileHandler',
@@ -717,6 +721,7 @@ LOGGING = {
             'backupCount': 10,
             'formatter': 'websocket',
             'level': 'INFO',
+            'encoding': 'utf-8',  # UTF-8 encoding for file
         },
         'file_performance': {
             'class': 'logging.handlers.RotatingFileHandler',
@@ -725,6 +730,7 @@ LOGGING = {
             'backupCount': 10,
             'formatter': 'performance',
             'level': 'INFO',
+            'encoding': 'utf-8',  # UTF-8 encoding for file
         },
         'file_error': {
             'class': 'logging.handlers.RotatingFileHandler',
@@ -733,6 +739,7 @@ LOGGING = {
             'backupCount': 10,
             'formatter': 'verbose',
             'level': 'ERROR',
+            'encoding': 'utf-8',  # UTF-8 encoding for file
         },
         'file_security': {
             'class': 'logging.handlers.RotatingFileHandler',
@@ -741,6 +748,7 @@ LOGGING = {
             'backupCount': 20,
             'formatter': 'json',
             'level': 'WARNING',
+            'encoding': 'utf-8',  # UTF-8 encoding for file
         },
     },
     'root': {
@@ -803,7 +811,7 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': False,
         },
-                'analytics': {
+        'analytics': {
             'handlers': ['console', 'file_performance'],
             'level': 'DEBUG',
             'propagate': False,
@@ -815,7 +823,6 @@ LOGGING = {
         },
     },
 }
-
 
 # =============================================================================
 # PROMETHEUS MONITORING CONFIGURATION
