@@ -11,6 +11,33 @@ This is the complete paper trading bot that integrates:
 
 File: dexproject/paper_trading/bot/simple_trader.py
 """
+"""
+Enhanced Paper Trading Bot with Intel Slider System...
+"""
+
+# ============================================================================
+# WINDOWS CONSOLE ENCODING FIX
+# ============================================================================
+import sys
+import io
+
+# Force UTF-8 encoding for Windows console to support emoji logging
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer,
+        encoding='utf-8',
+        errors='replace',
+        line_buffering=True
+    )
+    sys.stderr = io.TextIOWrapper(
+        sys.stderr.buffer,
+        encoding='utf-8',
+        errors='replace',
+        line_buffering=True
+    )
+
+import os
+# ... rest of imports continue ...
 
 import os
 import sys
@@ -658,7 +685,7 @@ class EnhancedPaperTradingBot:
             logger.error(f"[ERROR] Failed to send status update: {e}")
     
     def run(self):
-        """Main bot execution loop."""
+        """Main bot execution loop with interruptible sleep and stop signal detection."""
         logger.info("[START] Bot starting main execution loop...")
         
         # Setup signal handlers
@@ -669,21 +696,60 @@ class EnhancedPaperTradingBot:
         
         try:
             while self.running:
-                # Check pending transactions if TX Manager is enabled
-                if self.use_tx_manager and self.pending_transactions:
-                    self._check_pending_transactions()
-                
-                # Market analysis tick
-                self._tick()
-                
-                # Sleep between ticks
-                time.sleep(self.tick_interval)
-                
+                try:
+                    # ✅ CHECK FOR DASHBOARD STOP SIGNAL
+                    if self._check_stop_signal():
+                        logger.info("[SHUTDOWN] Dashboard stop detected")
+                        break
+                    
+                    # Check pending transactions if TX Manager is enabled
+                    if self.use_tx_manager and self.pending_transactions:
+                        self._check_pending_transactions()
+                    
+                    # Market analysis tick
+                    self._tick()
+                    
+                    # ✅ INTERRUPTIBLE SLEEP - Check every 0.5 seconds
+                    sleep_remaining = self.tick_interval
+                    while sleep_remaining > 0 and self.running:
+                        # Check stop signal during sleep
+                        if self._check_stop_signal():
+                            logger.info("[SHUTDOWN] Stop signal during sleep")
+                            self.running = False
+                            break
+                        
+                        # Sleep in 0.5s chunks for responsiveness
+                        sleep_time = min(0.5, sleep_remaining)
+                        time.sleep(sleep_time)
+                        sleep_remaining -= sleep_time
+                    
+                except KeyboardInterrupt:
+                    logger.info("[SHUTDOWN] Keyboard interrupt received")
+                    break
+                except Exception as e:
+                    logger.error(f"[ERROR] Tick failed: {e}", exc_info=True)
+                    # Continue running even if one tick fails
+                    if not self.running:
+                        break
+                    
         except Exception as e:
             logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
         finally:
+            logger.info("[SHUTDOWN] Starting cleanup...")
             self._cleanup()
-    
+            logger.info("[SHUTDOWN] Cleanup complete - bot stopped")
+
+
+
+
+
+
+
+
+
+
+
+
     def _check_pending_transactions(self):
         """Check status of pending transactions from Transaction Manager."""
         if not self.use_tx_manager or not self.tx_manager:
@@ -833,12 +899,248 @@ class EnhancedPaperTradingBot:
 
 
 
+    def _update_market_prices(self):
+        """
+        Simulate market price changes for all tracked tokens.
+        
+        Updates prices with random movements between -5% and +5%,
+        maintains price history for trend analysis, and logs
+        significant price changes.
+        """
+        try:
+            for token in self.token_list:
+                # Simulate price movement (-5% to +5%)
+                change = Decimal(str(random.uniform(-0.05, 0.05)))
+                old_price = token['price']
+                token['price'] = old_price * (Decimal('1') + change)
+                
+                # Update price history
+                if token['symbol'] not in self.price_history:
+                    self.price_history[token['symbol']] = []
+                self.price_history[token['symbol']].append(token['price'])
+                
+                # Keep only last 100 prices for memory efficiency
+                if len(self.price_history[token['symbol']]) > 100:
+                    self.price_history[token['symbol']].pop(0)
+                
+                # Log significant changes (> 2%)
+                if abs(change) > Decimal('0.02'):
+                    logger.info(
+                        f"[PRICE] {token['symbol']}: "
+                        f"${old_price:.2f} -> ${token['price']:.2f} "
+                        f"({change*100:+.2f}%)"
+                    )
+            
+            logger.debug(f"[MARKET] Updated prices for {len(self.token_list)} tokens")
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to update market prices: {e}", exc_info=True)
+
+
+
+    def _check_auto_close_positions(self):
+        """
+        Check all open positions for auto-close conditions.
+        
+        Automatically closes positions that have:
+        - Hit stop-loss threshold (e.g., -5% loss)
+        - Hit take-profit threshold (e.g., +10% gain)
+        - Exceeded maximum hold time
+        
+        This ensures risk management rules are enforced even
+        when circuit breakers are active.
+        """
+        try:
+            if not self.positions:
+                return
+            
+            positions_to_close = []
+            
+            for token_symbol, position in self.positions.items():
+                # Calculate current P&L percentage
+                if position.total_invested_usd > 0:
+                    pnl_percent = (
+                        (position.current_value_usd - position.total_invested_usd) 
+                        / position.total_invested_usd 
+                        * 100
+                    )
+                else:
+                    continue
+                
+                # Get stop-loss and take-profit thresholds from strategy config
+                stop_loss_threshold = -5.0  # Default -5%
+                take_profit_threshold = 10.0  # Default +10%
+                
+                if hasattr(self, 'strategy_config') and self.strategy_config:
+                    stop_loss_threshold = -float(
+                        getattr(self.strategy_config, 'stop_loss_percent', 5)
+                    )
+                    take_profit_threshold = float(
+                        getattr(self.strategy_config, 'take_profit_percent', 10)
+                    )
+                
+                # Check stop-loss condition
+                if pnl_percent <= stop_loss_threshold:
+                    logger.warning(
+                        f"[AUTO-CLOSE] Stop-loss triggered for {token_symbol}: "
+                        f"P&L={pnl_percent:.2f}% (threshold={stop_loss_threshold:.2f}%)"
+                    )
+                    positions_to_close.append((token_symbol, 'STOP_LOSS', pnl_percent))
+                    
+                # Check take-profit condition
+                elif pnl_percent >= take_profit_threshold:
+                    logger.info(
+                        f"[AUTO-CLOSE] Take-profit triggered for {token_symbol}: "
+                        f"P&L={pnl_percent:.2f}% (threshold={take_profit_threshold:.2f}%)"
+                    )
+                    positions_to_close.append((token_symbol, 'TAKE_PROFIT', pnl_percent))
+                
+                # Check maximum hold time (24 hours default)
+                if position.opened_at:
+                    hold_duration = timezone.now() - position.opened_at
+                    max_hold_hours = 24  # Default 24 hours
+                    
+                    if hold_duration.total_seconds() > (max_hold_hours * 3600):
+                        logger.info(
+                            f"[AUTO-CLOSE] Max hold time exceeded for {token_symbol}: "
+                            f"Held for {hold_duration.total_seconds()/3600:.1f} hours"
+                        )
+                        positions_to_close.append((token_symbol, 'MAX_HOLD_TIME', pnl_percent))
+            
+            # Execute auto-closes
+            for token_symbol, reason, pnl_percent in positions_to_close:
+                self._execute_auto_close(token_symbol, reason, pnl_percent)
+            
+            if positions_to_close:
+                logger.info(
+                    f"[AUTO-CLOSE] Closed {len(positions_to_close)} positions automatically"
+                )
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to check auto-close positions: {e}", exc_info=True)
+
+
+    def _execute_auto_close(self, token_symbol: str, reason: str, pnl_percent: float):
+        """
+        Execute an automatic position close.
+        
+        Args:
+            token_symbol: Token symbol to close
+            reason: Reason for auto-close (STOP_LOSS, TAKE_PROFIT, MAX_HOLD_TIME)
+            pnl_percent: Current P&L percentage
+        """
+        try:
+            if token_symbol not in self.positions:
+                logger.warning(f"[AUTO-CLOSE] Position {token_symbol} not found")
+                return
+            
+            position = self.positions[token_symbol]
+            
+            # Get current token price
+            current_token = next(
+                (t for t in self.token_list if t['symbol'] == token_symbol),
+                None
+            )
+            
+            if not current_token:
+                logger.error(f"[AUTO-CLOSE] Token {token_symbol} not found in token list")
+                return
+            
+            current_price = current_token['price']
+            
+            # ✅ Create a sell decision with CORRECT parameters
+            decision = TradingDecision(
+                action='SELL',
+                token_address=position.token_address,
+                token_symbol=token_symbol,
+                position_size_percent=Decimal('100'),  # Close entire position
+                position_size_usd=position.current_value_usd,
+                stop_loss_percent=self.strategy_config.stop_loss_percent if hasattr(self, 'strategy_config') else Decimal('5'),
+                take_profit_targets=[],
+                execution_mode='IMMEDIATE',
+                use_private_relay=False,
+                gas_strategy='standard',
+                max_gas_price_gwei=Decimal('50'),
+                overall_confidence=Decimal('100'),  # ✅ CORRECT: overall_confidence, not confidence_percent
+                risk_score=Decimal('0'),
+                opportunity_score=Decimal('0'),
+                primary_reasoning=f"Auto-close triggered: {reason}. P&L: {pnl_percent:+.2f}%",
+                risk_factors=[f"Auto-close: {reason}"],
+                opportunity_factors=[],
+                mitigation_strategies=[],
+                intel_level_used=self.intel_level,
+                intel_adjustments={},
+                time_sensitivity='HIGH',
+                max_execution_time_ms=1000,
+                processing_time_ms=100
+            )            
+            
+            # Log the auto-close decision
+            self._log_thought(
+                action="SELL",
+                reasoning=f"Auto-close: {reason}. Position P&L: {pnl_percent:+.2f}%. "
+                        f"Closing entire position of {position.quantity:.4f} {token_symbol}.",
+                confidence=100,
+                decision_type="RISK_MANAGEMENT",
+                metadata={
+                    'token': token_symbol,
+                    'token_address': position.token_address,
+                    'reason': reason,
+                    'pnl_percent': float(pnl_percent),  # ✅ Convert to float
+                    'position_size': float(position.current_value_usd),
+                    'auto_close': True
+                }
+            )
+            
+            # Execute the close
+            self._execute_trade_legacy(decision, token_symbol, current_price)
+            
+            logger.info(
+                f"[AUTO-CLOSE] Successfully closed {token_symbol} position: "
+                f"Reason={reason}, P&L={pnl_percent:+.2f}%"
+            )
+            
+        except Exception as e:
+            logger.error(
+                f"[ERROR] Failed to execute auto-close for {token_symbol}: {e}",
+                exc_info=True
+            )
 
 
 
 
 
 
+
+    def _check_stop_signal(self) -> bool:
+        """
+        Check if a stop signal has been sent from the dashboard.
+        
+        Returns:
+            True if bot should stop, False otherwise
+        """
+        try:
+            # Refresh session from database to check for stop signals
+            if self.session:
+                self.session.refresh_from_db()
+                
+                # Check if session status was changed to STOPPED
+                if self.session.status == 'STOPPED':
+                    logger.info("[SHUTDOWN] Stop signal received from dashboard")
+                    return True
+            
+            # Check account status
+            if self.account:
+                self.account.refresh_from_db()
+                if not self.account.is_active:
+                    logger.info("[SHUTDOWN] Account deactivated - stopping bot")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to check stop signal: {e}")
+            return False
 
 
 
@@ -1832,10 +2134,39 @@ class EnhancedPaperTradingBot:
             logger.error(f"[ERROR] Failed to update performance metrics: {e}")
     
     def _handle_shutdown(self, signum, frame):
-        """Handle shutdown signals."""
-        logger.info("[SHUTDOWN] Received shutdown signal")
+        """
+        Handle shutdown signals immediately with force-exit timeout.
+        
+        Args:
+            signum: Signal number
+            frame: Current stack frame
+        """
+        logger.info(f"[SHUTDOWN] Received signal {signum} - stopping bot immediately")
         self.running = False
-    
+        
+        # Force exit after 3 seconds if cleanup hangs
+        import threading
+        def force_exit():
+            time.sleep(3)
+            if self.running is False:  # Still shutting down after 3 seconds
+                logger.warning("[SHUTDOWN] Force exit after 3 second timeout")
+                import os
+                os._exit(0)
+        
+        threading.Thread(target=force_exit, daemon=True).start()
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _cleanup(self):
         """Clean up on exit."""
         try:

@@ -185,10 +185,10 @@ class TransactionManager:
             # Start stuck transaction monitor
             await self._stuck_monitor.start_monitoring()
             
-            self.logger.info("✅ Transaction Manager services initialized successfully")
+            self.logger.info("Transaction Manager services initialized successfully")
             
         except Exception as e:
-            self.logger.error(f"❌ Transaction Manager initialization failed: {e}")
+            self.logger.error(f"Transaction Manager initialization failed: {e}")
             raise
     
     async def _initialize_circuit_breakers(self) -> None:
@@ -342,7 +342,7 @@ class TransactionManager:
                         request
                     )
                 except CircuitBreakerOpenError as e:
-                    self.logger.warning(f"⛔ Gas optimization circuit breaker open: {e}")
+                    self.logger.warning(f"Gas optimization circuit breaker open: {e}")
                     # Continue with default gas settings
                     transaction_state.status = TransactionStatus.READY_TO_SUBMIT
             else:
@@ -390,7 +390,7 @@ class TransactionManager:
                 )
             else:
                 # Handle failure with potential retry
-                self.logger.error(f"❌ Initial transaction submission failed: {transaction_id}")
+                self.logger.error(f"Initial transaction submission failed: {transaction_id}")
                 
                 # Check if we should retry
                 if request.auto_retry and await self._retry_manager.should_retry_transaction(
@@ -427,7 +427,7 @@ class TransactionManager:
                     )
             
         except Exception as e:
-            self.logger.error(f"❌ Transaction submission failed: {transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Transaction submission failed: {transaction_id} - {e}", exc_info=True)
             
             # Update transaction state with error
             if transaction_id in self._active_transactions:
@@ -507,7 +507,7 @@ class TransactionManager:
                 transaction_state.gas_price_gwei = new_gas_price
             
             self.logger.info(
-                f"⛽ Retry gas price: {new_gas_price:.2f} gwei "
+                f"Retry gas price: {new_gas_price:.2f} gwei "
                 f"(+{((new_gas_price / (transaction_state.original_gas_price or Decimal('1'))) - 1) * 100:.1f}%)"
             )
             
@@ -559,7 +559,7 @@ class TransactionManager:
                     await self._broadcast_transaction_update(transaction_state)
                     
                     self.logger.error(
-                        f"❌ Transaction retry failed after {transaction_state.retry_count} attempts: "
+                        f"Transaction retry failed after {transaction_state.retry_count} attempts: "
                         f"{transaction_id}"
                     )
                     
@@ -572,7 +572,7 @@ class TransactionManager:
                     )
             
         except Exception as e:
-            self.logger.error(f"❌ Error during transaction retry: {transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Error during transaction retry: {transaction_id} - {e}", exc_info=True)
             
             if transaction_id in self._active_transactions:
                 transaction_state = self._active_transactions[transaction_id]
@@ -637,7 +637,7 @@ class TransactionManager:
                 new_gas_price = self.retry_config.max_gas_price_gwei
             
             self.logger.info(
-                f"⛽ Replacement gas price: {new_gas_price:.2f} gwei "
+                f"Replacement gas price: {new_gas_price:.2f} gwei "
                 f"(x{multiplier} multiplier)"
             )
             
@@ -689,7 +689,7 @@ class TransactionManager:
                 )
             
         except Exception as e:
-            self.logger.error(f"❌ Error replacing transaction: {transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Error replacing transaction: {transaction_id} - {e}", exc_info=True)
             return TransactionManagerResult(
                 success=False,
                 transaction_id=transaction_id,
@@ -717,7 +717,7 @@ class TransactionManager:
                 # Calculate backoff delay
                 backoff = self._retry_manager.calculate_backoff_delay(transaction_state.retry_count)
                 self.logger.info(
-                    f"⏱️ Auto-retry scheduled in {backoff:.1f}s for: {transaction_id} "
+                    f"⏱Auto-retry scheduled in {backoff:.1f}s for: {transaction_id} "
                     f"(Attempt {transaction_state.retry_count + 1}/{transaction_state.max_retries})"
                 )
                 
@@ -731,7 +731,7 @@ class TransactionManager:
                 )
                 
                 if result.success:
-                    self.logger.info(f"✅ Auto-retry successful: {transaction_id}")
+                    self.logger.info(f"Auto-retry successful: {transaction_id}")
                     break
                 
                 # Check if we should continue retrying
@@ -739,14 +739,14 @@ class TransactionManager:
                     transaction_state,
                     result.error_message
                 ):
-                    self.logger.info(f"🛑 Stopping auto-retry: {transaction_id} - Not retryable error")
+                    self.logger.info(f"Stopping auto-retry: {transaction_id} - Not retryable error")
                     break
             
             # Clean up retry task
             self._retry_manager.cancel_retry(transaction_id)
             
         except Exception as e:
-            self.logger.error(f"❌ Auto-retry error: {transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Auto-retry error: {transaction_id} - {e}", exc_info=True)
             
             # Clean up
             self._retry_manager.cancel_retry(transaction_id)
@@ -803,7 +803,7 @@ class TransactionManager:
                 transaction_state.gas_savings_percent = gas_price.cost_savings_percent
                 
                 self.logger.info(
-                    f"✅ Gas optimization complete: {transaction_state.transaction_id} "
+                    f"Gas optimization complete: {transaction_state.transaction_id} "
                     f"(Savings: {gas_price.cost_savings_percent:.2f}%)"
                 )
                 
@@ -813,7 +813,7 @@ class TransactionManager:
             else:
                 # Gas optimization failed, log warning but continue with defaults
                 self.logger.warning(
-                    f"⚠️ Gas optimization failed, using defaults: {transaction_state.transaction_id} "
+                    f"Gas optimization failed, using defaults: {transaction_state.transaction_id} "
                     f"- {gas_optimization_result.error_message}"
                 )
                 transaction_state.status = TransactionStatus.READY_TO_SUBMIT
@@ -821,7 +821,7 @@ class TransactionManager:
             await self._broadcast_transaction_update(transaction_state)
             
         except Exception as e:
-            self.logger.error(f"❌ Gas optimization error: {transaction_state.transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Gas optimization error: {transaction_state.transaction_id} - {e}", exc_info=True)
             # Continue with default gas parameters
             transaction_state.status = TransactionStatus.READY_TO_SUBMIT
             transaction_state.error_message = f"Gas optimization failed: {e}"
@@ -848,7 +848,7 @@ class TransactionManager:
             transaction_state.submitted_at = datetime.now(timezone.utc)
             await self._broadcast_transaction_update(transaction_state)
             
-            self.logger.info(f"🔄 Executing swap via DEX router: {transaction_state.transaction_id}")
+            self.logger.info(f"Executing swap via DEX router: {transaction_state.transaction_id}")
             
             # Get user's wallet address
             if self._wallet_manager:
@@ -866,7 +866,7 @@ class TransactionManager:
                         from_address=from_address
                     )
                 except CircuitBreakerOpenError as e:
-                    self.logger.error(f"⛔ DEX circuit breaker open: {e}")
+                    self.logger.error(f"DEX circuit breaker open: {e}")
                     return SwapResult(
                         transaction_hash="0x",
                         block_number=None,
@@ -895,7 +895,7 @@ class TransactionManager:
             if swap_result.success:
                 transaction_state.status = TransactionStatus.PENDING
                 self.logger.info(
-                    f"✅ Swap executed successfully: {transaction_state.transaction_id} "
+                    f"Swap executed successfully: {transaction_state.transaction_id} "
                     f"(Hash: {swap_result.transaction_hash[:10] if swap_result.transaction_hash else 'N/A'}...)"
                 )
             else:
@@ -903,7 +903,7 @@ class TransactionManager:
                 transaction_state.error_message = swap_result.error_message
                 transaction_state.error_type = classify_error(swap_result.error_message).value
                 self.logger.error(
-                    f"❌ Swap execution failed: {transaction_state.transaction_id} "
+                    f"Swap execution failed: {transaction_state.transaction_id} "
                     f"- {swap_result.error_message}"
                 )
             
@@ -911,7 +911,7 @@ class TransactionManager:
             return swap_result
             
         except Exception as e:
-            self.logger.error(f"❌ Swap execution error: {transaction_state.transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Swap execution error: {transaction_state.transaction_id} - {e}", exc_info=True)
             # Create failed swap result
             return SwapResult(
                 transaction_hash="0x",
@@ -939,7 +939,7 @@ class TransactionManager:
             if not transaction_state:
                 return
             
-            self.logger.info(f"👁️ Starting transaction monitoring: {transaction_id}")
+            self.logger.info(f"Starting transaction monitoring: {transaction_id}")
             
             # Monitor for confirmation
             timeout_seconds = 600  # 10 minutes timeout
@@ -949,7 +949,7 @@ class TransactionManager:
             while (time.time() - start_time) < timeout_seconds:
                 # Check if cancelled
                 if transaction_state.status == TransactionStatus.CANCELLED:
-                    self.logger.info(f"🛑 Transaction monitoring cancelled: {transaction_id}")
+                    self.logger.info(f"Transaction monitoring cancelled: {transaction_id}")
                     break
                 
                 # Check transaction status on blockchain
@@ -988,7 +988,7 @@ class TransactionManager:
                                         )
                                 
                                 self.logger.info(
-                                    f"✅ Transaction confirmed: {transaction_id} "
+                                    f"Transaction confirmed: {transaction_id} "
                                     f"(Block: {receipt['blockNumber']}, Gas: {receipt['gasUsed']})"
                                 )
                             else:
@@ -997,7 +997,7 @@ class TransactionManager:
                                 transaction_state.error_message = "Transaction reverted on chain"
                                 self.metrics.failed_transactions += 1
                                 
-                                self.logger.error(f"❌ Transaction reverted: {transaction_id}")
+                                self.logger.error(f"Transaction reverted: {transaction_id}")
                                 
                                 # Check if we should retry
                                 if self.retry_config.auto_retry_enabled:
@@ -1025,7 +1025,7 @@ class TransactionManager:
                     await self.replace_stuck_transaction(transaction_id)
             
         except Exception as e:
-            self.logger.error(f"❌ Transaction monitoring error: {transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Transaction monitoring error: {transaction_id} - {e}", exc_info=True)
             if transaction_id in self._active_transactions:
                 transaction_state = self._active_transactions[transaction_id]
                 transaction_state.status = TransactionStatus.FAILED
@@ -1045,7 +1045,7 @@ class TransactionManager:
         
         # Only retry if configured to retry reverts
         if self.retry_config.retry_on_revert and transaction_state.retry_count < transaction_state.max_retries:
-            self.logger.info(f"🔄 Scheduling retry for reverted transaction: {transaction_id}")
+            self.logger.info(f"Scheduling retry for reverted transaction: {transaction_id}")
             
             # Get original request (simplified version)
             request = TransactionSubmissionRequest(
@@ -1088,13 +1088,13 @@ class TransactionManager:
             
             if portfolio_update.trade_created:
                 self.logger.info(
-                    f"📊 Portfolio updated: {transaction_state.transaction_id} "
+                    f"Portfolio updated: {transaction_state.transaction_id} "
                     f"(Trade ID: {portfolio_update.trade_id})"
                 )
             
         except Exception as e:
             self.logger.error(
-                f"❌ Portfolio tracking update failed: {transaction_state.transaction_id} - {e}",
+                f"Portfolio tracking update failed: {transaction_state.transaction_id} - {e}",
                 exc_info=True
             )
     
@@ -1138,7 +1138,7 @@ class TransactionManager:
             
         except Exception as e:
             # Non-critical error, log but don't fail
-            self.logger.warning(f"⚠️ Failed to broadcast transaction update: {e}")
+            self.logger.warning(f"Failed to broadcast transaction update: {e}")
     
     def _estimate_trade_amount_usd(self, swap_params: SwapParams) -> Decimal:
         """
@@ -1227,13 +1227,13 @@ class TransactionManager:
                 # Cancel any active retry tasks
                 self._retry_manager.cancel_retry(transaction_id)
                 
-                self.logger.info(f"✅ Transaction cancelled: {transaction_id}")
+                self.logger.info(f"Transaction cancelled: {transaction_id}")
                 return True
             
             return False
             
         except Exception as e:
-            self.logger.error(f"❌ Transaction cancellation error: {transaction_id} - {e}", exc_info=True)
+            self.logger.error(f"Transaction cancellation error: {transaction_id} - {e}", exc_info=True)
             return False
     
     def get_performance_metrics(self) -> Dict[str, Any]:
@@ -1314,7 +1314,7 @@ class TransactionManager:
             return cleaned_count
             
         except Exception as e:
-            self.logger.error(f"❌ Transaction cleanup error: {e}", exc_info=True)
+            self.logger.error(f"Transaction cleanup error: {e}", exc_info=True)
             return 0
     
     async def shutdown(self) -> None:
@@ -1324,7 +1324,7 @@ class TransactionManager:
         Cancels all background tasks and cleans up resources.
         """
         try:
-            self.logger.info("🛑 Shutting down Transaction Manager...")
+            self.logger.info("Shutting down Transaction Manager...")
             
             # Stop stuck monitor
             await self._stuck_monitor.stop_monitoring()
@@ -1339,7 +1339,7 @@ class TransactionManager:
                     group=CircuitBreakerGroup.EXECUTION,
                     chain_id=self.chain_id
                 )
-                self.logger.info("✅ Circuit breakers reset for shutdown")
+                self.logger.info("Circuit breakers reset for shutdown")
             
             # Disconnect services
             if self._web3_client:
@@ -1348,7 +1348,7 @@ class TransactionManager:
             self.logger.info("✅ Transaction Manager shutdown complete")
             
         except Exception as e:
-            self.logger.error(f"❌ Error during shutdown: {e}", exc_info=True)
+            self.logger.error(f"Error during shutdown: {e}", exc_info=True)
 
 
 # =============================================================================
@@ -1524,7 +1524,7 @@ async def cleanup_all_transaction_managers():
             logger.error(f"Error shutting down transaction manager for chain {chain_id}: {e}")
     
     _transaction_managers.clear()
-    logger.info("✅ All transaction managers cleaned up")
+    logger.info("All transaction managers cleaned up")
 
 
 # Register cleanup on module unload (for Django)
