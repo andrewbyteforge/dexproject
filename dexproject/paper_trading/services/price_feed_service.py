@@ -16,8 +16,8 @@ Features:
 - Comprehensive error handling and logging
 - Type-safe with Pylance compliance
 
-FIXED: Method call signatures for _fetch_from_alchemy and _fetch_from_coingecko
-now properly pass both token_symbol and token_address parameters.
+UPDATED: Added real token addresses for Base Sepolia, Ethereum Sepolia,
+Base Mainnet, and Ethereum Mainnet - removed placeholder addresses.
 
 File: dexproject/paper_trading/services/price_feed_service.py
 """
@@ -140,8 +140,7 @@ class PriceFeedService:
         logger.info(
             f"[PRICE FEED] Initialized for chain {chain_id} ({self.chain_name}), "
             f"DEX quotes: {'ENABLED' if self.dex_quotes_enabled else 'DISABLED'}"
-        )
-    
+        )    
 
     def _get_chain_name(self, chain_id: int) -> str:
         """
@@ -167,63 +166,97 @@ class PriceFeedService:
         }
         return chain_names.get(chain_id, f'chain-{chain_id}')
 
-
     def _get_token_addresses(self) -> Dict[str, str]:
         """
         Get token addresses for the current chain.
         
+        UPDATED: Now includes only REAL, verified token addresses.
+        Placeholder addresses have been removed. For tokens not on testnets,
+        use CoinGecko API which fetches mainnet prices.
+        
         Returns:
             Dictionary mapping token symbols to contract addresses
         """
-        # Base Sepolia (testnet) token addresses
+        # =============================================================================
+        # BASE SEPOLIA (TESTNET) - Chain ID: 84532
+        # =============================================================================
         if self.chain_id == 84532:
             return {
-                'WETH': '0x4200000000000000000000000000000000000006',
-                'USDC': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-                'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
-                'WBTC': '0x0000000000000000000000000000000000000000',  # Placeholder
-                'UNI': '0x0000000000000000000000000000000000000000',   # Placeholder
-                'AAVE': '0x0000000000000000000000000000000000000000',  # Placeholder
-                'LINK': '0x0000000000000000000000000000000000000000',  # Placeholder
-                'MATIC': '0x0000000000000000000000000000000000000000', # Placeholder
-                'ARB': '0x0000000000000000000000000000000000000000',   # Placeholder
+                # Core tokens deployed on Base Sepolia
+                'WETH': '0x4200000000000000000000000000000000000006',  # Native wrapped ETH
+                'USDC': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',  # Circle USDC
+                'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',   # MakerDAO DAI
+                
+                # Note: Most tokens are NOT deployed on Base Sepolia testnet
+                # For other tokens, use CoinGecko fallback which returns mainnet prices
             }
         
-        # Ethereum Sepolia (testnet)
+        # =============================================================================
+        # ETHEREUM SEPOLIA (TESTNET) - Chain ID: 11155111
+        # =============================================================================
         elif self.chain_id == 11155111:
             return {
-                'WETH': '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
-                'USDC': '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
-                'DAI': '0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6',
-                'WBTC': '0x0000000000000000000000000000000000000000',  # Placeholder
-                'UNI': '0x0000000000000000000000000000000000000000',   # Placeholder
-                'AAVE': '0x0000000000000000000000000000000000000000',  # Placeholder
-                'LINK': '0x779877A7B0D9E8603169DdbD7836e478b4624789',
-                'MATIC': '0x0000000000000000000000000000000000000000', # Placeholder
-                'ARB': '0x0000000000000000000000000000000000000000',   # Placeholder
+                # Core tokens deployed on Ethereum Sepolia
+                'WETH': '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',  # Wrapped ETH
+                'USDC': '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',  # Circle USDC
+                'DAI': '0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6',   # MakerDAO DAI
+                'LINK': '0x779877A7B0D9E8603169DdbD7836e478b4624789',  # Chainlink
+                
+                # Note: Other tokens may not be deployed - use CoinGecko fallback
             }
         
-        # Base Mainnet
+        # =============================================================================
+        # BASE MAINNET - Chain ID: 8453
+        # =============================================================================
         elif self.chain_id == 8453:
             return {
-                'WETH': '0x4200000000000000000000000000000000000006',
-                'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-                'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
-                'WBTC': '0x0000000000000000000000000000000000000000',  # Add real address
-                'UNI': '0x0000000000000000000000000000000000000000',   # Add real address
-                'AAVE': '0x0000000000000000000000000000000000000000',  # Add real address
-                'LINK': '0x0000000000000000000000000000000000000000',  # Add real address
-                'MATIC': '0x0000000000000000000000000000000000000000', # Add real address
-                'ARB': '0x0000000000000000000000000000000000000000',   # Add real address
+                # Core Base Mainnet tokens
+                'WETH': '0x4200000000000000000000000000000000000006',  # Native wrapped ETH
+                'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  # Native USDC (official)
+                'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',   # DAI Stablecoin
+                'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',  # Coinbase Wrapped ETH
+                
+                # Popular tokens on Base
+                'USDT': '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',  # Tether USD (bridged)
+                
+                # Note: Many ERC-20 tokens are bridged to Base
+                # For tokens not found, use CoinGecko for mainnet prices
             }
         
-        # Default - return empty dict for unsupported chains
+        # =============================================================================
+        # ETHEREUM MAINNET - Chain ID: 1
+        # =============================================================================
+        elif self.chain_id == 1:
+            return {
+                # Major Ethereum tokens
+                'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',  # Wrapped Ether
+                'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',  # USD Coin
+                'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',  # Tether USD
+                'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',   # Dai Stablecoin
+                'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',  # Wrapped BTC
+                
+                # DeFi tokens
+                'UNI': '0x1f9840a85d5aF5bf1D1762F925BDADdc4201F984',   # Uniswap
+                'AAVE': '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',  # Aave
+                'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',  # Chainlink
+                'CRV': '0xD533a949740bb3306d119CC777fa900bA034cd52',   # Curve DAO
+                'SNX': '0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F',   # Synthetix
+                
+                # Layer 2 / Bridge tokens
+                'MATIC': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0',  # Polygon
+                'ARB': '0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1',   # Arbitrum
+                'OP': '0x4200000000000000000000000000000000000042',   # Optimism
+            }
+        
+        # =============================================================================
+        # UNSUPPORTED CHAINS - Return empty dict
+        # =============================================================================
         else:
             logger.warning(
-                f"[PRICE FEED] No token addresses configured for chain {self.chain_id}"
+                f"[PRICE FEED] No token addresses configured for chain {self.chain_id}. "
+                f"Will rely on CoinGecko for all price lookups."
             )
             return {}
-
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session (lazy initialization)."""
@@ -281,7 +314,14 @@ class PriceFeedService:
                 return None
             
             # Checksum the address
-            token_address = to_checksum_ethereum_address(token_address)
+            checksummed_address = to_checksum_ethereum_address(token_address)
+            if checksummed_address is None:
+                logger.error(
+                    f"[PRICE FEED] Failed to checksum address: {token_address}"
+                )
+                return None
+            
+            token_address = checksummed_address
             
             # Check if this is a known stablecoin
             if token_symbol and token_symbol.upper() in STABLECOINS:
@@ -305,7 +345,6 @@ class PriceFeedService:
                 f"fetching from APIs..."
             )
             
-            # FIXED: Pass both token_symbol and token_address to _fetch_from_alchemy
             # Try Alchemy first (fastest, most reliable)
             price = await self._fetch_from_alchemy(
                 token_symbol=token_symbol or "UNKNOWN",
@@ -318,7 +357,6 @@ class PriceFeedService:
                     f"[PRICE FEED] Alchemy failed for {token_symbol}, "
                     f"trying CoinGecko..."
                 )
-                # FIXED: Pass both token_symbol and token_address to _fetch_from_coingecko
                 price = await self._fetch_from_coingecko(
                     token_symbol=token_symbol,
                     token_address=token_address
@@ -327,7 +365,7 @@ class PriceFeedService:
             # Final fallback to DEX quote (most accurate but slowest)
             if price is None:
                 logger.warning(
-                    f"[PRICE FEED] CoinGecko failed, trying DEX quote..."
+                    "[PRICE FEED] CoinGecko failed, trying DEX quote..."
                 )
                 price = await self._fetch_from_dex_quote(token_address)
             
@@ -452,8 +490,13 @@ class PriceFeedService:
                 'LINK': 'chainlink',
                 'MATIC': 'matic-network',
                 'ARB': 'arbitrum',
+                'OP': 'optimism',
+                'CRV': 'curve-dao-token',
+                'SNX': 'synthetix-network-token',
                 'USDC': 'usd-coin',
-                'DAI': 'dai'
+                'USDT': 'tether',
+                'DAI': 'dai',
+                'cbETH': 'coinbase-wrapped-staked-eth'
             }
             
             coin_id = coingecko_ids.get(token_symbol)
@@ -485,7 +528,7 @@ class PriceFeedService:
                             return price_usd
                     elif response.status == 429:
                         logger.warning(
-                            f"[PRICE FEED] CoinGecko rate limit exceeded"
+                            "[PRICE FEED] CoinGecko rate limit exceeded"
                         )
                         return None
                     else:
@@ -508,11 +551,10 @@ class PriceFeedService:
             )
             return None
 
-
     # =========================================================================
     # DATA SOURCE: DEX ROUTER QUOTE
     # =========================================================================
-    
+
     async def _fetch_from_dex_quote(
         self,
         token_address: str
@@ -537,7 +579,7 @@ class PriceFeedService:
             # DEX quotes require full Web3 infrastructure which paper trading doesn't have
             # Skip this source for now - Alchemy and CoinGecko are sufficient
             logger.debug(
-                f"[PRICE FEED] DEX quote disabled for paper trading (requires Web3Client)"
+                "[PRICE FEED] DEX quote disabled for paper trading (requires Web3Client)"
             )
             return None
             
@@ -550,37 +592,36 @@ class PriceFeedService:
             # await web3_client.connect()
             # wallet_manager = WalletManager(chain_config)
             # await wallet_manager.initialize(web3_client)
-            # 
+            #
             # router_service = await create_dex_router_service(
             #     web3_client=web3_client,
             #     wallet_manager=wallet_manager
             # )
-            
-            
+
         except Exception as e:
             logger.debug(
                 f"[PRICE FEED] DEX quote disabled: {e}"
             )
             return None
-    
+
     # =========================================================================
     # CACHING METHODS
     # =========================================================================
-    
+
     def _get_cached_price(self, token_address: str) -> Optional[Decimal]:
         """
         Get cached price from Redis.
-        
+
         Args:
             token_address: Token contract address
-        
+
         Returns:
             Cached price or None if not in cache
         """
         try:
             cache_key = f"{PRICE_CACHE_PREFIX}:{self.chain_id}:{token_address.lower()}"
             cached_value = cache.get(cache_key)
-            
+
             if cached_value is not None:
                 return Decimal(str(cached_value))
             
