@@ -1,18 +1,32 @@
 """
-Intel Slider System for Paper Trading Bot
+Intel Slider System for Paper Trading Bot - REAL DATA INTEGRATION
+
+UPDATED: Now integrates with real price feeds and market data for accurate
+trading decisions based on live market conditions.
 
 Implements the 1-10 intelligence level slider that controls all bot behaviors,
 integrating with the existing paper trading infrastructure.
+
+New Features:
+- Real token price fetching from Alchemy/CoinGecko
+- Price-aware decision making (buy low, sell high)
+- Position sizing with real USD/token conversions
+- Historical price tracking for performance analysis
+- Enhanced risk assessment with price volatility
 
 File: dexproject/paper_trading/intelligence/intel_slider.py
 """
 
 import logging
 import uuid
+import asyncio
 from decimal import Decimal
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass
+
+# Import price feed service for real data
+from paper_trading.services.price_feed_service import PriceFeedService
 
 from paper_trading.intelligence.base import (
     IntelligenceEngine,
@@ -57,6 +71,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
+
 @dataclass
 class IntelLevelConfig:
     """Configuration for each intelligence level."""
@@ -74,7 +92,74 @@ class IntelLevelConfig:
     decision_speed: str = "moderate"
 
 
-# Intel level configurations
+@dataclass
+class PriceHistory:
+    """
+    Historical price data for a token.
+    
+    Used to track price movements and calculate trends for better
+    trading decisions.
+    """
+    token_address: str
+    token_symbol: str
+    prices: List[Decimal]  # Recent prices
+    timestamps: List[datetime]  # When prices were fetched
+    
+    def get_price_change_percent(self, period_minutes: int = 60) -> Optional[Decimal]:
+        """
+        Calculate price change percentage over a time period.
+        
+        Args:
+            period_minutes: Time period to calculate change over
+            
+        Returns:
+            Price change percentage, or None if insufficient data
+        """
+        if len(self.prices) < 2:
+            return None
+        
+        # Find price from period_minutes ago
+        cutoff_time = datetime.now() - timedelta(minutes=period_minutes)
+        
+        for i, timestamp in enumerate(self.timestamps):
+            if timestamp <= cutoff_time:
+                if i < len(self.prices) - 1:
+                    old_price = self.prices[i]
+                    current_price = self.prices[-1]
+                    
+                    change = ((current_price - old_price) / old_price) * Decimal('100')
+                    return change
+        
+        return None
+    
+    def is_trending_up(self) -> bool:
+        """Check if price is in upward trend."""
+        if len(self.prices) < 3:
+            return False
+        
+        # Simple trend: last 3 prices increasing
+        return (
+            self.prices[-1] > self.prices[-2] and
+            self.prices[-2] > self.prices[-3]
+        )
+    
+    def is_trending_down(self) -> bool:
+        """Check if price is in downward trend."""
+        if len(self.prices) < 3:
+            return False
+        
+        # Simple trend: last 3 prices decreasing
+        return (
+            self.prices[-1] < self.prices[-2] and
+            self.prices[-2] < self.prices[-3]
+        )
+
+
+# =============================================================================
+# INTEL LEVEL CONFIGURATIONS
+# =============================================================================
+
+# Intel level configurations (1-10)
 INTEL_CONFIGS = {
     1: IntelLevelConfig(
         level=1,
@@ -209,99 +294,366 @@ INTEL_CONFIGS = {
 }
 
 
+# =============================================================================
+# INTEL SLIDER ENGINE - MAIN CLASS
+# =============================================================================
+
 class IntelSliderEngine(IntelligenceEngine):
     """
-    Intelligence engine controlled by the Intel slider.
+    Intelligence engine controlled by the Intel slider with REAL data integration.
     
-    This engine adapts its behavior based on the selected intelligence
-    level, providing a simple interface for users while handling
-    complex decision-making internally.
+    This engine adapts its behavior based on the selected intelligence level,
+    providing a simple interface for users while handling complex decision-making
+    internally. Now integrates with real token prices and market data.
+    
+    New Features:
+    - Fetches real token prices from Alchemy/CoinGecko APIs
+    - Tracks price history for trend analysis
+    - Makes price-aware trading decisions (buy low, sell high)
+    - Calculates position sizes with real USD/token conversions
+    - Adjusts risk assessment based on price volatility
+    
+    Example:
+        engine = IntelSliderEngine(intel_level=5, chain_id=84532)
+        context = await engine.analyze_market('0x...', trade_size_usd=Decimal('100'))
+        decision = await engine.make_decision(context, account_balance, [], '0x...', 'WETH')
     """
     
-    def __init__(self, intel_level: int = 5, account_id: Optional[str] = None, 
-                strategy_config=None):  # ✅ ADD THIS PARAMETER
+    def __init__(
+        self, 
+        intel_level: int = 5, 
+        account_id: Optional[str] = None, 
+        strategy_config=None,
+        chain_id: int = 84532
+    ):
         """
-        Initialize the Intel Slider engine.
+        Initialize the Intel Slider engine with real data support.
         
         Args:
             intel_level: Intelligence level (1-10)
             account_id: Optional paper trading account ID
             strategy_config: Optional PaperStrategyConfiguration to override defaults
+            chain_id: Blockchain network ID for price feeds (default: Base Sepolia)
         """
         super().__init__(intel_level)
         self.config = INTEL_CONFIGS[intel_level]
         self.account_id = account_id
-        self.analyzer = CompositeMarketAnalyzer()
-        self.converter = TypeConverter()  # Initialize type converter
-        self.normalizer = MarketDataNormalizer()  # Initialize normalizer
+        self.chain_id = chain_id
         
-        # ✅ APPLY CONFIGURATION OVERRIDES FROM DATABASE
+        # Initialize market analyzer
+        self.analyzer = CompositeMarketAnalyzer()
+        
+        # Initialize type converters
+        self.converter = TypeConverter()
+        self.normalizer = MarketDataNormalizer()
+        
+        # =====================================================================
+        # REAL DATA INTEGRATION - Price Feed Service
+        # =====================================================================
+        # Initialize price feed service for fetching real token prices
+        self.price_service = PriceFeedService(chain_id=chain_id)
+        
+        # Price history tracking for trend analysis
+        # Key: token_address -> PriceHistory object
+        self.price_history: Dict[str, PriceHistory] = {}
+        
+        # Cache for recent price fetches (avoid API spam)
+        self.price_cache: Dict[str, tuple[Decimal, datetime]] = {}
+        self.price_cache_ttl = 30  # seconds
+        
+        logger.info(
+            f"[INTEL] Initialized with REAL data integration: "
+            f"Chain={chain_id}, Price feeds enabled"
+        )
+        
+        # =====================================================================
+        # CONFIGURATION OVERRIDES from database
+        # =====================================================================
         if strategy_config:
-            logger.info(f"[CONFIG] Applying database configuration overrides: {strategy_config.name}")
+            logger.info(
+                f"[CONFIG] Applying database configuration overrides: "
+                f"{strategy_config.name}"
+            )
             
             # Override confidence threshold from HTML slider
             if strategy_config.confidence_threshold:
-                self.config.min_confidence_required = Decimal(str(strategy_config.confidence_threshold))
-                logger.info(f"[CONFIG] Confidence threshold set to: {self.config.min_confidence_required}%")
+                self.config.min_confidence_required = Decimal(
+                    str(strategy_config.confidence_threshold)
+                )
+                logger.info(
+                    f"[CONFIG] Confidence threshold set to: "
+                    f"{self.config.min_confidence_required}%"
+                )
             
             # Override max position size from HTML slider
             if strategy_config.max_position_size_percent:
-                self.config.max_position_percent = Decimal(str(strategy_config.max_position_size_percent))
-                logger.info(f"[CONFIG] Max position size set to: {self.config.max_position_percent}%")
+                self.config.max_position_percent = Decimal(
+                    str(strategy_config.max_position_size_percent)
+                )
+                logger.info(
+                    f"[CONFIG] Max position size set to: "
+                    f"{self.config.max_position_percent}%"
+                )
             
             # Override risk tolerance based on trading mode
             if strategy_config.trading_mode == 'CONSERVATIVE':
                 self.config.risk_tolerance = Decimal('30')
-                logger.info(f"[CONFIG] Risk tolerance set to CONSERVATIVE: 30%")
+                logger.info(
+                    "[CONFIG] Risk tolerance set to CONSERVATIVE: 30%"
+                )
             elif strategy_config.trading_mode == 'AGGRESSIVE':
                 self.config.risk_tolerance = Decimal('70')
-                logger.info(f"[CONFIG] Risk tolerance set to AGGRESSIVE: 70%")
+                logger.info(
+                    "[CONFIG] Risk tolerance set to AGGRESSIVE: 70%"
+                )
             elif strategy_config.trading_mode == 'MODERATE':
                 self.config.risk_tolerance = Decimal('50')
-                logger.info(f"[CONFIG] Risk tolerance set to MODERATE: 50%")
+                logger.info(
+                    "[CONFIG] Risk tolerance set to MODERATE: 50%"
+                )
             
             # Override stop loss if provided
             if strategy_config.stop_loss_percent:
-                # Stop loss affects risk tolerance (tighter stop = lower risk tolerance)
                 stop_loss = Decimal(str(strategy_config.stop_loss_percent))
                 logger.info(f"[CONFIG] Stop loss set to: {stop_loss}%")
             
             # Override max daily trades
             if strategy_config.max_daily_trades:
-                logger.info(f"[CONFIG] Max daily trades set to: {strategy_config.max_daily_trades}")
+                logger.info(
+                    f"[CONFIG] Max daily trades set to: "
+                    f"{strategy_config.max_daily_trades}"
+                )
         
         # Learning system data (for level 10)
         self.historical_decisions: List[TradingDecision] = []
         self.performance_history: List[Dict[str, Any]] = []
         
         self.logger.info(
-            f"Intel Slider Engine initialized: Level {intel_level} - {self.config.name}"
+            f"Intel Slider Engine initialized: Level {intel_level} - "
+            f"{self.config.name}"
         )
-
-
-
-
-
-
-
-
-
-
-
-
-    async def analyze_market(self, token_address: str, **kwargs) -> MarketContext:
+    
+    # =========================================================================
+    # REAL PRICE FETCHING METHODS
+    # =========================================================================
+    
+    async def _get_token_price(
+        self,
+        token_address: str,
+        token_symbol: str
+    ) -> Optional[Decimal]:
         """
-        Analyze market conditions adapted to intel level.
+        Fetch REAL token price from APIs with caching.
+        
+        This method fetches live token prices from Alchemy (primary) and
+        CoinGecko (fallback) APIs. Prices are cached for 30 seconds to
+        reduce API calls.
+        
+        Args:
+            token_address: Token contract address
+            token_symbol: Token symbol (e.g., 'WETH', 'USDC')
+            
+        Returns:
+            Token price in USD, or None if fetch fails
+            
+        Example:
+            price = await engine._get_token_price('0x...', 'WETH')
+            # Returns: Decimal("2543.50")
+        """
+        try:
+            # ================================================================
+            # STEP 1: Check cache first
+            # ================================================================
+            cache_key = f"{token_address.lower()}_{token_symbol}"
+            
+            if cache_key in self.price_cache:
+                cached_price, cached_time = self.price_cache[cache_key]
+                age = (datetime.now() - cached_time).total_seconds()
+                
+                if age < self.price_cache_ttl:
+                    logger.debug(
+                        f"[PRICE] Cache hit for {token_symbol}: "
+                        f"${cached_price:.2f} (age: {age:.0f}s)"
+                    )
+                    return cached_price
+            
+            # ================================================================
+            # STEP 2: Fetch real price from APIs
+            # ================================================================
+            logger.info(
+                f"[PRICE] Fetching real price for {token_symbol} "
+                f"from APIs..."
+            )
+            
+            price = await self.price_service.get_token_price(
+                token_address,
+                token_symbol
+            )
+            
+            if price is None:
+                logger.error(
+                    f"[PRICE] Failed to fetch price for {token_symbol}"
+                )
+                return None
+            
+            # ================================================================
+            # STEP 3: Cache the price
+            # ================================================================
+            self.price_cache[cache_key] = (price, datetime.now())
+            
+            # ================================================================
+            # STEP 4: Update price history for trend analysis
+            # ================================================================
+            self._update_price_history(
+                token_address,
+                token_symbol,
+                price
+            )
+            
+            logger.info(
+                f"[PRICE] ✅ Real price fetched for {token_symbol}: "
+                f"${price:.2f}"
+            )
+            
+            return price
+            
+        except Exception as e:
+            logger.error(
+                f"[PRICE] Error fetching price for {token_symbol}: {e}",
+                exc_info=True
+            )
+            return None
+    
+    def _update_price_history(
+        self,
+        token_address: str,
+        token_symbol: str,
+        price: Decimal
+    ) -> None:
+        """
+        Update price history for trend analysis.
+        
+        Maintains a rolling window of recent prices to detect trends
+        (upward, downward, or sideways movement).
+        
+        Args:
+            token_address: Token contract address
+            token_symbol: Token symbol
+            price: Current price to add to history
+        """
+        try:
+            # Create history object if doesn't exist
+            if token_address not in self.price_history:
+                self.price_history[token_address] = PriceHistory(
+                    token_address=token_address,
+                    token_symbol=token_symbol,
+                    prices=[],
+                    timestamps=[]
+                )
+            
+            history = self.price_history[token_address]
+            
+            # Add new price and timestamp
+            history.prices.append(price)
+            history.timestamps.append(datetime.now())
+            
+            # Keep only last 100 prices (rolling window)
+            if len(history.prices) > 100:
+                history.prices = history.prices[-100:]
+                history.timestamps = history.timestamps[-100:]
+            
+            logger.debug(
+                f"[PRICE HISTORY] Updated for {token_symbol}: "
+                f"{len(history.prices)} prices tracked"
+            )
+            
+        except Exception as e:
+            logger.error(
+                f"[PRICE HISTORY] Error updating for {token_symbol}: {e}"
+            )
+    
+    def _get_price_trend(self, token_address: str) -> str:
+        """
+        Analyze price trend from history.
+        
+        Args:
+            token_address: Token contract address
+            
+        Returns:
+            'bullish', 'bearish', or 'neutral'
+        """
+        if token_address not in self.price_history:
+            return 'neutral'
+        
+        history = self.price_history[token_address]
+        
+        if history.is_trending_up():
+            return 'bullish'
+        elif history.is_trending_down():
+            return 'bearish'
+        else:
+            return 'neutral'
+    
+    # =========================================================================
+    # MARKET ANALYSIS WITH REAL PRICES
+    # =========================================================================
+    
+    async def analyze_market(
+        self,
+        token_address: str,
+        **kwargs
+    ) -> MarketContext:
+        """
+        Analyze market conditions with REAL price data.
+        
+        This method combines comprehensive market analysis with live token
+        prices to provide a complete picture of trading conditions.
         
         Args:
             token_address: Token to analyze
-            **kwargs: Additional parameters
+            **kwargs: Additional parameters including:
+                - trade_size_usd: Size of trade in USD
+                - liquidity_usd: Pool liquidity
+                - volume_24h: 24-hour volume
+                - token_symbol: Token symbol
             
         Returns:
-            Market context with intel-level adjustments
+            Market context with real price data and intel-level adjustments
+            
+        Example:
+            context = await engine.analyze_market(
+                '0x...',
+                trade_size_usd=Decimal('100'),
+                token_symbol='WETH'
+            )
         """
         try:
-            # Get comprehensive analysis
+            # =================================================================
+            # STEP 1: Fetch REAL token price
+            # =================================================================
+            token_symbol = kwargs.get('token_symbol', 'UNKNOWN')
+            
+            logger.info(
+                f"[MARKET ANALYSIS] Starting analysis for {token_symbol}..."
+            )
+            
+            # Fetch current token price from APIs
+            current_price = await self._get_token_price(
+                token_address,
+                token_symbol
+            )
+            
+            if current_price is None:
+                logger.warning(
+                    f"[MARKET ANALYSIS] Failed to fetch price for "
+                    f"{token_symbol}, using fallback"
+                )
+                # Fallback: use a default price if API fails
+                current_price = Decimal('1.00')
+            
+            # =================================================================
+            # STEP 2: Get comprehensive market analysis
+            # =================================================================
             analysis = await self.analyzer.analyze_comprehensive(
                 token_address=token_address,
                 trade_size_usd=kwargs.get('trade_size_usd', Decimal('1000')),
@@ -309,61 +661,209 @@ class IntelSliderEngine(IntelligenceEngine):
                 volume_24h=kwargs.get('volume_24h', Decimal('50000'))
             )
             
-            # Convert to MarketContext with type safety
+            # =================================================================
+            # STEP 3: Get price trend from history
+            # =================================================================
+            price_trend = self._get_price_trend(token_address)
+            
+            # Calculate price change if we have history
+            price_change_1h = None
+            if token_address in self.price_history:
+                price_change_1h = self.price_history[token_address].get_price_change_percent(60)
+            
+            logger.info(
+                f"[MARKET ANALYSIS] Price data: "
+                f"Current=${current_price:.2f}, "
+                f"Trend={price_trend}, "
+                f"Change(1h)={price_change_1h:.2f}% if price_change_1h else 'N/A'"
+            )
+            
+            # =================================================================
+            # STEP 4: Convert to MarketContext with type safety
+            # =================================================================
+            # Calculate price 24h ago from history if available
+            price_24h_ago = current_price  # Default to current
+            if token_address in self.price_history:
+                change_24h = self.price_history[token_address].get_price_change_percent(1440)  # 24 hours
+                if change_24h:
+                    price_24h_ago = current_price / (Decimal('1') + (change_24h / Decimal('100')))
+            
             context = MarketContext(
-                gas_price_gwei=self.converter.to_decimal(analysis['gas_analysis']['current_gas_gwei']),
+                # =============================================================
+                # REQUIRED PARAMETERS (must come first)
+                # =============================================================
+                token_symbol=token_symbol,
+                token_address=token_address,
+                current_price=current_price,
+                price_24h_ago=price_24h_ago,
+                volume_24h=kwargs.get('volume_24h', Decimal('50000')),
+                liquidity_usd=self.converter.to_decimal(
+                    analysis['liquidity']['pool_liquidity_usd']
+                ),
+                holder_count=kwargs.get('holder_count', 1000),
+                market_cap=kwargs.get('market_cap', current_price * Decimal('1000000')),  # Estimate
+                volatility=self.converter.to_decimal(
+                    analysis['market_state']['volatility_index']
+                ),
+                trend=price_trend,  # 'bullish', 'bearish', 'neutral'
+                momentum=price_change_1h or Decimal('0'),
+                support_levels=kwargs.get('support_levels', []),
+                resistance_levels=kwargs.get('resistance_levels', []),
+                
+                # =============================================================
+                # Gas and network data
+                # =============================================================
+                gas_price_gwei=self.converter.to_decimal(
+                    analysis['gas_analysis']['current_gas_gwei']
+                ),
                 network_congestion=analysis['gas_analysis']['network_congestion'],
                 pending_tx_count=analysis['gas_analysis']['pending_tx_count'],
+                
+                # =============================================================
+                # MEV protection data
+                # =============================================================
                 mev_threat_level=analysis['mev_analysis']['threat_level'],
                 sandwich_risk=analysis['mev_analysis']['sandwich_risk'],
                 frontrun_probability=analysis['mev_analysis']['frontrun_probability'],
+                
+                # =============================================================
+                # Competition data
+                # =============================================================
                 competing_bots_detected=analysis['competition']['competing_bots'],
-                average_bot_gas_price=self.converter.to_decimal(analysis['competition']['avg_bot_gas']),
+                average_bot_gas_price=self.converter.to_decimal(
+                    analysis['competition']['avg_bot_gas']
+                ),
                 bot_success_rate=analysis['competition']['bot_success_rate'],
-                pool_liquidity_usd=self.converter.to_decimal(analysis['liquidity']['pool_liquidity_usd']),
-                expected_slippage=self.converter.to_decimal(analysis['liquidity']['expected_slippage']),
+                
+                # =============================================================
+                # Liquidity data
+                # =============================================================
+                pool_liquidity_usd=self.converter.to_decimal(
+                    analysis['liquidity']['pool_liquidity_usd']
+                ),
+                expected_slippage=self.converter.to_decimal(
+                    analysis['liquidity']['expected_slippage']
+                ),
                 liquidity_depth_score=analysis['liquidity']['liquidity_depth_score'],
+                
+                # =============================================================
+                # Market state data
+                # =============================================================
                 volatility_index=analysis['market_state']['volatility_index'],
                 chaos_event_detected=analysis['market_state']['chaos_event_detected'],
                 trend_direction=analysis['market_state']['trend_direction'],
-                volume_24h_change=self.converter.to_decimal(analysis['market_state']['volume_24h_change']),
+                volume_24h_change=self.converter.to_decimal(
+                    analysis['market_state']['volume_24h_change']
+                ),
+                
+                # =============================================================
+                # Historical performance
+                # =============================================================
                 recent_failures=kwargs.get('recent_failures', 0),
                 success_rate_1h=kwargs.get('success_rate_1h', 50.0),
-                average_profit_1h=kwargs.get('average_profit_1h', Decimal('0'))
+                average_profit_1h=kwargs.get('average_profit_1h', Decimal('0')),
+                
+                # =============================================================
+                # Timestamp and confidence
+                # =============================================================
+                timestamp=datetime.now(),
+                confidence_in_data=kwargs.get('confidence_in_data', 80.0)
             )
             
-            # Normalize all numeric fields to ensure Decimal consistency
+            # =================================================================
+            # STEP 5: Normalize all numeric fields
+            # =================================================================
             context = self.normalizer.normalize_context(context)
             
-            # Adjust perception based on intel level
+            # =================================================================
+            # STEP 6: Adjust perception based on intel level
+            # =================================================================
             context = self._adjust_market_perception(context)
+            
+            logger.info(
+                f"[MARKET ANALYSIS] ✅ Complete for {token_symbol}: "
+                f"Risk={context.mev_threat_level:.0f}, "
+                f"Liquidity={context.liquidity_depth_score:.0f}, "
+                f"Trend={context.trend_direction}"
+            )
             
             return context
             
         except Exception as e:
-            self.logger.error(f"Error in market analysis: {e}")
+            logger.error(
+                f"[MARKET ANALYSIS] Error analyzing market: {e}",
+                exc_info=True
+            )
             raise
     
     def _adjust_market_perception(self, context: MarketContext) -> MarketContext:
         """
         Adjust market perception based on intel level.
         
-        Lower levels are more pessimistic, higher levels more optimistic.
+        Lower intel levels are more pessimistic (see more risk), while
+        higher levels are more optimistic (see more opportunity).
+        
+        Args:
+            context: Market context to adjust
+            
+        Returns:
+            Adjusted market context
         """
         if self.intel_level <= 3:
-            # Cautious levels see more risk
-            context.mev_threat_level = self.converter.safe_multiply(context.mev_threat_level, Decimal('1.3'))
-            context.sandwich_risk = self.converter.safe_multiply(context.sandwich_risk, Decimal('1.3'))
-            context.volatility_index = self.converter.safe_multiply(context.volatility_index, Decimal('1.2'))
-            context.confidence_in_data = self.converter.safe_multiply(context.confidence_in_data, Decimal('0.8'))
+            # ================================================================
+            # CAUTIOUS LEVELS (1-3): Amplify risks, reduce confidence
+            # ================================================================
+            context.mev_threat_level = self.converter.safe_multiply(
+                context.mev_threat_level,
+                Decimal('1.3')
+            )
+            context.sandwich_risk = self.converter.safe_multiply(
+                context.sandwich_risk,
+                Decimal('1.3')
+            )
+            context.volatility_index = self.converter.safe_multiply(
+                context.volatility_index,
+                Decimal('1.2')
+            )
+            context.confidence_in_data = self.converter.safe_multiply(
+                context.confidence_in_data,
+                Decimal('0.8')
+            )
+            
+            logger.debug(
+                f"[PERCEPTION] Cautious adjustment applied (Level {self.intel_level})"
+            )
+            
         elif self.intel_level >= 7:
-            # Aggressive levels downplay risks
-            context.mev_threat_level = self.converter.safe_multiply(context.mev_threat_level, Decimal('0.8'))
-            context.sandwich_risk = self.converter.safe_multiply(context.sandwich_risk, Decimal('0.8'))
-            context.volatility_index = self.converter.safe_multiply(context.volatility_index, Decimal('0.9'))
-            context.confidence_in_data = self.converter.safe_multiply(context.confidence_in_data, Decimal('1.1'))
+            # ================================================================
+            # AGGRESSIVE LEVELS (7-10): Downplay risks, boost confidence
+            # ================================================================
+            context.mev_threat_level = self.converter.safe_multiply(
+                context.mev_threat_level,
+                Decimal('0.8')
+            )
+            context.sandwich_risk = self.converter.safe_multiply(
+                context.sandwich_risk,
+                Decimal('0.8')
+            )
+            context.volatility_index = self.converter.safe_multiply(
+                context.volatility_index,
+                Decimal('0.9')
+            )
+            context.confidence_in_data = self.converter.safe_multiply(
+                context.confidence_in_data,
+                Decimal('1.1')
+            )
+            
+            logger.debug(
+                f"[PERCEPTION] Aggressive adjustment applied (Level {self.intel_level})"
+            )
         
         return context
+    
+    # =========================================================================
+    # DECISION MAKING WITH REAL PRICES
+    # =========================================================================
     
     async def make_decision(
         self,
@@ -374,247 +874,446 @@ class IntelSliderEngine(IntelligenceEngine):
         token_symbol: str
     ) -> TradingDecision:
         """
-        Make trading decision based on intel level.
+        Make trading decision based on intel level and REAL price data.
+        
+        This method analyzes market conditions, real token prices, and price
+        trends to make intelligent trading decisions aligned with the selected
+        intelligence level.
         
         Args:
-            market_context: Current market conditions
-            account_balance: Available balance
-            existing_positions: Current positions
-            token_address: Token to trade
-            token_symbol: Token symbol
+            market_context: Current market conditions (with real prices)
+            account_balance: Available balance in USD
+            existing_positions: Current open positions
+            token_address: Token contract address
+            token_symbol: Token symbol (e.g., 'WETH')
             
         Returns:
-            Complete trading decision
+            Complete trading decision with action, sizing, and reasoning
+            
+        Example:
+            decision = await engine.make_decision(
+                context,
+                Decimal('1000.00'),
+                [],
+                '0x...',
+                'WETH'
+            )
+            print(f"Action: {decision.action}")  # BUY, SELL, HOLD, SKIP
+            print(f"Amount: ${decision.position_size_usd}")
         """
         try:
             # Ensure account_balance is Decimal
-            account_balance = self.converter.to_decimal(account_balance)            
+            account_balance = self.converter.to_decimal(account_balance)
             
-            # Calculate base scores
+            logger.info(
+                f"[DECISION] Making decision for {token_symbol}: "
+                f"Intel Level={self.intel_level}, "
+                f"Balance=${account_balance:.2f}"
+            )
+            
+            # =================================================================
+            # STEP 1: Calculate risk score
+            # =================================================================
             risk_score = self._calculate_risk_score(market_context)
-            opportunity_score = self._calculate_opportunity_score(market_context)
-            confidence_score = self._calculate_confidence_score(market_context, risk_score, opportunity_score)
+            logger.info(f"[DECISION] Risk score: {risk_score:.2f}/100")
             
-            # Determine action based on intel level
-            action = self._determine_action(risk_score, opportunity_score, confidence_score)
+            # =================================================================
+            # STEP 2: Calculate opportunity score WITH PRICE AWARENESS
+            # =================================================================
+            opportunity_score = self._calculate_opportunity_score_with_price(
+                market_context,
+                token_address,
+                existing_positions
+            )
+            logger.info(f"[DECISION] Opportunity score: {opportunity_score:.2f}/100")
             
-
-            # ✅ ADD THESE TWO LINES RIGHT HERE:
-            self.logger.info(f"[SCORES] {token_symbol}: Risk={risk_score:.1f}, Opportunity={opportunity_score:.1f}, Confidence={confidence_score:.1f}")
-
-            # Determine action based on intel level
-            action = self._determine_action(risk_score, opportunity_score, confidence_score)
-
-            # ✅ AND ADD THIS LINE:
-            self.logger.info(f"[DECISION] {token_symbol}: Action={action} | Min Confidence Required={self.config.min_confidence_required} | Risk Tolerance={self.config.risk_tolerance}")
-
-
-            # Calculate position size
-            position_size = self._calculate_position_size(
-                confidence_score,
+            # =================================================================
+            # STEP 3: Calculate confidence score
+            # =================================================================
+            confidence_score = self._calculate_confidence_score(
+                market_context,
                 risk_score,
-                account_balance
+                opportunity_score
             )
+            logger.info(f"[DECISION] Confidence score: {confidence_score:.2f}/100")
             
-            # Determine execution strategy
-            execution = self._determine_execution_strategy(market_context, action)
-            
-            # Generate reasoning
-            reasoning = self._generate_reasoning(
-                action, risk_score, opportunity_score, confidence_score, market_context
+            # =================================================================
+            # STEP 4: Determine action (BUY, SELL, HOLD, SKIP)
+            # =================================================================
+            action = self._determine_action(
+                risk_score,
+                opportunity_score,
+                confidence_score
             )
+            logger.info(f"[DECISION] Action determined: {action}")
             
-            # Build decision with type-safe values
-            decision = TradingDecision(
-                action=action,
-                token_address=token_address,
-                token_symbol=token_symbol,
-                position_size_percent=position_size,
-                position_size_usd=self.converter.safe_multiply(
+            # =================================================================
+            # STEP 5: Calculate position size with REAL price
+            # =================================================================
+            if action in ['BUY', 'SELL']:
+                position_size_percent = self._calculate_position_size(
+                    confidence_score,
+                    risk_score,
+                    account_balance
+                )
+                position_size_usd = self.converter.safe_percentage(
                     account_balance,
-                    position_size / Decimal('100')
-                ),
-                stop_loss_percent=self._calculate_stop_loss(risk_score),
-                take_profit_targets=self._calculate_take_profits(opportunity_score),
-                execution_mode=execution['mode'],
-                use_private_relay=execution['use_private_relay'],
-                gas_strategy=execution['gas_strategy'],
-                max_gas_price_gwei=self.converter.to_decimal(execution['max_gas_gwei']),
-                overall_confidence=confidence_score,
+                    position_size_percent
+                )
+                
+                # Calculate actual token quantity using real price
+                if hasattr(market_context, 'current_price') and market_context.current_price:
+                    token_quantity = position_size_usd / market_context.current_price
+                else:
+                    token_quantity = Decimal('0')
+                
+                logger.info(
+                    f"[DECISION] Position sizing: "
+                    f"{position_size_percent:.2f}% = ${position_size_usd:.2f} = "
+                    f"{token_quantity:.6f} {token_symbol}"
+                )
+            else:
+                position_size_usd = Decimal('0')
+                token_quantity = Decimal('0')
+            
+            # =================================================================
+            # STEP 6: Determine execution strategy
+            # =================================================================
+            execution_strategy = self._determine_execution_strategy(
+                market_context,
+                action
+            )
+            
+            # =================================================================
+            # STEP 7: Calculate stop loss and take profit targets
+            # =================================================================
+            stop_loss_percent = self._calculate_stop_loss(risk_score)
+            take_profit_targets = self._calculate_take_profits(opportunity_score)
+            
+            # =================================================================
+            # STEP 8: Generate detailed reasoning
+            # =================================================================
+            reasoning = self._generate_reasoning(
+                action,
+                risk_score,
+                opportunity_score,
+                confidence_score,
+                market_context
+            )
+            
+            # =================================================================
+            # STEP 9: Identify risk and opportunity factors
+            # =================================================================
+            risk_factors = self._identify_risk_factors(market_context)
+            opportunity_factors = self._identify_opportunity_factors(market_context)
+            mitigation_strategies = self._generate_mitigation_strategies(market_context)
+            
+            # =================================================================
+            # STEP 10: Assess time sensitivity
+            # =================================================================
+            time_sensitivity = self._assess_time_sensitivity(market_context)
+            max_execution_time_ms = self._calculate_max_execution_time()
+            
+            # =================================================================
+            # STEP 11: Create trading decision object
+            # =================================================================
+            decision = TradingDecision(
+                decision_id=str(uuid.uuid4()),
+                timestamp=datetime.now(),
+                action=action,
+                confidence_score=confidence_score,
                 risk_score=risk_score,
                 opportunity_score=opportunity_score,
-                primary_reasoning=reasoning,
-                risk_factors=self._identify_risk_factors(market_context),
-                opportunity_factors=self._identify_opportunity_factors(market_context),
-                mitigation_strategies=self._generate_mitigation_strategies(market_context),
-                intel_level_used=self.intel_level,
-                intel_adjustments={},
-                time_sensitivity=self._assess_time_sensitivity(market_context),
-                max_execution_time_ms=self._calculate_max_execution_time(),
-                processing_time_ms=100  # Add default processing time
+                position_size_usd=position_size_usd,
+                token_quantity=token_quantity,
+                stop_loss_percent=stop_loss_percent,
+                take_profit_targets=take_profit_targets,
+                execution_strategy=execution_strategy,
+                reasoning=reasoning,
+                intel_level=self.intel_level,
+                risk_factors=risk_factors,
+                opportunity_factors=opportunity_factors,
+                mitigation_strategies=mitigation_strategies,
+                time_sensitivity=time_sensitivity,
+                max_execution_time_ms=max_execution_time_ms,
+                # Add price-related metadata
+                metadata={
+                    'token_price': float(market_context.current_price) if hasattr(market_context, 'current_price') else None,
+                    'price_trend': market_context.trend if hasattr(market_context, 'trend') else None,
+                    'price_change_1h': float(market_context.momentum) if hasattr(market_context, 'momentum') else None,
+                    'token_symbol': token_symbol,
+                    'token_address': token_address
+                }
             )
             
-            # Apply intel level adjustments
-            decision = self.adjust_for_intel_level(decision)
+            # =================================================================
+            # STEP 12: Store decision in history (for level 10 learning)
+            # =================================================================
+            self.historical_decisions.append(decision)
             
-            # Store for learning (level 10)
-            if self.intel_level == 10:
-                self.historical_decisions.append(decision)
+            # Keep only last 1000 decisions
+            if len(self.historical_decisions) > 1000:
+                self.historical_decisions = self.historical_decisions[-1000:]
+            
+            logger.info(
+                f"[DECISION] ✅ Decision complete: {action} "
+                f"${position_size_usd:.2f} with {confidence_score:.1f}% confidence"
+            )
             
             return decision
             
         except Exception as e:
-            self.logger.error(f"Error making decision: {e}")
+            logger.error(
+                f"[DECISION] Error making decision: {e}",
+                exc_info=True
+            )
             raise
     
-    def _calculate_risk_score(self, context: MarketContext) -> Decimal:
+    # =========================================================================
+    # SCORING METHODS WITH PRICE AWARENESS
+    # =========================================================================
+    
+    def _calculate_opportunity_score_with_price(
+        self,
+        context: MarketContext,
+        token_address: str,
+        existing_positions: List[Dict[str, Any]]
+    ) -> Decimal:
         """
-        Calculate risk score based on market context.
+        Calculate opportunity score considering REAL price trends.
         
-        Production-level implementation with proper type handling.
+        This method evaluates trading opportunities by analyzing:
+        1. Market conditions (liquidity, volume, trend)
+        2. Price trends (is it going up or down?)
+        3. Price momentum (fast or slow movement?)
+        4. Existing positions (already invested?)
         
         Args:
-            context: Market analysis context
+            context: Market context with price data
+            token_address: Token being analyzed
+            existing_positions: Current open positions
             
         Returns:
-            Risk score (0-100)
+            Opportunity score (0-100)
         """
-        # Normalize the context to ensure all numeric fields are Decimals
         context = self.normalizer.normalize_context(context)
         
-        # Base risk from market conditions (0-40 points)
-        market_risk = self.converter.safe_multiply(
-            self.converter.to_decimal(context.liquidity_depth_score, Decimal('50')),
-            Decimal('0.4')
-        )
-        
-        # Volatility risk (0-30 points)  
-        volatility_risk = self.converter.safe_multiply(
-            self.converter.to_decimal(context.volatility_index, Decimal('50')),
-            Decimal('0.3')
-        )
-        
-        # MEV threat risk (0-20 points)
-        mev_risk = self.converter.safe_multiply(
-            self.converter.to_decimal(context.mev_threat_level, Decimal('50')),
-            Decimal('0.2')
-        )
-        
-        # Slippage risk (0-10 points)
-        slippage_risk = self.converter.safe_multiply(
-            self.converter.to_decimal(context.expected_slippage, Decimal('5')),  # Note: expected_slippage is usually 0-10, not 0-100
-            Decimal('0.1')
-        )
-        
-        # Calculate total risk score
-        total_risk = market_risk + volatility_risk + mev_risk + slippage_risk
-        
-        # Ensure it's within bounds (0-100)
-        total_risk = max(Decimal('0'), min(Decimal('100'), total_risk))
-        
-        # Apply intelligence level modifier
-        risk_modifier = Decimal('1.0')
-        if self.intel_level <= 3:
-            risk_modifier = Decimal('1.2')  # Cautious - increase perceived risk
-        elif self.intel_level >= 7:
-            risk_modifier = Decimal('0.8')  # Aggressive - decrease perceived risk
-        
-        final_risk = self.converter.safe_multiply(total_risk, risk_modifier)
-        
-        # Round to 2 decimal places
-        return final_risk.quantize(Decimal('0.01'))
-    
-    def _calculate_opportunity_score(self, context: MarketContext) -> Decimal:
-        """Calculate opportunity score with type safety and random variation for paper trading."""
-        import random
-        
-        context = self.normalizer.normalize_context(context)
-        
-        trend_bonus = Decimal('30') if context.trend_direction == 'bullish' else Decimal('0')
-        
-        liquidity_component = self.converter.safe_multiply(
-            self.converter.to_decimal(context.liquidity_depth_score, Decimal('50')),
+        # =================================================================
+        # BASE OPPORTUNITY SCORE from market conditions
+        # =================================================================
+        # Liquidity component (30% weight)
+        liquidity_score = self.converter.safe_multiply(
+            self.converter.to_decimal(
+                context.liquidity_depth_score,
+                Decimal('50')
+            ),
             Decimal('0.30')
         )
         
-        congestion_component = self.converter.safe_multiply(
-            Decimal('100') - self.converter.to_decimal(context.network_congestion, Decimal('50')),
-            Decimal('0.20')
+        # Volume component (20% weight)
+        volume_factor = min(
+            self.converter.to_decimal(context.volume_24h_change, Decimal('0')) / Decimal('100'),
+            Decimal('1.0')
+        )
+        volume_score = self.converter.safe_multiply(volume_factor * Decimal('100'), Decimal('0.20'))
+        
+        # Trend component (20% weight)
+        if context.trend_direction == 'bullish':
+            trend_score = Decimal('20')
+        elif context.trend_direction == 'bearish':
+            trend_score = Decimal('5')
+        else:
+            trend_score = Decimal('10')
+        
+        # Competition component (15% weight) - inverse
+        competition_factor = max(
+            Decimal('0'),
+            Decimal('100') - self.converter.to_decimal(
+                context.competing_bots_detected,
+                Decimal('0')
+            ) * Decimal('10')
+        )
+        competition_score = self.converter.safe_multiply(competition_factor, Decimal('0.15'))
+        
+        # Network conditions (15% weight) - inverse congestion
+        network_factor = max(
+            Decimal('0'),
+            Decimal('100') - self.converter.to_decimal(
+                context.network_congestion,
+                Decimal('50')
+            )
+        )
+        network_score = self.converter.safe_multiply(network_factor, Decimal('0.15'))
+        
+        base_score = (
+            liquidity_score +
+            volume_score +
+            trend_score +
+            competition_score +
+            network_score
         )
         
-        bot_component = self.converter.safe_multiply(
-            Decimal('100') - self.converter.to_decimal(context.bot_success_rate, Decimal('50')),
-            Decimal('0.20')
+        # =================================================================
+        # PRICE TREND ADJUSTMENT (NEW!)
+        # =================================================================
+        price_adjustment = Decimal('0')
+        
+        # Get price trend from history
+        if token_address in self.price_history:
+            history = self.price_history[token_address]
+            
+            # Bullish trend bonus
+            if history.is_trending_up():
+                price_adjustment += Decimal('15')  # +15 points for uptrend
+                logger.debug("[OPPORTUNITY] +15 points for bullish price trend")
+            
+            # Bearish trend penalty
+            elif history.is_trending_down():
+                price_adjustment -= Decimal('10')  # -10 points for downtrend
+                logger.debug("[OPPORTUNITY] -10 points for bearish price trend")
+            
+            # Price momentum bonus (fast changes = more opportunity)
+            price_change_1h = history.get_price_change_percent(60)
+            if price_change_1h:
+                if price_change_1h > 5:  # >5% gain in 1 hour
+                    price_adjustment += Decimal('10')
+                    logger.debug(
+                        f"[OPPORTUNITY] +10 points for strong momentum "
+                        f"({price_change_1h:.1f}%)"
+                    )
+                elif price_change_1h < -5:  # >5% loss in 1 hour
+                    price_adjustment -= Decimal('10')
+                    logger.debug(
+                        f"[OPPORTUNITY] -10 points for negative momentum "
+                        f"({price_change_1h:.1f}%)"
+                    )
+        
+        # =================================================================
+        # EXISTING POSITION ADJUSTMENT
+        # =================================================================
+        # Penalty for duplicate positions (diversification)
+        has_position = any(
+            pos.get('token_address', '').lower() == token_address.lower()
+            for pos in existing_positions
         )
         
-        volume_component = self.converter.safe_multiply(
-            max(self.converter.to_decimal(context.volume_24h_change, Decimal('0')), Decimal('0')),
-            Decimal('0.10')
+        if has_position:
+            price_adjustment -= Decimal('20')  # -20 points for duplicate
+            logger.debug("[OPPORTUNITY] -20 points for existing position")
+        
+        # =================================================================
+        # FINAL OPPORTUNITY SCORE
+        # =================================================================
+        final_score = base_score + price_adjustment
+        
+        # Cap at 0-100 range
+        final_score = max(Decimal('0'), min(Decimal('100'), final_score))
+        
+        logger.debug(
+            f"[OPPORTUNITY] Score breakdown: "
+            f"Base={base_score:.1f}, Price={price_adjustment:+.1f}, "
+            f"Final={final_score:.1f}"
         )
         
-        # Calculate base opportunity
-        opportunity = (
-            liquidity_component +
-            congestion_component +
-            bot_component +
-            trend_bonus +
-            volume_component
+        return final_score.quantize(Decimal('0.01'))
+    
+    def _calculate_risk_score(self, context: MarketContext) -> Decimal:
+        """
+        Calculate comprehensive risk score from market conditions.
+        
+        Args:
+            context: Market context
+            
+        Returns:
+            Risk score (0-100, higher = more risky)
+        """
+        context = self.normalizer.normalize_context(context)
+        
+        # MEV risk (30% weight)
+        mev_risk = self.converter.safe_multiply(
+            self.converter.to_decimal(context.mev_threat_level, Decimal('0')),
+            Decimal('0.30')
         )
         
-        # ✅ ADD RANDOM VARIATION FOR PAPER TRADING
-        # This simulates market volatility and varying conditions
-        # Range: -15 to +35 allows for varied BUY/SELL/HOLD decisions
-        random_variation = Decimal(str(random.uniform(-15, 35)))
-        opportunity = opportunity + random_variation
-        
-        # Log the calculation for debugging
-        self.logger.debug(
-            f"Opportunity: base={opportunity - random_variation:.1f}, "
-            f"variation={random_variation:+.1f}, final={opportunity:.1f}"
+        # Volatility risk (25% weight)
+        volatility_risk = self.converter.safe_multiply(
+            self.converter.to_decimal(context.volatility_index, Decimal('0')),
+            Decimal('0.25')
         )
         
-        # Ensure score stays within 0-100 bounds
-        opportunity = max(Decimal('0'), min(Decimal('100'), opportunity))
+        # Liquidity risk (20% weight) - inverse
+        liquidity_factor = max(
+            Decimal('0'),
+            Decimal('100') - self.converter.to_decimal(
+                context.liquidity_depth_score,
+                Decimal('100')
+            )
+        )
+        liquidity_risk = self.converter.safe_multiply(liquidity_factor, Decimal('0.20'))
         
-        return opportunity.quantize(Decimal('0.01'))
-
-
-
-
-
-
-
-
-
-
+        # Slippage risk (15% weight)
+        slippage_risk = self.converter.safe_multiply(
+            min(
+                self.converter.to_decimal(context.expected_slippage, Decimal('0')) * Decimal('10'),
+                Decimal('100')
+            ),
+            Decimal('0.15')
+        )
+        
+        # Chaos event risk (10% weight)
+        chaos_risk = (
+            Decimal('10') if context.chaos_event_detected 
+            else Decimal('0')
+        )
+        
+        total_risk = (
+            mev_risk +
+            volatility_risk +
+            liquidity_risk +
+            slippage_risk +
+            chaos_risk
+        )
+        
+        return min(total_risk, Decimal('100')).quantize(Decimal('0.01'))
+    
     def _calculate_confidence_score(
         self,
         context: MarketContext,
         risk_score: Decimal,
         opportunity_score: Decimal
     ) -> Decimal:
-        """Calculate confidence in the decision with type safety."""
+        """
+        Calculate overall confidence in the trading decision.
+        
+        Args:
+            context: Market context
+            risk_score: Calculated risk score
+            opportunity_score: Calculated opportunity score
+            
+        Returns:
+            Confidence score (0-100)
+        """
         context = self.normalizer.normalize_context(context)
         
-        if self.intel_level == 10:
-            # Autonomous mode uses ML-based confidence
-            return self._calculate_ml_confidence(context, risk_score, opportunity_score)
-        
+        # Data quality confidence (30% weight)
         data_confidence = self.converter.safe_multiply(
             self.converter.to_decimal(context.confidence_in_data, Decimal('50')),
             Decimal('0.30')
         )
         
+        # Volatility confidence (30% weight) - inverse
         volatility_confidence = self.converter.safe_multiply(
             Decimal('100') - self.converter.to_decimal(context.volatility_index, Decimal('50')),
             Decimal('0.30')
         )
         
+        # Liquidity confidence (20% weight)
         liquidity_confidence = self.converter.safe_multiply(
             self.converter.to_decimal(context.liquidity_depth_score, Decimal('50')),
             Decimal('0.20')
         )
         
+        # Chaos confidence (20% weight)
         chaos_confidence = self.converter.safe_multiply(
             Decimal('100') if not context.chaos_event_detected else Decimal('20'),
             Decimal('0.20')
@@ -663,9 +1362,8 @@ class IntelSliderEngine(IntelligenceEngine):
             # Autonomous sizing
             return self._calculate_ml_position_size(risk_score, confidence)
         
-        # Base position from configuration (percentage of balance)
+        # Base position percentage from configuration
         base_position_percent = self.converter.to_decimal(self.config.max_position_percent)
-        base_position = self.converter.safe_percentage(account_balance, base_position_percent)
         
         # Adjust by confidence (0.5x to 1.5x)
         confidence_multiplier = Decimal('0.5') + (confidence / Decimal('100'))
@@ -739,14 +1437,14 @@ class IntelSliderEngine(IntelligenceEngine):
                     return 'BUY'
             return 'SKIP'
         
-        # ✅ MORE AGGRESSIVE OPPORTUNITY ASSESSMENT
+        # More aggressive opportunity assessment
         # Lower thresholds to trigger BUY/SELL more easily
-        if opportunity_score > 50:  # ✅ LOWERED FROM 60
+        if opportunity_score > 50:  # Lowered from 60
             return 'BUY'
-        elif opportunity_score < 45:  # ✅ RAISED FROM 40
+        elif opportunity_score < 45:  # Raised from 40
             return 'SELL' if risk_score > 50 else 'HOLD'
         else:
-            # ✅ ADD RANDOM FACTOR FOR BORDERLINE CASES
+            # Add random factor for borderline cases
             # If confidence is high enough, sometimes trade even in neutral territory
             if confidence_score > self.config.min_confidence_required * Decimal('1.2'):
                 # High confidence - make a decision
@@ -755,10 +1453,6 @@ class IntelSliderEngine(IntelligenceEngine):
                 else:
                     return 'SELL' if risk_score > 45 else 'HOLD'
             return 'HOLD'
-    
-
-
-
     
     def _calculate_ml_position_size(
         self,
@@ -879,12 +1573,24 @@ class IntelSliderEngine(IntelligenceEngine):
         reasoning += f"Action: {action}\n"
         reasoning += f"Risk Assessment: {risk_score:.1f}/100\n"
         reasoning += f"Opportunity Score: {opportunity_score:.1f}/100\n"
-        reasoning += f"Confidence: {confidence_score:.1f}/100\n\n"
+        reasoning += f"Confidence: {confidence_score:.1f}/100\n"
+        
+        # Add price context if available
+        if hasattr(context, 'current_price') and context.current_price:
+            reasoning += f"Current Price: ${context.current_price:.2f}\n"
+        if hasattr(context, 'trend'):
+            reasoning += f"Price Trend: {context.trend}\n"
+        if hasattr(context, 'momentum') and context.momentum:
+            reasoning += f"1H Change: {context.momentum:+.2f}%\n"
+        
+        reasoning += "\n"
         
         if action == 'BUY':
             reasoning += "Rationale: Favorable opportunity with acceptable risk. "
             if context.trend_direction == 'bullish':
                 reasoning += "Bullish trend supports entry. "
+            if hasattr(context, 'trend') and context.trend == 'bullish':
+                reasoning += "Price momentum is positive. "
             if self.converter.to_decimal(context.liquidity_depth_score, Decimal('0')) > 70:
                 reasoning += "Good liquidity minimizes slippage. "
         elif action == 'SKIP':
@@ -931,6 +1637,8 @@ class IntelSliderEngine(IntelligenceEngine):
         
         if context.trend_direction == 'bullish':
             factors.append("Bullish market trend")
+        if hasattr(context, 'trend') and context.trend == 'bullish':
+            factors.append("Positive price momentum")
         if volume_change > 50:
             factors.append(f"Volume surge ({volume_change:.1f}%)")
         if liquidity_score > 70:
@@ -992,3 +1700,16 @@ class IntelSliderEngine(IntelligenceEngine):
             return 1000
         else:  # slow
             return 3000
+    
+    async def cleanup(self):
+        """
+        Cleanup resources when done.
+        
+        Call this when shutting down the engine to properly
+        close the price feed service.
+        """
+        try:
+            await self.price_service.close()
+            logger.info("[INTEL] Engine cleanup complete")
+        except Exception as e:
+            logger.error(f"[INTEL] Error during cleanup: {e}")
