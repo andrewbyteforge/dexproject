@@ -338,6 +338,7 @@ else:
 TESTNET_MODE = get_env_bool('TESTNET_MODE', 'True')
 DEFAULT_CHAIN_ID = get_env_int('DEFAULT_CHAIN_ID', '84532')  # Base Sepolia
 TARGET_CHAINS = get_env_list('TARGET_CHAINS', '84532,11155111')
+SUPPORTED_CHAINS = [int(chain_id) for chain_id in TARGET_CHAINS if chain_id]
 
 # Engine Configuration
 TRADING_MODE = os.getenv('TRADING_MODE', 'PAPER')  # PAPER | SHADOW | LIVE

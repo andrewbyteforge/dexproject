@@ -203,6 +203,42 @@ class LiveMempoolService:
             self.logger.error(f"Failed to establish live connection {connection_key}: {e}")
             return False
     
+
+
+    async def _test_websocket_connection(self, ws_url: str, timeout: float = 10.0) -> bool:
+        """
+        Test WebSocket connection.
+        
+        Args:
+            ws_url: WebSocket URL to test
+            timeout: Connection timeout in seconds
+            
+        Returns:
+            True if connection successful
+        """
+        try:
+            import websockets
+            async with asyncio.timeout(timeout):
+                async with websockets.connect(ws_url) as ws:
+                    # Connection successful
+                    return True
+        except ImportError:
+            self.logger.error("websockets library not installed. Install with: pip install websockets")
+            return False
+        except asyncio.TimeoutError:
+            self.logger.error(f"WebSocket connection timeout after {timeout}s")
+            return False
+        except Exception as e:
+            self.logger.debug(f"WebSocket test failed: {e}")
+            return False
+
+
+
+
+
+
+
+
     async def _subscribe_to_pending_transactions(self, websocket, chain_id: int, provider: str) -> None:
         """
         Subscribe to pending transactions on the WebSocket connection.
@@ -250,6 +286,16 @@ class LiveMempoolService:
         except Exception as e:
             self.logger.error(f"Failed to subscribe to pending transactions: {e}")
             raise
+
+
+            
+
+
+
+
+
+
+
     
     async def _process_websocket_message(self, message: str, chain_id: int, provider: str) -> None:
         """

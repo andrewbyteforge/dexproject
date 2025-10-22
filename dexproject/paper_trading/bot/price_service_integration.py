@@ -11,6 +11,8 @@ Features:
 - Async price fetching with sync wrapper for bot compatibility
 - Comprehensive error handling and logging
 
+FIXED: Added missing except block for close() method
+
 File: dexproject/paper_trading/bot/price_service_integration.py
 """
 
@@ -186,6 +188,9 @@ class RealPriceManager:
         
         Args:
             web3_client: Optional Web3Client for DEX quotes
+            
+        Returns:
+            True if initialization successful, False otherwise
         """
         try:
             if self.use_real_prices:
@@ -198,6 +203,12 @@ class RealPriceManager:
                     f"[PRICE MANAGER] Real price service initialized "
                     f"(DEX quotes: {'ENABLED' if web3_client else 'DISABLED'})"
                 )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"[PRICE MANAGER] Initialization failed: {e}", exc_info=True)
+            return False
     
     async def close(self):
         """Close the price feed service and cleanup resources."""
