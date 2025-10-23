@@ -478,6 +478,8 @@ class MarketAnalyzer:
                 }
                 for pos in position_manager.get_all_positions().values()
             ]
+
+            self.intelligence_engine.update_market_context(market_context)
             
             # Make trading decision
             decision = async_to_sync(self.intelligence_engine.make_decision)(

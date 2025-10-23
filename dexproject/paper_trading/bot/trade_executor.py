@@ -257,6 +257,13 @@ class TradeExecutor:
             self.consecutive_failures += 1
             return False
     
+
+
+
+
+
+
+    
     # =========================================================================
     # TRANSACTION MANAGER EXECUTION
     # =========================================================================

@@ -1018,32 +1018,48 @@ class IntelSliderEngine(IntelligenceEngine):
             # STEP 11: Create trading decision object
             # =================================================================
             decision = TradingDecision(
-                decision_id=str(uuid.uuid4()),
-                timestamp=datetime.now(),
+                # Basic identification
                 action=action,
-                confidence_score=confidence_score,
-                risk_score=risk_score,
-                opportunity_score=opportunity_score,
-                position_size_usd=position_size_usd,
-                token_quantity=token_quantity,
-                stop_loss_percent=stop_loss_percent,
+                token_address=token_address,
+                token_symbol=token_symbol,
+                
+                # Position sizing
+                position_size_percent=Decimal(str((position_size_usd / account_balance * 100) if account_balance > 0 else 0)),
+                position_size_usd=Decimal(str(position_size_usd)),
+                
+                # Risk management
+                stop_loss_percent=Decimal(str(stop_loss_percent)),
                 take_profit_targets=take_profit_targets,
-                execution_strategy=execution_strategy,
-                reasoning=reasoning,
-                intel_level=self.intel_level,
+                
+                # Execution parameters
+                execution_mode='IMMEDIATE',  # or 'SMART', 'FAST_LANE' based on your strategy
+                use_private_relay=False,
+                gas_strategy='standard',
+                max_gas_price_gwei=Decimal('50'),
+                
+                # Scoring - ✅ FIXED: Changed confidence_score to overall_confidence
+                overall_confidence=Decimal(str(confidence_score)),
+                risk_score=Decimal(str(risk_score)),
+                opportunity_score=Decimal(str(opportunity_score)),
+                
+                # Reasoning
+                primary_reasoning=reasoning[:500] if reasoning else "No reasoning provided",
                 risk_factors=risk_factors,
                 opportunity_factors=opportunity_factors,
                 mitigation_strategies=mitigation_strategies,
+                
+                # Intelligence metadata
+                intel_level_used=self.intel_level,
+                intel_adjustments={
+                    'risk_threshold': self.get_risk_threshold(),
+                    'opportunity_threshold': self.get_opportunity_threshold(),
+                    'confidence_required': self.get_confidence_threshold()
+                },
+                
+                # Timing
                 time_sensitivity=time_sensitivity,
                 max_execution_time_ms=max_execution_time_ms,
-                # Add price-related metadata
-                metadata={
-                    'token_price': float(market_context.current_price) if hasattr(market_context, 'current_price') else None,
-                    'price_trend': market_context.trend if hasattr(market_context, 'trend') else None,
-                    'price_change_1h': float(market_context.momentum) if hasattr(market_context, 'momentum') else None,
-                    'token_symbol': token_symbol,
-                    'token_address': token_address
-                }
+                processing_time_ms=100  # Placeholder - would be actual processing time
             )
             
             # =================================================================
@@ -1700,6 +1716,64 @@ class IntelSliderEngine(IntelligenceEngine):
             return 1000
         else:  # slow
             return 3000
+        
+
+
+    
+    def get_risk_threshold(self) -> float:
+        """
+        Get dynamic risk threshold based on intelligence level and market conditions.
+        
+        This threshold represents the maximum acceptable risk score (0-100)
+        before the bot will refuse to trade. Lower levels are more conservative
+        (lower threshold), higher levels accept more risk (higher threshold).
+        
+        Returns:
+            Risk threshold percentage (0-100)
+            
+        Example:
+            Level 1: 20% - Very conservative, only accepts minimal risk
+            Level 5: 50% - Balanced, accepts moderate risk
+            Level 10: 95% - Very aggressive, accepts almost any risk (ML optimized)
+        """
+        # Base threshold on intel level
+        # Formula: (intel_level * 10) - 10
+        # Level 1 = 0, Level 5 = 40, Level 10 = 90
+        base_threshold = (self.intel_level * 10) - 10
+        
+        # Adjust based on configuration
+        # Use risk_tolerance from config as the primary driver
+        configured_threshold = float(self.config.risk_tolerance)
+        
+        # Blend base threshold with configured tolerance (70% config, 30% base)
+        blended_threshold = (configured_threshold * 0.7) + (base_threshold * 0.3)
+        
+        # Add dynamic adjustment based on recent performance
+        if len(self.historical_decisions) > 5:
+            # Calculate recent win rate
+            recent_wins = sum(
+                1 for d in self.historical_decisions[-10:]
+                if d.opportunity_score > d.risk_score
+            )
+            win_rate = recent_wins / min(10, len(self.historical_decisions))
+            
+            # If winning, slightly increase risk tolerance (max +10%)
+            # If losing, decrease risk tolerance (max -10%)
+            performance_adjustment = (win_rate - 0.5) * 20  # -10% to +10%
+            blended_threshold += performance_adjustment
+        
+        # Ensure within bounds (10-95)
+        final_threshold = max(10.0, min(95.0, blended_threshold))
+        
+        logger.debug(
+            f"[THRESHOLD] Risk threshold: {final_threshold:.1f}% "
+            f"(Level {self.intel_level}, Config: {configured_threshold}%)"
+        )
+        
+        return final_threshold
+
+
+
     
     async def cleanup(self):
         """
