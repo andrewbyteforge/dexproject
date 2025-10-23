@@ -180,7 +180,7 @@ class TradeExecutor:
         """
         try:
             # Check circuit breakers before executing
-            if not self._can_trade():
+            if not self._can_trade(trade_type=decision.action):
                 logger.info(
                     f"[TRADE] Trade blocked for {token_symbol} - "
                     f"circuit breaker active"
@@ -868,7 +868,7 @@ class TradeExecutor:
     # CIRCUIT BREAKER CHECKS
     # =========================================================================
     
-    def _can_trade(self) -> bool:
+    def _can_trade(self, trade_type: str = 'BUY') -> bool:
         """
         Check if bot can execute a trade based on circuit breakers and limits.
         
@@ -920,12 +920,12 @@ class TradeExecutor:
             
             # Check account balance minimum
             min_balance = Decimal('100')  # Minimum $100 to trade
-            if self.account.current_balance_usd < min_balance:
-                logger.warning(
-                    f"[CB] Insufficient balance: "
-                    f"${self.account.current_balance_usd:.2f}"
-                )
-                return False
+            if trade_type in ['BUY', 'LONG']:
+                if self.account.current_balance_usd < min_balance:
+                    logger.warning(f"[CB] Insufficient balance for BUY")
+                    return False
+            else:
+                logger.debug(f"[CB] Balance check skipped for {trade_type}")
             
             return True
             
@@ -933,6 +933,14 @@ class TradeExecutor:
             logger.error(f"[CB] Error checking trade permission: {e}")
             return True  # Fail open if circuit breaker check fails
     
+
+
+
+
+
+
+
+
     def _get_portfolio_state(self, position_manager: Any) -> Dict[str, Any]:
         """
         Get current portfolio state for circuit breaker evaluation.

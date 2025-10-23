@@ -34,11 +34,6 @@ class IntelligenceLevel(IntEnum):
     AUTONOMOUS_10 = 10
 
 
-from dataclasses import dataclass, field
-from decimal import Decimal
-from datetime import datetime
-from typing import List, Optional
-
 @dataclass
 class MarketContext:
     """
@@ -166,38 +161,57 @@ class IntelligenceEngine(ABC):
         self.opportunity_threshold = self._calculate_opportunity_threshold()
         self.confidence_threshold = self._calculate_confidence_threshold()
         
+        self.logger.info(
+            f"Intelligence engine initialized: Level={intel_level}, "
+            f"Risk threshold={self.risk_threshold}, "
+            f"Opportunity threshold={self.opportunity_threshold}, "
+            f"Confidence threshold={self.confidence_threshold}"
+        )
+        
     def _calculate_risk_threshold(self) -> Decimal:
         """Calculate risk threshold based on intel level."""
-        if self.intel_level <= 3:
-            return Decimal('30')  # Very low risk tolerance
-        elif self.intel_level <= 6:
-            return Decimal('60')  # Moderate risk tolerance
-        elif self.intel_level <= 9:
-            return Decimal('80')  # High risk tolerance
-        else:
-            return Decimal('100')  # Autonomous - dynamic risk
+        try:
+            if self.intel_level <= 3:
+                return Decimal('30')  # Very low risk tolerance
+            elif self.intel_level <= 6:
+                return Decimal('60')  # Moderate risk tolerance
+            elif self.intel_level <= 9:
+                return Decimal('80')  # High risk tolerance
+            else:
+                return Decimal('100')  # Autonomous - dynamic risk
+        except Exception as e:
+            self.logger.error(f"Error calculating risk threshold: {e}", exc_info=True)
+            return Decimal('60')  # Safe default
     
     def _calculate_opportunity_threshold(self) -> Decimal:
         """Calculate opportunity threshold based on intel level."""
-        if self.intel_level <= 3:
-            return Decimal('80')  # Only very high opportunity
-        elif self.intel_level <= 6:
-            return Decimal('50')  # Moderate opportunity
-        elif self.intel_level <= 9:
-            return Decimal('30')  # Lower threshold
-        else:
-            return Decimal('20')  # Autonomous - considers all
+        try:
+            if self.intel_level <= 3:
+                return Decimal('80')  # Only very high opportunity
+            elif self.intel_level <= 6:
+                return Decimal('50')  # Moderate opportunity
+            elif self.intel_level <= 9:
+                return Decimal('30')  # Lower threshold
+            else:
+                return Decimal('20')  # Autonomous - considers all
+        except Exception as e:
+            self.logger.error(f"Error calculating opportunity threshold: {e}", exc_info=True)
+            return Decimal('50')  # Safe default
     
     def _calculate_confidence_threshold(self) -> Decimal:
         """Calculate confidence threshold based on intel level."""
-        if self.intel_level <= 3:
-            return Decimal('90')  # Very high confidence required
-        elif self.intel_level <= 6:
-            return Decimal('60')  # Moderate confidence
-        elif self.intel_level <= 9:
-            return Decimal('40')  # Lower confidence acceptable
-        else:
-            return Decimal('30')  # Autonomous - adaptive
+        try:
+            if self.intel_level <= 3:
+                return Decimal('90')  # Very high confidence required
+            elif self.intel_level <= 6:
+                return Decimal('60')  # Moderate confidence
+            elif self.intel_level <= 9:
+                return Decimal('40')  # Lower confidence acceptable
+            else:
+                return Decimal('30')  # Autonomous - adaptive
+        except Exception as e:
+            self.logger.error(f"Error calculating confidence threshold: {e}", exc_info=True)
+            return Decimal('60')  # Safe default
     
     @abstractmethod
     async def analyze_market(self, token_address: str) -> MarketContext:
@@ -232,6 +246,48 @@ class IntelligenceEngine(ABC):
         """
         pass
     
+    def update_market_context(self, market_context: MarketContext) -> None:
+        """
+        Update engine with latest market context for historical tracking.
+        
+        This method allows the intelligence engine to track market conditions
+        over time, enabling trend analysis, pattern recognition, and better
+        decision-making. Critical for Real Data Integration (Phase 4-5).
+        
+        Args:
+            market_context: Latest market conditions with real-time data
+        
+        Notes:
+            - Default implementation does nothing (base class behavior)
+            - Subclasses like IntelSliderEngine override to enable tracking
+            - Called by MarketAnalyzer after creating market context
+            - Enables Level 10 autonomous learning
+            - Non-blocking: errors are logged but don't stop execution
+        
+        Example:
+            >>> engine = IntelSliderEngine(intel_level=5)
+            >>> context = MarketContext(
+            ...     token_symbol='WETH',
+            ...     current_price=Decimal('2000'),
+            ...     volatility=Decimal('0.15')
+            ... )
+            >>> engine.update_market_context(context)
+            >>> # Engine now tracks this token's price history
+        """
+        try:
+            # Default implementation: do nothing
+            # Subclasses can override to add market tracking functionality
+            self.logger.debug(
+                f"[BASE] update_market_context called for {market_context.token_symbol} "
+                f"(base implementation - no tracking)"
+            )
+        except Exception as e:
+            # Catch any errors in logging to prevent crashes
+            self.logger.error(
+                f"[BASE] Error in update_market_context default implementation: {e}",
+                exc_info=True
+            )
+    
     def adjust_for_intel_level(self, base_decision: TradingDecision) -> TradingDecision:
         """
         Adjust decision based on intelligence level.
@@ -242,62 +298,101 @@ class IntelligenceEngine(ABC):
         Returns:
             Adjusted decision based on intel level
         """
-        decision = base_decision
-        
-        # Cautious levels (1-3): Reduce risk, increase safety
-        if self.intel_level <= 3:
-            decision.position_size_percent *= Decimal('0.5')  # Half position size
-            decision.use_private_relay = True  # Always use protection
-            decision.gas_strategy = 'standard'  # Don't compete on gas
+        try:
+            decision = base_decision
             
-            if decision.risk_score > 30:
-                decision.action = 'SKIP'
-                decision.primary_reasoning = (
-                    f"Intel Level {self.intel_level} (Ultra Cautious): "
-                    f"Risk score {decision.risk_score} exceeds threshold. "
-                    "Skipping trade for safety."
+            self.logger.debug(
+                f"[INTEL ADJUST] Adjusting decision for level {self.intel_level}: "
+                f"Action={decision.action}, Risk={decision.risk_score}"
+            )
+            
+            # Cautious levels (1-3): Reduce risk, increase safety
+            if self.intel_level <= 3:
+                decision.position_size_percent *= Decimal('0.5')  # Half position size
+                decision.use_private_relay = True  # Always use protection
+                decision.gas_strategy = 'standard'  # Don't compete on gas
+                
+                if decision.risk_score > 30:
+                    decision.action = 'SKIP'
+                    decision.primary_reasoning = (
+                        f"Intel Level {self.intel_level} (Ultra Cautious): "
+                        f"Risk score {decision.risk_score} exceeds threshold. "
+                        "Skipping trade for safety."
+                    )
+                    self.logger.info(
+                        f"[INTEL ADJUST] Ultra Cautious mode: Skipping trade due to "
+                        f"risk score {decision.risk_score} > 30"
+                    )
+            
+            # Balanced levels (4-6): Moderate adjustments
+            elif self.intel_level <= 6:
+                decision.position_size_percent *= Decimal('0.8')
+                if decision.risk_score > 70:
+                    decision.use_private_relay = True
+                
+                if decision.risk_score > 60:
+                    decision.gas_strategy = 'standard'
+                else:
+                    decision.gas_strategy = 'aggressive'
+                
+                self.logger.debug(
+                    f"[INTEL ADJUST] Balanced mode: Position size adjusted to "
+                    f"{decision.position_size_percent}%, Gas={decision.gas_strategy}"
                 )
-        
-        # Balanced levels (4-6): Moderate adjustments
-        elif self.intel_level <= 6:
-            decision.position_size_percent *= Decimal('0.8')
-            if decision.risk_score > 70:
-                decision.use_private_relay = True
             
-            if decision.risk_score > 60:
-                decision.gas_strategy = 'standard'
-            else:
+            # Aggressive levels (7-9): Push boundaries
+            elif self.intel_level <= 9:
+                decision.position_size_percent *= Decimal('1.2')  # Increase size
                 decision.gas_strategy = 'aggressive'
-        
-        # Aggressive levels (7-9): Push boundaries
-        elif self.intel_level <= 9:
-            decision.position_size_percent *= Decimal('1.2')  # Increase size
-            decision.gas_strategy = 'aggressive'
+                
+                # Only skip if extremely risky
+                if decision.risk_score > 90:
+                    decision.action = 'SKIP'
+                    decision.primary_reasoning = (
+                        f"Intel Level {self.intel_level} (Aggressive): "
+                        f"Even for aggressive trading, risk score {decision.risk_score} "
+                        "is too extreme."
+                    )
+                    self.logger.warning(
+                        f"[INTEL ADJUST] Aggressive mode: Skipping extremely risky trade "
+                        f"(risk score {decision.risk_score} > 90)"
+                    )
+                else:
+                    self.logger.debug(
+                        f"[INTEL ADJUST] Aggressive mode: Increasing position to "
+                        f"{decision.position_size_percent}%"
+                    )
             
-            # Only skip if extremely risky
-            if decision.risk_score > 90:
-                decision.action = 'SKIP'
-                decision.primary_reasoning = (
-                    f"Intel Level {self.intel_level} (Aggressive): "
-                    f"Even for aggressive trading, risk score {decision.risk_score} "
-                    "is too extreme."
-                )
-        
-        # Autonomous (10): Dynamic optimization
-        else:
-            # Use machine learning or advanced heuristics
-            decision = self._autonomous_optimization(decision)
-        
-        # Record intel adjustments
-        decision.intel_adjustments = {
-            'original_position_size': float(base_decision.position_size_percent),
-            'adjusted_position_size': float(decision.position_size_percent),
-            'risk_threshold_used': float(self.risk_threshold),
-            'opportunity_threshold_used': float(self.opportunity_threshold),
-            'confidence_threshold_used': float(self.confidence_threshold)
-        }
-        
-        return decision
+            # Autonomous (10): Dynamic optimization
+            else:
+                # Use machine learning or advanced heuristics
+                decision = self._autonomous_optimization(decision)
+            
+            # Record intel adjustments
+            decision.intel_adjustments = {
+                'original_position_size': float(base_decision.position_size_percent),
+                'adjusted_position_size': float(decision.position_size_percent),
+                'risk_threshold_used': float(self.risk_threshold),
+                'opportunity_threshold_used': float(self.opportunity_threshold),
+                'confidence_threshold_used': float(self.confidence_threshold),
+                'intel_level': int(self.intel_level)
+            }
+            
+            self.logger.info(
+                f"[INTEL ADJUST] Decision adjusted: "
+                f"Position {base_decision.position_size_percent}% → {decision.position_size_percent}%, "
+                f"Action={decision.action}"
+            )
+            
+            return decision
+            
+        except Exception as e:
+            self.logger.error(
+                f"[INTEL ADJUST] Error adjusting decision for intel level: {e}",
+                exc_info=True
+            )
+            # Return original decision if adjustment fails
+            return base_decision
     
     def _autonomous_optimization(self, decision: TradingDecision) -> TradingDecision:
         """
@@ -312,25 +407,45 @@ class IntelligenceEngine(ABC):
         Returns:
             Optimized decision
         """
-        # Placeholder for ML integration
-        # In production, this would:
-        # 1. Query historical performance data
-        # 2. Run ML models for prediction
-        # 3. Optimize based on personal trading patterns
-        # 4. Adapt to current market regime
-        
-        self.logger.info("Autonomous mode: Optimizing decision with advanced algorithms")
-        
-        # For now, make balanced adjustments
-        if decision.risk_score < 40 and decision.opportunity_score > 70:
-            decision.position_size_percent *= Decimal('1.5')
-            decision.gas_strategy = 'ultra_aggressive'
-            decision.primary_reasoning = (
-                "Autonomous AI: Exceptional opportunity detected with low risk. "
-                "Maximizing position based on historical patterns and current market regime."
+        try:
+            # Placeholder for ML integration
+            # In production, this would:
+            # 1. Query historical performance data
+            # 2. Run ML models for prediction
+            # 3. Optimize based on personal trading patterns
+            # 4. Adapt to current market regime
+            
+            self.logger.info(
+                "[AUTONOMOUS] Optimizing decision with advanced algorithms"
             )
-        
-        return decision
+            
+            # For now, make balanced adjustments
+            if decision.risk_score < 40 and decision.opportunity_score > 70:
+                decision.position_size_percent *= Decimal('1.5')
+                decision.gas_strategy = 'ultra_aggressive'
+                decision.primary_reasoning = (
+                    "Autonomous AI: Exceptional opportunity detected with low risk. "
+                    "Maximizing position based on historical patterns and current market regime."
+                )
+                self.logger.info(
+                    f"[AUTONOMOUS] Exceptional opportunity: Increasing position to "
+                    f"{decision.position_size_percent}% (Risk={decision.risk_score}, "
+                    f"Opportunity={decision.opportunity_score})"
+                )
+            else:
+                self.logger.debug(
+                    f"[AUTONOMOUS] Standard optimization applied "
+                    f"(Risk={decision.risk_score}, Opportunity={decision.opportunity_score})"
+                )
+            
+            return decision
+            
+        except Exception as e:
+            self.logger.error(
+                f"[AUTONOMOUS] Error in autonomous optimization: {e}",
+                exc_info=True
+            )
+            return decision
     
     def generate_thought_log(self, decision: TradingDecision) -> str:
         """
@@ -342,46 +457,68 @@ class IntelligenceEngine(ABC):
         Returns:
             Formatted thought log
         """
-        thoughts = []
-        
-        # Header
-        thoughts.append(f"=== AI Trading Decision - Intel Level {self.intel_level} ===")
-        thoughts.append(f"Token: {decision.token_symbol} ({decision.token_address[:10]}...)")
-        thoughts.append(f"Decision: {decision.action}")
-        thoughts.append("")
-        
-        # Risk Assessment
-        thoughts.append("[RISK ASSESSMENT]")
-        thoughts.append(f"Risk Score: {decision.risk_score}/100")
-        for factor in decision.risk_factors[:3]:
-            thoughts.append(f"  • {factor}")
-        thoughts.append("")
-        
-        # Opportunity Analysis
-        thoughts.append("[OPPORTUNITY ANALYSIS]")
-        thoughts.append(f"Opportunity Score: {decision.opportunity_score}/100")
-        for factor in decision.opportunity_factors[:3]:
-            thoughts.append(f"  • {factor}")
-        thoughts.append("")
-        
-        # Decision Reasoning
-        thoughts.append("[DECISION REASONING]")
-        thoughts.append(decision.primary_reasoning)
-        thoughts.append("")
-        
-        # Execution Strategy
-        thoughts.append("[EXECUTION STRATEGY]")
-        thoughts.append(f"Mode: {decision.execution_mode}")
-        thoughts.append(f"Position Size: {decision.position_size_percent}% of portfolio")
-        thoughts.append(f"Gas Strategy: {decision.gas_strategy}")
-        if decision.use_private_relay:
-            thoughts.append("MEV Protection: ENABLED (Private Relay)")
-        thoughts.append("")
-        
-        # Intel Level Impact
-        thoughts.append("[INTELLIGENCE ADJUSTMENTS]")
-        thoughts.append(f"Intel Level {self.intel_level} Impact:")
-        for key, value in decision.intel_adjustments.items():
-            thoughts.append(f"  • {key}: {value}")
-        
-        return "\n".join(thoughts)
+        try:
+            thoughts = []
+            
+            # Header
+            thoughts.append(f"=== AI Trading Decision - Intel Level {self.intel_level} ===")
+            thoughts.append(f"Token: {decision.token_symbol} ({decision.token_address[:10]}...)")
+            thoughts.append(f"Decision: {decision.action}")
+            thoughts.append(f"Confidence: {decision.overall_confidence}%")
+            thoughts.append("")
+            
+            # Risk Assessment
+            thoughts.append("[RISK ASSESSMENT]")
+            thoughts.append(f"Risk Score: {decision.risk_score}/100")
+            if decision.risk_factors:
+                for factor in decision.risk_factors[:3]:
+                    thoughts.append(f"  • {factor}")
+            else:
+                thoughts.append("  • No specific risk factors identified")
+            thoughts.append("")
+            
+            # Opportunity Analysis
+            thoughts.append("[OPPORTUNITY ANALYSIS]")
+            thoughts.append(f"Opportunity Score: {decision.opportunity_score}/100")
+            if decision.opportunity_factors:
+                for factor in decision.opportunity_factors[:3]:
+                    thoughts.append(f"  • {factor}")
+            else:
+                thoughts.append("  • No specific opportunities identified")
+            thoughts.append("")
+            
+            # Decision Reasoning
+            thoughts.append("[DECISION REASONING]")
+            thoughts.append(decision.primary_reasoning)
+            thoughts.append("")
+            
+            # Execution Strategy
+            thoughts.append("[EXECUTION STRATEGY]")
+            thoughts.append(f"Mode: {decision.execution_mode}")
+            thoughts.append(f"Position Size: {decision.position_size_percent}% of portfolio (${decision.position_size_usd:.2f})")
+            thoughts.append(f"Gas Strategy: {decision.gas_strategy}")
+            if decision.use_private_relay:
+                thoughts.append("MEV Protection: ENABLED (Private Relay)")
+            thoughts.append("")
+            
+            # Intel Level Impact
+            thoughts.append("[INTELLIGENCE ADJUSTMENTS]")
+            thoughts.append(f"Intel Level {self.intel_level} Impact:")
+            for key, value in decision.intel_adjustments.items():
+                thoughts.append(f"  • {key}: {value}")
+            
+            result = "\n".join(thoughts)
+            
+            self.logger.debug(
+                f"[THOUGHT LOG] Generated log for {decision.token_symbol}: "
+                f"{len(result)} characters"
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(
+                f"[THOUGHT LOG] Error generating thought log: {e}",
+                exc_info=True
+            )
+            return f"Error generating thought log for {decision.token_symbol}"
