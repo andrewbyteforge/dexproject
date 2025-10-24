@@ -512,12 +512,12 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
                 'name': account.name,
                 'current_balance_usd': float(account.current_balance_usd),
                 'initial_balance_usd': float(account.initial_balance_usd),
-                'total_pnl_usd': float(account.total_pnl_usd),
+                'total_pnl_usd': float(account.total_profit_loss_usd),
                 'total_trades': account.total_trades,
-                'successful_trades': account.successful_trades,
-                'failed_trades': account.failed_trades,
+                'successful_trades': account.winning_trades,
+                'failed_trades': account.losing_trades,
                 'win_rate': (
-                    float((account.successful_trades / account.total_trades) * 100)
+                    float((account.winning_trades / account.total_trades) * 100)
                     if account.total_trades > 0 else 0.0
                 ),
                 'is_active': account.is_active,
@@ -657,15 +657,15 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
                 return None
             
             return {
-                'metrics_id': str(metrics.metrics_id),
+                'metrics_id': str(metrics.metric_id),
                 'total_trades': metrics.total_trades,
                 'winning_trades': metrics.winning_trades,
                 'losing_trades': metrics.losing_trades,
                 'win_rate': float(metrics.win_rate),
                 'total_pnl_usd': float(metrics.total_pnl_usd),
                 'total_pnl_percent': float(metrics.total_pnl_percent),
-                'avg_win_usd': float(metrics.avg_win_usd),
-                'avg_loss_usd': float(metrics.avg_loss_usd),
+                'avg_win_usd': float(metrics.average_win_usd),
+                'avg_loss_usd': float(metrics.average_loss_usd),
                 'largest_win_usd': float(metrics.largest_win_usd),
                 'largest_loss_usd': float(metrics.largest_loss_usd),
                 'max_drawdown_percent': (

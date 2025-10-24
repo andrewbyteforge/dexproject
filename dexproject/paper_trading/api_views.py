@@ -191,9 +191,9 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
                 'name': account.name,
                 'balance': float(account.current_balance_usd),
                 'initial_balance': float(account.initial_balance_usd),
-                'total_pnl': float(account.total_pnl_usd),
-                'return_percent': float(account.total_return_percent),
-                'win_rate': float(account.win_rate),
+                'total_pnl': float(account.total_profit_loss_usd),
+                'return_percent': float(account.get_roi()),
+                'win_rate': float(account.get_win_rate()),
             },
             'positions': [],
             'summary': {
@@ -582,18 +582,18 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             'initial_balance': float(account.initial_balance_usd),
             'positions_value': float(positions_value),        # ✅ ADD THIS
             'portfolio_value': float(portfolio_value),         # ✅ ADD THIS
-            'total_pnl': float(account.total_pnl_usd),
+            'total_pnl': float(account.total_profit_loss_usd),
             'return_percent': return_percent,                  # ✅ NOW CORRECT
-            'win_rate': float(account.win_rate) if account.win_rate else 0,
+            'win_rate': float(account.get_win_rate()) if account.get_win_rate() else 0,
             'trades_24h': trades_24h_data['count'] or 0,
             'volume_24h': float(trades_24h_data['total_volume']) if trades_24h_data['total_volume'] else 0,
             'total_trades': account.total_trades,
-            'successful_trades': account.successful_trades,
-            'failed_trades': account.failed_trades,
+            'successful_trades': account.winning_trades,
+            'failed_trades': account.losing_trades,
             'timestamp': timezone.now().isoformat()
         }
         
-        logger.debug(f"Metrics fetched: portfolio=${portfolio_value:.2f}, pnl=${account.total_pnl_usd:.2f}")
+        logger.debug(f"Metrics fetched: portfolio=${portfolio_value:.2f}, pnl=${account.total_profit_loss_usd:.2f}")
         return JsonResponse(metrics)
         
     except Exception as e:
@@ -783,7 +783,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         if active_sessions.exists():
             latest_metrics = PaperPerformanceMetrics.objects.filter(
                 session__in=active_sessions
-            ).order_by('-calculated_at').first()
+            ).order_by('-created_at').first()
         
         if not latest_metrics:
             # Try to get any metrics for this account
@@ -791,7 +791,7 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
             if all_sessions.exists():
                 latest_metrics = PaperPerformanceMetrics.objects.filter(
                     session__in=all_sessions
-                ).order_by('-calculated_at').first()
+                ).order_by('-created_at').first()
         
         if latest_metrics:
             metrics_data = {
@@ -799,8 +799,8 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                 'max_drawdown': float(latest_metrics.max_drawdown_percent) if latest_metrics.max_drawdown_percent else 0,
                 'win_rate': float(latest_metrics.win_rate) if latest_metrics.win_rate else 0,
                 'profit_factor': float(latest_metrics.profit_factor) if latest_metrics.profit_factor else 0,
-                'average_win': float(latest_metrics.avg_win_usd) if latest_metrics.avg_win_usd else 0,
-                'average_loss': float(latest_metrics.avg_loss_usd) if latest_metrics.avg_loss_usd else 0,
+                'average_win': float(latest_metrics.average_win_usd) if latest_metrics.average_win_usd else 0,
+                'average_loss': float(latest_metrics.average_loss_usd) if latest_metrics.average_loss_usd else 0,
                 'best_trade': float(latest_metrics.largest_win_usd) if latest_metrics.largest_win_usd else 0,
                 'worst_trade': float(latest_metrics.largest_loss_usd) if latest_metrics.largest_loss_usd else 0,
                 'total_trades': latest_metrics.total_trades,
@@ -808,46 +808,46 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                 'losing_trades': latest_metrics.losing_trades,
                 'total_pnl_usd': float(latest_metrics.total_pnl_usd),
                 'total_pnl_percent': float(latest_metrics.total_pnl_percent),
-                'avg_execution_time_ms': latest_metrics.avg_execution_time_ms,
-                'total_gas_fees_usd': float(latest_metrics.total_gas_fees_usd),
-                'avg_slippage_percent': float(latest_metrics.avg_slippage_percent),
-                'fast_lane_trades': latest_metrics.fast_lane_trades,
-                'smart_lane_trades': latest_metrics.smart_lane_trades,
-                'fast_lane_win_rate': float(latest_metrics.fast_lane_win_rate),
-                'smart_lane_win_rate': float(latest_metrics.smart_lane_win_rate),
+                # REMOVED IN MIGRATION:                 'avg_execution_time_ms': latest_metrics.avg_execution_time_ms,
+                # REMOVED IN MIGRATION:                 'total_gas_fees_usd': float(latest_metrics.total_gas_fees_usd),
+                # REMOVED IN MIGRATION:                 'avg_slippage_percent': float(latest_metrics.avg_slippage_percent),
+                # REMOVED IN MIGRATION:                 'fast_lane_trades': latest_metrics.fast_lane_trades,
+                # REMOVED IN MIGRATION:                 'smart_lane_trades': latest_metrics.smart_lane_trades,
+                # REMOVED IN MIGRATION:                 'fast_lane_win_rate': float(latest_metrics.fast_lane_win_rate),
+                # REMOVED IN MIGRATION:                 'smart_lane_win_rate': float(latest_metrics.smart_lane_win_rate),
                 'period_start': latest_metrics.period_start.isoformat(),
                 'period_end': latest_metrics.period_end.isoformat(),
-                'calculated_at': latest_metrics.calculated_at.isoformat(),
+                'calculated_at': latest_metrics.created_at.isoformat(),
             }
         else:
             # Return default metrics if none exist
             metrics_data = {
                 'sharpe_ratio': 0,
                 'max_drawdown': 0,
-                'win_rate': float(account.win_rate) if account.win_rate else 0,
+                'win_rate': float(account.get_win_rate()) if account.get_win_rate() else 0,
                 'profit_factor': 0,
                 'average_win': 0,
                 'average_loss': 0,
                 'best_trade': 0,
                 'worst_trade': 0,
                 'total_trades': account.total_trades,
-                'winning_trades': account.successful_trades,
-                'losing_trades': account.failed_trades,
-                'total_pnl_usd': float(account.total_pnl_usd),
-                'total_pnl_percent': float(account.total_return_percent),
+                'winning_trades': account.winning_trades,
+                'losing_trades': account.losing_trades,
+                'total_pnl_usd': float(account.total_profit_loss_usd),
+                'total_pnl_percent': float(account.get_roi()),
                 'message': 'No performance metrics calculated yet'
             }
         
         # Add account-level stats
         metrics_data['account_stats'] = {
-            'total_pnl': float(account.total_pnl_usd),
-            'total_return': float(account.total_return_percent),
+            'total_pnl': float(account.total_profit_loss_usd),
+            'total_return': float(account.get_roi()),
             'current_balance': float(account.current_balance_usd),
             'initial_balance': float(account.initial_balance_usd),
             'total_trades': account.total_trades,
-            'successful_trades': account.successful_trades,
-            'failed_trades': account.failed_trades,
-            'win_rate': float(account.win_rate) if account.win_rate else 0,
+            'successful_trades': account.winning_trades,
+            'failed_trades': account.losing_trades,
+            'win_rate': float(account.get_win_rate()) if account.get_win_rate() else 0,
         }
         
         logger.debug(f"Performance metrics fetched")

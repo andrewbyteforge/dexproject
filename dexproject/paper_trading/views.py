@@ -339,9 +339,9 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
                 'thought_id': str(thought.thought_id),
                 'decision_type': thought.decision_type,
                 'token_symbol': thought.token_symbol,
-                'confidence_percent': safe_decimal(thought.confidence_percent, '0'),
+                'confidence_percent': safe_decimal(thought.confidence_level, '0'),
                 'created_at': thought.created_at,
-                'thought_content': thought.primary_reasoning[:150] if thought.primary_reasoning else "Analyzing market conditions...",
+                'thought_content': thought.reasoning[:150] if thought.reasoning else "Analyzing market conditions...",
                 '_original': thought
             })
         
@@ -351,13 +351,13 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             try:
                 performance = PaperPerformanceMetrics.objects.filter(
                     session=active_session
-                ).order_by('-calculated_at').first()
+                ).order_by('-created_at').first()
             except Exception as e:
                 logger.warning(f"Error fetching performance metrics: {e}")
         
         # Calculate summary statistics with safe decimal handling
         total_trades = account.total_trades or 0
-        successful_trades = account.successful_trades or 0
+        winning_trades = account.winning_trades or 0
         
         # Get 24h stats with error handling
         time_24h_ago = timezone.now() - timedelta(hours=24)
@@ -383,14 +383,14 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'performance': performance,
             'recent_thoughts': formatted_thoughts,
             'total_trades': total_trades,
-            'successful_trades': successful_trades,
-            'win_rate': safe_decimal((successful_trades / total_trades * 100) if total_trades > 0 else 0),
+            'successful_trades': winning_trades,
+            'win_rate': safe_decimal((winning_trades / total_trades * 100) if total_trades > 0 else 0),
             'trades_24h': trades_24h.get('count', 0),
             'volume_24h': safe_decimal(trades_24h.get('total_volume', 0)),
             'current_balance': safe_decimal(account.current_balance_usd),
             'initial_balance': safe_decimal(account.initial_balance_usd),
-            'total_pnl': safe_decimal(account.total_pnl_usd),
-            'return_percent': safe_decimal(account.total_return_percent),
+            'total_pnl': safe_decimal(account.total_profit_loss_usd),
+            'return_percent': safe_decimal(account.get_roi()),
             'user': user,
         }
         
@@ -1084,7 +1084,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
         try:
             latest_metrics = PaperPerformanceMetrics.objects.filter(
                 session__account=account
-            ).order_by('-calculated_at').first()
+            ).order_by('-created_at').first()
         except Exception as e:
             logger.error(f"Error fetching performance metrics: {e}")
             latest_metrics = None
@@ -1164,8 +1164,8 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'win_rate': float(win_rate),
             'profit_factor': 1.5 if win_rate > 50 else 0.8,
             'total_trades': total_trades,
-            'avg_profit': float(safe_decimal(account.total_pnl_usd) / completed_trades) if completed_trades > 0 else 0,
-            'avg_loss': float(abs(safe_decimal(account.total_pnl_usd)) / failed_trades) if failed_trades > 0 else 0,
+            'avg_profit': float(safe_decimal(account.total_profit_loss_usd) / completed_trades) if completed_trades > 0 else 0,
+            'avg_loss': float(abs(safe_decimal(account.total_profit_loss_usd)) / failed_trades) if failed_trades > 0 else 0,
             'max_drawdown': 15.5,  # Placeholder
             
             # Period performance
@@ -1173,7 +1173,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'today_trades': today_trades_count,
             'week_pnl': 0,
             'week_trades': week_trades_count,
-            'month_pnl': float(safe_decimal(account.total_pnl_usd or 0)),
+            'month_pnl': float(safe_decimal(account.total_profit_loss_usd or 0)),
             'month_trades': total_trades,
             
             # Chart data
@@ -1199,8 +1199,8 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'best_hours': [],
             
             # Account metrics with safe decimals
-            'account_pnl': float(safe_decimal(account.total_pnl_usd or 0)),
-            'account_return': float(safe_decimal(account.total_return_percent or 0)),
+            'account_pnl': float(safe_decimal(account.total_profit_loss_usd or 0)),
+            'account_return': float(safe_decimal(account.get_roi() or 0)),
         }
         
         logger.info(f"Successfully loaded analytics for account {account.account_id}")
