@@ -388,7 +388,10 @@ class EnhancedPaperTradingBot:
                 "resumed_at": timezone.now().isoformat()
             }
             
-            self.session.config_snapshot = json_safe(config_snapshot)
+            # Store config in metadata instead of config_snapshot
+            if not self.session.metadata:
+                self.session.metadata = {}
+            self.session.metadata.update(json_safe(config_snapshot))
             self.session.save()
             
         else:
@@ -401,12 +404,19 @@ class EnhancedPaperTradingBot:
             
             for old_session in old_sessions:
                 old_session.status = 'STOPPED'
-                old_session.ended_at = timezone.now()
-                old_session.ending_balance_usd = self.account.current_balance_usd
-                old_session.session_pnl_usd = (
-                    self.account.current_balance_usd -
-                    old_session.starting_balance_usd
-                )
+                old_session.stopped_at = timezone.now()
+                
+                # Store ending balance and P&L in metadata
+                if not old_session.metadata:
+                    old_session.metadata = {}
+                    
+                old_session.metadata['ending_balance_usd'] = float(self.account.current_balance_usd)
+                
+                # Calculate P&L using starting balance from metadata
+                starting_balance = old_session.metadata.get('starting_balance_usd', 0)
+                session_pnl = float(self.account.current_balance_usd) - starting_balance
+                old_session.metadata['session_pnl_usd'] = session_pnl
+                
                 old_session.save()
                 logger.info(
                     f"[SESSION] Closed old session from "
@@ -436,9 +446,11 @@ class EnhancedPaperTradingBot:
             self.session = PaperTradingSession.objects.create(
                 account=self.account,
                 status="RUNNING",
-                starting_balance_usd=self.account.current_balance_usd,
-                name=session_name,
-                config_snapshot=safe_snapshot,
+                metadata={  # Store everything in metadata
+                    'session_name': session_name,
+                    'starting_balance_usd': float(self.account.current_balance_usd),
+                    **safe_snapshot  # Merge config into metadata
+                }
             )
             logger.info(
                 f"[SESSION] Created new session for today: {self.session.session_id}"
@@ -810,23 +822,22 @@ class EnhancedPaperTradingBot:
                 import os
                 os._exit(0)
         
-        threading.Thread(target=force_exit, daemon=True).start()
-    
-    # =========================================================================
-    # CLEANUP
-    # =========================================================================
-    
-    def _cleanup(self):
-        """Clean up on exit."""
         try:
             if self.session:
                 self.session.status = 'STOPPED'
-                self.session.ended_at = timezone.now()
-                self.session.ending_balance_usd = self.account.current_balance_usd
-                self.session.session_pnl_usd = (
-                    self.account.current_balance_usd -
-                    self.session.starting_balance_usd
-                )
+                self.session.stopped_at = timezone.now()
+                
+                # Store ending balance and P&L in metadata
+                if not self.session.metadata:
+                    self.session.metadata = {}
+                    
+                self.session.metadata['ending_balance_usd'] = float(self.account.current_balance_usd)
+                
+                # Calculate P&L using starting balance from metadata
+                starting_balance = self.session.metadata.get('starting_balance_usd', 0)
+                session_pnl = float(self.account.current_balance_usd) - starting_balance
+                self.session.metadata['session_pnl_usd'] = session_pnl
+                
                 self.session.save()
             
             # Log final TX Manager stats if enabled

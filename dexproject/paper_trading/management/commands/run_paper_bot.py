@@ -162,27 +162,13 @@ class Command(BaseCommand):
         self._display_configuration(account, options)
         
         # ====================================================================
-        # CREATE SESSION FOR TRACKING
+        # NOTE: Session will be created by the bot during initialization
         # ====================================================================
         session_name = options['session_name'] or f'Session_{timezone.now().strftime("%Y%m%d_%H%M%S")}'
         
-        # Create a trading session for better tracking
-        session = PaperTradingSession.objects.create(
-            account=account,
-            name=session_name,
-            status='STARTING',
-            starting_balance_usd=account.current_balance_usd,
-            config_snapshot={
-                'intel_level': options['intel'],
-                'tick_interval': options['override_tick_interval'],
-                'show_thoughts': options['show_thoughts'],
-                'mode': 'background' if options['background'] else 'direct'
-            }
-        )
-        
         self.stdout.write(
             self.style.SUCCESS(
-                f'📝 Created trading session: {session.name} (ID: {session.session_id})'
+                f'📝 Bot will create session: {session_name}'
             )
         )
         
@@ -201,127 +187,173 @@ class Command(BaseCommand):
                 )
                 
                 # Start the Celery task
-                task = run_paper_trading_bot.delay(
-                    session_id=str(session.session_id),
-                    user_id=account.user.id,
+                task = run_paper_trading_bot.delay(  # type: ignore[attr-defined]
+                    account_name=account.name,
+                    intel_level=options['intel'],
+                    user_id=account.user.pk,  # Use .pk for Pylance compatibility
                     runtime_minutes=options['runtime_minutes']
                 )
                 
-                # Store task ID in session
-                session.metadata = session.metadata or {}
-                session.metadata['celery_task_id'] = task.id
-                session.save()
-                
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f'✅ Bot started in background with task ID: {task.id}\n'
-                        f'   Session ID: {session.session_id}\n'
-                        f'   Use "celery -A dexproject inspect active" to monitor\n'
-                        f'   Use API endpoints to stop the bot'
+                        f'✅ Bot started in background (Task ID: {task.id})'
+                    )
+                )
+                self.stdout.write(
+                    self.style.WARNING(
+                        '\n💡 Check status with: python manage.py paper_status'
                     )
                 )
                 
             except ImportError:
                 self.stdout.write(
                     self.style.ERROR(
-                        '❌ Celery tasks not available. Running in direct mode instead.'
+                        '❌ Celery not available. Run in direct mode instead.'
                     )
                 )
-                options['background'] = False
+                return
             except Exception as e:
+                logger.exception("Failed to start background bot")
                 self.stdout.write(
-                    self.style.ERROR(
-                        f'❌ Failed to start background task: {e}\n'
-                        f'   Running in direct mode instead.'
-                    )
+                    self.style.ERROR(f'❌ Failed to start background bot: {e}')
                 )
-                options['background'] = False
-        
-        if not options['background']:
-            # Run directly (current behavior)
+                return
+        else:
+            # Run directly in foreground
+            bot = None  # Initialize to avoid 'possibly unbound' warning
             try:
                 self.stdout.write(
-                    self.style.SUCCESS(
-                        f'🤖 Initializing bot for account: {account.name}'
+                    self.style.WARNING(
+                        '\n🚀 Starting bot in DIRECT mode (foreground)...'
+                    )
+                )
+                self.stdout.write(
+                    self.style.WARNING(
+                        '   Press Ctrl+C to stop the bot gracefully\n'
                     )
                 )
                 
-                # Update session status
-                session.status = 'RUNNING'
-                session.save()
-                
-                # Create and initialize bot
+                # Initialize the bot with correct parameters
                 bot = EnhancedPaperTradingBot(
-                    account.pk,  # First positional argument
-                    options['intel']  # Second positional argument
+                    account_name=account.name,
+                    intel_level=options['intel'],
+                    use_real_prices=True,
+                    chain_id=84532  # Base Sepolia
                 )
                 
-                # Store session reference in bot
-                bot.session = session
-                
-                # Override tick interval if specified
+                # Set tick interval if overridden
                 if options['override_tick_interval']:
                     bot.tick_interval = options['override_tick_interval']
-                    self.stdout.write(
-                        self.style.WARNING(
-                            f'⚠️  Overriding tick interval to {bot.tick_interval}s'
-                        )
-                    )
                 
-                # Initialize the bot
+                # Initialize the bot (this will load account and create session)
                 if not bot.initialize():
                     self.stdout.write(self.style.ERROR('❌ Bot initialization failed'))
-                    session.status = 'ERROR'
-                    session.save()
                     return
                 
-                # Display final status
-                self.stdout.write(self.style.SUCCESS('✅ Bot initialized successfully'))
+                # Get the session that bot created
+                session = bot.session
                 
-                # Show AI thoughts in console if requested
-                if options['show_thoughts']:
-                    self.stdout.write(
-                        self.style.WARNING(
-                            '👁️  AI thought process will be displayed in console'
-                        )
-                    )
-                    bot.display_thoughts = True
-                
-                # Start bot
-                self.stdout.write(
-                    self.style.NOTICE(
-                        '\n🏃 Bot is running... Press Ctrl+C to stop\n'
-                    )
-                )
-                
+                # Run the bot (this blocks until stopped)
                 bot.run()
                 
-            except KeyboardInterrupt:
-                self.stdout.write('\n\n🛑 Shutting down bot...')
+                # Get final session state
+                session = bot.session
+                account = bot.account
                 
-                # Update session status
-                if session:
+                # Update session when done
+                if session and account:
                     session.status = 'STOPPED'
-                    session.ended_at = timezone.now()
-                    session.ending_balance_usd = account.current_balance_usd
-                    session.session_pnl_usd = account.current_balance_usd - session.starting_balance_usd
-                    session.save()
-                
-                if 'bot' in locals():
-                    bot.cleanup()
+                    session.stopped_at = timezone.now()
                     
-                self.stdout.write(self.style.SUCCESS('✅ Bot stopped gracefully'))
+                    # Store ending balance in metadata
+                    if session.metadata and 'ending_balance_usd' not in session.metadata:
+                        session.metadata['ending_balance_usd'] = float(account.current_balance_usd)
+                    
+                    # Calculate session P&L
+                    starting_balance = Decimal(str(session.metadata.get('starting_balance_usd', 0)))
+                    session_pnl = account.current_balance_usd - starting_balance
+                    if session.metadata:
+                        session.metadata['session_pnl_usd'] = float(session_pnl)
+                    
+                    session.save(update_fields=['status', 'stopped_at', 'metadata'])
+                
+                # Display final stats
+                if session and account:
+                    # Calculate session P&L
+                    starting_balance = Decimal(str(session.metadata.get('starting_balance_usd', 0)))
+                    session_pnl = account.current_balance_usd - starting_balance
+                    
+                    # Get duration safely
+                    duration = getattr(session, 'duration_seconds', None)
+                    duration_display = f"{duration}s" if duration else "N/A"
+                    
+                    self.stdout.write('\n' + '=' * 60)
+                    self.stdout.write(
+                        self.style.SUCCESS('✅ BOT STOPPED SUCCESSFULLY')
+                    )
+                    self.stdout.write('=' * 60)
+                    self.stdout.write(f"  Session Duration : {duration_display}")
+                    self.stdout.write(f"  Total Trades     : {session.total_trades}")
+                    self.stdout.write(f"  Successful       : {session.successful_trades}")
+                    self.stdout.write(f"  Failed           : {session.failed_trades}")
+                    self.stdout.write(
+                        f"  Session P&L      : ${session_pnl:,.2f}"
+                    )
+                    self.stdout.write(
+                        f"  Final Balance    : ${account.current_balance_usd:,.2f}"
+                    )
+                    self.stdout.write('=' * 60 + '\n')
+                
+            except KeyboardInterrupt:
+                self.stdout.write('\n')
+                self.stdout.write(
+                    self.style.WARNING('⏸️  Bot interrupted by user...')
+                )
+                
+                # Get session and account from bot if bot exists
+                session = None
+                account = None
+                if bot and hasattr(bot, 'session'):
+                    session = bot.session
+                if bot and hasattr(bot, 'account'):
+                    account = bot.account
+                
+                # Update session status on interrupt
+                if session and account:
+                    session.status = 'STOPPED'
+                    session.stopped_at = timezone.now()
+                    
+                    # Store ending balance in metadata
+                    if session.metadata:
+                        session.metadata['ending_balance_usd'] = float(account.current_balance_usd)
+                        
+                        # Calculate session P&L
+                        starting_balance = Decimal(str(session.metadata.get('starting_balance_usd', 0)))
+                        session_pnl = account.current_balance_usd - starting_balance
+                        session.metadata['session_pnl_usd'] = float(session_pnl)
+                    
+                    session.save(update_fields=['status', 'stopped_at', 'metadata'])
+                    
+                self.stdout.write(
+                    self.style.SUCCESS('✅ Bot stopped gracefully')
+                )
                 
             except Exception as e:
-                self.stdout.write(self.style.ERROR(f'❌ Bot error: {e}'))
-                logger.exception("Bot crashed with exception")
+                logger.exception("Bot execution failed")
+                self.stdout.write(
+                    self.style.ERROR(f'❌ Bot error: {e}')
+                )
                 
                 # Update session status on error
+                session = None
+                if bot and hasattr(bot, 'session'):
+                    session = bot.session
+                    
                 if session:
                     session.status = 'ERROR'
                     session.error_message = str(e)
-                    session.ended_at = timezone.now()
-                    session.save()
+                    session.stopped_at = timezone.now()
+                    session.save(update_fields=['status', 'error_message', 'stopped_at'])
     
     def _display_banner(self, intel_level: int):
         """Display the startup banner with Intel level visualization."""
@@ -345,7 +377,7 @@ class Command(BaseCommand):
                 self.stdout.write(f'\nINTELLIGENCE LEVEL: {icon}  Level {intel_level}: {name} - {desc}')
                 break
     
-    def _get_or_create_account(self, options: dict) -> PaperTradingAccount:
+    def _get_or_create_account(self, options: dict) -> PaperTradingAccount | None:
         """
         Get existing account or create a new one.
         
@@ -461,11 +493,11 @@ class Command(BaseCommand):
         
         # Show execution mode
         if options['background']:
-            self.stdout.write(f'  EXECUTION MODE  : Background (Celery)')
+            self.stdout.write('  EXECUTION MODE  : Background (Celery)')
             if options['runtime_minutes']:
                 self.stdout.write(f'  RUNTIME LIMIT   : {options["runtime_minutes"]} minutes')
         else:
-            self.stdout.write(f'  EXECUTION MODE  : Direct (Foreground)')
+            self.stdout.write('  EXECUTION MODE  : Direct (Foreground)')
         
         # Show what the Intel level controls
         intel_config = self._get_intel_configuration(options['intel'])
