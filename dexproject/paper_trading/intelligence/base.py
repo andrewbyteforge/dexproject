@@ -1,671 +1,524 @@
 """
-Paper Trading Base Models
+Enhanced Intelligence Engine Base for Paper Trading Bot
 
-Core models for paper trading infrastructure including accounts, trades,
-positions, and basic configuration. These are the fundamental building blocks
-for the paper trading system.
+This module provides the core intelligence infrastructure with separated
+concerns for better maintainability and extensibility.
 
-File: dexproject/paper_trading/models/base.py
+File: dexproject/paper_trading/intelligence/base.py
 """
 
-from django.db import models
-from django.contrib.auth.models import User
-from django.utils import timezone
-from decimal import Decimal
-import uuid
 import logging
-from typing import Optional
+from abc import ABC, abstractmethod
+from decimal import Decimal
+from typing import Dict, Any, Optional, List, Tuple
+from dataclasses import dataclass, field
+from enum import IntEnum
+from datetime import datetime
+import uuid
 
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# CORE PAPER TRADING MODELS
-# =============================================================================
-
-class PaperTradingAccount(models.Model):
-    """
-    Virtual trading account for paper trading.
+class IntelligenceLevel(IntEnum):
+    """Intelligence level settings for the bot."""
     
-    Each user can have multiple paper trading accounts to test different
-    strategies without risking real funds.
-    
-    Attributes:
-        account_id: Unique identifier (UUID)
-        user: Owner of the account
-        name: Account name for identification
-        description: Optional account description
-        initial_balance_usd: Starting virtual balance
-        current_balance_usd: Current virtual balance
-        is_active: Whether account is active
-        created_at: Account creation timestamp
-        last_activity: Last activity timestamp
-        total_trades: Total number of trades executed
-        winning_trades: Number of profitable trades
-        losing_trades: Number of losing trades
-        total_profit_loss_usd: Total P&L in USD
-    """
-    
-    # Identity
-    account_id = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
-        help_text="Unique account identifier"
-    )
-    
-    user = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='paper_accounts',
-        help_text="Account owner"
-    )
-    
-    name = models.CharField(
-        max_length=100,
-        help_text="Account name"
-    )
-    
-    description = models.TextField(
-        blank=True,
-        help_text="Account description"
-    )
-    
-    # Balance tracking
-    initial_balance_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        default=Decimal('10000.00'),
-        help_text="Starting virtual balance in USD"
-    )
-    
-    current_balance_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        help_text="Current virtual balance in USD"
-    )
-    
-    # Status
-    is_active = models.BooleanField(
-        default=True,
-        help_text="Whether account is active"
-    )
-    
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Account creation timestamp"
-    )
-    
-    last_activity = models.DateTimeField(
-        auto_now=True,
-        help_text="Last activity timestamp"
-    )
-    
-    # Statistics
-    total_trades = models.IntegerField(
-        default=0,
-        help_text="Total number of trades"
-    )
-    
-    winning_trades = models.IntegerField(
-        default=0,
-        help_text="Number of winning trades"
-    )
-    
-    losing_trades = models.IntegerField(
-        default=0,
-        help_text="Number of losing trades"
-    )
-    
-    total_profit_loss_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Total profit/loss in USD"
-    )
-    
-    class Meta:
-        """Meta configuration."""
-        db_table = 'paper_trading_accounts'
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['user', 'is_active']),
-            models.Index(fields=['created_at']),
-        ]
-        verbose_name = 'Paper Trading Account'
-        verbose_name_plural = 'Paper Trading Accounts'
-    
-    def __str__(self) -> str:
-        """String representation."""
-        return f"{self.name} ({self.user.username})"
-    
-    def get_win_rate(self) -> Decimal:
-        """
-        Calculate win rate percentage.
-        
-        Returns:
-            Win rate as percentage (0-100)
-        """
-        try:
-            if self.total_trades == 0:
-                return Decimal('0')
-            win_rate = (Decimal(self.winning_trades) / Decimal(self.total_trades)) * Decimal('100')
-            return win_rate.quantize(Decimal('0.01'))
-        except Exception as e:
-            logger.error(f"Error calculating win rate for account {self.account_id}: {e}")
-            return Decimal('0')
-    
-    def get_roi(self) -> Decimal:
-        """
-        Calculate return on investment percentage.
-        
-        Returns:
-            ROI as percentage
-        """
-        try:
-            if self.initial_balance_usd == 0:
-                return Decimal('0')
-            roi = (self.total_profit_loss_usd / self.initial_balance_usd) * Decimal('100')
-            return roi.quantize(Decimal('0.01'))
-        except Exception as e:
-            logger.error(f"Error calculating ROI for account {self.account_id}: {e}")
-            return Decimal('0')
+    ULTRA_CAUTIOUS_1 = 1
+    ULTRA_CAUTIOUS_2 = 2
+    ULTRA_CAUTIOUS_3 = 3
+    BALANCED_4 = 4
+    BALANCED_5 = 5
+    BALANCED_6 = 6
+    AGGRESSIVE_7 = 7
+    AGGRESSIVE_8 = 8
+    AGGRESSIVE_9 = 9
+    AUTONOMOUS_10 = 10
 
 
-class PaperTrade(models.Model):
+@dataclass
+class MarketContext:
     """
-    Individual simulated trade record.
-    
-    Stores all simulated trades with realistic execution details including
-    gas costs, slippage, timing, and execution status.
-    
-    Attributes:
-        trade_id: Unique identifier (UUID)
-        account: Associated trading account
-        trade_type: Type of trade (buy/sell/swap)
-        token_in_address: Input token contract address
-        token_in_symbol: Input token symbol
-        token_out_address: Output token contract address
-        token_out_symbol: Output token symbol
-        amount_in: Input amount in wei
-        amount_in_usd: Input amount in USD
-        expected_amount_out: Expected output amount in wei
-        actual_amount_out: Actual output amount in wei
-        simulated_gas_price_gwei: Simulated gas price
-        simulated_gas_used: Simulated gas units used
-        simulated_gas_cost_usd: Simulated gas cost in USD
-        simulated_slippage_percent: Simulated slippage percentage
-        created_at: Trade creation timestamp
-        executed_at: Trade execution timestamp
-        execution_time_ms: Simulated execution time in milliseconds
-        status: Current trade status
-        error_message: Error message if failed
-        mock_tx_hash: Simulated transaction hash
-        mock_block_number: Simulated block number
-        strategy_name: Strategy that generated this trade
-        metadata: Additional context (AI decisions, etc.)
+    Complete market context for decision making.
+    Combines token-level market data and network-level intelligence metrics.
     """
     
-    TRADE_STATUS = (
-        ('pending', 'Pending'),
-        ('executing', 'Executing'),
-        ('completed', 'Completed'),
-        ('failed', 'Failed'),
-        ('cancelled', 'Cancelled'),
-    )
+    # === Token-Level Data ===
+    token_symbol: str
+    token_address: Optional[str] = None
+    current_price: Decimal = Decimal("0")
+    price_24h_ago: Decimal = Decimal("0")
+    volume_24h: Decimal = Decimal("0")
+    liquidity_usd: Decimal = Decimal("0")
+    holder_count: int = 0
+    market_cap: Decimal = Decimal("0")
+    volatility: Decimal = Decimal("0")
+    trend: str = "neutral"
+    momentum: Decimal = Decimal("0")
+    support_levels: List[Decimal] = field(default_factory=list)
+    resistance_levels: List[Decimal] = field(default_factory=list)
+
+    # === Network Conditions ===
+    gas_price_gwei: Decimal = Decimal("0")
+    network_congestion: float = 0.0  # 0-100
+    pending_tx_count: int = 0
+
+    # === MEV Environment ===
+    mev_threat_level: float = 0.0  # 0-100
+    sandwich_risk: float = 0.0  # 0-100
+    frontrun_probability: float = 0.0  # 0-100
+
+    # === Competition ===
+    competing_bots_detected: int = 0
+    average_bot_gas_price: Decimal = Decimal("0")
+    bot_success_rate: float = 0.0  # 0-100
+
+    # === Liquidity ===
+    pool_liquidity_usd: Decimal = Decimal("0")
+    expected_slippage: Decimal = Decimal("0")
+    liquidity_depth_score: float = 0.0  # 0-100
+
+    # === Market State ===
+    volatility_index: float = 0.0  # 0-100
+    chaos_event_detected: bool = False
+    trend_direction: str = "neutral"
+    volume_24h_change: Decimal = Decimal("0")
+
+    # === Historical Data ===
+    recent_failures: int = 0
+    success_rate_1h: float = 0.0
+    average_profit_1h: Decimal = Decimal("0")
+
+    # === Metadata ===
+    timestamp: datetime = field(default_factory=datetime.now)
+    confidence_in_data: float = 100.0  # 0-100
+
+
+@dataclass
+class TradingDecision:
+    """Complete trading decision with reasoning."""
     
-    TRADE_TYPES = (
-        ('buy', 'Buy'),
-        ('sell', 'Sell'),
-        ('swap', 'Swap'),
-    )
+    # Core decision
+    action: str  # 'BUY', 'SELL', 'HOLD', 'SKIP'
+    token_address: str
+    token_symbol: str
     
-    # Identity
-    trade_id = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
-        help_text="Unique trade identifier"
-    )
+    # Sizing and risk
+    position_size_percent: Decimal
+    position_size_usd: Decimal
+    stop_loss_percent: Optional[Decimal]
+    take_profit_targets: List[Decimal]
     
-    account = models.ForeignKey(
-        PaperTradingAccount,
-        on_delete=models.CASCADE,
-        related_name='trades',
-        help_text="Associated account"
-    )
+    # Execution strategy
+    execution_mode: str  # 'FAST_LANE', 'SMART_LANE', 'HYBRID'
+    use_private_relay: bool
+    gas_strategy: str  # 'standard', 'aggressive', 'ultra_aggressive'
+    max_gas_price_gwei: Decimal
     
-    # Trade details
-    trade_type = models.CharField(
-        max_length=10,
-        choices=TRADE_TYPES,
-        help_text="Type of trade"
-    )
+    # Confidence and reasoning
+    overall_confidence: Decimal  # 0-100
+    risk_score: Decimal  # 0-100
+    opportunity_score: Decimal  # 0-100
     
-    token_in_address = models.CharField(
-        max_length=42,
-        help_text="Input token address"
-    )
+    # Detailed reasoning
+    primary_reasoning: str
+    risk_factors: List[str]
+    opportunity_factors: List[str]
+    mitigation_strategies: List[str]
     
-    token_in_symbol = models.CharField(
-        max_length=20,
-        help_text="Input token symbol"
-    )
-    
-    token_out_address = models.CharField(
-        max_length=42,
-        help_text="Output token address"
-    )
-    
-    token_out_symbol = models.CharField(
-        max_length=20,
-        help_text="Output token symbol"
-    )
-    
-    # Amounts
-    amount_in = models.DecimalField(
-        max_digits=36,
-        decimal_places=18,
-        help_text="Amount in (wei)"
-    )
-    
-    amount_in_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        help_text="Amount in USD"
-    )
-    
-    expected_amount_out = models.DecimalField(
-        max_digits=36,
-        decimal_places=18,
-        help_text="Expected output amount"
-    )
-    
-    actual_amount_out = models.DecimalField(
-        max_digits=36,
-        decimal_places=18,
-        null=True,
-        blank=True,
-        help_text="Actual output amount"
-    )
-    
-    # Execution details
-    simulated_gas_price_gwei = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        help_text="Simulated gas price"
-    )
-    
-    simulated_gas_used = models.IntegerField(
-        help_text="Simulated gas units used"
-    )
-    
-    simulated_gas_cost_usd = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        help_text="Simulated gas cost in USD"
-    )
-    
-    simulated_slippage_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        help_text="Simulated slippage percentage"
-    )
+    # Intel level impact
+    intel_level_used: int
+    intel_adjustments: Dict[str, Any]
     
     # Timing
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Trade creation timestamp"
-    )
+    time_sensitivity: str  # 'critical', 'high', 'medium', 'low'
+    max_execution_time_ms: int
     
-    executed_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Trade execution timestamp"
-    )
-    
-    execution_time_ms = models.IntegerField(
-        null=True,
-        blank=True,
-        help_text="Simulated execution time in milliseconds"
-    )
-    
-    # Status
-    status = models.CharField(
-        max_length=20,
-        choices=TRADE_STATUS,
-        default='pending',
-        help_text="Current trade status"
-    )
-    
-    error_message = models.TextField(
-        blank=True,
-        help_text="Error message if failed"
-    )
-    
-    # Mock transaction details
-    mock_tx_hash = models.CharField(
-        max_length=66,
-        blank=True,
-        help_text="Simulated transaction hash"
-    )
-    
-    mock_block_number = models.IntegerField(
-        null=True,
-        blank=True,
-        help_text="Simulated block number"
-    )
-    
-    # Strategy reference
-    strategy_name = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Strategy that generated this trade"
-    )
-    
-    # Metadata for AI context
-    metadata = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="AI trade context (intel level, confidence, reasoning)"
-    )
-    
-    class Meta:
-        """Meta configuration."""
-        db_table = 'paper_trades'
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['account', 'status']),
-            models.Index(fields=['created_at']),
-            models.Index(fields=['trade_type']),
-        ]
-        verbose_name = 'Paper Trade'
-        verbose_name_plural = 'Paper Trades'
-    
-    def __str__(self) -> str:
-        """String representation."""
-        return f"{self.trade_type.upper()}: {self.token_in_symbol} → {self.token_out_symbol}"
+    # Metadata
+    decision_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = field(default_factory=datetime.now)
+    processing_time_ms: float = 0
 
 
-class PaperPosition(models.Model):
+class IntelligenceEngine(ABC):
     """
-    Open position in paper trading account.
+    Abstract base class for intelligence engines.
     
-    Tracks currently held token positions with real-time P&L calculations.
-    Positions are marked as closed when fully exited.
-    
-    Attributes:
-        position_id: Unique identifier (UUID)
-        account: Associated trading account
-        token_address: Token contract address
-        token_symbol: Token symbol
-        token_name: Token name
-        quantity: Amount held (in wei)
-        average_entry_price_usd: Average entry price
-        total_invested_usd: Total amount invested
-        current_price_usd: Current market price
-        current_value_usd: Current position value
-        unrealized_pnl_usd: Unrealized profit/loss
-        realized_pnl_usd: Realized profit/loss after closing
-        is_open: Whether position is still open
-        opened_at: Position open timestamp
-        closed_at: Position close timestamp
-        last_updated: Last update timestamp
+    This provides the interface that all intelligence implementations
+    must follow, ensuring consistency across different intel levels.
     """
     
-    # Identity
-    position_id = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
-        help_text="Unique position identifier"
-    )
-    
-    account = models.ForeignKey(
-        PaperTradingAccount,
-        on_delete=models.CASCADE,
-        related_name='positions',
-        help_text="Associated account"
-    )
-    
-    # Token details
-    token_address = models.CharField(
-        max_length=42,
-        help_text="Token contract address"
-    )
-    
-    token_symbol = models.CharField(
-        max_length=20,
-        help_text="Token symbol"
-    )
-    
-    token_name = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Token name"
-    )
-    
-    # Position details
-    quantity = models.DecimalField(
-        max_digits=36,
-        decimal_places=18,
-        help_text="Amount held in wei"
-    )
-    
-    average_entry_price_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=8,
-        help_text="Average entry price in USD"
-    )
-    
-    total_invested_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        help_text="Total amount invested"
-    )
-    
-    # Current values
-    current_price_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=8,
-        help_text="Current market price"
-    )
-    
-    current_value_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        help_text="Current position value"
-    )
-    
-    unrealized_pnl_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        help_text="Unrealized profit/loss"
-    )
-    
-    realized_pnl_usd = models.DecimalField(
-        max_digits=20,
-        decimal_places=2,
-        default=Decimal('0'),
-        help_text="Realized profit/loss after closing"
-    )
-    
-    # Status
-    is_open = models.BooleanField(
-        default=True,
-        help_text="Whether position is still open"
-    )
-    
-    opened_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Position open timestamp"
-    )
-    
-    closed_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Position close timestamp"
-    )
-    
-    last_updated = models.DateTimeField(
-        auto_now=True,
-        help_text="Last update timestamp"
-    )
-    
-    class Meta:
-        """Meta configuration."""
-        db_table = 'paper_positions'
-        ordering = ['-opened_at']
-        indexes = [
-            models.Index(fields=['account', 'is_open']),
-            models.Index(fields=['token_address']),
-        ]
-        unique_together = [['account', 'token_address', 'is_open']]
-        verbose_name = 'Paper Position'
-        verbose_name_plural = 'Paper Positions'
-    
-    def __str__(self) -> str:
-        """String representation."""
-        status = "OPEN" if self.is_open else "CLOSED"
-        return f"{status}: {self.quantity} {self.token_symbol}"
-    
-    def update_price(self, new_price_usd: Decimal) -> None:
+    def __init__(self, intel_level: int = 5):
         """
-        Update position with new price and recalculate P&L.
+        Initialize the intelligence engine.
         
         Args:
-            new_price_usd: New market price in USD
+            intel_level: Intelligence level (1-10)
         """
+        self.intel_level = IntelligenceLevel(intel_level)
+        self.logger = logging.getLogger(f'{__name__}.{self.__class__.__name__}')
+        
+        # Risk and opportunity thresholds based on intel level
+        self.risk_threshold = self._calculate_risk_threshold()
+        self.opportunity_threshold = self._calculate_opportunity_threshold()
+        self.confidence_threshold = self._calculate_confidence_threshold()
+        
+        self.logger.info(
+            f"Intelligence engine initialized: Level={intel_level}, "
+            f"Risk threshold={self.risk_threshold}, "
+            f"Opportunity threshold={self.opportunity_threshold}, "
+            f"Confidence threshold={self.confidence_threshold}"
+        )
+        
+    def _calculate_risk_threshold(self) -> Decimal:
+        """Calculate risk threshold based on intel level."""
         try:
-            self.current_price_usd = new_price_usd
-            self.current_value_usd = self.quantity * new_price_usd
-            self.unrealized_pnl_usd = self.current_value_usd - self.total_invested_usd
-            self.last_updated = timezone.now()
-            self.save(update_fields=[
-                'current_price_usd',
-                'current_value_usd',
-                'unrealized_pnl_usd',
-                'last_updated'
-            ])
-            logger.debug(f"Updated position {self.position_id} price to ${new_price_usd}")
+            if self.intel_level <= 3:
+                return Decimal('30')  # Very low risk tolerance
+            elif self.intel_level <= 6:
+                return Decimal('60')  # Moderate risk tolerance
+            elif self.intel_level <= 9:
+                return Decimal('80')  # High risk tolerance
+            else:
+                return Decimal('100')  # Autonomous - dynamic risk
         except Exception as e:
-            logger.error(f"Error updating position {self.position_id} price: {e}", exc_info=True)
+            self.logger.error(f"Error calculating risk threshold: {e}", exc_info=True)
+            return Decimal('60')  # Safe default
     
-    def close_position(self, exit_price_usd: Decimal) -> None:
+    def _calculate_opportunity_threshold(self) -> Decimal:
+        """Calculate opportunity threshold based on intel level."""
+        try:
+            if self.intel_level <= 3:
+                return Decimal('80')  # Only very high opportunity
+            elif self.intel_level <= 6:
+                return Decimal('50')  # Moderate opportunity
+            elif self.intel_level <= 9:
+                return Decimal('30')  # Lower threshold
+            else:
+                return Decimal('20')  # Autonomous - considers all
+        except Exception as e:
+            self.logger.error(f"Error calculating opportunity threshold: {e}", exc_info=True)
+            return Decimal('50')  # Safe default
+    
+    def _calculate_confidence_threshold(self) -> Decimal:
+        """Calculate confidence threshold based on intel level."""
+        try:
+            if self.intel_level <= 3:
+                return Decimal('90')  # Very high confidence required
+            elif self.intel_level <= 6:
+                return Decimal('60')  # Moderate confidence
+            elif self.intel_level <= 9:
+                return Decimal('40')  # Lower confidence acceptable
+            else:
+                return Decimal('30')  # Autonomous - adaptive
+        except Exception as e:
+            self.logger.error(f"Error calculating confidence threshold: {e}", exc_info=True)
+            return Decimal('60')  # Safe default
+    
+    @abstractmethod
+    async def analyze_market(self, token_address: str) -> MarketContext:
         """
-        Close position and calculate realized P&L.
+        Analyze current market conditions.
         
         Args:
-            exit_price_usd: Exit price in USD
+            token_address: Token to analyze
+            
+        Returns:
+            Complete market context
+        """
+        pass
+    
+    @abstractmethod
+    async def make_decision(
+        self,
+        market_context: MarketContext,
+        account_balance: Decimal,
+        existing_positions: List[Dict[str, Any]]
+    ) -> TradingDecision:
+        """
+        Make a trading decision based on market context.
+        
+        Args:
+            market_context: Current market conditions
+            account_balance: Available balance
+            existing_positions: Current open positions
+            
+        Returns:
+            Complete trading decision with reasoning
+        """
+        pass
+    
+    def update_market_context(self, market_context: MarketContext) -> None:
+        """
+        Update engine with latest market context for historical tracking.
+        
+        This method allows the intelligence engine to track market conditions
+        over time, enabling trend analysis, pattern recognition, and better
+        decision-making. Critical for Real Data Integration (Phase 4-5).
+        
+        Args:
+            market_context: Latest market conditions with real-time data
+        
+        Notes:
+            - Default implementation does nothing (base class behavior)
+            - Subclasses like IntelSliderEngine override to enable tracking
+            - Called by MarketAnalyzer after creating market context
+            - Enables Level 10 autonomous learning
+            - Non-blocking: errors are logged but don't stop execution
+        
+        Example:
+            >>> engine = IntelSliderEngine(intel_level=5)
+            >>> context = MarketContext(
+            ...     token_symbol='WETH',
+            ...     current_price=Decimal('2000'),
+            ...     volatility=Decimal('0.15')
+            ... )
+            >>> engine.update_market_context(context)
+            >>> # Engine now tracks this token's price history
         """
         try:
-            self.current_price_usd = exit_price_usd
-            self.current_value_usd = self.quantity * exit_price_usd
-            self.realized_pnl_usd = self.current_value_usd - self.total_invested_usd
-            self.unrealized_pnl_usd = Decimal('0')
-            self.is_open = False
-            self.closed_at = timezone.now()
-            self.save()
-            logger.info(
-                f"Closed position {self.position_id}: "
-                f"{self.token_symbol} P&L=${self.realized_pnl_usd}"
+            # Default implementation: do nothing
+            # Subclasses can override to add market tracking functionality
+            self.logger.debug(
+                f"[BASE] update_market_context called for {market_context.token_symbol} "
+                f"(base implementation - no tracking)"
             )
         except Exception as e:
-            logger.error(f"Error closing position {self.position_id}: {e}", exc_info=True)
-
-
-class PaperTradingConfig(models.Model):
-    """
-    Configuration for paper trading simulation parameters.
+            # Catch any errors in logging to prevent crashes
+            self.logger.error(
+                f"[BASE] Error in update_market_context default implementation: {e}",
+                exc_info=True
+            )
     
-    Allows customization of simulation behavior per account to make
-    paper trading more realistic with configurable slippage, gas costs,
-    delays, and failure simulation.
+    def adjust_for_intel_level(self, base_decision: TradingDecision) -> TradingDecision:
+        """
+        Adjust decision based on intelligence level.
+        
+        Args:
+            base_decision: Initial trading decision
+            
+        Returns:
+            Adjusted decision based on intel level
+        """
+        try:
+            decision = base_decision
+            
+            self.logger.debug(
+                f"[INTEL ADJUST] Adjusting decision for level {self.intel_level}: "
+                f"Action={decision.action}, Risk={decision.risk_score}"
+            )
+            
+            # Cautious levels (1-3): Reduce risk, increase safety
+            if self.intel_level <= 3:
+                decision.position_size_percent *= Decimal('0.5')  # Half position size
+                decision.use_private_relay = True  # Always use protection
+                decision.gas_strategy = 'standard'  # Don't compete on gas
+                
+                if decision.risk_score > 30:
+                    decision.action = 'SKIP'
+                    decision.primary_reasoning = (
+                        f"Intel Level {self.intel_level} (Ultra Cautious): "
+                        f"Risk score {decision.risk_score} exceeds threshold. "
+                        "Skipping trade for safety."
+                    )
+                    self.logger.info(
+                        f"[INTEL ADJUST] Ultra Cautious mode: Skipping trade due to "
+                        f"risk score {decision.risk_score} > 30"
+                    )
+            
+            # Balanced levels (4-6): Moderate adjustments
+            elif self.intel_level <= 6:
+                decision.position_size_percent *= Decimal('0.8')
+                if decision.risk_score > 70:
+                    decision.use_private_relay = True
+                
+                if decision.risk_score > 60:
+                    decision.gas_strategy = 'standard'
+                else:
+                    decision.gas_strategy = 'aggressive'
+                
+                self.logger.debug(
+                    f"[INTEL ADJUST] Balanced mode: Position size adjusted to "
+                    f"{decision.position_size_percent}%, Gas={decision.gas_strategy}"
+                )
+            
+            # Aggressive levels (7-9): Push boundaries
+            elif self.intel_level <= 9:
+                decision.position_size_percent *= Decimal('1.2')  # Increase size
+                decision.gas_strategy = 'aggressive'
+                
+                # Only skip if extremely risky
+                if decision.risk_score > 90:
+                    decision.action = 'SKIP'
+                    decision.primary_reasoning = (
+                        f"Intel Level {self.intel_level} (Aggressive): "
+                        f"Even for aggressive trading, risk score {decision.risk_score} "
+                        "is too extreme."
+                    )
+                    self.logger.warning(
+                        f"[INTEL ADJUST] Aggressive mode: Skipping extremely risky trade "
+                        f"(risk score {decision.risk_score} > 90)"
+                    )
+                else:
+                    self.logger.debug(
+                        f"[INTEL ADJUST] Aggressive mode: Increasing position to "
+                        f"{decision.position_size_percent}%"
+                    )
+            
+            # Autonomous (10): Dynamic optimization
+            else:
+                # Use machine learning or advanced heuristics
+                decision = self._autonomous_optimization(decision)
+            
+            # Record intel adjustments
+            decision.intel_adjustments = {
+                'original_position_size': float(base_decision.position_size_percent),
+                'adjusted_position_size': float(decision.position_size_percent),
+                'risk_threshold_used': float(self.risk_threshold),
+                'opportunity_threshold_used': float(self.opportunity_threshold),
+                'confidence_threshold_used': float(self.confidence_threshold),
+                'intel_level': int(self.intel_level)
+            }
+            
+            self.logger.info(
+                f"[INTEL ADJUST] Decision adjusted: "
+                f"Position {base_decision.position_size_percent}% → {decision.position_size_percent}%, "
+                f"Action={decision.action}"
+            )
+            
+            return decision
+            
+        except Exception as e:
+            self.logger.error(
+                f"[INTEL ADJUST] Error adjusting decision for intel level: {e}",
+                exc_info=True
+            )
+            # Return original decision if adjustment fails
+            return base_decision
     
-    Attributes:
-        account: Associated trading account (OneToOne)
-        base_slippage_percent: Base slippage for all trades
-        gas_price_multiplier: Gas price simulation multiplier
-        execution_delay_ms: Simulated execution delay
-        max_position_size_percent: Max position size as % of portfolio
-        max_daily_trades: Maximum trades per day
-        stop_loss_percent: Default stop loss percentage
-        simulate_network_issues: Whether to simulate failures
-        simulate_mev: Whether to simulate MEV competition
-        failure_rate_percent: Percentage of trades that fail
-    """
+    def _autonomous_optimization(self, decision: TradingDecision) -> TradingDecision:
+        """
+        Autonomous optimization for level 10.
+        
+        This method would integrate with machine learning models
+        or advanced statistical analysis in production.
+        
+        Args:
+            decision: Base trading decision
+            
+        Returns:
+            Optimized decision
+        """
+        try:
+            # Placeholder for ML integration
+            # In production, this would:
+            # 1. Query historical performance data
+            # 2. Run ML models for prediction
+            # 3. Optimize based on personal trading patterns
+            # 4. Adapt to current market regime
+            
+            self.logger.info(
+                "[AUTONOMOUS] Optimizing decision with advanced algorithms"
+            )
+            
+            # For now, make balanced adjustments
+            if decision.risk_score < 40 and decision.opportunity_score > 70:
+                decision.position_size_percent *= Decimal('1.5')
+                decision.gas_strategy = 'ultra_aggressive'
+                decision.primary_reasoning = (
+                    "Autonomous AI: Exceptional opportunity detected with low risk. "
+                    "Maximizing position based on historical patterns and current market regime."
+                )
+                self.logger.info(
+                    f"[AUTONOMOUS] Exceptional opportunity: Increasing position to "
+                    f"{decision.position_size_percent}% (Risk={decision.risk_score}, "
+                    f"Opportunity={decision.opportunity_score})"
+                )
+            else:
+                self.logger.debug(
+                    f"[AUTONOMOUS] Standard optimization applied "
+                    f"(Risk={decision.risk_score}, Opportunity={decision.opportunity_score})"
+                )
+            
+            return decision
+            
+        except Exception as e:
+            self.logger.error(
+                f"[AUTONOMOUS] Error in autonomous optimization: {e}",
+                exc_info=True
+            )
+            return decision
     
-    account = models.OneToOneField(
-        PaperTradingAccount,
-        on_delete=models.CASCADE,
-        related_name='config',
-        help_text="Associated account"
-    )
-    
-    # Simulation parameters
-    base_slippage_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.5'),
-        help_text="Base slippage percentage for all trades"
-    )
-    
-    gas_price_multiplier = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('1.0'),
-        help_text="Multiplier for gas price simulation"
-    )
-    
-    execution_delay_ms = models.IntegerField(
-        default=500,
-        help_text="Simulated execution delay in milliseconds"
-    )
-    
-    # Risk limits
-    max_position_size_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('10.0'),
-        help_text="Max position size as % of portfolio"
-    )
-    
-    max_daily_trades = models.IntegerField(
-        default=50,
-        help_text="Maximum trades per day"
-    )
-    
-    stop_loss_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('5.0'),
-        help_text="Default stop loss percentage"
-    )
-    
-    # Realistic simulation
-    simulate_network_issues = models.BooleanField(
-        default=True,
-        help_text="Simulate occasional network failures"
-    )
-    
-    simulate_mev = models.BooleanField(
-        default=True,
-        help_text="Simulate MEV bot competition"
-    )
-    
-    failure_rate_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('2.0'),
-        help_text="Percentage of trades that should randomly fail"
-    )
-    
-    class Meta:
-        """Meta configuration."""
-        db_table = 'paper_trading_configs'
-        verbose_name = 'Paper Trading Config'
-        verbose_name_plural = 'Paper Trading Configs'
-    
-    def __str__(self) -> str:
-        """String representation."""
-        return f"Config for {self.account.name}"
+    def generate_thought_log(self, decision: TradingDecision) -> str:
+        """
+        Generate a detailed thought log for the decision.
+        
+        Args:
+            decision: Trading decision to explain
+            
+        Returns:
+            Formatted thought log
+        """
+        try:
+            thoughts = []
+            
+            # Header
+            thoughts.append(f"=== AI Trading Decision - Intel Level {self.intel_level} ===")
+            thoughts.append(f"Token: {decision.token_symbol} ({decision.token_address[:10]}...)")
+            thoughts.append(f"Decision: {decision.action}")
+            thoughts.append(f"Confidence: {decision.overall_confidence}%")
+            thoughts.append("")
+            
+            # Risk Assessment
+            thoughts.append("[RISK ASSESSMENT]")
+            thoughts.append(f"Risk Score: {decision.risk_score}/100")
+            if decision.risk_factors:
+                for factor in decision.risk_factors[:3]:
+                    thoughts.append(f"  • {factor}")
+            else:
+                thoughts.append("  • No specific risk factors identified")
+            thoughts.append("")
+            
+            # Opportunity Analysis
+            thoughts.append("[OPPORTUNITY ANALYSIS]")
+            thoughts.append(f"Opportunity Score: {decision.opportunity_score}/100")
+            if decision.opportunity_factors:
+                for factor in decision.opportunity_factors[:3]:
+                    thoughts.append(f"  • {factor}")
+            else:
+                thoughts.append("  • No specific opportunities identified")
+            thoughts.append("")
+            
+            # Decision Reasoning
+            thoughts.append("[DECISION REASONING]")
+            thoughts.append(decision.primary_reasoning)
+            thoughts.append("")
+            
+            # Execution Strategy
+            thoughts.append("[EXECUTION STRATEGY]")
+            thoughts.append(f"Mode: {decision.execution_mode}")
+            thoughts.append(f"Position Size: {decision.position_size_percent}% of portfolio (${decision.position_size_usd:.2f})")
+            thoughts.append(f"Gas Strategy: {decision.gas_strategy}")
+            if decision.use_private_relay:
+                thoughts.append("MEV Protection: ENABLED (Private Relay)")
+            thoughts.append("")
+            
+            # Intel Level Impact
+            thoughts.append("[INTELLIGENCE ADJUSTMENTS]")
+            thoughts.append(f"Intel Level {self.intel_level} Impact:")
+            for key, value in decision.intel_adjustments.items():
+                thoughts.append(f"  • {key}: {value}")
+            
+            result = "\n".join(thoughts)
+            
+            self.logger.debug(
+                f"[THOUGHT LOG] Generated log for {decision.token_symbol}: "
+                f"{len(result)} characters"
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(
+                f"[THOUGHT LOG] Error generating thought log: {e}",
+                exc_info=True
+            )
+            return f"Error generating thought log for {decision.token_symbol}"

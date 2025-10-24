@@ -16,9 +16,7 @@ import uuid
 import logging
 from typing import Dict, Any, Optional
 
-from .intelligence import PaperStrategyConfiguration
-from .performance import PaperTradingSession
-
+# NO IMPORTS from other model files - use string references instead
 logger = logging.getLogger(__name__)
 
 
@@ -93,15 +91,17 @@ class AutoPilotLog(models.Model):
         help_text="Unique log identifier"
     )
     
+    # Use string reference to avoid circular import
     strategy_config = models.ForeignKey(
-        PaperStrategyConfiguration,
+        'paper_trading.PaperStrategyConfiguration',
         on_delete=models.CASCADE,
         related_name='autopilot_logs',
         help_text="Associated strategy configuration"
     )
     
+    # Use string reference to avoid circular import
     session = models.ForeignKey(
-        PaperTradingSession,
+        'paper_trading.PaperTradingSession',
         on_delete=models.CASCADE,
         related_name='autopilot_logs',
         null=True,
@@ -254,7 +254,12 @@ class AutoPilotLog(models.Model):
         )
     
     def calculate_change_percent(self) -> Decimal:
-        """Calculate percentage change."""
+        """
+        Calculate percentage change.
+        
+        Returns:
+            Percentage change (can be negative)
+        """
         try:
             if self.old_value == 0:
                 if self.new_value > 0:
@@ -279,7 +284,15 @@ class AutoPilotLog(models.Model):
         super().save(*args, **kwargs)
     
     def evaluate_outcome(self, current_performance: Dict[str, Any]) -> str:
-        """Evaluate the outcome of this adjustment based on performance."""
+        """
+        Evaluate the outcome of this adjustment based on performance.
+        
+        Args:
+            current_performance: Current performance metrics
+            
+        Returns:
+            Outcome evaluation (POSITIVE/NEUTRAL/NEGATIVE)
+        """
         try:
             if not self.performance_before:
                 logger.warning(f"No performance_before data for log {self.log_id}")
@@ -308,66 +321,220 @@ class AutoPilotLog(models.Model):
             self.outcome = outcome
             self.performance_after = current_performance
             self.outcome_evaluated_at = timezone.now()
-            self.save(update_fields=['outcome', 'performance_after', 'outcome_evaluated_at'])
+            self.save(update_fields=[
+                'outcome',
+                'performance_after',
+                'outcome_evaluated_at'
+            ])
             
             logger.info(
-                f"Evaluated Auto Pilot adjustment {self.log_id}: {outcome} "
-                f"(Win rate: {before_win_rate}% → {after_win_rate}%)"
+                f"Evaluated Auto Pilot adjustment {self.log_id}: "
+                f"{outcome} (Win rate: {before_win_rate}% → {after_win_rate}%)"
             )
             
             return outcome
         
         except Exception as e:
-            logger.error(f"Error evaluating outcome for log {self.log_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error evaluating outcome for log {self.log_id}: {e}",
+                exc_info=True
+            )
             return self.AdjustmentOutcome.UNKNOWN
 
 
 class AutoPilotPerformanceSnapshot(models.Model):
-    """Periodic performance snapshots for Auto Pilot learning."""
+    """
+    Periodic performance snapshots for Auto Pilot learning.
     
-    snapshot_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    Captures comprehensive performance metrics at regular intervals to help
+    Auto Pilot learn which parameter configurations work best under different
+    market conditions.
+    
+    This data is used for:
+    - Identifying optimal parameter ranges
+    - Detecting regime changes (market conditions)
+    - Evaluating adjustment effectiveness
+    - Continuous learning and improvement
+    """
+    
+    # Identity
+    snapshot_id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Unique snapshot identifier"
+    )
+    
+    # Use string references to avoid circular imports
     strategy_config = models.ForeignKey(
-        PaperStrategyConfiguration, on_delete=models.CASCADE, related_name='performance_snapshots'
-    )
-    session = models.ForeignKey(
-        PaperTradingSession, on_delete=models.CASCADE, related_name='performance_snapshots',
-        null=True, blank=True
+        'paper_trading.PaperStrategyConfiguration',
+        on_delete=models.CASCADE,
+        related_name='performance_snapshots',
+        help_text="Associated strategy configuration"
     )
     
-    timestamp = models.DateTimeField(auto_now_add=True)
-    current_parameters = models.JSONField(default=dict)
+    session = models.ForeignKey(
+        'paper_trading.PaperTradingSession',
+        on_delete=models.CASCADE,
+        related_name='performance_snapshots',
+        null=True,
+        blank=True,
+        help_text="Associated trading session"
+    )
+    
+    timestamp = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When snapshot was taken"
+    )
+    
+    # Current parameter values
+    current_parameters = models.JSONField(
+        default=dict,
+        help_text="Current parameter configuration at snapshot time"
+    )
     
     # Performance metrics
-    win_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0'))
-    total_trades = models.IntegerField(default=0)
-    winning_trades = models.IntegerField(default=0)
-    losing_trades = models.IntegerField(default=0)
-    total_pnl_usd = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal('0'))
-    average_profit_per_trade = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal('0'))
-    average_win_usd = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal('0'))
-    average_loss_usd = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal('0'))
-    largest_win_usd = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal('0'))
-    largest_loss_usd = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal('0'))
+    win_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Win rate percentage"
+    )
+    
+    total_trades = models.IntegerField(
+        default=0,
+        help_text="Total trades executed"
+    )
+    
+    winning_trades = models.IntegerField(
+        default=0,
+        help_text="Number of winning trades"
+    )
+    
+    losing_trades = models.IntegerField(
+        default=0,
+        help_text="Number of losing trades"
+    )
+    
+    total_pnl_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Total profit/loss in USD"
+    )
+    
+    average_profit_per_trade = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Average profit per trade"
+    )
+    
+    average_win_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Average winning trade amount"
+    )
+    
+    average_loss_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Average losing trade amount"
+    )
+    
+    largest_win_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Largest winning trade"
+    )
+    
+    largest_loss_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Largest losing trade"
+    )
     
     # Risk metrics
-    max_drawdown_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0'))
-    sharpe_ratio = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal('0'))
-    profit_factor = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal('0'))
+    max_drawdown_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Maximum drawdown percentage"
+    )
+    
+    sharpe_ratio = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=Decimal('0'),
+        help_text="Risk-adjusted return metric (Sharpe Ratio)"
+    )
+    
+    profit_factor = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=Decimal('0'),
+        help_text="Ratio of gross profit to gross loss"
+    )
     
     # Market conditions
-    market_volatility = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0'))
-    avg_gas_price_gwei = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
-    market_trend = models.CharField(max_length=20, default='neutral')
-    market_conditions_detail = models.JSONField(default=dict)
+    market_volatility = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Market volatility index at snapshot time (0-100)"
+    )
+    
+    avg_gas_price_gwei = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0'),
+        help_text="Average gas price in this period"
+    )
+    
+    market_trend = models.CharField(
+        max_length=20,
+        default='neutral',
+        help_text="Market trend (bullish/bearish/neutral)"
+    )
+    
+    market_conditions_detail = models.JSONField(
+        default=dict,
+        help_text="Detailed market conditions"
+    )
     
     # Auto Pilot context
-    autopilot_active = models.BooleanField(default=False)
-    adjustments_made_count = models.IntegerField(default=0)
-    last_adjustment_type = models.CharField(max_length=50, blank=True)
+    autopilot_active = models.BooleanField(
+        default=False,
+        help_text="Whether Auto Pilot was active during this period"
+    )
+    
+    adjustments_made_count = models.IntegerField(
+        default=0,
+        help_text="Number of Auto Pilot adjustments made before this snapshot"
+    )
+    
+    last_adjustment_type = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Type of most recent adjustment"
+    )
     
     # Learning metadata
-    snapshot_period_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('1'))
-    notes = models.TextField(blank=True)
+    snapshot_period_hours = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal('1'),
+        help_text="Time period covered by this snapshot in hours"
+    )
+    
+    notes = models.TextField(
+        blank=True,
+        help_text="Optional notes or observations"
+    )
     
     class Meta:
         """Meta configuration."""
@@ -399,24 +566,36 @@ class AutoPilotPerformanceSnapshot(models.Model):
                     Decimal(self.winning_trades) / Decimal(self.total_trades)
                 ) * Decimal('100')
                 self.win_rate = self.win_rate.quantize(Decimal('0.01'))
+            else:
+                self.win_rate = Decimal('0')
             
             # Calculate average profit per trade
             if self.total_trades > 0:
                 self.average_profit_per_trade = (
                     self.total_pnl_usd / Decimal(self.total_trades)
                 ).quantize(Decimal('0.01'))
+            else:
+                self.average_profit_per_trade = Decimal('0')
             
             # Calculate profit factor
-            total_wins = self.winning_trades * self.average_win_usd
+            total_wins = self.winning_trades * abs(self.average_win_usd)
             total_losses = abs(self.losing_trades * self.average_loss_usd)
             
             if total_losses > 0:
                 self.profit_factor = (total_wins / total_losses).quantize(Decimal('0.001'))
+            else:
+                self.profit_factor = Decimal('0') if total_wins == 0 else Decimal('999.999')
             
-            logger.debug(f"Calculated metrics for snapshot {self.snapshot_id}")
+            logger.debug(
+                f"Calculated metrics for snapshot {self.snapshot_id}: "
+                f"WR={self.win_rate}%, PF={self.profit_factor}"
+            )
         
         except Exception as e:
-            logger.error(f"Error calculating metrics for snapshot {self.snapshot_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error calculating metrics for snapshot {self.snapshot_id}: {e}",
+                exc_info=True
+            )
     
     def save(self, *args, **kwargs):
         """Override save to auto-calculate metrics."""
@@ -426,3 +605,45 @@ class AutoPilotPerformanceSnapshot(models.Model):
             logger.error(f"Error in AutoPilotPerformanceSnapshot save: {e}", exc_info=True)
         
         super().save(*args, **kwargs)
+    
+    def compare_to_previous(self) -> Optional[Dict[str, Any]]:
+        """
+        Compare this snapshot to the previous one.
+        
+        Returns:
+            Dictionary with comparison metrics or None if no previous snapshot
+        """
+        try:
+            previous = AutoPilotPerformanceSnapshot.objects.filter(
+                strategy_config=self.strategy_config,
+                timestamp__lt=self.timestamp
+            ).order_by('-timestamp').first()
+            
+            if not previous:
+                logger.debug(f"No previous snapshot found for config {self.strategy_config.config_id}")
+                return None
+            
+            comparison = {
+                'previous_snapshot_id': str(previous.snapshot_id),
+                'time_difference_hours': (
+                    (self.timestamp - previous.timestamp).total_seconds() / 3600
+                ),
+                'win_rate_change': float(self.win_rate - previous.win_rate),
+                'pnl_change': float(self.total_pnl_usd - previous.total_pnl_usd),
+                'trades_count_change': self.total_trades - previous.total_trades,
+                'sharpe_ratio_change': float(self.sharpe_ratio - previous.sharpe_ratio),
+            }
+            
+            logger.debug(
+                f"Compared snapshot {self.snapshot_id} to previous: "
+                f"WR change {comparison['win_rate_change']:+.2f}%"
+            )
+            
+            return comparison
+        
+        except Exception as e:
+            logger.error(
+                f"Error comparing snapshot {self.snapshot_id} to previous: {e}",
+                exc_info=True
+            )
+            return None
