@@ -244,6 +244,184 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
+
+@require_http_methods(["GET"])
+def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
+    """
+    API endpoint to get current price for a specific token.
+    
+    Returns real-time price data for the specified token symbol.
+    
+    Args:
+        request: HttpRequest object
+        token_symbol: Token symbol (e.g., 'ETH', 'WETH', 'USDC')
+    
+    Query Parameters:
+        include_history (bool): Include 24h price history (default: False)
+        force_refresh (bool): Bypass cache and fetch fresh price (default: False)
+    
+    Returns:
+        JsonResponse: Token price data with metadata
+        
+    Example Response:
+        {
+            'success': True,
+            'token_symbol': 'WETH',
+            'token_address': null,
+            'price_usd': 3881.03,
+            'source': 'price_feed_service',
+            'cached': False,
+            'timestamp': '2025-10-24T18:30:00Z',
+            'chain_id': 84532
+        }
+    """
+    try:
+        logger.debug(f"[TOKEN PRICE API] Fetching price for token: {token_symbol}")
+        
+        # Normalize token symbol
+        token_symbol = token_symbol.upper().strip()
+        
+        # Get query parameters
+        include_history = request.GET.get('include_history', 'false').lower() == 'true'
+        force_refresh = request.GET.get('force_refresh', 'false').lower() == 'true'
+        
+        # Get chain_id from settings
+        from django.conf import settings
+        chain_id = getattr(settings, 'DEFAULT_CHAIN_ID', 84532)
+        
+        # Try to get from cache first (unless force_refresh is True)
+        cache_key = f'token_price_{token_symbol}_{chain_id}'
+        
+        if not force_refresh:
+            cached_price = cache.get(cache_key)
+            if cached_price is not None:
+                logger.debug(f"[TOKEN PRICE API] Using cached price for {token_symbol}: ${cached_price}")
+                return JsonResponse({
+                    'success': True,
+                    'token_symbol': token_symbol,
+                    'token_address': None,
+                    'price_usd': float(cached_price),
+                    'source': 'cache',
+                    'cached': True,
+                    'timestamp': timezone.now().isoformat(),
+                    'chain_id': chain_id
+                })
+        
+        # Initialize price feed service with chain_id
+        try:
+            price_service = PriceFeedService(chain_id=chain_id)
+        except Exception as init_error:
+            logger.error(
+                f"[TOKEN PRICE API] Failed to initialize PriceFeedService: {init_error}",
+                exc_info=True
+            )
+            return JsonResponse({
+                'success': False,
+                'error': f'Price service initialization failed: {str(init_error)}',
+                'token_symbol': token_symbol,
+                'token_address': None,
+                'timestamp': timezone.now().isoformat()
+            }, status=503)
+        
+        # Attempt to get price using async service
+        try:
+            # Run async price fetch in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            price_data = loop.run_until_complete(
+                price_service.get_token_price(token_symbol)
+            )
+            loop.close()
+            
+            if price_data is None or price_data == 0:
+                logger.warning(
+                    f"[TOKEN PRICE API] No price data available for token: {token_symbol}"
+                )
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Price data not available for {token_symbol}',
+                    'token_symbol': token_symbol,
+                    'token_address': None,
+                    'timestamp': timezone.now().isoformat()
+                }, status=404)
+            
+            # Cache the price for 60 seconds
+            cache.set(cache_key, price_data, 60)
+            
+            # Build response
+            response_data = {
+                'success': True,
+                'token_symbol': token_symbol,
+                'token_address': None,  # Could be added if needed
+                'price_usd': float(price_data),
+                'source': 'price_feed_service',
+                'cached': False,
+                'timestamp': timezone.now().isoformat(),
+                'chain_id': chain_id
+            }
+            
+            # Add 24h history if requested
+            if include_history:
+                # Try to get from cache first
+                history_cache_key = f'price_history_24h_{token_symbol}'
+                history = cache.get(history_cache_key)
+                
+                if history is None:
+                    # Fetch recent position updates to build history
+                    # (positions track price changes over time)
+                    recent_positions = PaperPosition.objects.filter(
+                        token_symbol=token_symbol,
+                        last_updated__gte=timezone.now() - timedelta(hours=24)
+                    ).order_by('last_updated')
+                    
+                    history = [
+                        {
+                            'timestamp': pos.last_updated.isoformat(),
+                            'price': float(pos.current_price_usd) if pos.current_price_usd else 0
+                        }
+                        for pos in recent_positions
+                        if pos.current_price_usd
+                    ]
+                    
+                    # Cache for 5 minutes
+                    cache.set(history_cache_key, history, 300)
+                
+                response_data['price_history_24h'] = history
+            
+            logger.info(
+                f"[TOKEN PRICE API] Successfully fetched price for {token_symbol}: ${price_data}"
+            )
+            return JsonResponse(response_data)
+            
+        except Exception as price_error:
+            logger.error(
+                f"[TOKEN PRICE API] Error fetching price from service: {price_error}",
+                exc_info=True
+            )
+            
+            # No fallback - just return error
+            return JsonResponse({
+                'success': False,
+                'error': f'Unable to fetch price for {token_symbol}: {str(price_error)}',
+                'token_symbol': token_symbol,
+                'token_address': None,
+                'timestamp': timezone.now().isoformat()
+            }, status=503)
+        
+    except Exception as e:
+        logger.error(
+            f"[TOKEN PRICE API] Unexpected error for {token_symbol}: {e}",
+            exc_info=True
+        )
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+            'token_symbol': token_symbol,
+            'token_address': None,
+            'timestamp': timezone.now().isoformat()
+        }, status=500)
+
+
 @require_http_methods(["GET"])
 def api_trades_data(request: HttpRequest) -> JsonResponse:
     """
@@ -929,13 +1107,16 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
                 pass
         
         # Create new trading session
+        # Note: Store config and starting balance in metadata since those fields don't exist
         session = PaperTradingSession.objects.create(
             account=account,
             strategy_config=strategy_config,
             status='STARTING',
-            name=session_config.get('name', f'Session {timezone.now().strftime("%Y%m%d_%H%M%S")}'),
-            starting_balance_usd=account.current_balance_usd,
-            config_snapshot=session_config
+            metadata={
+                'config_snapshot': session_config,
+                'starting_balance_usd': float(account.current_balance_usd),
+                'session_name': session_config.get('name', f'Session {timezone.now().strftime("%Y%m%d_%H%M%S")}')
+            }
         )
         
         # Start the bot via Celery task
@@ -1092,20 +1273,22 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         recent_sessions = PaperTradingSession.objects.filter(
             account=account,
             status__in=['COMPLETED', 'STOPPED']
-        ).order_by('-ended_at')[:5]
+        ).order_by('-stopped_at')[:5]
         
         # Build response
         sessions_data = []
         for session in active_sessions:
+            # Get starting balance from metadata (stored during session creation)
+            starting_balance = Decimal(str(session.metadata.get('starting_balance_usd', account.initial_balance_usd)))
+            session_name = session.metadata.get('session_name', f'Session {str(session.session_id)[:8]}')
+            
             session_data = {
                 'session_id': str(session.session_id),
                 'status': session.status,
-                'name': session.name,
+                'name': session_name,
                 'started_at': session.started_at.isoformat() if session.started_at else None,
-                'current_pnl': float(
-                    account.current_balance_usd - session.starting_balance_usd
-                ),
-                'trades_executed': session.total_trades_executed or 0
+                'current_pnl': float(account.current_balance_usd - starting_balance),
+                'trades_executed': session.total_trades or 0
             }
             
             # Add Celery task status if available
@@ -1121,12 +1304,17 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         # Add recent sessions summary
         recent_data = []
         for session in recent_sessions:
+            session_name = session.metadata.get('session_name', f'Session {str(session.session_id)[:8]}')
+            # Calculate final P&L if we have starting balance stored
+            starting_balance = Decimal(str(session.metadata.get('starting_balance_usd', 0)))
+            # Note: We don't have ending balance, so P&L calculation would need to be done differently
+            
             recent_data.append({
                 'session_id': str(session.session_id),
-                'name': session.name,
-                'ended_at': session.ended_at.isoformat() if session.ended_at else None,
-                'final_pnl': float(session.session_pnl_usd) if session.session_pnl_usd else 0,
-                'trades': session.total_trades_executed or 0
+                'name': session_name,
+                'stopped_at': session.stopped_at.isoformat() if session.stopped_at else None,
+                'final_pnl': 0.0,  # Would need ending_balance_usd field to calculate accurately
+                'trades': session.total_trades or 0
             })
         
         logger.debug(f"Bot status fetched")
