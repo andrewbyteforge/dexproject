@@ -539,7 +539,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
         try:
             session = PaperTradingSession.objects.filter(
                 account__account_id=self.account_id,
-                status__in=['STARTING', 'RUNNING', 'PAUSED']
+                status__in=['RUNNING', 'PAUSED']  # ✅ Only valid statuses
             ).first()
             
             if not session:
@@ -548,7 +548,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             return {
                 'session_id': str(session.session_id),
                 'started_at': session.started_at.isoformat(),
-                'total_trades_executed': session.total_trades_executed,
+                'total_trades': session.total_trades,
                 'strategy_name': (
                     session.strategy_config.name 
                     if session.strategy_config else 'Unknown'
@@ -643,7 +643,7 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
         try:
             session = PaperTradingSession.objects.filter(
                 account__account_id=self.account_id,
-                status='ACTIVE'
+                status__in=['RUNNING']  # or just status='RUNNING'
             ).first()
             
             if not session:

@@ -703,76 +703,89 @@ class MarketAnalyzer:
     # =========================================================================
     
     def _log_thought(
-        self,
-        action: str,
-        reasoning: str,
-        confidence: float,
-        decision_type: str = "ANALYSIS",
-        metadata: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Log AI thought process to database.
-        
-        Args:
-            action: Action being taken
-            reasoning: Reasoning behind the action
-            confidence: Confidence level (0-100)
-            decision_type: Type of decision
-            metadata: Additional metadata
-        """
-        try:
-            metadata = metadata or {}
+            self,
+            action: str,
+            reasoning: str,
+            confidence: float,
+            decision_type: str = "ANALYSIS",
+            metadata: Optional[Dict[str, Any]] = None
+        ):
+            """
+            Log AI thought process to database.
             
-            # Map action to decision type
-            decision_type_map = {
-                'BUY': 'BUY',
-                'SELL': 'SELL',
-                'HOLD': 'HOLD',
-                'SKIP': 'SKIP',
-                'STARTUP': 'SKIP',
-                'TRADE_DECISION': 'HOLD',
-                'BLOCKED': 'SKIP',
-                'CB_RESET': 'SKIP',
-                'RISK_MANAGEMENT': 'SKIP'
-            }
-            
-            # Get token info from metadata
-            token_symbol = metadata.get('token', 'SYSTEM')
-            token_address = metadata.get('token_address', '0x' + '0' * 40)
-            
-            # Create thought log record
-            thought_log = PaperAIThoughtLog.objects.create(
-                account=self.account,
-                paper_trade=None,
-                decision_type=decision_type_map.get(action, 'SKIP'),
-                token_address=token_address,
-                token_symbol=token_symbol,
-                confidence_level=self._get_confidence_level(confidence),
-                confidence_percent=Decimal(str(confidence)),
-                risk_score=Decimal(str(metadata.get('risk_score', 50))),
-                opportunity_score=Decimal(str(metadata.get('opportunity_score', 50))),
-                primary_reasoning=reasoning[:500],
-                key_factors=[
-                    f"Intel Level: {metadata.get('intel_level', self.intelligence_engine.intel_level)}",
-                    f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event",
-                    f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}"
-                ],
-                positive_signals=[],
-                negative_signals=[],
-                market_data=metadata,
-                strategy_name=f"Intel_{self.intelligence_engine.intel_level}",
-                lane_used='SMART',
-                analysis_time_ms=100
-            )
-            
-            logger.debug(
-                f"[THOUGHT] Logged: {action} for {token_symbol} "
-                f"({confidence:.0f}% confidence)"
-            )
-            
-        except Exception as e:
-            logger.error(f"[MARKET ANALYZER] Failed to log thought: {e}")
-    
+            Args:
+                action: Action being taken
+                reasoning: Reasoning behind the action
+                confidence: Confidence level (0-100)
+                decision_type: Type of decision
+                metadata: Additional metadata
+            """
+            try:
+                metadata = metadata or {}
+                
+                # Map action to decision type
+                decision_type_map = {
+                    'BUY': 'BUY',
+                    'SELL': 'SELL',
+                    'HOLD': 'HOLD',
+                    'SKIP': 'SKIP',
+                    'STARTUP': 'SKIP',
+                    'TRADE_DECISION': 'HOLD',
+                    'BLOCKED': 'SKIP',
+                    'CB_RESET': 'SKIP',
+                    'RISK_MANAGEMENT': 'SKIP'
+                }
+                
+                # Get token info from metadata
+                token_symbol = metadata.get('token', 'SYSTEM')
+                token_address = metadata.get('token_address', '0x' + '0' * 40)
+                
+                # Extract risk and opportunity scores from metadata
+                risk_score = metadata.get('risk_score', 50)
+                opportunity_score = metadata.get('opportunity_score', 50)
+                
+                # Build enhanced market data including risk metrics
+                enhanced_market_data = {
+                    **metadata,
+                    'risk_score': float(risk_score),
+                    'opportunity_score': float(opportunity_score),
+                    'intel_level': int(self.intelligence_engine.intel_level),
+                }
+                
+                # Create thought log record with correct field mappings
+                thought_log = PaperAIThoughtLog.objects.create(
+                    account=self.account,
+                    paper_trade=None,
+                    decision_type=decision_type_map.get(action, 'SKIP'),
+                    token_address=token_address,
+                    token_symbol=token_symbol,
+                    confidence_level=Decimal(str(confidence)),
+                    reasoning=reasoning,  # TextField - main reasoning text
+                    risk_assessment=f"Risk Score: {risk_score}, Opportunity Score: {opportunity_score}",  # TextField
+                    key_factors=[
+                        f"Intel Level: {metadata.get('intel_level', self.intelligence_engine.intel_level)}",
+                        f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event",
+                        f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}",
+                        f"Risk Score: {risk_score}",
+                        f"Opportunity Score: {opportunity_score}"
+                    ],
+                    positive_signals=[],
+                    negative_signals=[],
+                    market_data=enhanced_market_data,  # JSON field - stores all metrics
+                    strategy_name=f"Intel_{self.intelligence_engine.intel_level}",
+                    lane_used='SMART',
+                    analysis_time_ms=100
+                )
+                
+                logger.debug(
+                    f"[THOUGHT] Logged: {action} for {token_symbol} "
+                    f"({confidence:.0f}% confidence)"
+                )
+                
+            except Exception as e:
+                logger.error(f"[MARKET ANALYZER] Failed to log thought: {e}")
+
+
     def _get_confidence_level(self, confidence: float) -> str:
         """Convert confidence percentage to level category."""
         if confidence >= 90:
