@@ -885,6 +885,8 @@ class PaperStrategyConfiguration(models.Model):
         blank=True,
         help_text="Custom strategy parameters"
     )
+
+    
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
