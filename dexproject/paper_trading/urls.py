@@ -67,6 +67,9 @@ urlpatterns = [
     # GET: /paper-trading/api/performance/
     path('api/performance/', api_views.api_performance_metrics, name='api_performance'),
     
+
+    path('api/prices/<str:token_symbol>/', api_views.api_token_price, name='api_token_price'),
+    
     # ==========================================================================
     # ANALYTICS API ENDPOINTS (from views.py)
     # Analytics-specific data and export APIs

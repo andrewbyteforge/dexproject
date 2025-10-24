@@ -12,7 +12,8 @@ import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, Any, Optional, List
-
+from .services.price_feed_service import PriceFeedService
+import asyncio
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
@@ -522,6 +523,8 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             'error': 'Failed to fetch open positions',
             'positions': []
         }, status=500)
+
+
 
 
 @require_http_methods(["GET"])
