@@ -5,13 +5,14 @@ This module bridges the paper trading bot with real blockchain price data,
 replacing mock/hardcoded prices with actual market data from multiple sources.
 
 Features:
-- Real-time price fetching from Alchemy, CoinGecko, and DEX routers
+- Real-time price fetching from CoinGecko and DEX routers
 - Automatic fallback to mock data on API failures
 - Token list management with price updates
 - Async price fetching with sync wrapper for bot compatibility
+- REQUEST SPACING to avoid rate limits
 - Comprehensive error handling and logging
 
-FIXED: Added missing except block for close() method
+FIXED: Added request spacing between API calls to prevent rate limiting
 
 File: dexproject/paper_trading/bot/price_service_integration.py
 """
@@ -113,6 +114,16 @@ PRICE_UPDATE_INTERVAL = 5  # Update prices every 5 seconds
 # Mock price simulation settings
 MOCK_PRICE_VOLATILITY = 0.05  # +/- 5% max price change when simulating
 
+# =============================================================================
+# RATE LIMITING CONFIGURATION
+# =============================================================================
+
+# Time delay between API requests to avoid rate limiting
+API_REQUEST_DELAY = 1.0  
+
+# Minimum time between API calls to same endpoint
+MIN_API_CALL_INTERVAL = 0.5  
+
 
 # =============================================================================
 # REAL PRICE MANAGER CLASS
@@ -127,6 +138,7 @@ class RealPriceManager:
     
     Features:
     - Automatic real price fetching from multiple sources
+    - REQUEST SPACING to avoid rate limits
     - Fallback to mock prices on API failures
     - Price history tracking
     - Async/sync compatibility
@@ -136,7 +148,7 @@ class RealPriceManager:
         manager = RealPriceManager(use_real_prices=True, chain_id=84532)
         await manager.initialize()
         
-        # Update all token prices
+        # Update all token prices (with automatic spacing)
         await manager.update_all_prices()
         
         # Get token list with current prices
@@ -172,10 +184,16 @@ class RealPriceManager:
         # Price history for each token (last 100 prices)
         self.price_history: Dict[str, List[Decimal]] = {}
         
+        # Rate limiting tracking
+        self.last_api_call_time: Optional[datetime] = None
+        self.api_calls_this_minute = 0
+        self.rate_limit_reset_time: Optional[datetime] = None
+        
         logger.info(
             f"[PRICE MANAGER] Initialized: "
             f"Mode={'REAL' if use_real_prices else 'MOCK'}, "
-            f"Chain={chain_id}, Tokens={len(self.token_list)}"
+            f"Chain={chain_id}, Tokens={len(self.token_list)}, "
+            f"API Delay={API_REQUEST_DELAY}s"
         )
     
     def _clone_token_list(self, original: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -220,12 +238,45 @@ class RealPriceManager:
             logger.error(f"[PRICE MANAGER] Error during cleanup: {e}")
     
     # =========================================================================
+    # RATE LIMITING HELPER METHODS
+    # =========================================================================
+    
+    async def _wait_for_rate_limit(self) -> None:
+        """
+        Wait if necessary to respect rate limits.
+        
+        This adds a delay between API calls to prevent hitting rate limits.
+        CoinGecko free tier allows 10-50 calls/minute.
+        """
+        if self.last_api_call_time is None:
+            # First call, no wait needed
+            self.last_api_call_time = timezone.now()
+            return
+        
+        # Calculate time since last API call
+        elapsed = (timezone.now() - self.last_api_call_time).total_seconds()
+        
+        # If not enough time has passed, wait
+        if elapsed < MIN_API_CALL_INTERVAL:
+            wait_time = MIN_API_CALL_INTERVAL - elapsed
+            logger.debug(
+                f"[RATE LIMIT] Waiting {wait_time:.2f}s to respect API limits..."
+            )
+            await asyncio.sleep(wait_time)
+        
+        # Update last call time
+        self.last_api_call_time = timezone.now()
+    
+    # =========================================================================
     # PRICE UPDATE METHODS
     # =========================================================================
     
     async def update_all_prices(self) -> Dict[str, bool]:
         """
         Update prices for all tokens in the token list.
+        
+        NEW: Adds automatic spacing between requests to avoid rate limits.
+        With 9 tokens and 500ms delay, full update takes ~4.5 seconds.
         
         Returns:
             Dictionary mapping token symbols to update success status
@@ -234,11 +285,19 @@ class RealPriceManager:
         
         try:
             logger.debug(
-                f"[PRICE MANAGER] Updating prices for {len(self.token_list)} tokens..."
+                f"[PRICE MANAGER] Updating prices for {len(self.token_list)} tokens "
+                f"(with {API_REQUEST_DELAY}s spacing)..."
             )
             
-            for token in self.token_list:
+            for index, token in enumerate(self.token_list):
                 symbol = token['symbol']
+                
+                # Add spacing between requests (except first one)
+                if index > 0 and self.use_real_prices:
+                    logger.debug(
+                        f"[RATE LIMIT] Spacing {API_REQUEST_DELAY}s before fetching {symbol}..."
+                    )
+                    await asyncio.sleep(API_REQUEST_DELAY)
                 
                 if self.use_real_prices:
                     success = await self._update_token_price_real(token)
@@ -283,16 +342,19 @@ class RealPriceManager:
             
             symbol = token['symbol']
             address = token['address']
+            old_price = token['price']
             
-            # Fetch real price
+            # Respect rate limits before making API call
+            await self._wait_for_rate_limit()
+            
+            # Fetch real price from service
             real_price = await self._price_service.get_token_price(
                 token_address=address,
                 token_symbol=symbol
             )
             
-            if real_price is not None and real_price > 0:
+            if real_price is not None:
                 # Update token price
-                old_price = token['price']
                 token['price'] = real_price
                 
                 # Update price history
@@ -305,10 +367,10 @@ class RealPriceManager:
                 if len(self.price_history[symbol]) > 100:
                     self.price_history[symbol].pop(0)
                 
-                # Log significant changes
+                # Log significant changes (>1%)
                 if old_price > 0:
                     change_pct = ((real_price - old_price) / old_price) * 100
-                    if abs(change_pct) > 1:  # Log if >1% change
+                    if abs(change_pct) > 1.0:
                         logger.info(
                             f"[PRICE UPDATE] {symbol}: "
                             f"${old_price:.2f} → ${real_price:.2f} "
@@ -446,7 +508,9 @@ class RealPriceManager:
             'uptime_seconds': (
                 (timezone.now() - self.last_update_time).total_seconds()
                 if self.last_update_time else 0
-            )
+            ),
+            'api_request_delay': API_REQUEST_DELAY,
+            'min_api_interval': MIN_API_CALL_INTERVAL
         }
 
 
