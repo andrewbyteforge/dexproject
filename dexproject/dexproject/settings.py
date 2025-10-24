@@ -349,6 +349,7 @@ ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY', 'demo')
 BASE_ALCHEMY_API_KEY = os.getenv('BASE_ALCHEMY_API_KEY', 'demo')
 ANKR_API_KEY = os.getenv('ANKR_API_KEY', '')
 INFURA_PROJECT_ID = os.getenv('INFURA_PROJECT_ID', '')
+COIN_GECKO_API_KEY = os.getenv('COIN_GECKO_API_KEY', '')
 
 # Production API key validation
 if PRODUCTION_MODE:

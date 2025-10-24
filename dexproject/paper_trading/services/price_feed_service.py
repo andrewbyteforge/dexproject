@@ -443,17 +443,19 @@ class PriceFeedService:
                 'ids': coin_id,
                 'vs_currencies': 'usd'
             }
-            
-            # Add API key if available (Pro tier)
+
+            # Build headers with API key (Demo tier)
+            headers = {}
             if self.coingecko_api_key:
-                params['x_cg_pro_api_key'] = self.coingecko_api_key
-            
+                headers['x-cg-demo-api-key'] = self.coingecko_api_key  # ✅ CORRECT!
+                logger.debug(f"[PRICE FEED] Using CoinGecko API key for {token_symbol}")
+
             # Create a fresh timeout
             timeout = aiohttp.ClientTimeout(total=10)
-            
+
             # Create fresh session with current event loop
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, params=params) as response:
+                async with session.get(url, params=params, headers=headers) as response:  # ✅ Added headers
                     if response.status == 200:
                         data = await response.json()
                         
