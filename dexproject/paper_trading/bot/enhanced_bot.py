@@ -94,6 +94,7 @@ try:
     from engine.portfolio import CircuitBreakerManager
     CIRCUIT_BREAKER_AVAILABLE = True
 except ImportError:
+    CircuitBreakerManager = None  # type: ignore
     CIRCUIT_BREAKER_AVAILABLE = False
 
 # ============================================================================
@@ -103,6 +104,7 @@ try:
     from trading.services.transaction_manager import get_transaction_manager
     TRANSACTION_MANAGER_AVAILABLE = True
 except ImportError:
+    get_transaction_manager = None  # type: ignore
     TRANSACTION_MANAGER_AVAILABLE = False
 
 # ============================================================================
@@ -221,33 +223,41 @@ class EnhancedPaperTradingBot:
             
             # Step 1: Load or create account
             self._load_account()
+            assert self.account is not None, "Account initialization failed"
             
             # Step 2: Create trading session
             self._create_session()
+            assert self.session is not None, "Session initialization failed"
             
             # Step 3: Clean up duplicates AFTER session is created
             self._cleanup_duplicate_accounts()
             
             # Step 4: Initialize intelligence engine
             self._initialize_intelligence()
+            assert self.intelligence_engine is not None, "Intelligence engine initialization failed"
             
             # Step 5: Setup strategy configuration
             self._setup_strategy_configuration()
+            assert self.strategy_config is not None, "Strategy configuration initialization failed"
             
             # Step 6: Initialize circuit breaker manager
             self._initialize_circuit_breaker()
             
             # Step 7: Initialize price manager
             self._initialize_price_manager()
+            assert self.price_manager is not None, "Price manager initialization failed"
             
             # Step 8: Initialize position manager
             self._initialize_position_manager()
+            assert self.position_manager is not None, "Position manager initialization failed"
             
             # Step 9: Initialize trade executor
             self._initialize_trade_executor()
+            assert self.trade_executor is not None, "Trade executor initialization failed"
             
             # Step 10: Initialize market analyzer
             self._initialize_market_analyzer()
+            assert self.market_analyzer is not None, "Market analyzer initialization failed"
             
             # Step 11: Log initial thought
             self._log_startup_thought()
@@ -259,7 +269,7 @@ class EnhancedPaperTradingBot:
             logger.error(f"[BOT] ❌ Initialization failed: {e}", exc_info=True)
             return False
     
-    def _load_account(self):
+    def _load_account(self) -> None:
         """
         Load the single paper trading account for this user.
         Always uses the same account regardless of parameters.
@@ -278,6 +288,8 @@ class EnhancedPaperTradingBot:
         if existing_accounts.exists():
             # Always use the first (oldest) account
             self.account = existing_accounts.first()
+            assert self.account is not None, "Failed to retrieve account from database"
+            
             logger.info(
                 f"[ACCOUNT] Using existing account: {self.account.name} "
                 f"(ID: {self.account.account_id})"
@@ -307,8 +319,10 @@ class EnhancedPaperTradingBot:
         # Override the account_name to match what we're actually using
         self.account_name = self.account.name
     
-    def _cleanup_duplicate_accounts(self):
+    def _cleanup_duplicate_accounts(self) -> None:
         """Clean up duplicate accounts AFTER session is created successfully."""
+        assert self.account is not None, "Account must be initialized before cleanup"
+        
         try:
             user = User.objects.get(username='demo_user')
             
@@ -333,12 +347,14 @@ class EnhancedPaperTradingBot:
         except Exception as e:
             logger.error(f"[ACCOUNT] Error cleaning up duplicates: {e}")
     
-    def _create_session(self):
+    def _create_session(self) -> None:
         """
         Create or resume a trading session for today.
         Only one active session per day is allowed.
         """
-        def json_safe(data):
+        assert self.account is not None, "Account must be initialized before creating session"
+        
+        def json_safe(data: Any) -> Any:
             """Recursively convert non-serializable types to safe formats."""
             if isinstance(data, dict):
                 return {k: json_safe(v) for k, v in data.items()}
@@ -364,6 +380,8 @@ class EnhancedPaperTradingBot:
         if existing_sessions.exists():
             # Resume the most recent session from today
             self.session = existing_sessions.first()
+            assert self.session is not None, "Failed to retrieve session from database"
+            
             logger.info(
                 f"[SESSION] Resuming existing session from today: "
                 f"{self.session.session_id}"
@@ -380,7 +398,7 @@ class EnhancedPaperTradingBot:
                 "account_name": self.account_name,
                 "account_id": str(self.account.account_id),
                 "session_uuid": str(self.session.session_id),
-                "user_id": str(self.account.user.id),
+                "user_id": str(self.account.user.id),  # type: ignore[attr-defined]
                 "transaction_manager_enabled": self.use_tx_manager,
                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
                 "use_real_prices": self.use_real_prices,
@@ -430,7 +448,7 @@ class EnhancedPaperTradingBot:
                 "account_name": self.account_name,
                 "account_id": str(self.account.account_id),
                 "session_uuid": str(uuid.uuid4()),
-                "user_id": str(self.account.user.id),
+                "user_id": str(self.account.user.id),  # type: ignore[attr-defined]
                 "transaction_manager_enabled": self.use_tx_manager,
                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
                 "use_real_prices": self.use_real_prices,
@@ -457,8 +475,10 @@ class EnhancedPaperTradingBot:
             )
             logger.info(f"[SESSION] Session name: {session_name}")
     
-    def _initialize_intelligence(self):
+    def _initialize_intelligence(self) -> None:
         """Initialize the intelligence engine."""
+        assert self.account is not None, "Account must be initialized before intelligence engine"
+        
         active_config = PaperStrategyConfiguration.objects.filter(
             account=self.account,
             is_active=True
@@ -473,9 +493,12 @@ class EnhancedPaperTradingBot:
             f"[INTEL] Intelligence Engine initialized at Level {self.intel_level}"
         )
     
-    def _setup_strategy_configuration(self):
+    def _setup_strategy_configuration(self) -> None:
         """Set up or load a valid PaperStrategyConfiguration for this account."""
-        def json_safe(value):
+        assert self.account is not None, "Account must be initialized before strategy config"
+        assert self.intelligence_engine is not None, "Intelligence engine must be initialized before strategy config"
+        
+        def json_safe(value: Any) -> Any:
             """Convert Decimals and other non-JSON types to serializable types."""
             if isinstance(value, Decimal):
                 return float(value)
@@ -563,9 +586,9 @@ class EnhancedPaperTradingBot:
             )
             raise
     
-    def _initialize_circuit_breaker(self):
+    def _initialize_circuit_breaker(self) -> None:
         """Initialize circuit breaker manager for risk management."""
-        if not CIRCUIT_BREAKER_AVAILABLE:
+        if not CIRCUIT_BREAKER_AVAILABLE or CircuitBreakerManager is None:
             self.circuit_breaker_enabled = False
             return
         
@@ -584,7 +607,7 @@ class EnhancedPaperTradingBot:
             logger.error(f"[CB] Failed to initialize circuit breaker: {e}")
             self.circuit_breaker_enabled = False
     
-    def _initialize_price_manager(self):
+    def _initialize_price_manager(self) -> None:
         """Initialize the price manager for real/mock price feeds."""
         try:
             self.price_manager = create_price_manager(
@@ -600,8 +623,11 @@ class EnhancedPaperTradingBot:
             logger.error(f"[PRICE] Failed to initialize price manager: {e}")
             raise
     
-    def _initialize_position_manager(self):
+    def _initialize_position_manager(self) -> None:
         """Initialize the position manager."""
+        assert self.account is not None, "Account must be initialized before position manager"
+        assert self.strategy_config is not None, "Strategy config must be initialized before position manager"
+        
         try:
             self.position_manager = PositionManager(
                 account=self.account,
@@ -613,8 +639,12 @@ class EnhancedPaperTradingBot:
             logger.error(f"[POSITION] Failed to initialize position manager: {e}")
             raise
     
-    def _initialize_trade_executor(self):
+    def _initialize_trade_executor(self) -> None:
         """Initialize the trade executor."""
+        assert self.account is not None, "Account must be initialized before trade executor"
+        assert self.session is not None, "Session must be initialized before trade executor"
+        assert self.strategy_config is not None, "Strategy config must be initialized before trade executor"
+        
         try:
             self.trade_executor = TradeExecutor(
                 account=self.account,
@@ -627,9 +657,13 @@ class EnhancedPaperTradingBot:
             )
             
             # Initialize Transaction Manager if enabled
-            if self.use_tx_manager:
-                async def init_tx_manager():
-                    self.trade_executor.tx_manager = await get_transaction_manager(
+            if self.use_tx_manager and get_transaction_manager is not None:
+                async def init_tx_manager() -> bool:
+                    # Type guard for async function closure
+                    if self.trade_executor is None:
+                        return False
+                    
+                    self.trade_executor.tx_manager = await get_transaction_manager(  # type: ignore[assignment]
                         self.chain_id
                     )
                     return self.trade_executor.tx_manager is not None
@@ -654,8 +688,13 @@ class EnhancedPaperTradingBot:
             logger.error(f"[TRADE] Failed to initialize trade executor: {e}")
             raise
     
-    def _initialize_market_analyzer(self):
+    def _initialize_market_analyzer(self) -> None:
         """Initialize the market analyzer."""
+        assert self.account is not None, "Account must be initialized before market analyzer"
+        assert self.session is not None, "Session must be initialized before market analyzer"
+        assert self.intelligence_engine is not None, "Intelligence engine must be initialized before market analyzer"
+        assert self.strategy_config is not None, "Strategy config must be initialized before market analyzer"
+        
         try:
             self.market_analyzer = MarketAnalyzer(
                 account=self.account,
@@ -671,13 +710,16 @@ class EnhancedPaperTradingBot:
             logger.error(f"[MARKET] Failed to initialize market analyzer: {e}")
             raise
     
-    def _log_startup_thought(self):
+    def _log_startup_thought(self) -> None:
         """
         Log a startup thought to track bot initialization.
         
         This creates a thought log entry documenting the bot's configuration
         and initialization parameters for auditing and debugging purposes.
         """
+        assert self.account is not None, "Account must be initialized before logging startup thought"
+        assert self.intelligence_engine is not None, "Intelligence engine must be initialized before logging startup thought"
+        
         try:
             from paper_trading.models import PaperAIThoughtLog
             
@@ -714,7 +756,7 @@ class EnhancedPaperTradingBot:
                 token_symbol='SYSTEM',
                 confidence_level=Decimal('100'),  # FIXED: Use Decimal, not string
                 reasoning=reasoning[:500],  # FIXED: Use 'reasoning', not 'primary_reasoning'
-                risk_assessment="Risk Score: 0, Opportunity Score: 100 - Bot startup with optimal configuration",  # FIXED: Use 'risk_assessment', not 'risk_score'
+                risk_assessment="Risk Score: 0, Opportunity Score: 100 - Bot startup with optimal configuration",  
                 key_factors=[
                     f"Intel Level: {self.intel_level}",
                     f"TX Manager: {'Enabled' if self.use_tx_manager else 'Disabled'}",
@@ -728,140 +770,80 @@ class EnhancedPaperTradingBot:
                     "Configuration validated"
                 ],
                 negative_signals=[],
-                market_data=market_data,  # FIXED: Store risk_score and opportunity_score in JSON
-                strategy_name=f"Intel_{self.intel_level}",
-                lane_used='SMART',
-                analysis_time_ms=0
+                market_data=market_data
             )
             
-            logger.info("[BOT] ✅ Startup thought logged successfully")
+            logger.info("[THOUGHT] Startup thought logged successfully")
             
         except Exception as e:
-            logger.error(f"[BOT] Failed to log startup thought: {e}")
-
-
-
-
-
-
-
-
-
-
-
-
-
+            logger.error(f"[THOUGHT] Failed to log startup thought: {e}", exc_info=True)
+    
     # =========================================================================
     # MAIN RUN LOOP
     # =========================================================================
     
-    def run(self):
-        """Main bot execution loop with interruptible sleep and stop signal detection."""
-        logger.info("[START] Bot starting main execution loop...")
+    def run(self) -> None:
+        """
+        Main bot run loop - handles signals and coordinates market ticks.
         
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        This method runs the main bot loop, coordinating all managers
+        and handling graceful shutdown on interrupt signals.
+        """
+        # Type guards for components that must be initialized
+        assert self.price_manager is not None, "Price manager must be initialized before running"
+        assert self.position_manager is not None, "Position manager must be initialized before running"
+        assert self.trade_executor is not None, "Trade executor must be initialized before running"
+        assert self.market_analyzer is not None, "Market analyzer must be initialized before running"
+        
+        # Setup signal handlers for graceful shutdown
+        def signal_handler(signum: int, frame: Any) -> None:
+            """Handle shutdown signals gracefully."""
+            logger.info(f"[BOT] Received signal {signum} - initiating graceful shutdown...")
+            self.running = False
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
         
         self.running = True
+        logger.info("[BOT] Starting main run loop...")
         
         try:
             while self.running:
-                try:
-                    # Check for dashboard stop signal
-                    if self._check_stop_signal():
-                        logger.info("[SHUTDOWN] Dashboard stop detected")
-                        break
-                    
-                    # Execute market tick
-                    self.market_analyzer.tick(
-                        price_manager=self.price_manager,
-                        position_manager=self.position_manager,
-                        trade_executor=self.trade_executor
-                    )
-                    
-                    # Interruptible sleep - check every 0.5 seconds
-                    sleep_remaining = self.tick_interval
-                    while sleep_remaining > 0 and self.running:
-                        # Check stop signal during sleep
-                        if self._check_stop_signal():
-                            logger.info("[SHUTDOWN] Stop signal during sleep")
-                            self.running = False
-                            break
-                        
-                        # Sleep in 0.5s chunks for responsiveness
-                        sleep_time = min(0.5, sleep_remaining)
-                        time.sleep(sleep_time)
-                        sleep_remaining -= sleep_time
-                    
-                except KeyboardInterrupt:
-                    logger.info("[SHUTDOWN] Keyboard interrupt received")
-                    break
-                except Exception as e:
-                    logger.error(f"[ERROR] Tick failed: {e}", exc_info=True)
-                    # Continue running even if one tick fails
-                    if not self.running:
-                        break
-                    
-        except Exception as e:
-            logger.error(f"[ERROR] Bot crashed: {e}", exc_info=True)
-        finally:
-            logger.info("[SHUTDOWN] Starting cleanup...")
-            self._cleanup()
-            logger.info("[SHUTDOWN] Cleanup complete - bot stopped")
-    
-    def _check_stop_signal(self) -> bool:
-        """
-        Check if a stop signal has been sent from the dashboard.
-        
-        Returns:
-            True if bot should stop, False otherwise
-        """
-        try:
-            # Refresh session from database to check for stop signals
-            if self.session:
-                self.session.refresh_from_db()
+                # Run one market tick
+                self.market_analyzer.tick(
+                    price_manager=self.price_manager,
+                    position_manager=self.position_manager,
+                    trade_executor=self.trade_executor
+                )
                 
-                # Check if session status was changed to STOPPED
-                if self.session.status == 'STOPPED':
-                    logger.info("[SHUTDOWN] Stop signal received from dashboard")
-                    return True
-            
-            # Check account status
-            if self.account:
-                self.account.refresh_from_db()
-                if not self.account.is_active:
-                    logger.info("[SHUTDOWN] Account deactivated - stopping bot")
-                    return True
-            
-            return False
-            
+                # Sleep for tick interval
+                if self.running:
+                    time.sleep(self.tick_interval)
+        
+        except KeyboardInterrupt:
+            logger.info("[BOT] Keyboard interrupt received - shutting down...")
         except Exception as e:
-            logger.error(f"[ERROR] Failed to check stop signal: {e}")
-            return False
+            logger.error(f"[BOT] Error in main run loop: {e}", exc_info=True)
+        finally:
+            self.cleanup()
     
-    def _handle_shutdown(self, signum, frame):
+    # =========================================================================
+    # CLEANUP AND SHUTDOWN
+    # =========================================================================
+    
+    def cleanup(self) -> None:
         """
-        Handle shutdown signals immediately with force-exit timeout.
+        Cleanup bot resources and finalize session.
         
-        Args:
-            signum: Signal number
-            frame: Current stack frame
+        This method handles graceful shutdown, closing all connections
+        and finalizing session data.
         """
-        logger.info(f"[SHUTDOWN] Received signal {signum} - stopping bot immediately")
-        self.running = False
-        
-        # Force exit after 3 seconds if cleanup hangs
-        import threading
-        def force_exit():
-            time.sleep(3)
-            if self.running is False:  # Still shutting down after 3 seconds
-                logger.warning("[SHUTDOWN] Force exit after 3 second timeout")
-                import os
-                os._exit(0)
-        
         try:
-            if self.session:
+            logger.info("[CLEANUP] Starting bot cleanup...")
+            self.running = False
+            
+            # Finalize session if it exists
+            if self.session and self.account:
                 self.session.status = 'STOPPED'
                 self.session.stopped_at = timezone.now()
                 
@@ -879,7 +861,8 @@ class EnhancedPaperTradingBot:
                 self.session.save()
             
             # Log final TX Manager stats if enabled
-            if self.use_tx_manager and self.trade_executor.trades_with_tx_manager > 0:
+            if self.trade_executor and self.use_tx_manager and hasattr(
+                    self.trade_executor, 'trades_with_tx_manager') and self.trade_executor.trades_with_tx_manager > 0:
                 avg_savings = (
                     self.trade_executor.total_gas_savings /
                     self.trade_executor.trades_with_tx_manager
@@ -898,7 +881,7 @@ class EnhancedPaperTradingBot:
                 )
             
             # Log final circuit breaker stats if enabled
-            if self.circuit_breaker_enabled:
+            if self.trade_executor and self.circuit_breaker_enabled and hasattr(self.trade_executor, 'daily_trades_count'):
                 logger.info(
                     f"[CB] Final Stats: "
                     f"{self.trade_executor.daily_trades_count} trades today"
@@ -921,7 +904,7 @@ class EnhancedPaperTradingBot:
 # MAIN ENTRY POINT
 # =============================================================================
 
-def main():
+def main() -> None:
     """Main entry point for the bot."""
     import argparse
     
@@ -1027,6 +1010,10 @@ def main():
     print("=" * 60)
     
     if bot.initialize():
+        # Type guards to ensure components are initialized
+        assert bot.account is not None, "Account initialization failed"
+        assert bot.intelligence_engine is not None, "Intelligence engine initialization failed"
+        
         print(f"  Account         : {bot.account.name}")
         print(f"  User            : {bot.account.user.username}")
         print(f"  Balance         : ${bot.account.current_balance_usd:,.2f}")
