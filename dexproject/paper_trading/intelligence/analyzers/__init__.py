@@ -10,18 +10,21 @@ File: dexproject/paper_trading/intelligence/analyzers/__init__.py
 import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, Any, Optional, Tuple, List, cast
+from typing import Dict, Any, Optional, cast, List, TYPE_CHECKING
 from abc import ABC, abstractmethod
-import random  # For simulation in paper trading
 
 # Import Web3 infrastructure for real data (optional)
+if TYPE_CHECKING:
+    # Only import for type checking, not at runtime
+    from engine.web3_client import Web3Client
+
 try:
     from engine.config import config as engine_config
-    from engine.web3_client import Web3Client
+    from engine.web3_client import Web3Client as Web3ClientRuntime
     WEB3_AVAILABLE = True
 except ImportError:
     engine_config = None  # type: ignore
-    Web3Client = None  # type: ignore
+    Web3ClientRuntime = None  # type: ignore
     WEB3_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -104,10 +107,7 @@ class BaseAnalyzer(ABC):
         self._web3_client: Optional[object] = None
         self._web3_initialized = False
     
-    async def _ensure_web3_client(
-        self, 
-        chain_id: int = 84532
-    ) -> Optional[Web3ClientType]:
+    async def _ensure_web3_client(self, chain_id: int = 84532) -> Optional[Web3Client]:
         """
         Ensure Web3 client is initialized.
         
@@ -122,8 +122,8 @@ class BaseAnalyzer(ABC):
             return None
         
         if self._web3_initialized and self._web3_client:
-            # Type guard: we know it's Web3ClientType at this point
-            return cast(Web3ClientType, self._web3_client)
+            # Type guard: we know it's Web3Client at this point
+            return cast(Web3Client, self._web3_client)
         
         try:
             # Type guard: engine_config is not None when WEB3_AVAILABLE is True
@@ -135,14 +135,14 @@ class BaseAnalyzer(ABC):
                 self.logger.error(f"No config for chain {chain_id}")
                 return None
             
-            # Type guard: Web3ClientType is not None when WEB3_AVAILABLE is True
-            assert Web3ClientType is not None, "Web3ClientType should be available"
+            # Type guard: Web3Client is not None when WEB3_AVAILABLE is True
+            assert Web3Client is not None, "Web3Client should be available"
             
             # Initialize Web3 client
-            self._web3_client = Web3ClientType(chain_config)
+            self._web3_client = Web3Client(chain_config)
             
             # Type guard for mypy/pylance
-            client = cast(Web3ClientType, self._web3_client)
+            client = cast(Web3Client, self._web3_client)
             await client.connect()
             
             if not client.is_connected:
@@ -208,7 +208,7 @@ class RealGasAnalyzer(BaseAnalyzer):
             
             if web3_client is not None:
                 # Type guard: at this point we know it's a Web3ClientType
-                client = cast(Web3ClientType, web3_client)
+                client = cast(Web3Client, web3_client)
                 
                 if client.is_connected:
                     # ✅ REAL DATA: Query actual blockchain
@@ -407,7 +407,7 @@ class RealLiquidityAnalyzer(BaseAnalyzer):
             
             if web3_client is not None:
                 # Type guard
-                client = cast(Web3ClientType, web3_client)
+                client = cast(Web3Client, web3_client)
                 
                 # ✅ REAL DATA: Query Uniswap V3 pool
                 liquidity_data = await self._get_real_pool_liquidity(
@@ -484,7 +484,7 @@ class RealLiquidityAnalyzer(BaseAnalyzer):
     
     async def _get_real_pool_liquidity(
         self,
-        web3_client: Web3ClientType,
+        web3_client: Web3Client,
         token_address: str,
         chain_id: int
     ) -> Optional[Dict[str, Any]]:
@@ -554,6 +554,7 @@ class RealLiquidityAnalyzer(BaseAnalyzer):
                         }
                         
                 except Exception as e:
+                    logger.error(f"Error querying pool at fee {fee_tier}: {e}")                    
                     # Pool doesn't exist for this fee tier, try next
                     continue
             
