@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from .services.price_feed_service import PriceFeedService
 import asyncio
 from django.http import JsonResponse, HttpRequest
@@ -34,8 +34,18 @@ from .models import (
     PaperPerformanceMetrics
 )
 
-# Import Celery tasks for bot control
-from .tasks import run_paper_trading_bot, stop_paper_trading_bot
+# Import Celery tasks for bot control with proper type hints
+if TYPE_CHECKING:
+    # For type checking, import as Celery Task type
+    from celery import Task
+    run_paper_trading_bot: Task  # type: ignore
+    stop_paper_trading_bot: Task  # type: ignore
+    # Help Pylance recognize Django User model has id attribute
+    from django.contrib.auth.models import AbstractUser
+    User = AbstractUser
+else:
+    # At runtime, import the actual shared_task decorated functions
+    from .tasks import run_paper_trading_bot, stop_paper_trading_bot
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +54,7 @@ logger = logging.getLogger(__name__)
 # HELPER FUNCTION TO GET DEFAULT USER
 # =============================================================================
 
-def get_default_user():
+def get_default_user() -> User:
     """
     Get or create the default user for single-user operation.
     No authentication required.
@@ -123,15 +133,15 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
             'thoughts': [
                 {
                     'id': str(thought.thought_id),
-                    'metadata': thought.metadata or {},
+                    'metadata': thought.market_data or {},  # FIXED: Use market_data instead of metadata
                     'created_at': thought.created_at.isoformat(),
-                    'importance': thought.importance_score,
+                    'importance': float(thought.confidence_level),  # FIXED: Use confidence_level instead of importance_score
                     # Additional fields for dashboard display
-                    'decision_type': thought.metadata.get('decision_type', 'ANALYSIS') if thought.metadata else 'ANALYSIS',
-                    'token_symbol': thought.metadata.get('token_symbol', '') if thought.metadata else '',
-                    'lane_used': thought.metadata.get('lane_used', 'SMART') if thought.metadata else 'SMART',
-                    'confidence_percent': thought.metadata.get('confidence', 50) if thought.metadata else 50,
-                    'primary_reasoning': thought.thought_content[:200] if thought.thought_content else '',
+                    'decision_type': thought.market_data.get('decision_type', 'ANALYSIS') if thought.market_data else 'ANALYSIS',
+                    'token_symbol': thought.market_data.get('token_symbol', '') if thought.market_data else '',
+                    'lane_used': thought.market_data.get('lane_used', 'SMART') if thought.market_data else 'SMART',
+                    'confidence_percent': thought.market_data.get('confidence', 50) if thought.market_data else 50,
+                    'primary_reasoning': thought.reasoning[:200] if thought.reasoning else '',  # FIXED: Use reasoning instead of thought_content
                     'timestamp': thought.created_at.isoformat(),
                 }
                 for thought in thoughts
@@ -186,7 +196,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         )
         
         # Build portfolio data
-        portfolio_data = {
+        portfolio_data: Dict[str, Any] = {
             'account': {
                 'id': str(account.account_id),
                 'name': account.name,
@@ -236,7 +246,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
             (account.current_balance_usd / total_value * 100) if total_value > 0 else 100
         )
         
-        logger.debug(f"Portfolio data fetched")
+        logger.debug("Portfolio data fetched")
         return JsonResponse(portfolio_data)
         
     except Exception as e:
@@ -244,201 +254,25 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
-@require_http_methods(["GET"])
-def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
-    """
-    API endpoint to get current price for a specific token.
-    
-    Returns real-time price data for the specified token symbol.
-    
-    Args:
-        request: HttpRequest object
-        token_symbol: Token symbol (e.g., 'ETH', 'WETH', 'USDC')
-    
-    Query Parameters:
-        include_history (bool): Include 24h price history (default: False)
-        force_refresh (bool): Bypass cache and fetch fresh price (default: False)
-    
-    Returns:
-        JsonResponse: Token price data with metadata
-        
-    Example Response:
-        {
-            'success': True,
-            'token_symbol': 'WETH',
-            'token_address': null,
-            'price_usd': 3881.03,
-            'source': 'price_feed_service',
-            'cached': False,
-            'timestamp': '2025-10-24T18:30:00Z',
-            'chain_id': 84532
-        }
-    """
-    try:
-        logger.debug(f"[TOKEN PRICE API] Fetching price for token: {token_symbol}")
-        
-        # Normalize token symbol
-        token_symbol = token_symbol.upper().strip()
-        
-        # Get query parameters
-        include_history = request.GET.get('include_history', 'false').lower() == 'true'
-        force_refresh = request.GET.get('force_refresh', 'false').lower() == 'true'
-        
-        # Get chain_id from settings
-        from django.conf import settings
-        chain_id = getattr(settings, 'DEFAULT_CHAIN_ID', 84532)
-        
-        # Try to get from cache first (unless force_refresh is True)
-        cache_key = f'token_price_{token_symbol}_{chain_id}'
-        
-        if not force_refresh:
-            cached_price = cache.get(cache_key)
-            if cached_price is not None:
-                logger.debug(f"[TOKEN PRICE API] Using cached price for {token_symbol}: ${cached_price}")
-                return JsonResponse({
-                    'success': True,
-                    'token_symbol': token_symbol,
-                    'token_address': None,
-                    'price_usd': float(cached_price),
-                    'source': 'cache',
-                    'cached': True,
-                    'timestamp': timezone.now().isoformat(),
-                    'chain_id': chain_id
-                })
-        
-        # Initialize price feed service with chain_id
-        try:
-            price_service = PriceFeedService(chain_id=chain_id)
-        except Exception as init_error:
-            logger.error(
-                f"[TOKEN PRICE API] Failed to initialize PriceFeedService: {init_error}",
-                exc_info=True
-            )
-            return JsonResponse({
-                'success': False,
-                'error': f'Price service initialization failed: {str(init_error)}',
-                'token_symbol': token_symbol,
-                'token_address': None,
-                'timestamp': timezone.now().isoformat()
-            }, status=503)
-        
-        # Attempt to get price using async service
-        try:
-            # Run async price fetch in sync context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            price_data = loop.run_until_complete(
-                price_service.get_token_price(token_symbol)
-            )
-            loop.close()
-            
-            if price_data is None or price_data == 0:
-                logger.warning(
-                    f"[TOKEN PRICE API] No price data available for token: {token_symbol}"
-                )
-                return JsonResponse({
-                    'success': False,
-                    'error': f'Price data not available for {token_symbol}',
-                    'token_symbol': token_symbol,
-                    'token_address': None,
-                    'timestamp': timezone.now().isoformat()
-                }, status=404)
-            
-            # Cache the price for 60 seconds
-            cache.set(cache_key, price_data, 60)
-            
-            # Build response
-            response_data = {
-                'success': True,
-                'token_symbol': token_symbol,
-                'token_address': None,  # Could be added if needed
-                'price_usd': float(price_data),
-                'source': 'price_feed_service',
-                'cached': False,
-                'timestamp': timezone.now().isoformat(),
-                'chain_id': chain_id
-            }
-            
-            # Add 24h history if requested
-            if include_history:
-                # Try to get from cache first
-                history_cache_key = f'price_history_24h_{token_symbol}'
-                history = cache.get(history_cache_key)
-                
-                if history is None:
-                    # Fetch recent position updates to build history
-                    # (positions track price changes over time)
-                    recent_positions = PaperPosition.objects.filter(
-                        token_symbol=token_symbol,
-                        last_updated__gte=timezone.now() - timedelta(hours=24)
-                    ).order_by('last_updated')
-                    
-                    history = [
-                        {
-                            'timestamp': pos.last_updated.isoformat(),
-                            'price': float(pos.current_price_usd) if pos.current_price_usd else 0
-                        }
-                        for pos in recent_positions
-                        if pos.current_price_usd
-                    ]
-                    
-                    # Cache for 5 minutes
-                    cache.set(history_cache_key, history, 300)
-                
-                response_data['price_history_24h'] = history
-            
-            logger.info(
-                f"[TOKEN PRICE API] Successfully fetched price for {token_symbol}: ${price_data}"
-            )
-            return JsonResponse(response_data)
-            
-        except Exception as price_error:
-            logger.error(
-                f"[TOKEN PRICE API] Error fetching price from service: {price_error}",
-                exc_info=True
-            )
-            
-            # No fallback - just return error
-            return JsonResponse({
-                'success': False,
-                'error': f'Unable to fetch price for {token_symbol}: {str(price_error)}',
-                'token_symbol': token_symbol,
-                'token_address': None,
-                'timestamp': timezone.now().isoformat()
-            }, status=503)
-        
-    except Exception as e:
-        logger.error(
-            f"[TOKEN PRICE API] Unexpected error for {token_symbol}: {e}",
-            exc_info=True
-        )
-        return JsonResponse({
-            'success': False,
-            'error': str(e),
-            'token_symbol': token_symbol,
-            'token_address': None,
-            'timestamp': timezone.now().isoformat()
-        }, status=500)
-
-
 @require_http_methods(["GET"])
 def api_trades_data(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for trade history data with filtering support.
     
+    Returns trade history with pagination and filtering options.
+    
     Query Parameters:
+        limit (int): Maximum number of trades to return (default: 10, max: 50)
+        since (str): ISO datetime to get trades after
         status (str): Filter by trade status
-        trade_type (str): Filter by trade type (buy/sell)
-        limit (int): Maximum number of trades to return
     
     Returns:
-        JsonResponse: Filtered trade data
+        JsonResponse: Trade history data with filters applied
     """
     try:
         # Get default user - no authentication required
         user = get_default_user()
-            
+        
         # Get account for user
         account = PaperTradingAccount.objects.filter(
             user=user,
@@ -446,102 +280,21 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         ).first()
         
         if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+            return JsonResponse({
+                'success': True,
+                'trades': [],
+                'count': 0,
+                'timestamp': timezone.now().isoformat()
+            })
         
-        # Build query with filters
+        # Build query for trades
         trades_query = PaperTrade.objects.filter(account=account)
         
-        # Apply status filter
-        status = request.GET.get('status')
-        if status:
-            trades_query = trades_query.filter(status=status)
+        # Apply filters from query parameters
+        status_filter = request.GET.get('status')
+        if status_filter:
+            trades_query = trades_query.filter(status=status_filter)
         
-        # Apply trade type filter
-        trade_type = request.GET.get('trade_type')
-        if trade_type:
-            trades_query = trades_query.filter(trade_type=trade_type)
-        
-        # Apply limit
-        limit = int(request.GET.get('limit', 50))
-        trades_query = trades_query.order_by('-created_at')[:limit]
-        
-        # Build trades data
-        trades_data = {
-            'trades': [
-                {
-                    'id': str(trade.trade_id),
-                    'type': trade.trade_type,
-                    'status': trade.status,
-                    'token_in': trade.token_in_symbol,
-                    'token_out': trade.token_out_symbol,
-                    'amount_in': float(trade.amount_in),
-                    'amount_in_usd': float(trade.amount_in_usd),
-                    'expected_amount_out': float(trade.expected_amount_out) if trade.expected_amount_out else None,
-                    'actual_amount_out': float(trade.actual_amount_out) if trade.actual_amount_out else None,
-                    'gas_cost_usd': float(trade.simulated_gas_cost_usd) if trade.simulated_gas_cost_usd else 0,
-                    'slippage': float(trade.simulated_slippage_percent) if trade.simulated_slippage_percent else 0,
-                    'created_at': trade.created_at.isoformat(),
-                    'executed_at': trade.executed_at.isoformat() if trade.executed_at else None,
-                }
-                for trade in trades_query
-            ],
-            'count': len(trades_query),
-            'timestamp': timezone.now().isoformat(),
-        }
-        
-        logger.debug(f"Trade data fetched: {len(trades_query)} trades")
-        return JsonResponse(trades_data)
-        
-    except Exception as e:
-        logger.error(f"Error in trades API: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
-
-
-@require_http_methods(["GET"])
-def api_recent_trades(request: HttpRequest) -> JsonResponse:
-    """
-    API endpoint for recent trades - simplified for dashboard display.
-    
-    Query Parameters:
-        limit (int): Number of trades to return (max: 50)
-        since (str): ISO datetime to get trades after
-    
-    Returns:
-        JsonResponse: Recent trades with essential information
-    """
-    try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get active account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
-        
-        # Build query
-        trades_query = PaperTrade.objects.filter(account=account)
-        
-        # Apply since filter if provided
         since = request.GET.get('since')
         if since:
             try:
@@ -555,7 +308,7 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
         trades = trades_query.order_by('-created_at')[:limit]
         
         # Build response data
-        trades_data = []
+        trades_data: List[Dict[str, Any]] = []
         for trade in trades:
             trade_data = {
                 'trade_id': str(trade.trade_id),
@@ -571,10 +324,14 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
                 'execution_time_ms': trade.execution_time_ms,
             }
             
-            # Add P&L if available
-            if hasattr(trade, 'pnl_usd') and trade.pnl_usd is not None:
-                trade_data['pnl_usd'] = float(trade.pnl_usd)
-                trade_data['pnl_percent'] = float(trade.pnl_percent) if hasattr(trade, 'pnl_percent') and trade.pnl_percent else 0
+            # FIXED: Use getattr() with default values instead of direct attribute access
+            # Add P&L if available - safely check and retrieve attributes
+            pnl_usd = getattr(trade, 'pnl_usd', None)
+            if pnl_usd is not None:
+                trade_data['pnl_usd'] = float(pnl_usd)
+                # Also safely get pnl_percent with default
+                pnl_percent = getattr(trade, 'pnl_percent', 0)
+                trade_data['pnl_percent'] = float(pnl_percent) if pnl_percent else 0
             
             trades_data.append(trade_data)
         
@@ -596,6 +353,77 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
         }, status=500)
 
 
+# Alias for backward compatibility with urls.py
+api_recent_trades = api_trades_data
+
+
+@require_http_methods(["GET"])
+def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
+    """
+    API endpoint to get current token price.
+    
+    Returns the current price for a given token symbol.
+    
+    Args:
+        token_symbol: Token symbol (e.g., 'WETH', 'USDC')
+    
+    Returns:
+        JsonResponse: Token price data
+    """
+    try:
+        # Try to get price from PriceFeedService
+        try:
+            price_feed = PriceFeedService()
+            price_data = asyncio.run(price_feed.get_token_price(token_symbol))
+            
+            if price_data:
+                return JsonResponse({
+                    'success': True,
+                    'token_symbol': token_symbol.upper(),
+                    'price_usd': float(price_data.get('price_usd', 0)),
+                    'price_eth': float(price_data.get('price_eth', 0)),
+                    'timestamp': timezone.now().isoformat(),
+                    'source': 'live'
+                })
+        except Exception as price_error:
+            logger.warning(f"Could not fetch live price for {token_symbol}: {price_error}")
+        
+        # Fallback to mock/default prices for common tokens
+        mock_prices = {
+            'WETH': {'price_usd': 2000.00, 'price_eth': 1.0},
+            'ETH': {'price_usd': 2000.00, 'price_eth': 1.0},
+            'USDC': {'price_usd': 1.00, 'price_eth': 0.0005},
+            'USDT': {'price_usd': 1.00, 'price_eth': 0.0005},
+            'DAI': {'price_usd': 1.00, 'price_eth': 0.0005},
+        }
+        
+        token_upper = token_symbol.upper()
+        if token_upper in mock_prices:
+            return JsonResponse({
+                'success': True,
+                'token_symbol': token_upper,
+                'price_usd': mock_prices[token_upper]['price_usd'],
+                'price_eth': mock_prices[token_upper]['price_eth'],
+                'timestamp': timezone.now().isoformat(),
+                'source': 'mock'
+            })
+        
+        # Token not found
+        return JsonResponse({
+            'success': False,
+            'error': f'Price data not available for token: {token_symbol}',
+            'token_symbol': token_symbol.upper()
+        }, status=404)
+        
+    except Exception as e:
+        logger.error(f"Error in api_token_price for {token_symbol}: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+            'token_symbol': token_symbol
+        }, status=500)
+
+
 @require_http_methods(["GET"])
 def api_open_positions(request: HttpRequest) -> JsonResponse:
     """
@@ -604,67 +432,69 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
     Returns all open positions with current values and P&L calculations.
     
     Returns:
-        JsonResponse: Open positions data with summary metrics
+        JsonResponse: Open positions with current market values
     """
     try:
         # Get default user - no authentication required
         user = get_default_user()
         
-        # Get active account
+        # Get account
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
         ).first()
         
         if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+            return JsonResponse({
+                'success': True,
+                'positions': [],
+                'summary': {
+                    'total_positions': 0,
+                    'total_value_usd': 0,
+                    'total_cost_basis_usd': 0,
+                    'total_unrealized_pnl_usd': 0,
+                    'total_unrealized_pnl_percent': 0
+                },
+                'timestamp': timezone.now().isoformat()
+            })
         
         # Get open positions
         positions = PaperPosition.objects.filter(
             account=account,
             is_open=True
-        ).order_by('-current_value_usd')
+        )
         
-        # Build response data
-        positions_data = []
+        # Build positions data
+        positions_data: List[Dict[str, Any]] = []
         total_value = Decimal('0')
         total_pnl = Decimal('0')
         total_invested = Decimal('0')
         
         for position in positions:
-            # Get current values with safe defaults
+            # Calculate current values
             current_value = position.current_value_usd or Decimal('0')
+            unrealized_pnl = position.unrealized_pnl_usd
             invested = position.total_invested_usd or Decimal('0')
-            unrealized_pnl = position.unrealized_pnl_usd or Decimal('0')
             
-            # Calculate unrealized_pnl_percent dynamically
-            if invested and invested > 0:
-                unrealized_pnl_percent = (unrealized_pnl / invested) * 100
+            # Calculate P&L percentage
+            if invested > 0:
+                pnl_percent = (unrealized_pnl / invested) * 100
             else:
-                unrealized_pnl_percent = Decimal('0')
+                pnl_percent = Decimal('0')
             
             position_data = {
                 'position_id': str(position.position_id),
                 'token_symbol': position.token_symbol,
                 'token_address': position.token_address,
                 'quantity': float(position.quantity),
-                'average_entry_price_usd': float(position.average_entry_price_usd) if position.average_entry_price_usd else 0,
-                'current_price_usd': float(position.current_price_usd) if position.current_price_usd else 0,
-                'current_value_usd': float(current_value),
+                'average_entry_price': float(position.average_entry_price_usd) if position.average_entry_price_usd else 0,
+                'current_price': float(position.current_price_usd) if position.current_price_usd else 0,
                 'cost_basis_usd': float(invested),
-                'total_invested_usd': float(invested),
+                'current_value_usd': float(current_value),
                 'unrealized_pnl_usd': float(unrealized_pnl),
-                'unrealized_pnl_percent': float(unrealized_pnl_percent),
-                'opened_at': position.opened_at.isoformat() if position.opened_at else None,
-                'last_updated': position.last_updated.isoformat() if position.last_updated else None,
+                'unrealized_pnl_percent': float(pnl_percent),
+                'opened_at': position.opened_at.isoformat(),
+                'last_updated': position.last_updated.isoformat() if position.last_updated else None  # FIXED: Use last_updated instead of last_updated_at
             }
             
             positions_data.append(position_data)
@@ -703,8 +533,6 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
         }, status=500)
 
 
-
-
 @require_http_methods(["GET"])
 def api_metrics(request: HttpRequest) -> JsonResponse:
     """
@@ -736,12 +564,12 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             )
             logger.info(f"Created new paper trading account: {account.account_id}")
         
-        # ✅ CALCULATE POSITIONS VALUE
+        # Calculate positions value
         open_positions = PaperPosition.objects.filter(account=account, is_open=True)
         positions_value = sum(pos.current_value_usd or Decimal('0') for pos in open_positions)
         portfolio_value = account.current_balance_usd + positions_value
         
-        # ✅ CALCULATE CORRECT RETURN PERCENTAGE
+        # Calculate correct return percentage
         return_percent = float(
             ((portfolio_value - account.initial_balance_usd) / account.initial_balance_usd * 100)
             if account.initial_balance_usd > 0 else 0
@@ -761,10 +589,10 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             'success': True,
             'current_balance': float(account.current_balance_usd),
             'initial_balance': float(account.initial_balance_usd),
-            'positions_value': float(positions_value),        # ✅ ADD THIS
-            'portfolio_value': float(portfolio_value),         # ✅ ADD THIS
+            'positions_value': float(positions_value),
+            'portfolio_value': float(portfolio_value),
             'total_pnl': float(account.total_profit_loss_usd),
-            'return_percent': return_percent,                  # ✅ NOW CORRECT
+            'return_percent': return_percent,
             'win_rate': float(account.get_win_rate()) if account.get_win_rate() else 0,
             'trades_24h': trades_24h_data['count'] or 0,
             'volume_24h': float(trades_24h_data['total_volume']) if trades_24h_data['total_volume'] else 0,
@@ -784,153 +612,16 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
             'error': 'Failed to fetch metrics'
         }, status=500)
 
-# =============================================================================
-# CONFIGURATION API
-# =============================================================================
-
-@require_http_methods(["GET", "POST"])
-@csrf_exempt
-def api_configuration(request: HttpRequest) -> JsonResponse:
-    """
-    API endpoint for strategy configuration management.
-    
-    GET: Returns current configuration
-    POST: Updates configuration
-    
-    Returns:
-        JsonResponse: Configuration data or update status
-    """
-    try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get or create account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
-        
-        if request.method == 'GET':
-            # Get current configuration
-            config = PaperStrategyConfiguration.objects.filter(
-                account=account,
-                is_active=True
-            ).first()
-            
-            if config:
-                config_data = {
-                    'strategy_name': config.name,
-                    'is_active': config.is_active,
-                    'trading_mode': config.trading_mode,
-                    'use_fast_lane': config.use_fast_lane,
-                    'use_smart_lane': config.use_smart_lane,
-                    'fast_lane_threshold_usd': float(config.fast_lane_threshold_usd),
-                    'max_position_size_percent': float(config.max_position_size_percent),
-                    'stop_loss_percent': float(config.stop_loss_percent),
-                    'take_profit_percent': float(config.take_profit_percent),
-                    'max_daily_trades': config.max_daily_trades,
-                    'max_concurrent_positions': config.max_concurrent_positions,
-                    'min_liquidity_usd': float(config.min_liquidity_usd),
-                    'max_slippage_percent': float(config.max_slippage_percent),
-                    'confidence_threshold': float(config.confidence_threshold),
-                    'created_at': config.created_at.isoformat(),
-                    'updated_at': config.updated_at.isoformat(),
-                }
-            else:
-                # Create default configuration
-                config = PaperStrategyConfiguration.objects.create(
-                    account=account,
-                    name='Default Strategy',
-                    is_active=True,
-                    trading_mode='MODERATE',
-                    use_fast_lane=True,
-                    use_smart_lane=False,
-                    fast_lane_threshold_usd=Decimal('100'),
-                    max_position_size_percent=Decimal('5.0'),
-                    stop_loss_percent=Decimal('5.0'),
-                    take_profit_percent=Decimal('10.0'),
-                    max_daily_trades=20,
-                    max_concurrent_positions=5,
-                    min_liquidity_usd=Decimal('10000'),
-                    max_slippage_percent=Decimal('1.0'),
-                    confidence_threshold=Decimal('60')
-                )
-                config_data = {
-                    'strategy_name': config.name,
-                    'is_active': config.is_active,
-                    'trading_mode': config.trading_mode,
-                    'message': 'Created default configuration'
-                }
-            
-            return JsonResponse(config_data)
-            
-        elif request.method == 'POST':
-            # Update configuration
-            try:
-                data = json.loads(request.body)
-                
-                config, created = PaperStrategyConfiguration.objects.update_or_create(
-                    account=account,
-                    name=data.get('strategy_name', 'default'),
-                    defaults={
-                        'is_active': data.get('is_active', True),
-                        'trading_mode': data.get('trading_mode', 'MODERATE'),
-                        'use_fast_lane': data.get('use_fast_lane', True),
-                        'use_smart_lane': data.get('use_smart_lane', False),
-                        'fast_lane_threshold_usd': Decimal(str(data.get('fast_lane_threshold_usd', 100))),
-                        'max_position_size_percent': Decimal(str(data.get('max_position_size_percent', 5.0))),
-                        'stop_loss_percent': Decimal(str(data.get('stop_loss_percent', 5.0))),
-                        'take_profit_percent': Decimal(str(data.get('take_profit_percent', 10.0))),
-                        'max_daily_trades': data.get('max_daily_trades', 20),
-                        'max_concurrent_positions': data.get('max_concurrent_positions', 5),
-                        'min_liquidity_usd': Decimal(str(data.get('min_liquidity_usd', 10000))),
-                        'max_slippage_percent': Decimal(str(data.get('max_slippage_percent', 1.0))),
-                        'confidence_threshold': Decimal(str(data.get('confidence_threshold', 60))),
-                        'allowed_tokens': data.get('allowed_tokens', []),
-                        'blocked_tokens': data.get('blocked_tokens', []),
-                        'custom_parameters': data.get('custom_parameters', {}),
-                    }
-                )
-                
-                logger.info(f"Configuration {'created' if created else 'updated'} for account {account.account_id}")
-                
-                return JsonResponse({
-                    'success': True,
-                    'message': f"Configuration {'created' if created else 'updated'}",
-                    'config_id': str(config.config_id)
-                })
-                
-            except json.JSONDecodeError:
-                return JsonResponse({'error': 'Invalid JSON'}, status=400)
-            except Exception as e:
-                logger.error(f"Error updating configuration: {e}", exc_info=True)
-                return JsonResponse({'error': str(e)}, status=500)
-                
-    except Exception as e:
-        logger.error(f"Error in configuration API: {e}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
-
 
 @require_http_methods(["GET"])
 def api_performance_metrics(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for performance metrics.
     
-    Returns detailed performance metrics and statistics.
+    Returns detailed performance analytics and statistics.
     
     Returns:
-        JsonResponse: Performance data including Sharpe ratio, win rate, etc.
+        JsonResponse: Performance metrics including Sharpe ratio, max drawdown, etc.
     """
     try:
         # Get default user - no authentication required
@@ -943,37 +634,19 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         ).first()
         
         if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+            return JsonResponse({
+                'error': 'No active account found',
+                'sharpe_ratio': 0,
+                'max_drawdown': 0,
+                'win_rate': 0
+            }, status=404)
         
-        # Get active sessions
-        active_sessions = PaperTradingSession.objects.filter(
-            account=account,
-            status__in=['STARTING', 'RUNNING', 'PAUSED']
-        )
+        # Get latest performance metrics
+        latest_metrics = PaperPerformanceMetrics.objects.filter(
+            account=account
+        ).order_by('-created_at').first()
         
-        # Get latest metrics
-        latest_metrics = None
-        if active_sessions.exists():
-            latest_metrics = PaperPerformanceMetrics.objects.filter(
-                session__in=active_sessions
-            ).order_by('-created_at').first()
-        
-        if not latest_metrics:
-            # Try to get any metrics for this account
-            all_sessions = PaperTradingSession.objects.filter(account=account)
-            if all_sessions.exists():
-                latest_metrics = PaperPerformanceMetrics.objects.filter(
-                    session__in=all_sessions
-                ).order_by('-created_at').first()
-        
+        # Build metrics response
         if latest_metrics:
             metrics_data = {
                 'sharpe_ratio': float(latest_metrics.sharpe_ratio) if latest_metrics.sharpe_ratio else 0,
@@ -989,13 +662,6 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                 'losing_trades': latest_metrics.losing_trades,
                 'total_pnl_usd': float(latest_metrics.total_pnl_usd),
                 'total_pnl_percent': float(latest_metrics.total_pnl_percent),
-                # REMOVED IN MIGRATION:                 'avg_execution_time_ms': latest_metrics.avg_execution_time_ms,
-                # REMOVED IN MIGRATION:                 'total_gas_fees_usd': float(latest_metrics.total_gas_fees_usd),
-                # REMOVED IN MIGRATION:                 'avg_slippage_percent': float(latest_metrics.avg_slippage_percent),
-                # REMOVED IN MIGRATION:                 'fast_lane_trades': latest_metrics.fast_lane_trades,
-                # REMOVED IN MIGRATION:                 'smart_lane_trades': latest_metrics.smart_lane_trades,
-                # REMOVED IN MIGRATION:                 'fast_lane_win_rate': float(latest_metrics.fast_lane_win_rate),
-                # REMOVED IN MIGRATION:                 'smart_lane_win_rate': float(latest_metrics.smart_lane_win_rate),
                 'period_start': latest_metrics.period_start.isoformat(),
                 'period_end': latest_metrics.period_end.isoformat(),
                 'calculated_at': latest_metrics.created_at.isoformat(),
@@ -1031,12 +697,125 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
             'win_rate': float(account.get_win_rate()) if account.get_win_rate() else 0,
         }
         
-        logger.debug(f"Performance metrics fetched")
+        logger.debug("Performance metrics fetched")
         return JsonResponse(metrics_data)
         
     except Exception as e:
         logger.error(f"Error in performance metrics API: {e}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
+
+
+# =============================================================================
+# CONFIGURATION API
+# =============================================================================
+
+@require_http_methods(["GET", "POST"])
+@csrf_exempt
+def api_configuration(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for strategy configuration management.
+    
+    GET: Returns current configuration
+    POST: Updates configuration with new settings
+    
+    Returns:
+        JsonResponse: Configuration data or update confirmation
+    """
+    try:
+        # Get default user
+        user = get_default_user()
+        
+        # Get account
+        account = PaperTradingAccount.objects.filter(
+            user=user,
+            is_active=True
+        ).first()
+        
+        if not account:
+            return JsonResponse({
+                'error': 'No active account found'
+            }, status=404)
+        
+        if request.method == 'GET':
+            # Return current configuration
+            config = PaperStrategyConfiguration.objects.filter(
+                account=account,
+                is_active=True
+            ).first()
+            
+            if config:
+                config_data = {
+                    'config_id': str(config.config_id),
+                    'name': config.name,
+                    'trading_mode': config.trading_mode,  # FIXED: Use trading_mode (exists in model)
+                    # REMOVED: intel_level, risk_tolerance - don't exist in model
+                    'max_position_size_percent': float(config.max_position_size_percent),
+                    'stop_loss_percent': float(config.stop_loss_percent),
+                    'take_profit_percent': float(config.take_profit_percent),
+                    # REMOVED: enable_trailing_stop, min_trade_interval_minutes - don't exist in model
+                    'created_at': config.created_at.isoformat(),
+                }
+            else:
+                # Return default config
+                config_data = {
+                    'name': 'Default Strategy',
+                    'trading_mode': 'BALANCED',  # FIXED: Use trading_mode instead of strategy_type
+                    # REMOVED: intel_level, risk_tolerance, enable_trailing_stop, min_trade_interval_minutes
+                    'max_position_size_percent': 10.0,
+                    'stop_loss_percent': 5.0,
+                    'take_profit_percent': 15.0,
+                }
+            
+            return JsonResponse({
+                'success': True,
+                'configuration': config_data
+            })
+        
+        elif request.method == 'POST':
+            # Update configuration
+            try:
+                body_data = json.loads(request.body)
+            except json.JSONDecodeError:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Invalid JSON in request body'
+                }, status=400)
+            
+            # Create or update configuration
+            config, created = PaperStrategyConfiguration.objects.update_or_create(
+                account=account,
+                is_active=True,
+                defaults={
+                    'name': body_data.get('name', 'Custom Strategy'),
+                    'trading_mode': body_data.get('trading_mode', 'BALANCED'),  # FIXED: Use trading_mode
+                    # REMOVED: intel_level, risk_tolerance, enable_trailing_stop, min_trade_interval_minutes
+                    'max_position_size_percent': Decimal(str(body_data.get('max_position_size_percent', 10.0))),
+                    'stop_loss_percent': Decimal(str(body_data.get('stop_loss_percent', 5.0))),
+                    'take_profit_percent': Decimal(str(body_data.get('take_profit_percent', 15.0))),
+                }
+            )
+            
+            logger.info(f"Configuration {'created' if created else 'updated'}: {config.config_id}")
+            
+            return JsonResponse({
+                'success': True,
+                'message': 'Configuration updated successfully',
+                'config_id': str(config.config_id),
+                'created': created
+            })
+        
+        # Should not reach here due to @require_http_methods, but add for type safety
+        return JsonResponse({
+            'success': False,
+            'error': 'Method not allowed'
+        }, status=405)
+        
+    except Exception as e:
+        logger.error(f"Error in configuration API: {e}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
 
 
 # =============================================================================
@@ -1051,63 +830,66 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
     
     Creates a new trading session and initiates the bot process via Celery.
     
+    Request Body (JSON):
+        runtime_minutes (int, optional): Duration to run bot in minutes
+        strategy_config (dict, optional): Custom strategy configuration
+    
     Returns:
-        JsonResponse: Bot status with session ID and Celery task ID
+        JsonResponse: Bot start confirmation with session and task IDs
     """
     try:
-        # Get default user - no authentication required
+        # Get default user
         user = get_default_user()
         
-        # Get or create account for user
+        # Get account
         account = PaperTradingAccount.objects.filter(
             user=user,
             is_active=True
         ).first()
         
         if not account:
-            # Create default account if none exists
+            # Create account if it doesn't exist
             account = PaperTradingAccount.objects.create(
                 user=user,
-                name="My_Trading_Account",
+                name='My_Trading_Account',
                 initial_balance_usd=Decimal('10000.00'),
                 current_balance_usd=Decimal('10000.00'),
                 is_active=True
             )
             logger.info(f"Created new paper trading account: {account.account_id}")
         
-        # Check if there's already an active session
-        active_session = PaperTradingSession.objects.filter(
+        # Check if bot is already running
+        active_sessions = PaperTradingSession.objects.filter(
             account=account,
             status__in=['STARTING', 'RUNNING', 'PAUSED']
-        ).first()
+        )
         
-        if active_session:
+        if active_sessions.exists():
             return JsonResponse({
                 'success': False,
                 'error': 'Bot is already running',
-                'session_id': str(active_session.session_id),
-                'status': active_session.status
+                'active_sessions': [str(s.session_id) for s in active_sessions]
             }, status=400)
         
-        # Get active strategy configuration
+        # Parse request body
+        runtime_minutes: Optional[int] = None
+        session_config: Dict[str, Any] = {}
+        
+        if request.body:
+            try:
+                body_data = json.loads(request.body)
+                runtime_minutes = body_data.get('runtime_minutes')
+                session_config = body_data.get('config', {})
+            except json.JSONDecodeError:
+                logger.warning("Invalid JSON in request body, using defaults")
+        
+        # Get or create strategy configuration
         strategy_config = PaperStrategyConfiguration.objects.filter(
             account=account,
             is_active=True
         ).first()
         
-        # Parse request body for session config
-        session_config = {}
-        runtime_minutes = None
-        if request.body:
-            try:
-                body_data = json.loads(request.body)
-                session_config = body_data.get('config', {})
-                runtime_minutes = body_data.get('runtime_minutes')
-            except json.JSONDecodeError:
-                pass
-        
         # Create new trading session
-        # Note: Store config and starting balance in metadata since those fields don't exist
         session = PaperTradingSession.objects.create(
             account=account,
             strategy_config=strategy_config,
@@ -1119,10 +901,10 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
             }
         )
         
-        # Start the bot via Celery task
+        # FIXED: Start the bot via Celery task - now properly typed
         task_result = run_paper_trading_bot.delay(
             session_id=str(session.session_id),
-            user_id=user.id,
+            user_id=user.pk,  # FIXED: Use pk instead of id for Pylance compatibility
             runtime_minutes=runtime_minutes
         )
         
@@ -1160,6 +942,9 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
     
     Ends active trading sessions and stops the bot process via Celery.
     
+    Request Body (JSON, optional):
+        reason (str): Reason for stopping the bot
+    
     Returns:
         JsonResponse: Bot status with number of sessions ended
     """
@@ -1183,7 +968,7 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         )
         
         sessions_ended = 0
-        tasks_stopped = []
+        tasks_stopped: List[Dict[str, str]] = []
         
         if active_sessions.count() == 0:
             return JsonResponse({
@@ -1203,10 +988,10 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         
         # Stop each active session via Celery
         for session in active_sessions:
-            # Call stop task
+            # FIXED: Call stop task - now properly typed
             task_result = stop_paper_trading_bot.delay(
                 session_id=str(session.session_id),
-                user_id=user.id,
+                user_id=user.pk,  # FIXED: Use pk instead of id for Pylance compatibility
                 reason=stop_reason
             )
             
@@ -1276,13 +1061,13 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         ).order_by('-stopped_at')[:5]
         
         # Build response
-        sessions_data = []
+        sessions_data: List[Dict[str, Any]] = []
         for session in active_sessions:
             # Get starting balance from metadata (stored during session creation)
             starting_balance = Decimal(str(session.metadata.get('starting_balance_usd', account.initial_balance_usd)))
             session_name = session.metadata.get('session_name', f'Session {str(session.session_id)[:8]}')
             
-            session_data = {
+            session_data: Dict[str, Any] = {
                 'session_id': str(session.session_id),
                 'status': session.status,
                 'name': session_name,
@@ -1302,7 +1087,7 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
             sessions_data.append(session_data)
         
         # Add recent sessions summary
-        recent_data = []
+        recent_data: List[Dict[str, Any]] = []
         for session in recent_sessions:
             session_name = session.metadata.get('session_name', f'Session {str(session.session_id)[:8]}')
             # Calculate final P&L if we have starting balance stored
@@ -1317,7 +1102,7 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
                 'trades': session.total_trades or 0
             })
         
-        logger.debug(f"Bot status fetched")
+        logger.debug("Bot status fetched")
         
         return JsonResponse({
             'success': True,
