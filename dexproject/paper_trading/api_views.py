@@ -357,71 +357,224 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
 api_recent_trades = api_trades_data
 
 
+
+# =============================================================================
+# HELPER FUNCTION: TOKEN ADDRESS RESOLUTION
+# =============================================================================
+
+def _get_token_address(token_symbol: str, chain_id: int = 84532) -> Optional[str]:
+    """
+    Get token contract address for a given symbol and chain.
+    
+    Supports multiple chains with their respective token addresses.
+    
+    Args:
+        token_symbol: Token symbol (e.g., 'WETH', 'USDC')
+        chain_id: Blockchain network ID (default: 84532 - Base Sepolia)
+    
+    Returns:
+        Token contract address or None if not found
+    """
+    # Base Sepolia (84532) - Default testnet
+    if chain_id == 84532:
+        token_addresses = {
+            'WETH': '0x4200000000000000000000000000000000000006',
+            'ETH': '0x4200000000000000000000000000000000000006',  # Same as WETH
+            'USDC': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+            'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+        }
+        return token_addresses.get(token_symbol.upper())
+    
+    # Ethereum Sepolia (11155111)
+    elif chain_id == 11155111:
+        token_addresses = {
+            'WETH': '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
+            'USDC': '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+            'DAI': '0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6',
+            'LINK': '0x779877A7B0D9E8603169DdbD7836e478b4624789',
+        }
+        return token_addresses.get(token_symbol.upper())
+    
+    # Base Mainnet (8453)
+    elif chain_id == 8453:
+        token_addresses = {
+            'WETH': '0x4200000000000000000000000000000000000006',
+            'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+            'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+        }
+        return token_addresses.get(token_symbol.upper())
+    
+    # Ethereum Mainnet (1)
+    elif chain_id == 1:
+        token_addresses = {
+            'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+            'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+            'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+            'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+            'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+        }
+        return token_addresses.get(token_symbol.upper())
+    
+    return None
+
+
 @require_http_methods(["GET"])
 def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
     """
-    API endpoint to get current token price.
+    API endpoint to get current token price from REAL sources only.
     
-    Returns the current price for a given token symbol.
+    Fetches live prices from Alchemy/CoinGecko APIs.
+    NO MOCK DATA - returns error if price unavailable.
     
     Args:
         token_symbol: Token symbol (e.g., 'WETH', 'USDC')
     
+    Query Parameters:
+        chain_id (int): Optional chain ID (default: 84532 - Base Sepolia)
+    
     Returns:
-        JsonResponse: Token price data
+        JsonResponse: Token price data from live sources
+        
+    Response Format (Success):
+        {
+            'success': true,
+            'token_symbol': 'WETH',
+            'token_address': '0x4200...',
+            'price_usd': 2543.50,
+            'chain_id': 84532,
+            'timestamp': '2025-01-...',
+            'source': 'live'
+        }
+    
+    Response Format (Error):
+        {
+            'success': false,
+            'error': 'Error message',
+            'token_symbol': 'WETH',
+            'chain_id': 84532
+        }
     """
     try:
-        # Try to get price from PriceFeedService
-        try:
-            price_feed = PriceFeedService()
-            price_data = asyncio.run(price_feed.get_token_price(token_symbol))
+        # Get chain_id from query params or use default
+        chain_id = int(request.GET.get('chain_id', 84532))
+        token_symbol_upper = token_symbol.upper()
+        
+        logger.info(
+            f"[API] Fetching price for {token_symbol_upper} on chain {chain_id}"
+        )
+        
+        # Get token contract address
+        token_address = _get_token_address(token_symbol_upper, chain_id)
+        
+        if not token_address:
+            logger.warning(
+                f"[API] Token {token_symbol_upper} not supported on chain {chain_id}"
+            )
             
-            if price_data:
+            # Get list of supported tokens for this chain
+            supported_tokens = []
+            if chain_id == 84532:
+                supported_tokens = ['WETH', 'ETH', 'USDC', 'DAI']
+            elif chain_id == 11155111:
+                supported_tokens = ['WETH', 'USDC', 'DAI', 'LINK']
+            elif chain_id == 8453:
+                supported_tokens = ['WETH', 'USDC', 'DAI', 'cbETH']
+            elif chain_id == 1:
+                supported_tokens = ['WETH', 'USDC', 'USDT', 'DAI', 'WBTC']
+            
+            return JsonResponse({
+                'success': False,
+                'error': f'Token {token_symbol_upper} not supported on chain {chain_id}',
+                'token_symbol': token_symbol_upper,
+                'chain_id': chain_id,
+                'supported_tokens': supported_tokens
+            }, status=404)
+        
+        # Initialize PriceFeedService with correct chain_id (FIXED!)
+        try:
+            price_feed = PriceFeedService(chain_id=chain_id)
+            
+            # Fetch real price using correct method signature (FIXED!)
+            price = asyncio.run(
+                price_feed.get_token_price(
+                    token_address=token_address,
+                    token_symbol=token_symbol_upper
+                )
+            )
+            
+            # Close the service to cleanup resources
+            asyncio.run(price_feed.close())
+            
+            if price is not None and price > 0:
+                logger.info(
+                    f"[API] ✅ Successfully fetched {token_symbol_upper} price: "
+                    f"${float(price):.2f}"
+                )
                 return JsonResponse({
                     'success': True,
-                    'token_symbol': token_symbol.upper(),
-                    'price_usd': float(price_data.get('price_usd', 0)),
-                    'price_eth': float(price_data.get('price_eth', 0)),
+                    'token_symbol': token_symbol_upper,
+                    'token_address': token_address,
+                    'price_usd': float(price),
+                    'chain_id': chain_id,
                     'timestamp': timezone.now().isoformat(),
                     'source': 'live'
                 })
-        except Exception as price_error:
-            logger.warning(f"Could not fetch live price for {token_symbol}: {price_error}")
-        
-        # Fallback to mock/default prices for common tokens
-        mock_prices = {
-            'WETH': {'price_usd': 2000.00, 'price_eth': 1.0},
-            'ETH': {'price_usd': 2000.00, 'price_eth': 1.0},
-            'USDC': {'price_usd': 1.00, 'price_eth': 0.0005},
-            'USDT': {'price_usd': 1.00, 'price_eth': 0.0005},
-            'DAI': {'price_usd': 1.00, 'price_eth': 0.0005},
-        }
-        
-        token_upper = token_symbol.upper()
-        if token_upper in mock_prices:
+            else:
+                # Price fetch returned None or 0 - service is down or rate limited
+                logger.warning(
+                    f"[API] Price service returned no data for {token_symbol_upper}"
+                )
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Price data temporarily unavailable for {token_symbol_upper}',
+                    'token_symbol': token_symbol_upper,
+                    'token_address': token_address,
+                    'chain_id': chain_id,
+                    'message': 'Try again in a few moments. API may be rate limited or temporarily down.'
+                }, status=503)
+                
+        except asyncio.TimeoutError:
+            logger.error(f"[API] Timeout fetching price for {token_symbol_upper}")
             return JsonResponse({
-                'success': True,
-                'token_symbol': token_upper,
-                'price_usd': mock_prices[token_upper]['price_usd'],
-                'price_eth': mock_prices[token_upper]['price_eth'],
-                'timestamp': timezone.now().isoformat(),
-                'source': 'mock'
-            })
+                'success': False,
+                'error': 'Price fetch timeout - API request took too long',
+                'token_symbol': token_symbol_upper,
+                'chain_id': chain_id
+            }, status=504)
+            
+        except Exception as price_error:
+            logger.error(
+                f"[API] Error fetching price for {token_symbol_upper}: {price_error}",
+                exc_info=True
+            )
+            return JsonResponse({
+                'success': False,
+                'error': f'Could not fetch price: {str(price_error)}',
+                'token_symbol': token_symbol_upper,
+                'chain_id': chain_id
+            }, status=500)
         
-        # Token not found
+    except ValueError as ve:
+        logger.error(f"[API] Invalid chain_id parameter: {ve}")
         return JsonResponse({
             'success': False,
-            'error': f'Price data not available for token: {token_symbol}',
-            'token_symbol': token_symbol.upper()
-        }, status=404)
+            'error': 'Invalid chain_id parameter - must be an integer',
+            'token_symbol': token_symbol
+        }, status=400)
         
     except Exception as e:
-        logger.error(f"Error in api_token_price for {token_symbol}: {e}", exc_info=True)
+        logger.error(
+            f"[API] Unexpected error in api_token_price for {token_symbol}: {e}",
+            exc_info=True
+        )
         return JsonResponse({
             'success': False,
-            'error': str(e),
+            'error': f'Internal server error: {str(e)}',
             'token_symbol': token_symbol
         }, status=500)
+
+
 
 
 @require_http_methods(["GET"])

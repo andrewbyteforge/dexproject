@@ -672,10 +672,16 @@ class EnhancedPaperTradingBot:
             raise
     
     def _log_startup_thought(self):
-        """Log initial startup thought."""
+        """
+        Log a startup thought to track bot initialization.
+        
+        This creates a thought log entry documenting the bot's configuration
+        and initialization parameters for auditing and debugging purposes.
+        """
         try:
             from paper_trading.models import PaperAIThoughtLog
             
+            # Build reasoning text
             reasoning = (
                 f"Bot initialized with Intel Level {self.intel_level}. "
                 f"Strategy: {self.intelligence_engine.config.name}. "
@@ -686,33 +692,65 @@ class EnhancedPaperTradingBot:
                 f"Starting balance: ${self.account.current_balance_usd:.2f}"
             )
             
+            # Build market data with all metrics
+            market_data = {
+                'intel_level': self.intel_level,
+                'tx_manager_enabled': self.use_tx_manager,
+                'circuit_breaker_enabled': self.circuit_breaker_enabled,
+                'use_real_prices': self.use_real_prices,
+                'starting_balance': float(self.account.current_balance_usd),
+                'risk_score': 0,  # No risk at startup
+                'opportunity_score': 100,  # Full opportunity ahead
+                'confidence': 100,  # High confidence in configuration
+                'event_type': 'BOT_STARTUP'
+            }
+            
+            # Create thought log with CORRECT field names
             PaperAIThoughtLog.objects.create(
                 account=self.account,
                 paper_trade=None,
-                decision_type='SKIP',
-                token_address='0x' + '0' * 40,
+                decision_type='SKIP',  # System event, not a trade
+                token_address='0x' + '0' * 40,  # System address
                 token_symbol='SYSTEM',
-                confidence_level='VERY_HIGH',
-                confidence_percent=Decimal('100'),
-                risk_score=Decimal('0'),
-                opportunity_score=Decimal('100'),
-                primary_reasoning=reasoning[:500],
+                confidence_level=Decimal('100'),  # FIXED: Use Decimal, not string
+                reasoning=reasoning[:500],  # FIXED: Use 'reasoning', not 'primary_reasoning'
+                risk_assessment="Risk Score: 0, Opportunity Score: 100 - Bot startup with optimal configuration",  # FIXED: Use 'risk_assessment', not 'risk_score'
                 key_factors=[
                     f"Intel Level: {self.intel_level}",
                     f"TX Manager: {'Enabled' if self.use_tx_manager else 'Disabled'}",
                     f"Circuit Breaker: {'Enabled' if self.circuit_breaker_enabled else 'Disabled'}",
-                    f"Price Feeds: {'Real' if self.use_real_prices else 'Mock'}"
+                    f"Price Feeds: {'Real' if self.use_real_prices else 'Mock'}",
+                    f"Starting Balance: ${self.account.current_balance_usd:.2f}"
                 ],
-                positive_signals=[],
+                positive_signals=[
+                    "Bot successfully initialized",
+                    "All systems operational",
+                    "Configuration validated"
+                ],
                 negative_signals=[],
-                market_data={},
+                market_data=market_data,  # FIXED: Store risk_score and opportunity_score in JSON
                 strategy_name=f"Intel_{self.intel_level}",
                 lane_used='SMART',
                 analysis_time_ms=0
             )
+            
+            logger.info("[BOT] ✅ Startup thought logged successfully")
+            
         except Exception as e:
             logger.error(f"[BOT] Failed to log startup thought: {e}")
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
     # =========================================================================
     # MAIN RUN LOOP
     # =========================================================================
