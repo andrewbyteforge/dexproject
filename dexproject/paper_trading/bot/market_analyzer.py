@@ -431,7 +431,13 @@ class MarketAnalyzer:
                     f"[DECISION] {decision.action} {token_symbol}: "
                     f"{decision.primary_reasoning}"
                 )
-                trade_executor.execute_trade(decision, position_manager)
+            if decision.action in ['BUY', 'SELL']:
+                trade_executor.execute_trade(
+                    decision=decision,
+                    token_symbol=token_symbol,
+                    current_price=current_price,
+                    position_manager=position_manager
+                )
             
             # Track the decision
             self.last_decisions[token_symbol] = decision
@@ -655,7 +661,12 @@ class MarketAnalyzer:
             )
             
             # Execute the close
-            success = trade_executor.execute_trade(decision, position_manager)
+            success = trade_executor.execute_trade(
+                decision=decision,
+                token_symbol=token_symbol,         # <-- use your in-scope variable for the token (e.g. "WETH")
+                current_price=current_price,  # <-- use your in-scope Decimal price (e.g. Decimal("2500"))
+                position_manager=position_manager,
+            )
             
             if success:
                 logger.info(

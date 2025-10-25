@@ -1,52 +1,28 @@
 """
-Modular Market Analyzers for Paper Trading Intelligence - REAL DATA VERSION
+Modular Market Analyzers for Paper Trading Intelligence
 
-FIXED: Replaced all mock/random data with REAL blockchain data integration.
-This is the complete solution to the "all trades SKIP" problem.
-
-Changes from previous version:
-- ❌ Removed: random.uniform(), random.randint(), simulated data
-- ✅ Added: Real blockchain gas prices via Web3
-- ✅ Added: Real Uniswap V3 pool liquidity queries  
-- ✅ Added: Real volatility calculations from price history
-- ✅ Added: Smart MEV heuristics based on actual liquidity
-- ✅ Added: Proper error handling and fallback values
+Separate analyzer modules for different aspects of market analysis,
+making the system easier to maintain and extend.
 
 File: dexproject/paper_trading/intelligence/analyzers/__init__.py
 """
 
 import logging
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
-from typing import Dict, Any, Optional, Tuple, List, TYPE_CHECKING, cast
+from typing import Dict, Any, Optional, Tuple, List, cast
 from abc import ABC, abstractmethod
+import random  # For simulation in paper trading
 
-# Django imports
-from django.conf import settings
-from django.core.cache import cache
-
-# Import Web3 infrastructure
-# Use TYPE_CHECKING to properly handle conditional imports for type checkers
-if TYPE_CHECKING:
-    from engine.web3_client import Web3Client as Web3ClientType
-    from engine.config import Config as EngineConfigType
-    WEB3_AVAILABLE = True  # For type checking purposes
-    engine_config: EngineConfigType  # Type hint for static analysis
-else:
-    # Initialize at runtime
+# Import Web3 infrastructure for real data (optional)
+try:
+    from engine.config import config as engine_config
+    from engine.web3_client import Web3Client
+    WEB3_AVAILABLE = True
+except ImportError:
+    engine_config = None  # type: ignore
+    Web3Client = None  # type: ignore
     WEB3_AVAILABLE = False
-    engine_config = None
-    try:
-        from engine.web3_client import Web3Client as Web3ClientType
-        from engine.config import config as engine_config
-        WEB3_AVAILABLE = True
-    except ImportError:
-        # Create a dummy type for runtime when imports fail
-        class Web3ClientType:  # type: ignore[no-redef]
-            """Dummy Web3Client type when imports fail."""
-            pass
-        WEB3_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
