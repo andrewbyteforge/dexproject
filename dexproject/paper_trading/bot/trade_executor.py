@@ -58,6 +58,16 @@ try:
     TRANSACTION_MANAGER_AVAILABLE = True
 except ImportError:
     TRANSACTION_MANAGER_AVAILABLE = False
+    # Type stubs to satisfy Pylance when Transaction Manager is not available
+    get_transaction_manager = None  # type: ignore
+    create_transaction_submission_request = None  # type: ignore
+    TransactionStatus = None  # type: ignore
+    TransactionSubmissionRequest = None  # type: ignore
+    TransactionManagerResult = None  # type: ignore
+    SwapType = None  # type: ignore
+    DEXVersion = None  # type: ignore
+    TradingGasStrategy = None  # type: ignore
+    SwapParams = None  # type: ignore
 
 # Import Circuit Breaker (optional)
 try:
@@ -256,18 +266,11 @@ class TradeExecutor:
             )
             self.consecutive_failures += 1
             return False
-    
 
-
-
-
-
-
-    
     # =========================================================================
     # TRANSACTION MANAGER EXECUTION
     # =========================================================================
-    
+
     def _execute_trade_with_tx_manager(
         self,
         decision: TradingDecision,
@@ -321,6 +324,11 @@ class TradeExecutor:
                         token_in = decision.token_address
                         token_out = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"  # USDC
                     
+                    # Guard against missing SwapType
+                    if not TRANSACTION_MANAGER_AVAILABLE or SwapType is None:
+                        logger.error("[TX MANAGER] SwapType not available, cannot execute trade")
+                        return False
+
                     swap_type = SwapType.EXACT_TOKENS_FOR_TOKENS
                     
                     # Calculate amounts (in wei)
@@ -329,11 +337,11 @@ class TradeExecutor:
                     
                     # Gas strategy selection
                     if self.intel_level <= 3:
-                        gas_strategy = TradingGasStrategy.COST_EFFICIENT
+                        gas_strategy = TradingGasStrategy.COST_EFFICIENT  # type: ignore[possibly-unbound]
                     elif self.intel_level >= 7:
-                        gas_strategy = TradingGasStrategy.AGGRESSIVE
+                        gas_strategy = TradingGasStrategy.AGGRESSIVE  # type: ignore[possibly-unbound]
                     else:
-                        gas_strategy = TradingGasStrategy.BALANCED
+                        gas_strategy = TradingGasStrategy.BALANCED  # type: ignore[possibly-unbound]
                     
                     logger.debug(
                         f"[TX MANAGER] Preparing TX: {decision.action} {token_symbol}, "
@@ -342,8 +350,8 @@ class TradeExecutor:
                     )
                     
                     # Create transaction request
-                    tx_request = await create_transaction_submission_request(
-                        user=self.account.user,
+                    tx_request = await create_transaction_submission_request(  # type: ignore[possibly-unbound]
+                        user=self.account.user,  # type: ignore[attr-defined]
                         chain_id=self.chain_id,
                         token_in=token_in,
                         token_out=token_out,
@@ -358,7 +366,17 @@ class TradeExecutor:
                     logger.info("[TX MANAGER] Submitting transaction...")
                     
                     # Submit via Transaction Manager
-                    result = await self.tx_manager.submit_transaction(tx_request)
+                    # Type guard for tx_manager
+                    # Runtime check: ensure tx_manager is available and has submit_transaction
+                    if self.tx_manager is None:
+                        logger.error("[TX MANAGER] Transaction manager is None")
+                        return False
+                        
+                    if not hasattr(self.tx_manager, 'submit_transaction'):
+                        logger.error("[TX MANAGER] Transaction manager missing submit_transaction method")
+                        return False
+
+                    result = await self.tx_manager.submit_transaction(tx_request)  # type: ignore[misc]
                     
                     if not result.success:
                         logger.error(
@@ -549,7 +567,7 @@ class TradeExecutor:
             
             trade_type = trade_type_map.get(decision.action)
             if not trade_type:
-                logger.info(f"[TRADE] No trade created for HOLD action")
+                logger.info("[TRADE] No trade created for HOLD action")
                 return None
             
             # Token addresses mapping
@@ -680,9 +698,9 @@ class TradeExecutor:
             
             # Update trade counts based on status
             if trade.status == 'completed':
-                self.account.successful_trades += 1
+                self.account.winning_trades += 1
             elif trade.status == 'failed':
-                self.account.failed_trades += 1
+                self.account.losing_trades += 1
             
             # Update total trades counter
             self.account.total_trades += 1
@@ -698,15 +716,15 @@ class TradeExecutor:
             # Save all account updates
             self.account.save(update_fields=[
                 'total_trades',
-                'successful_trades',
-                'failed_trades',
+                'winning_trades',
+                'losing_trades',
                 'current_balance_usd'
             ])
             
             logger.debug(
                 f"[ACCOUNT STATS] Updated: Total={self.account.total_trades}, "
-                f"Successful={self.account.successful_trades}, "
-                f"Failed={self.account.failed_trades}, "
+                f"Winning={self.account.winning_trades}, "
+                f"Losing={self.account.losing_trades}, "
                 f"Balance=${self.account.current_balance_usd:.2f}"
             )
             
@@ -922,7 +940,7 @@ class TradeExecutor:
             min_balance = Decimal('100')  # Minimum $100 to trade
             if trade_type in ['BUY', 'LONG']:
                 if self.account.current_balance_usd < min_balance:
-                    logger.warning(f"[CB] Insufficient balance for BUY")
+                    logger.warning("[CB] Insufficient balance for BUY")
                     return False
             else:
                 logger.debug(f"[CB] Balance check skipped for {trade_type}")
@@ -932,54 +950,28 @@ class TradeExecutor:
         except Exception as e:
             logger.error(f"[CB] Error checking trade permission: {e}")
             return True  # Fail open if circuit breaker check fails
-    
-
-
-
-
-
-
-
 
     def _get_portfolio_state(self, position_manager: Any) -> Dict[str, Any]:
         """
-        Get current portfolio state for circuit breaker evaluation.
+        Get current portfolio state for circuit breaker checks.
         
-        Args:
-            position_manager: PositionManager instance
-        
-        Returns:
-            Dictionary with portfolio metrics
+        Note: starting_balance_usd was moved to session.metadata in migration 0005
         """
         try:
-            # Calculate current P&L
-            current_balance = self.account.current_balance_usd
-            starting_balance = self.session.starting_balance_usd
-            total_pnl = current_balance - starting_balance
+            # Get starting balance from metadata (migration 0005 change)
+            starting_balance = self.session.metadata.get(
+                'starting_balance_usd',
+                float(self.account.initial_balance_usd)
+            )
             
-            # Calculate daily P&L
-            daily_pnl = total_pnl  # Simplified for paper trading
-            
-            # Count open positions value
-            positions_value = position_manager.get_total_value()
-            
-            portfolio_state = {
-                'daily_pnl': daily_pnl,
-                'total_pnl': total_pnl,
-                'consecutive_losses': self.consecutive_failures,
-                'portfolio_value': current_balance + positions_value,
-                'cash_balance': current_balance,
-                'positions_count': position_manager.get_position_count(),
-                'daily_trades': self.daily_trades_count
+            return {
+                'account_id': str(self.account.account_id),
+                'current_balance': self.account.current_balance_usd,
+                'starting_balance': Decimal(str(starting_balance)),
+                'total_value': position_manager.get_total_portfolio_value(),
+                'position_count': position_manager.get_position_count(),
+                'open_positions': position_manager.positions,
             }
-            
-            return portfolio_state
-            
         except Exception as e:
             logger.error(f"[CB] Error getting portfolio state: {e}")
-            return {
-                'daily_pnl': Decimal('0'),
-                'total_pnl': Decimal('0'),
-                'consecutive_losses': 0,
-                'portfolio_value': Decimal('10000')
-            }
+            return {}

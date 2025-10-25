@@ -169,7 +169,7 @@ def paper_trade_created_or_updated(
             'token_out_symbol': instance.token_out_symbol,
             'trade_type': instance.trade_type,
             'amount_in': float(instance.amount_in),
-            'amount_out': float(instance.amount_out) if instance.amount_out else None,
+            'amount_out': float(instance.actual_amount_out) if instance.actual_amount_out else None,
             'amount_in_usd': float(instance.amount_in_usd),
             'status': instance.status,
             'executed_at': instance.executed_at.isoformat() if instance.executed_at else None,
