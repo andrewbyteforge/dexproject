@@ -356,8 +356,29 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
                 logger.warning(f"Error fetching performance metrics: {e}")
         
         # Calculate summary statistics with safe decimal handling
-        total_trades = account.total_trades or 0
-        winning_trades = account.winning_trades or 0
+        # FIXED: Get winning/losing trades from closed positions, not trade status
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_closed,
+                    SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) as winning,
+                    SUM(CASE WHEN realized_pnl_usd < 0 THEN 1 ELSE 0 END) as losing
+                FROM paper_positions
+                WHERE account_id = %s AND is_open = FALSE
+            """, [str(account.account_id)])
+            
+            position_stats = cursor.fetchone()
+            total_closed_positions = position_stats[0] or 0
+            winning_trades = position_stats[1] or 0
+            losing_trades = position_stats[2] or 0
+        
+        # Get total trades (number of trade executions)
+        total_trades = PaperTrade.objects.filter(account=account).count()
+        
+        # Calculate total portfolio value = cash balance + value of open positions
+        total_portfolio_value = safe_decimal(account.current_balance_usd)
+        for position in open_positions:
+            total_portfolio_value += safe_decimal(position['current_value_usd'])
         
         # Get 24h stats with error handling
         time_24h_ago = timezone.now() - timedelta(hours=24)
@@ -382,12 +403,14 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'open_positions': open_positions,
             'performance': performance,
             'recent_thoughts': formatted_thoughts,
-            'total_trades': total_trades,
-            'successful_trades': winning_trades,
-            'win_rate': safe_decimal((winning_trades / total_trades * 100) if total_trades > 0 else 0),
+            'total_trades': total_trades,  # Total trade executions
+            'successful_trades': winning_trades,  # Winning positions (realized_pnl_usd > 0)
+            'total_closed_positions': total_closed_positions,  # Total closed positions
+            'win_rate': safe_decimal((winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0),
             'trades_24h': trades_24h.get('count', 0),
             'volume_24h': safe_decimal(trades_24h.get('total_volume', 0)),
-            'current_balance': safe_decimal(account.current_balance_usd),
+            'current_balance': safe_decimal(account.current_balance_usd),  # Cash balance only
+            'portfolio_value': total_portfolio_value,  # FIXED: Total value = cash + open positions
             'initial_balance': safe_decimal(account.initial_balance_usd),
             'total_pnl': safe_decimal(account.total_profit_loss_usd),
             'return_percent': safe_decimal(account.get_roi()),
@@ -401,6 +424,14 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         logger.error(f"Error loading paper trading dashboard: {e}", exc_info=True)
         messages.error(request, f"Error loading dashboard: {str(e)}")
         return render(request, 'paper_trading/error.html', {"error": str(e)})
+
+
+
+
+
+
+
+
 
 
 def trade_history(request: HttpRequest) -> HttpResponse:
@@ -1126,7 +1157,30 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             daily_performance = []
         
         # Calculate additional metrics
-        win_rate = (completed_trades / total_trades * 100) if total_trades > 0 else 0
+        # FIXED: Get actual winning/losing trades from closed positions
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total_closed,
+                        SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) as winning,
+                        SUM(CASE WHEN realized_pnl_usd < 0 THEN 1 ELSE 0 END) as losing
+                    FROM paper_positions
+                    WHERE account_id = %s AND is_open = FALSE
+                """, [str(account.account_id)])
+                
+                position_stats = cursor.fetchone()
+                total_closed_positions = position_stats[0] or 0
+                winning_trades_positions = position_stats[1] or 0
+                losing_trades_positions = position_stats[2] or 0
+        except Exception as e:
+            logger.error(f"Error fetching position stats: {e}")
+            total_closed_positions = 0
+            winning_trades_positions = 0
+            losing_trades_positions = 0
+        
+        # Win rate based on closed positions, not trade executions
+        win_rate = (winning_trades_positions / total_closed_positions * 100) if total_closed_positions > 0 else 0
         
         # Calculate period-specific metrics
         today = timezone.now().date()
@@ -1225,29 +1279,43 @@ def api_analytics_data(request: HttpRequest) -> JsonResponse:
         
         logger.debug(f"API call for analytics data for account {account.account_id}")
         
-        # Get metrics using raw SQL to avoid decimal issues
+        # FIXED: Get metrics using correct position-based winning/losing trades
         with connection.cursor() as cursor:
+            # Get total trade executions
             cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_trades,
-                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
+                SELECT COUNT(*) as total_trades
                 FROM paper_trading_papertrade
                 WHERE account_id = %s
             """, [str(account.account_id)])
             
-            stats = cursor.fetchone()
-            total_trades = stats[0] or 0
-            completed_trades = stats[1] or 0
-            win_rate = (completed_trades / total_trades * 100) if total_trades > 0 else 0
+            total_trades = cursor.fetchone()[0] or 0
+            
+            # Get winning/losing trades from closed positions
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_closed,
+                    SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) as winning,
+                    SUM(CASE WHEN realized_pnl_usd < 0 THEN 1 ELSE 0 END) as losing
+                FROM paper_positions
+                WHERE account_id = %s AND is_open = FALSE
+            """, [str(account.account_id)])
+            
+            position_stats = cursor.fetchone()
+            total_closed_positions = position_stats[0] or 0
+            winning_trades = position_stats[1] or 0
+            losing_trades = position_stats[2] or 0
+            win_rate = (winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0
         
-        logger.info(f"API analytics data: {total_trades} trades, {win_rate:.1f}% win rate")
+        logger.info(f"API analytics data: {total_trades} trades, {total_closed_positions} closed positions, {win_rate:.1f}% win rate")
         
         return JsonResponse({
             'success': True,
             'metrics': {
                 'win_rate': float(win_rate),
-                'total_trades': total_trades,
-                'completed_trades': completed_trades,
+                'total_trades': total_trades,  # Total trade executions
+                'total_closed_positions': total_closed_positions,  # Closed positions
+                'winning_trades': winning_trades,  # Profitable positions
+                'losing_trades': losing_trades,  # Losing positions
                 'timestamp': timezone.now().isoformat()
             }
         })
@@ -1316,6 +1384,9 @@ def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
     """
     Calculate detailed portfolio metrics.
     
+    FIXED: Now correctly calculates winning/losing trades from PaperPosition.realized_pnl_usd
+    instead of incorrectly using PaperTrade.status='completed'.
+    
     Helper function to calculate various performance metrics for an account.
     
     Args:
@@ -1327,44 +1398,90 @@ def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
     try:
         logger.debug(f"Calculating portfolio metrics for account {account.account_id}")
         
-        # Use raw SQL to avoid decimal issues
+        # FIXED: Query PaperPosition table to get actual profit/loss data
+        # Winning trades = closed positions with positive realized P&L
+        # Losing trades = closed positions with negative realized P&L
         with connection.cursor() as cursor:
+            # Get closed positions with profit/loss data
             cursor.execute("""
                 SELECT 
-                    COUNT(*) as total_trades,
-                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as winning_trades,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as losing_trades
+                    COUNT(*) as total_positions,
+                    SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    SUM(CASE WHEN realized_pnl_usd < 0 THEN 1 ELSE 0 END) as losing_trades,
+                    SUM(CASE WHEN realized_pnl_usd = 0 THEN 1 ELSE 0 END) as breakeven_trades,
+                    SUM(realized_pnl_usd) as total_realized_pnl
+                FROM paper_positions
+                WHERE account_id = %s AND is_open = FALSE
+            """, [str(account.account_id)])
+            
+            stats = cursor.fetchone()
+            total_closed_positions = stats[0] or 0
+            winning_trades = stats[1] or 0
+            losing_trades = stats[2] or 0
+            breakeven_trades = stats[3] or 0
+            total_realized_pnl = Decimal(str(stats[4])) if stats[4] else Decimal('0')
+            
+            # Also get total number of trades executed
+            cursor.execute("""
+                SELECT COUNT(*) as total_trades
                 FROM paper_trading_papertrade
                 WHERE account_id = %s
             """, [str(account.account_id)])
             
-            stats = cursor.fetchone()
-            total_trades = stats[0] or 0
-            winning_trades = stats[1] or 0
-            losing_trades = stats[2] or 0
+            total_trades = cursor.fetchone()[0] or 0
         
-        # Calculate win rate
-        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+        # Calculate win rate based on closed positions
+        win_rate = (winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0
         
-        # Calculate profit factor (simplified)
-        profit_factor = 1.5 if win_rate > 50 else 0.8
+        # Calculate profit factor (total wins / total losses)
+        # This requires calculating average win vs average loss
+        if winning_trades > 0 and losing_trades > 0:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        AVG(CASE WHEN realized_pnl_usd > 0 THEN realized_pnl_usd ELSE NULL END) as avg_win,
+                        AVG(CASE WHEN realized_pnl_usd < 0 THEN ABS(realized_pnl_usd) ELSE NULL END) as avg_loss
+                    FROM paper_positions
+                    WHERE account_id = %s AND is_open = FALSE
+                """, [str(account.account_id)])
+                
+                pnl_stats = cursor.fetchone()
+                avg_win = Decimal(str(pnl_stats[0])) if pnl_stats[0] else Decimal('0')
+                avg_loss = Decimal(str(pnl_stats[1])) if pnl_stats[1] else Decimal('1')
+                
+                # Profit factor = (avg_win * win_count) / (avg_loss * loss_count)
+                profit_factor = float((avg_win * winning_trades) / (avg_loss * losing_trades)) if avg_loss > 0 else 0
+        else:
+            profit_factor = 0
         
         metrics = {
-            'total_trades': total_trades,
-            'winning_trades': winning_trades,
-            'losing_trades': losing_trades,
+            'total_trades': total_trades,  # Total trade executions
+            'total_closed_positions': total_closed_positions,  # Total positions closed
+            'winning_trades': winning_trades,  # Positions with profit
+            'losing_trades': losing_trades,  # Positions with loss
+            'breakeven_trades': breakeven_trades,  # Positions that broke even
             'win_rate': float(win_rate),
             'profit_factor': float(profit_factor),
+            'total_realized_pnl': float(total_realized_pnl),
         }
         
-        logger.info(f"Portfolio metrics calculated: {total_trades} trades, {win_rate:.1f}% win rate")
+        logger.info(
+            f"Portfolio metrics calculated: {total_closed_positions} closed positions, "
+            f"{winning_trades} wins, {losing_trades} losses, {win_rate:.1f}% win rate, "
+            f"profit factor: {profit_factor:.2f}"
+        )
         return metrics
         
     except Exception as e:
         logger.error(f"Error calculating portfolio metrics: {e}", exc_info=True)
         return {
             'total_trades': 0,
+            'total_closed_positions': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
+            'breakeven_trades': 0,
             'win_rate': 0,
             'profit_factor': 0,
+            'total_realized_pnl': 0,
             'error': str(e)
         }
