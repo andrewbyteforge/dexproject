@@ -7,7 +7,8 @@ for the paper trading system.
 
 File: dexproject/paper_trading/models/base.py
 """
-
+from decimal import Decimal, InvalidOperation
+import logging
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -17,6 +18,25 @@ import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def validate_decimal_field(value, field_name: str, min_val: Decimal, max_val: Decimal, default: Decimal) -> Decimal:
+    """Validate and sanitize decimal values to prevent corruption."""
+    if value is None:
+        return default
+    
+    try:
+        if not isinstance(value, Decimal):
+            value = Decimal(str(value))
+        
+        if not value.is_finite() or value < min_val or value > max_val:
+            logger.warning(f"{field_name}: Invalid value {value}, using {default}")
+            return default
+        
+        return value
+    except Exception as e:
+        logger.error(f"{field_name}: Error validating value {value}: {e}", exc_info=True)
+        return default
 
 
 # =============================================================================
@@ -369,6 +389,38 @@ class PaperTrade(models.Model):
         blank=True,
         help_text="AI trade context (intel level, confidence, reasoning)"
     )
+
+    def save(self, *args, **kwargs):
+        """Validate decimals before saving."""
+        # Validate USD amounts ($0.01 to $100,000)
+        self.amount_in_usd = validate_decimal_field(
+            self.amount_in_usd, 'amount_in_usd',
+            Decimal('0.01'), Decimal('100000.00'), Decimal('10.00')
+        )
+        
+        # Validate gas costs
+        self.simulated_gas_cost_usd = validate_decimal_field(
+            self.simulated_gas_cost_usd, 'simulated_gas_cost_usd',
+            Decimal('0.01'), Decimal('500.00'), Decimal('0.50')
+        )
+        
+        # Validate slippage (0% to 50%)
+        self.simulated_slippage_percent = validate_decimal_field(
+            self.simulated_slippage_percent, 'simulated_slippage_percent',
+            Decimal('0.00'), Decimal('50.00'), Decimal('0.50')
+        )
+        
+        # Validate gas price (0.1 to 1000 gwei)
+        self.simulated_gas_price_gwei = validate_decimal_field(
+            self.simulated_gas_price_gwei, 'simulated_gas_price_gwei',
+            Decimal('0.1'), Decimal('1000.00'), Decimal('1.0')
+        )
+        
+        # Fix gas_used
+        if not self.simulated_gas_used or self.simulated_gas_used <= 0:
+            self.simulated_gas_used = 21000
+        
+        super().save(*args, **kwargs)
     
     class Meta:
         """Meta configuration."""
@@ -385,7 +437,7 @@ class PaperTrade(models.Model):
     def __str__(self) -> str:
         """String representation."""
         return f"{self.trade_type.upper()}: {self.token_in_symbol} → {self.token_out_symbol}"
-
+    
 
 class PaperPosition(models.Model):
     """
