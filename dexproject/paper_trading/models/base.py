@@ -7,12 +7,10 @@ for the paper trading system.
 
 File: dexproject/paper_trading/models/base.py
 """
-from decimal import Decimal, InvalidOperation
-import logging
+from decimal import Decimal
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
-from decimal import Decimal
 import uuid
 import logging
 from typing import Optional
