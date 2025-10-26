@@ -875,7 +875,17 @@ class MarketAnalyzer:
                 metadata = metadata or {}
                 
                 # Map action to decision type
-                decision_type_map = {...}
+                decision_type_map = {
+                    'BUY': 'BUY',
+                    'SELL': 'SELL',
+                    'HOLD': 'HOLD',
+                    'SKIP': 'SKIP',
+                    'STARTUP': 'SKIP',
+                    'TRADE_DECISION': 'HOLD',
+                    'BLOCKED': 'SKIP',
+                    'CB_RESET': 'SKIP',
+                    'RISK_MANAGEMENT': 'SKIP'
+                }
                 
                 # Get token info from metadata
                 token_symbol = metadata.get('token', 'SYSTEM')
@@ -886,36 +896,38 @@ class MarketAnalyzer:
                 opportunity_score = metadata.get('opportunity_score', 50)
                 
                 # Map confidence to level string (matching trade_executor.py)
-                if confidence >= 90:
-                    confidence_level = 'VERY_HIGH'
-                elif confidence >= 70:
-                    confidence_level = 'HIGH'
-                elif confidence >= 50:
-                    confidence_level = 'MEDIUM'
-                elif confidence >= 30:
-                    confidence_level = 'LOW'
-                else:
-                    confidence_level = 'VERY_LOW'
+                confidence_level_str = self._get_confidence_level(confidence)
                 
                 # Build enhanced market data including risk metrics
-                enhanced_market_data = {...}
+                enhanced_market_data = {
+                    **metadata,
+                    'risk_score': float(risk_score),
+                    'opportunity_score': float(opportunity_score),
+                    'intel_level': int(self.intelligence_engine.intel_level),
+                }
                 
-                # Create thought log record with STANDARDIZED field mappings
+                # Create thought log record with STANDARDIZED field mappings (matching trade_executor.py)
                 PaperAIThoughtLog.objects.create(
                     account=self.account,
                     paper_trade=None,
                     decision_type=decision_type_map.get(action, 'SKIP'),
                     token_address=token_address,
                     token_symbol=token_symbol,
-                    confidence_level=confidence_level,  # ✅ STRING (VERY_HIGH, HIGH, etc.)
+                    confidence_level=confidence_level_str,  # ✅ STRING (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW)
                     confidence_percent=Decimal(str(confidence)),  # ✅ DECIMAL (0-100)
                     risk_score=Decimal(str(risk_score)),  # ✅ DECIMAL
                     opportunity_score=Decimal(str(opportunity_score)),  # ✅ DECIMAL
                     primary_reasoning=reasoning[:500],  # ✅ CORRECT FIELD NAME (truncated to 500 chars)
-                    key_factors=[...],
+                    key_factors=[
+                        f"Intel Level: {metadata.get('intel_level', self.intelligence_engine.intel_level)}",
+                        f"Current Price: ${metadata.get('current_price', 0):.2f}" if 'current_price' in metadata else "System Event",
+                        f"TX Manager: {'Enabled' if metadata.get('tx_manager_enabled', False) else 'Disabled'}",
+                        f"Risk Score: {risk_score}",
+                        f"Opportunity Score: {opportunity_score}"
+                    ],
                     positive_signals=[],
                     negative_signals=[],
-                    market_data=enhanced_market_data,
+                    market_data=enhanced_market_data,  # JSON field - stores all metrics
                     strategy_name=f"Intel_{self.intelligence_engine.intel_level}",
                     lane_used='SMART',
                     analysis_time_ms=100
