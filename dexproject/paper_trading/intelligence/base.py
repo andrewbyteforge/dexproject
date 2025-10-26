@@ -10,7 +10,6 @@ File: dexproject/paper_trading/intelligence/base.py
 import logging
 from decimal import Decimal, InvalidOperation
 from abc import ABC, abstractmethod
-from decimal import Decimal
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
 from enum import IntEnum
