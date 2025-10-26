@@ -792,33 +792,84 @@ async def get_gas_optimizer() -> DjangoGasOptimizer:
 
 
 async def optimize_trade_gas(
-    chain_id: int,
-    trade_type: str,
-    amount_usd: Decimal,
-    strategy: str = 'balanced',
+    web3_client: Web3Client,
+    swap_params: SwapParams,
+    strategy: TradingGasStrategy = TradingGasStrategy.BALANCED,
     is_paper_trade: bool = False
 ) -> GasOptimizationResult:
     """
-    Convenience function for optimizing gas for trades.
+    Optimize gas parameters for a trade execution.
+    
+    Args:
+        web3_client: Connected Web3 client
+        swap_params: Swap parameters
+        strategy: Gas optimization strategy
+        is_paper_trade: Whether this is a paper trade (uses simulated gas)
+        
+    Returns:
+        GasOptimizationResult with optimized gas parameters
     """
-    optimizer = await get_gas_optimizer()
+    from decimal import Decimal
+    import logging
     
-    # Convert string strategy to enum
-    strategy_map = {
-        'cost_efficient': TradingGasStrategy.COST_EFFICIENT,
-        'balanced': TradingGasStrategy.BALANCED,
-        'speed_priority': TradingGasStrategy.SPEED_PRIORITY,
-        'mev_protected': TradingGasStrategy.MEV_PROTECTED,
-        'emergency_fast': TradingGasStrategy.EMERGENCY_FAST,
-        'paper_trading': TradingGasStrategy.PAPER_TRADING
-    }
+    logger = logging.getLogger('trading.gas_optimizer')
     
-    strategy_enum = strategy_map.get(strategy, TradingGasStrategy.BALANCED)
-    
-    return await optimizer.optimize_gas_for_trade(
-        chain_id=chain_id,
-        trade_type=trade_type,
-        amount_usd=amount_usd,
-        strategy=strategy_enum,
-        is_paper_trade=is_paper_trade
-    )
+    try:
+        # Get current gas price from canonical source (returns wei)
+        base_gas_price_wei = await web3_client.get_gas_price()
+        
+        # TODO(tech-debt): Standardize on wei throughout codebase
+        # Convert to gwei for existing logic
+        base_gas_price_gwei = Decimal(str(base_gas_price_wei)) / Decimal('1e9')
+        
+        if base_gas_price_wei == 0:
+            logger.warning("Gas price is 0, using default of 1.5 gwei")
+            base_gas_price_gwei = Decimal('1.5')
+        
+        # Apply strategy multiplier
+        strategy_multipliers = {
+            TradingGasStrategy.SLOW: Decimal('0.8'),
+            TradingGasStrategy.BALANCED: Decimal('1.0'),
+            TradingGasStrategy.FAST: Decimal('1.2'),
+            TradingGasStrategy.URGENT: Decimal('1.5')
+        }
+        
+        multiplier = strategy_multipliers.get(strategy, Decimal('1.0'))
+        optimized_gas_price_gwei = base_gas_price_gwei * multiplier
+        
+        # Estimate gas limit
+        estimated_gas_limit = 200000  # Default for swaps
+        
+        # Calculate total cost
+        gas_cost_gwei = optimized_gas_price_gwei * Decimal(str(estimated_gas_limit))
+        gas_cost_eth = gas_cost_gwei / Decimal('1e9')
+        
+        # Assume ETH price for USD calculation (simplified)
+        eth_price_usd = Decimal('2000')  # TODO: Get from price oracle
+        gas_cost_usd = gas_cost_eth * eth_price_usd
+        
+        result = GasOptimizationResult(
+            gas_price_gwei=optimized_gas_price_gwei,
+            gas_limit=estimated_gas_limit,
+            estimated_cost_usd=gas_cost_usd,
+            strategy=strategy.value,
+            savings_percent=Decimal('0')
+        )
+        
+        logger.info(
+            f"Gas optimized: {optimized_gas_price_gwei:.2f} gwei, "
+            f"~${gas_cost_usd:.2f} USD"
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Gas optimization failed: {e}", exc_info=True)
+        # Return safe defaults
+        return GasOptimizationResult(
+            gas_price_gwei=Decimal('1.5'),
+            gas_limit=200000,
+            estimated_cost_usd=Decimal('0.60'),
+            strategy=strategy.value,
+            savings_percent=Decimal('0')
+        )

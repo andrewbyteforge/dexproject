@@ -347,7 +347,7 @@ class StuckTransactionMonitor:
                 await asyncio.sleep(30)  # Check every 30 seconds
                 
                 current_time = datetime.now(timezone.utc)
-                current_gas_price = await self._get_current_gas_price()
+                
                 
                 # Group transactions by user for nonce management
                 user_transactions = self._group_transactions_by_user()
@@ -358,7 +358,7 @@ class StuckTransactionMonitor:
                         user_id,
                         transactions,
                         current_time,
-                        current_gas_price
+                       
                     )
                 
             except Exception as e:
@@ -548,18 +548,9 @@ class StuckTransactionMonitor:
             self.logger.info(f"🔄 Auto-replacing stuck transaction: {tx_id}")
             await self._replacement_callback(tx_id, gas_multiplier)
     
-    async def _get_current_gas_price(self) -> Decimal:
-        """Get current network gas price."""
-        try:
-            if self._web3_client:
-                gas_price_wei = await self._web3_client.web3.eth.gas_price
-                return Decimal(gas_price_wei) / Decimal(10**9)
-            else:
-                return Decimal(os.getenv('DEFAULT_GAS_PRICE_GWEI', '30'))
-        except Exception as e:
-            self.logger.error(f"Error getting gas price: {e}")
-            return Decimal('30')
-    
+
+
+
     async def _get_user_next_nonce(self, user_id: int) -> int:
         """Get next expected nonce for user."""
         try:

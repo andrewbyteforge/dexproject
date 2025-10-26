@@ -742,11 +742,57 @@ class Web3Client:
         return await self._execute_with_retry(_estimate_gas, to_address, data, value, from_address)
 
     async def get_gas_price(self) -> int:
-        """Get current gas price."""
-        async def _get_gas_price(w3: Web3) -> int:
-            return w3.eth.gas_price
+        """
+        Get current gas price from the network.
         
-        return await self._execute_with_retry(_get_gas_price)
+        Returns gas price in wei (int). Typical callers:
+        - trading/services/gas_optimizer.py
+        - paper_trading/services/gas_optimizer.py
+        - dashboard/tasks.py
+        
+        Attempts eth_gasPrice RPC call first. On failure, falls back to
+        maxPriorityFeePerGas if available. Returns 0 on complete failure.
+        
+        Returns:
+            int: Gas price in wei (e.g., 1500000000 = 1.5 gwei)
+            
+        Raises:
+            Never raises - returns 0 on complete failure
+        """
+        try:
+            if not self.is_connected:
+                self.logger.warning("Cannot get gas price - not connected to provider")
+                return 0
+            
+            # Primary method: eth_gasPrice
+            gas_price_wei = await self.w3.eth.gas_price
+            self.logger.info(
+                f"Gas price fetched successfully: {gas_price_wei} wei "
+                f"({gas_price_wei / 1e9:.2f} gwei)"
+            )
+            return int(gas_price_wei)
+            
+        except Exception as e:
+            self.logger.warning(
+                f"eth_gasPrice failed, attempting fallback: {e}"
+            )
+            
+            # Fallback: Try maxPriorityFeePerGas
+            try:
+                max_priority_fee = await self.w3.eth.max_priority_fee
+                fallback_gas = int(max_priority_fee * 1.5)  # Add 50% buffer
+                self.logger.warning(
+                    f"Using fallback gas price: {fallback_gas} wei "
+                    f"({fallback_gas / 1e9:.2f} gwei) from max_priority_fee"
+                )
+                return fallback_gas
+                
+            except Exception as fallback_error:
+                self.logger.error(
+                    f"All gas price methods failed: {fallback_error}",
+                    exc_info=True
+                )
+                return 0
 
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get client performance statistics."""
