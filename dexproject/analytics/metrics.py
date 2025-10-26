@@ -795,7 +795,7 @@ def get_metrics_summary() -> Dict[str, Any]:
         paper_positions_count = PaperPosition.objects.filter(is_open=True).count()
         paper_accounts = PaperTradingAccount.objects.filter(is_active=True)
         paper_total_pnl = sum(
-            acc.total_pnl_usd for acc in paper_accounts if acc.total_pnl_usd
+            acc.total_profit_loss_usd for acc in paper_accounts if acc.total_profit_loss_usd
         ) if paper_accounts else Decimal('0')
         
         # Real trading metrics

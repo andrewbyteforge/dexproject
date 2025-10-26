@@ -4,7 +4,6 @@
 {% block title %}Portfolio - Paper Trading Dashboard{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/home.css' %}">
 <style>
     /* Portfolio Specific Styles */
     .portfolio-summary-card {
@@ -569,9 +568,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<!-- Chart.js for portfolio distribution -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
-
 <script>
     /**
      * Initialize portfolio distribution chart
@@ -668,35 +664,6 @@
         }
     }
     
-    /**
-     * Show toast notification
-     */
-    function showToast(message, type = 'info') {
-        // Create toast container if it doesn't exist
-        let toastContainer = document.getElementById('toast-container');
-        if (!toastContainer) {
-            toastContainer = document.createElement('div');
-            toastContainer.id = 'toast-container';
-            toastContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
-            document.body.appendChild(toastContainer);
-        }
-        
-        const toast = document.createElement('div');
-        toast.className = `alert alert-${type} alert-dismissible fade show`;
-        toast.style.minWidth = '300px';
-        toast.innerHTML = `
-            ${message}
-            <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>
-        `;
-        
-        toastContainer.appendChild(toast);
-        
-        // Auto-remove after 5 seconds
-        setTimeout(() => {
-            if (toast.parentElement) {
-                toast.remove();
-            }
-        }, 5000);
-    }
+
 </script>
 {% endblock %}

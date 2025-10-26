@@ -258,7 +258,7 @@ def _get_detailed_metrics(timeframe: str) -> Dict[str, Any]:
         performance_metrics = {
             'total_accounts': total_accounts,
             'profitable_accounts': paper_accounts.filter(
-                total_pnl_usd__gt=0
+                total_profit_loss_usd__gt=0 
             ).count(),
             'avg_return_percent': float(avg_return),
         }
