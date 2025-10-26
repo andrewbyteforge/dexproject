@@ -47,32 +47,10 @@ else:
     # At runtime, import the actual shared_task decorated functions
     from .tasks import run_paper_trading_bot, stop_paper_trading_bot
 
+# Import centralized account utilities (REFACTORED: removed duplicate get_default_user)
+from .utils import get_default_user, get_single_trading_account
+
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# HELPER FUNCTION TO GET DEFAULT USER
-# =============================================================================
-
-def get_default_user() -> User:
-    """
-    Get or create the default user for single-user operation.
-    No authentication required.
-    
-    Returns:
-        User: The default user instance
-    """
-    user, created = User.objects.get_or_create(
-        username='demo_user',
-        defaults={
-            'email': 'user@localhost',
-            'first_name': 'Default',
-            'last_name': 'User'
-        }
-    )
-    if created:
-        logger.info("Created default user for paper trading API")
-    return user
 
 
 # =============================================================================
@@ -94,25 +72,8 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
         JsonResponse: AI thoughts data with metadata
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get or create account for user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
         
         # Get query parameters
         limit = int(request.GET.get('limit', 10))
@@ -169,25 +130,8 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         JsonResponse: Portfolio data with positions and metrics
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-            
-        # Get or create account for user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
         
         # Get open positions
         positions = PaperPosition.objects.filter(
@@ -270,22 +214,8 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
         JsonResponse: Trade history data with filters applied
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get account for user
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({
-                'success': True,
-                'trades': [],
-                'count': 0,
-                'timestamp': timezone.now().isoformat()
-            })
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
         
         # Build query for trades
         trades_query = PaperTrade.objects.filter(account=account)
@@ -588,28 +518,8 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
         JsonResponse: Open positions with current market values
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({
-                'success': True,
-                'positions': [],
-                'summary': {
-                    'total_positions': 0,
-                    'total_value_usd': 0,
-                    'total_cost_basis_usd': 0,
-                    'total_unrealized_pnl_usd': 0,
-                    'total_unrealized_pnl_percent': 0
-                },
-                'timestamp': timezone.now().isoformat()
-            })
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
         
         # Get open positions
         positions = PaperPosition.objects.filter(
@@ -697,25 +607,8 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
         JsonResponse: Metrics data including P&L, win rate, and trading volume
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get active account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
         
         # Calculate positions value
         open_positions = PaperPosition.objects.filter(account=account, is_open=True)
@@ -777,22 +670,8 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
         JsonResponse: Performance metrics including Sharpe ratio, max drawdown, etc.
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({
-                'error': 'No active account found',
-                'sharpe_ratio': 0,
-                'max_drawdown': 0,
-                'win_rate': 0
-            }, status=404)
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
         
         # Get latest performance metrics
         latest_metrics = PaperPerformanceMetrics.objects.filter(
@@ -991,25 +870,9 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         JsonResponse: Bot start confirmation with session and task IDs
     """
     try:
-        # Get default user
-        user = get_default_user()
-        
-        # Get account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            # Create account if it doesn't exist
-            account = PaperTradingAccount.objects.create(
-                user=user,
-                name='My_Trading_Account',
-                initial_balance_usd=Decimal('10000.00'),
-                current_balance_usd=Decimal('10000.00'),
-                is_active=True
-            )
-            logger.info(f"Created new paper trading account: {account.account_id}")
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
+        user = account.user  # Get user from account for task call
         
         # Check if bot is already running
         active_sessions = PaperTradingSession.objects.filter(
@@ -1102,17 +965,9 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         JsonResponse: Bot status with number of sessions ended
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({'error': 'No active account found'}, status=404)
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
+        user = account.user  # Get user from account for task call
         
         # Find active sessions for this user
         active_sessions = PaperTradingSession.objects.filter(
@@ -1186,20 +1041,8 @@ def api_bot_status(request: HttpRequest) -> JsonResponse:
         JsonResponse: Bot status and metrics
     """
     try:
-        # Get default user - no authentication required
-        user = get_default_user()
-        
-        # Get account
-        account = PaperTradingAccount.objects.filter(
-            user=user,
-            is_active=True
-        ).first()
-        
-        if not account:
-            return JsonResponse({
-                'status': 'no_account',
-                'message': 'No paper trading account found'
-            })
+        # Get the single trading account (creates if doesn't exist)
+        account: PaperTradingAccount = get_single_trading_account()
         
         # Find active sessions
         active_sessions = PaperTradingSession.objects.filter(

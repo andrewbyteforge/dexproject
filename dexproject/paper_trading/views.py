@@ -38,42 +38,15 @@ from .models import (
     PaperPerformanceMetrics
 )
 
+# Import centralized utilities (REFACTORED: removed duplicate functions)
+from .utils import get_default_user, get_single_trading_account, to_decimal
+
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# DECIMAL HANDLING HELPERS
+# TEMPLATE FORMATTING HELPERS
 # =============================================================================
-
-def safe_decimal(value, default='0'):
-    """
-    Safely convert a value to decimal, handling large wei values.
-    
-    Args:
-        value: The value to convert
-        default: Default value if conversion fails
-        
-    Returns:
-        Decimal safe for display
-    """
-    try:
-        if value is None:
-            return Decimal(default)
-        
-        # If it's already a Decimal, check if it's too large (wei value)
-        if isinstance(value, Decimal):
-            # If it's a wei value (> 10^15), return 0 for display
-            if value > Decimal('1000000000000000'):
-                logger.debug(f"Converting large wei value to {default}: {value}")
-                return Decimal(default)
-            return value
-            
-        # Try to convert to Decimal
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError) as e:
-        logger.warning(f"Failed to convert value to decimal: {value}, error: {e}")
-        return Decimal(default)
-
 
 def format_trade_for_template(trade):
     """
@@ -94,18 +67,18 @@ def format_trade_for_template(trade):
             'trade_type': trade.trade_type or 'unknown',
             'token_in_symbol': trade.token_in_symbol or 'Unknown',
             'token_out_symbol': trade.token_out_symbol or 'Unknown',
-            'amount_in_usd': safe_decimal(trade.amount_in_usd, '0'),
-            'amount_in_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD for display
-            'amount_out_display': safe_decimal(trade.amount_in_usd, '0'),  # Use USD approximation
-            'simulated_gas_cost_usd': safe_decimal(trade.simulated_gas_cost_usd, '0'),
-            'simulated_slippage_percent': safe_decimal(trade.simulated_slippage_percent, '0'),
+            'amount_in_usd': to_decimal(trade.amount_in_usd, Decimal('0')),
+            'amount_in_display': to_decimal(trade.amount_in_usd, Decimal('0')),  # Use USD for display
+            'amount_out_display': to_decimal(trade.amount_in_usd, Decimal('0')),  # Use USD approximation
+            'simulated_gas_cost_usd': to_decimal(trade.simulated_gas_cost_usd, Decimal('0')),
+            'simulated_slippage_percent': to_decimal(trade.simulated_slippage_percent, Decimal('0')),
             'status': trade.status or 'pending',
             'created_at': trade.created_at,
             'executed_at': trade.executed_at,
             'execution_time_ms': trade.execution_time_ms or 0,
             'mock_tx_hash': trade.mock_tx_hash or '',
             'strategy_name': trade.strategy_name or 'Manual',
-            'simulated_gas_price_gwei': safe_decimal(trade.simulated_gas_price_gwei, '0'),
+            'simulated_gas_price_gwei': to_decimal(trade.simulated_gas_price_gwei, Decimal('0')),
             'simulated_gas_used': trade.simulated_gas_used or 0,
             # Original trade object for other attributes
             '_original': trade
@@ -150,13 +123,13 @@ def format_position_for_template(position):
             'position_id': str(position.position_id),
             'token_symbol': position.token_symbol or 'Unknown',
             'token_address': position.token_address or '',
-            'quantity': safe_decimal(position.quantity, '0'),
-            'average_entry_price_usd': safe_decimal(position.average_entry_price_usd, '0'),
-            'current_price_usd': safe_decimal(position.current_price_usd, '0'),
-            'total_invested_usd': safe_decimal(position.total_invested_usd, '0'),
-            'current_value_usd': safe_decimal(position.current_value_usd, '0'),
-            'unrealized_pnl_usd': safe_decimal(position.unrealized_pnl_usd, '0'),
-            'realized_pnl_usd': safe_decimal(position.realized_pnl_usd, '0'),
+            'quantity': to_decimal(position.quantity, Decimal('0')),
+            'average_entry_price_usd': to_decimal(position.average_entry_price_usd, Decimal('0')),
+            'current_price_usd': to_decimal(position.current_price_usd, Decimal('0')),
+            'total_invested_usd': to_decimal(position.total_invested_usd, Decimal('0')),
+            'current_value_usd': to_decimal(position.current_value_usd, Decimal('0')),
+            'unrealized_pnl_usd': to_decimal(position.unrealized_pnl_usd, Decimal('0')),
+            'realized_pnl_usd': to_decimal(position.realized_pnl_usd, Decimal('0')),
             'is_open': position.is_open,
             'opened_at': position.opened_at,
             'closed_at': position.closed_at,
@@ -183,85 +156,6 @@ def format_position_for_template(position):
 
 
 # =============================================================================
-# CENTRALIZED ACCOUNT MANAGEMENT
-# =============================================================================
-
-def get_default_user():
-    """
-    Get or create the default user for single-user operation.
-    No authentication required.
-    
-    Returns:
-        User: The default user instance
-    """
-    user, created = User.objects.get_or_create(
-        username='demo_user',  # Using demo_user to match the bot
-        defaults={
-            'email': 'demo@example.com',
-            'first_name': 'Demo',
-            'last_name': 'User'
-        }
-    )
-    if created:
-        logger.info("Created demo_user for paper trading")
-    return user
-
-
-def get_single_trading_account(user: Optional[User] = None) -> PaperTradingAccount:
-    """
-    Get or create the single paper trading account for the application.
-    
-    This ensures only one account exists and is consistently used across
-    the entire application (bot, API, dashboard, WebSocket).
-    
-    Args:
-        user: The user to get account for. If None, uses demo_user.
-        
-    Returns:
-        PaperTradingAccount: The single account for this user
-    """
-    if user is None:
-        user = get_default_user()
-    
-    # Get all accounts for this user
-    accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
-    
-    if accounts.exists():
-        # Use the first (oldest) account
-        account = accounts.first()
-        
-        # Clean up any duplicates
-        if accounts.count() > 1:
-            logger.warning(f"Found {accounts.count()} accounts, cleaning duplicates")
-            # Keep the first account, delete others
-            for duplicate in accounts[1:]:
-                logger.info(f"Removing duplicate account: {duplicate.name} ({duplicate.account_id})")
-                duplicate.delete()
-        
-        # Ensure the account is active and has the consistent name
-        if not account.is_active or account.name != 'My_Trading_Account':
-            account.is_active = True
-            account.name = 'My_Trading_Account'  # Use consistent name with bot
-            account.save()
-            logger.info(f"Updated account to standard name: {account.name}")
-        
-        logger.debug(f"Using existing account: {account.name} ({account.account_id})")
-        
-    else:
-        # No account exists, create the single account
-        account = PaperTradingAccount.objects.create(
-            user=user,
-            name='My_Trading_Account',  # Consistent name with bot
-            initial_balance_usd=Decimal('10000.00'),
-            current_balance_usd=Decimal('10000.00'),
-            is_active=True
-        )
-        logger.info(f"Created new paper trading account: {account.name} ({account.account_id})")
-    
-    return account
-
-
-# =============================================================================
 # DASHBOARD VIEWS
 # =============================================================================
 
@@ -280,7 +174,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
     """
     try:
         # Get the single account
-        account = get_single_trading_account()
+        account: PaperTradingAccount = get_single_trading_account()
         user = account.user
         
         logger.debug(f"Loading paper trading dashboard for account {account.account_id}")
@@ -302,7 +196,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             )
             for old_session in old_sessions:
                 old_session.status = "STOPPED"
-                old_session.ended_at = timezone.now()
+                old_session.stopped_at = timezone.now()
                 old_session.save()
                 logger.info(f"Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
         
@@ -339,7 +233,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
                 'thought_id': str(thought.thought_id),
                 'decision_type': thought.decision_type,
                 'token_symbol': thought.token_symbol,
-                'confidence_percent': safe_decimal(thought.confidence_level, '0'),
+                'confidence_percent': to_decimal(thought.confidence_level, Decimal('0')),
                 'created_at': thought.created_at,
                 'thought_content': thought.reasoning[:150] if thought.reasoning else "Analyzing market conditions...",
                 '_original': thought
@@ -368,17 +262,21 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             """, [str(account.account_id)])
             
             position_stats = cursor.fetchone()
-            total_closed_positions = position_stats[0] or 0
-            winning_trades = position_stats[1] or 0
-            losing_trades = position_stats[2] or 0
+            if position_stats is not None:
+                total_closed_positions = position_stats[0] or 0
+                winning_trades = position_stats[1] or 0
+                # losing_trades not used in dashboard view - only winning trades shown
+            else:
+                total_closed_positions = 0
+                winning_trades = 0
         
         # Get total trades (number of trade executions)
         total_trades = PaperTrade.objects.filter(account=account).count()
         
         # Calculate total portfolio value = cash balance + value of open positions
-        total_portfolio_value = safe_decimal(account.current_balance_usd)
+        total_portfolio_value = to_decimal(account.current_balance_usd)
         for position in open_positions:
-            total_portfolio_value += safe_decimal(position['current_value_usd'])
+            total_portfolio_value += to_decimal(position['current_value_usd'])
         
         # Get 24h stats with error handling
         time_24h_ago = timezone.now() - timedelta(hours=24)
@@ -406,14 +304,14 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'total_trades': total_trades,  # Total trade executions
             'successful_trades': winning_trades,  # Winning positions (realized_pnl_usd > 0)
             'total_closed_positions': total_closed_positions,  # Total closed positions
-            'win_rate': safe_decimal((winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0),
+            'win_rate': to_decimal((winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0),
             'trades_24h': trades_24h.get('count', 0),
-            'volume_24h': safe_decimal(trades_24h.get('total_volume', 0)),
-            'current_balance': safe_decimal(account.current_balance_usd),  # Cash balance only
+            'volume_24h': to_decimal(trades_24h.get('total_volume', 0)),
+            'current_balance': to_decimal(account.current_balance_usd),  # Cash balance only
             'portfolio_value': total_portfolio_value,  # FIXED: Total value = cash + open positions
-            'initial_balance': safe_decimal(account.initial_balance_usd),
-            'total_pnl': safe_decimal(account.total_profit_loss_usd),
-            'return_percent': safe_decimal(account.get_roi()),
+            'initial_balance': to_decimal(account.initial_balance_usd),
+            'total_pnl': to_decimal(account.total_profit_loss_usd),
+            'return_percent': to_decimal(account.get_roi()),
             'user': user,
         }
         
@@ -424,14 +322,6 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         logger.error(f"Error loading paper trading dashboard: {e}", exc_info=True)
         messages.error(request, f"Error loading dashboard: {str(e)}")
         return render(request, 'paper_trading/error.html', {"error": str(e)})
-
-
-
-
-
-
-
-
 
 
 def trade_history(request: HttpRequest) -> HttpResponse:
@@ -446,7 +336,7 @@ def trade_history(request: HttpRequest) -> HttpResponse:
     """
     try:
         # Get the single account
-        account = get_single_trading_account()
+        account: PaperTradingAccount = get_single_trading_account()
         user = account.user
         
         logger.debug(f"Loading trade history for account {account.account_id}")
@@ -562,12 +452,20 @@ def trade_history(request: HttpRequest) -> HttpResponse:
                 """, params)
                 
                 stats = cursor.fetchone()
-                summary_stats = {
-                    'total_trades': stats[0] or 0,
-                    'total_volume': safe_decimal(str(stats[1] or 0)),
-                    'avg_trade_size': safe_decimal(str(stats[2] or 0)),
-                    'total_gas_cost': safe_decimal(str(stats[3] or 0))
-                }
+                if stats is not None:
+                    summary_stats = {
+                        'total_trades': stats[0] or 0,
+                        'total_volume': to_decimal(str(stats[1] or 0)),
+                        'avg_trade_size': to_decimal(str(stats[2] or 0)),
+                        'total_gas_cost': to_decimal(str(stats[3] or 0))
+                    }
+                else:
+                    summary_stats = {
+                        'total_trades': 0,
+                        'total_volume': Decimal('0'),
+                        'avg_trade_size': Decimal('0'),
+                        'total_gas_cost': Decimal('0')
+                    }
                 
                 logger.info(f"Successfully calculated summary stats: {summary_stats['total_trades']} trades")
                 
@@ -632,7 +530,7 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
     """
     try:
         # Get the single account
-        account = get_single_trading_account()
+        account: PaperTradingAccount = get_single_trading_account()
         user = account.user
         
         logger.debug(f"Loading portfolio view for account {account.account_id}")
@@ -660,22 +558,22 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
         
         # Calculate portfolio metrics with safe decimal handling
         try:
-            portfolio_value = safe_decimal(account.current_balance_usd) + sum(
-                safe_decimal(pos['current_value_usd']) for pos in open_positions
+            portfolio_value = to_decimal(account.current_balance_usd) + sum(
+                to_decimal(pos['current_value_usd']) for pos in open_positions
             )
         except Exception as e:
             logger.error(f"Error calculating portfolio value: {e}")
-            portfolio_value = safe_decimal(account.current_balance_usd)
+            portfolio_value = to_decimal(account.current_balance_usd)
         
         try:
             total_invested = sum(
-                safe_decimal(pos['total_invested_usd']) for pos in open_positions
+                to_decimal(pos['total_invested_usd']) for pos in open_positions
             )
         except Exception as e:
             logger.error(f"Error calculating total invested: {e}")
             total_invested = Decimal('0')
         
-        total_current_value = sum(safe_decimal(pos['current_value_usd']) for pos in open_positions)
+        total_current_value = sum(to_decimal(pos['current_value_usd']) for pos in open_positions)
         unrealized_pnl = total_current_value - total_invested if total_invested > 0 else Decimal('0')
         
         # Position distribution for chart
@@ -698,7 +596,7 @@ def portfolio_view(request: HttpRequest) -> HttpResponse:
             'open_positions': open_positions,
             'closed_positions': closed_positions,
             'portfolio_value': portfolio_value,
-            'cash_balance': safe_decimal(account.current_balance_usd),
+            'cash_balance': to_decimal(account.current_balance_usd),
             'total_invested': total_invested,
             'unrealized_pnl': unrealized_pnl,
             'position_distribution': json.dumps(position_distribution),
@@ -730,7 +628,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
     """
     try:
         # Get the single account
-        account = get_single_trading_account()
+        account: PaperTradingAccount = get_single_trading_account()
         user = account.user
         
         logger.debug(f"Loading configuration view for account {account.account_id}")
@@ -967,15 +865,15 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                 'trading_mode': config.trading_mode,
                 'use_fast_lane': config.use_fast_lane,
                 'use_smart_lane': config.use_smart_lane,
-                'fast_lane_threshold_usd': safe_decimal(config.fast_lane_threshold_usd),
-                'max_position_size_percent': safe_decimal(config.max_position_size_percent),
-                'stop_loss_percent': safe_decimal(config.stop_loss_percent),
-                'take_profit_percent': safe_decimal(config.take_profit_percent),
+                'fast_lane_threshold_usd': to_decimal(config.fast_lane_threshold_usd),
+                'max_position_size_percent': to_decimal(config.max_position_size_percent),
+                'stop_loss_percent': to_decimal(config.stop_loss_percent),
+                'take_profit_percent': to_decimal(config.take_profit_percent),
                 'max_daily_trades': config.max_daily_trades,
                 'max_concurrent_positions': config.max_concurrent_positions,
-                'min_liquidity_usd': safe_decimal(config.min_liquidity_usd),
-                'max_slippage_percent': safe_decimal(config.max_slippage_percent),
-                'confidence_threshold': safe_decimal(config.confidence_threshold),
+                'min_liquidity_usd': to_decimal(config.min_liquidity_usd),
+                'max_slippage_percent': to_decimal(config.max_slippage_percent),
+                'confidence_threshold': to_decimal(config.confidence_threshold),
                 'allowed_tokens': config.allowed_tokens if config.allowed_tokens else [],
                 'blocked_tokens': config.blocked_tokens if config.blocked_tokens else [],
                 'custom_parameters': config.custom_parameters if config.custom_parameters else {},
@@ -1011,7 +909,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
     """
     try:
         # Get the single account
-        account = get_single_trading_account()
+        account: PaperTradingAccount = get_single_trading_account()
         user = account.user
         
         logger.debug(f"Loading analytics view for account {account.account_id}")
@@ -1058,12 +956,15 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                 """, [str(account.account_id), start_date, end_date])
                 
                 trade_stats = cursor.fetchone()
-                total_trades = trade_stats[0] or 0
-                completed_trades = trade_stats[1] or 0
-                failed_trades = trade_stats[2] or 0
-                pending_trades = trade_stats[3] or 0
-                total_volume = safe_decimal(str(trade_stats[4] or 0))
-                avg_trade_size = safe_decimal(str(trade_stats[5] or 0))
+                if trade_stats is not None:
+                    total_trades = trade_stats[0] or 0
+                    completed_trades = trade_stats[1] or 0
+                    failed_trades = trade_stats[2] or 0
+                    # pending_trades, total_volume, avg_trade_size not used in this view
+                else:
+                    total_trades = 0
+                    completed_trades = 0
+                    failed_trades = 0
                 
                 logger.info(f"Loaded trade statistics: {total_trades} total trades")
                 
@@ -1072,9 +973,6 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             total_trades = 0
             completed_trades = 0
             failed_trades = 0
-            pending_trades = 0
-            total_volume = Decimal('0')
-            avg_trade_size = Decimal('0')
         
         # Get token distribution using raw SQL to avoid decimal issues
         token_stats = {}
@@ -1100,7 +998,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                 for row in cursor.fetchall():
                     token_stats[row[0]] = {
                         'count': row[1],
-                        'volume': safe_decimal(str(row[2])) if row[2] else Decimal('0'),
+                        'volume': to_decimal(str(row[2])) if row[2] else Decimal('0'),
                         'success': row[3],
                         'failed': row[4]
                     }
@@ -1144,11 +1042,18 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                     """, [str(account.account_id), day_start, day_end])
                     
                     day_stats = cursor.fetchone()
-                    daily_performance.append({
-                        'date': current_date.isoformat(),
-                        'trades': day_stats[0] or 0,
-                        'volume': float(day_stats[1] or 0)
-                    })
+                    if day_stats is not None:
+                        daily_performance.append({
+                            'date': current_date.isoformat(),
+                            'trades': day_stats[0] or 0,
+                            'volume': float(day_stats[1] or 0)
+                        })
+                    else:
+                        daily_performance.append({
+                            'date': current_date.isoformat(),
+                            'trades': 0,
+                            'volume': 0.0
+                        })
                 
                 current_date += timedelta(days=1)
                 
@@ -1170,14 +1075,17 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                 """, [str(account.account_id)])
                 
                 position_stats = cursor.fetchone()
-                total_closed_positions = position_stats[0] or 0
-                winning_trades_positions = position_stats[1] or 0
-                losing_trades_positions = position_stats[2] or 0
+                if position_stats is not None:
+                    total_closed_positions = position_stats[0] or 0
+                    winning_trades_positions = position_stats[1] or 0
+                    # losing_trades_positions not used - only winning trades displayed
+                else:
+                    total_closed_positions = 0
+                    winning_trades_positions = 0
         except Exception as e:
             logger.error(f"Error fetching position stats: {e}")
             total_closed_positions = 0
             winning_trades_positions = 0
-            losing_trades_positions = 0
         
         # Win rate based on closed positions, not trade executions
         win_rate = (winning_trades_positions / total_closed_positions * 100) if total_closed_positions > 0 else 0
@@ -1195,11 +1103,15 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
                         SUM(CASE WHEN DATE(created_at) >= %s THEN 1 ELSE 0 END) as week_trades
                     FROM paper_trading_papertrade
                     WHERE account_id = %s
-                """, [today, week_ago, str(account.account_id)])
+                """, [str(today), str(week_ago), str(account.account_id)])
                 
                 period_stats = cursor.fetchone()
-                today_trades_count = period_stats[0] or 0
-                week_trades_count = period_stats[1] or 0
+                if period_stats is not None:
+                    today_trades_count = period_stats[0] or 0
+                    week_trades_count = period_stats[1] or 0
+                else:
+                    today_trades_count = 0
+                    week_trades_count = 0
         except Exception as e:
             logger.error(f"Error calculating period stats: {e}")
             today_trades_count = 0
@@ -1218,8 +1130,8 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'win_rate': float(win_rate),
             'profit_factor': 1.5 if win_rate > 50 else 0.8,
             'total_trades': total_trades,
-            'avg_profit': float(safe_decimal(account.total_profit_loss_usd) / completed_trades) if completed_trades > 0 else 0,
-            'avg_loss': float(abs(safe_decimal(account.total_profit_loss_usd)) / failed_trades) if failed_trades > 0 else 0,
+            'avg_profit': float(to_decimal(account.total_profit_loss_usd) / completed_trades) if completed_trades > 0 else 0,
+            'avg_loss': float(abs(to_decimal(account.total_profit_loss_usd)) / failed_trades) if failed_trades > 0 else 0,
             'max_drawdown': 15.5,  # Placeholder
             
             # Period performance
@@ -1227,7 +1139,7 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'today_trades': today_trades_count,
             'week_pnl': 0,
             'week_trades': week_trades_count,
-            'month_pnl': float(safe_decimal(account.total_profit_loss_usd or 0)),
+            'month_pnl': float(to_decimal(account.total_profit_loss_usd or 0)),
             'month_trades': total_trades,
             
             # Chart data
@@ -1253,8 +1165,8 @@ def analytics_view(request: HttpRequest) -> HttpResponse:
             'best_hours': [],
             
             # Account metrics with safe decimals
-            'account_pnl': float(safe_decimal(account.total_profit_loss_usd or 0)),
-            'account_return': float(safe_decimal(account.get_roi() or 0)),
+            'account_pnl': float(to_decimal(account.total_profit_loss_usd or 0)),
+            'account_return': float(to_decimal(account.get_roi() or 0)),
         }
         
         logger.info(f"Successfully loaded analytics for account {account.account_id}")
@@ -1275,7 +1187,7 @@ def api_analytics_data(request: HttpRequest) -> JsonResponse:
     """
     try:
         # Get the single account
-        account = get_single_trading_account()
+        account: PaperTradingAccount = get_single_trading_account()
         
         logger.debug(f"API call for analytics data for account {account.account_id}")
         
@@ -1301,10 +1213,15 @@ def api_analytics_data(request: HttpRequest) -> JsonResponse:
             """, [str(account.account_id)])
             
             position_stats = cursor.fetchone()
-            total_closed_positions = position_stats[0] or 0
-            winning_trades = position_stats[1] or 0
-            losing_trades = position_stats[2] or 0
-            win_rate = (winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0
+            if position_stats is not None:
+                total_closed_positions = position_stats[0] or 0
+                winning_trades = position_stats[1] or 0
+                # losing_trades = position_stats[2] or 0  # Not returned in API response
+                win_rate = (winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0
+            else:
+                total_closed_positions = 0
+                winning_trades = 0
+                win_rate = 0
         
         logger.info(f"API analytics data: {total_trades} trades, {total_closed_positions} closed positions, {win_rate:.1f}% win rate")
         
@@ -1315,7 +1232,6 @@ def api_analytics_data(request: HttpRequest) -> JsonResponse:
                 'total_trades': total_trades,  # Total trade executions
                 'total_closed_positions': total_closed_positions,  # Closed positions
                 'winning_trades': winning_trades,  # Profitable positions
-                'losing_trades': losing_trades,  # Losing positions
                 'timestamp': timezone.now().isoformat()
             }
         })
@@ -1334,7 +1250,7 @@ def api_analytics_export(request: HttpRequest) -> HttpResponse:
     
     try:
         # Get the single account
-        account = get_single_trading_account()
+        account: PaperTradingAccount = get_single_trading_account()
         
         logger.info(f"Exporting analytics data to CSV for account {account.account_id}")
         
@@ -1415,11 +1331,18 @@ def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
             """, [str(account.account_id)])
             
             stats = cursor.fetchone()
-            total_closed_positions = stats[0] or 0
-            winning_trades = stats[1] or 0
-            losing_trades = stats[2] or 0
-            breakeven_trades = stats[3] or 0
-            total_realized_pnl = Decimal(str(stats[4])) if stats[4] else Decimal('0')
+            if stats is not None:
+                total_closed_positions = stats[0] or 0
+                winning_trades = stats[1] or 0
+                losing_trades = stats[2] or 0
+                breakeven_trades = stats[3] or 0
+                total_realized_pnl = Decimal(str(stats[4])) if stats[4] else Decimal('0')
+            else:
+                total_closed_positions = 0
+                winning_trades = 0
+                losing_trades = 0
+                breakeven_trades = 0
+                total_realized_pnl = Decimal('0')
             
             # Also get total number of trades executed
             cursor.execute("""
@@ -1428,7 +1351,8 @@ def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
                 WHERE account_id = %s
             """, [str(account.account_id)])
             
-            total_trades = cursor.fetchone()[0] or 0
+            trade_count_result = cursor.fetchone()
+            total_trades = trade_count_result[0] if trade_count_result is not None else 0
         
         # Calculate win rate based on closed positions
         win_rate = (winning_trades / total_closed_positions * 100) if total_closed_positions > 0 else 0
@@ -1446,11 +1370,14 @@ def calculate_portfolio_metrics(account: PaperTradingAccount) -> Dict[str, Any]:
                 """, [str(account.account_id)])
                 
                 pnl_stats = cursor.fetchone()
-                avg_win = Decimal(str(pnl_stats[0])) if pnl_stats[0] else Decimal('0')
-                avg_loss = Decimal(str(pnl_stats[1])) if pnl_stats[1] else Decimal('1')
-                
-                # Profit factor = (avg_win * win_count) / (avg_loss * loss_count)
-                profit_factor = float((avg_win * winning_trades) / (avg_loss * losing_trades)) if avg_loss > 0 else 0
+                if pnl_stats is not None:
+                    avg_win = Decimal(str(pnl_stats[0])) if pnl_stats[0] else Decimal('0')
+                    avg_loss = Decimal(str(pnl_stats[1])) if pnl_stats[1] else Decimal('1')
+                    
+                    # Profit factor = (avg_win * win_count) / (avg_loss * loss_count)
+                    profit_factor = float((avg_win * winning_trades) / (avg_loss * losing_trades)) if avg_loss > 0 else 0
+                else:
+                    profit_factor = 0
         else:
             profit_factor = 0
         
