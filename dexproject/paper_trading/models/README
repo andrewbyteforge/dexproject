@@ -1,0 +1,800 @@
+# Paper Trading Models Documentation
+
+## Overview
+
+The Paper Trading Models package provides a comprehensive virtual trading system that simulates real cryptocurrency trading without risking actual funds. This system is organized into four logical modules, each handling specific aspects of the paper trading infrastructure.
+
+**Package Location:** `dexproject/paper_trading/models/`
+
+**Purpose:** Enable users to test trading strategies, learn trading mechanics, and evaluate AI decision-making in a risk-free environment with realistic market simulation.
+
+---
+
+## Architecture
+
+The models are organized into four distinct modules to maintain separation of concerns and prevent circular dependencies:
+
+1. **base.py** - Core trading infrastructure
+2. **intelligence.py** - AI decision tracking and strategy configuration
+3. **performance.py** - Performance metrics and session management
+4. **autopilot.py** - Autonomous parameter adaptation and learning
+
+---
+
+## Module Details
+
+### 1. base.py - Core Trading Infrastructure
+
+**File:** `dexproject/paper_trading/models/base.py`
+
+**Purpose:** Provides the fundamental building blocks for paper trading including accounts, trades, positions, and basic configuration.
+
+#### Models Included:
+
+##### PaperTradingAccount
+The virtual trading account model that tracks a user's paper trading portfolio.
+
+**Key Features:**
+- Supports multiple accounts per user for testing different strategies
+- Tracks initial and current balance in USD
+- Maintains win/loss statistics and total P&L
+- Calculates win rate and ROI (Return on Investment)
+- Activity tracking with automatic timestamp updates
+
+**Important Fields:**
+- Virtual balance tracking (initial and current)
+- Trade statistics (total, winning, losing)
+- Profit/loss aggregation
+- Active/inactive status management
+
+**Key Methods:**
+- Win rate calculation (percentage of profitable trades)
+- ROI calculation (percentage return on initial investment)
+
+##### PaperTrade
+Records individual simulated trade executions with realistic market conditions.
+
+**Key Features:**
+- Simulates realistic trade execution including gas costs, slippage, and timing
+- Supports buy, sell, and swap operations
+- Tracks complete trade lifecycle from pending to completed/failed
+- Links to AI decision logs for transparency
+- Generates mock transaction hashes for authenticity
+
+**Important Fields:**
+- Token pair information (in/out addresses and symbols)
+- Amount tracking (expected vs actual)
+- Simulated execution parameters (gas price, gas used, slippage)
+- Status tracking (pending, executing, completed, failed, cancelled)
+- Timing metrics (execution delay in milliseconds)
+- Strategy reference for analysis
+
+**Realistic Simulation:**
+- Gas cost calculation in USD
+- Slippage percentage simulation
+- Execution time delays
+- Random failure scenarios
+- Mock blockchain data (tx hash, block number)
+
+##### PaperPosition
+Tracks currently held token positions with real-time P&L calculations.
+
+**Key Features:**
+- Tracks open and closed positions separately
+- Calculates unrealized P&L for open positions
+- Records realized P&L when positions close
+- Supports average entry price calculation
+- Enforces unique constraint (one open position per token per account)
+
+**Important Fields:**
+- Token details (address, symbol, name)
+- Quantity held (in wei for precision)
+- Entry and current price tracking
+- Investment and value calculations
+- P&L tracking (unrealized and realized)
+- Position timing (opened, closed, last updated)
+
+**Key Methods:**
+- Price update with automatic P&L recalculation
+- Position closing with realized P&L calculation
+
+**Database Optimization:**
+- Indexed for fast querying by account and token
+- Unique constraint prevents duplicate open positions
+
+##### PaperTradingConfig
+Configurable simulation parameters for realistic paper trading behavior.
+
+**Key Features:**
+- Per-account customization of simulation parameters
+- Controls realism level of simulations
+- Defines risk management limits
+- Enables/disables various simulation features
+
+**Configuration Options:**
+- Base slippage percentage for all trades
+- Gas price multiplier for cost simulation
+- Execution delay in milliseconds
+- Maximum position size as percentage of portfolio
+- Daily trade limits
+- Default stop-loss percentage
+- Network issue simulation toggle
+- MEV (Maximal Extractable Value) simulation toggle
+- Configurable random failure rate
+
+**Purpose:** Makes paper trading as realistic as possible by simulating real-world trading conditions and constraints.
+
+---
+
+### 2. intelligence.py - AI Decision Tracking & Strategy Configuration
+
+**File:** `dexproject/paper_trading/models/intelligence.py`
+
+**Purpose:** Manages AI-driven decision-making, thought process logging, and comprehensive strategy configuration with Auto Pilot support.
+
+#### Models Included:
+
+##### PaperAIThoughtLog
+Records the AI's complete reasoning process for each trading decision.
+
+**Key Features:**
+- Full transparency into AI decision-making
+- Records confidence levels and reasoning
+- Captures positive and negative signals
+- Links decisions to actual trades (if executed)
+- Tracks analysis performance metrics
+
+**Decision Types:**
+- BUY - Purchase recommendation
+- SELL - Sell recommendation
+- HOLD - Maintain current position
+- SKIP - Decline trading opportunity
+
+**Important Fields:**
+- Decision type and confidence level (0-100%)
+- Detailed reasoning text
+- Risk assessment analysis
+- Key factors influencing the decision
+- Positive signals identified (bullish indicators)
+- Negative signals identified (bearish indicators)
+- Market data snapshot at decision time
+- Strategy name and lane used (Fast/Smart)
+- Analysis time in milliseconds
+
+**Purpose:** Provides complete audit trail of AI decisions, enabling users to understand why the bot made specific choices and learn from the AI's analysis.
+
+##### PaperStrategyConfiguration
+Comprehensive strategy configuration with Auto Pilot adaptive learning.
+
+**Key Features:**
+- Controls all aspects of bot behavior
+- Supports multiple trading modes (Conservative/Moderate/Aggressive/Custom)
+- Enables Fast Lane and Smart Lane selection
+- Complete risk management parameter set
+- Auto Pilot intelligent parameter adaptation
+- Learning rate and adaptation controls
+- Safety limits and cooldown periods
+
+**Trading Modes:**
+- CONSERVATIVE - Minimal risk, high confidence required
+- MODERATE - Balanced approach (recommended default)
+- AGGRESSIVE - Higher risk tolerance, faster execution
+- CUSTOM - User-defined parameters
+
+**Lane Configuration:**
+- Fast Lane toggle for quick execution trades
+- Smart Lane toggle for AI-analyzed trades
+- Fast Lane threshold (maximum trade size)
+
+**Risk Management:**
+- Maximum position size as percentage
+- Stop-loss percentage
+- Take-profit percentage
+- Maximum daily trades
+- Maximum concurrent positions
+- Minimum liquidity requirement
+- Maximum slippage tolerance
+- Confidence threshold for execution
+
+**Token Filtering:**
+- Allowed tokens whitelist (JSON array)
+- Blocked tokens blacklist (JSON array)
+- Custom parameters (JSON dict)
+
+**Auto Pilot System:**
+
+The Auto Pilot feature enables intelligent, autonomous parameter adaptation based on performance metrics and market conditions.
+
+**Auto Pilot Features:**
+- Automatic parameter optimization
+- Performance-based learning
+- Market condition awareness
+- Gradual adaptation with safety limits
+
+**Auto Pilot Configuration:**
+- Enable/disable toggle
+- Activation timestamp tracking
+- Total adjustments counter
+- Last adjustment timestamp
+
+**Parameter Boundaries:**
+Auto Pilot can only adjust parameters within safe ranges:
+- Minimum and maximum position size limits
+- Minimum and maximum confidence threshold limits
+- Prevents dangerous parameter combinations
+
+**Learning Parameters:**
+- Learning rate (0.0001 - 1.0) controls adjustment magnitude
+- Adaptation aggressiveness (Conservative/Moderate/Aggressive)
+- Performance window (number of recent trades to analyze)
+- Adjustment cooldown period (minimum minutes between changes)
+
+**Safety Limits:**
+- Maximum daily adjustments cap
+- Auto-disable after consecutive failures
+- Cooldown periods between adjustments
+
+**Key Methods:**
+- Check if Auto Pilot can make adjustment now
+- Record adjustment for tracking
+- Enforce cooldown periods
+- Validate daily limits
+
+**Purpose:** Provides a single, comprehensive configuration model that controls all bot behavior while enabling autonomous optimization through the Auto Pilot system.
+
+---
+
+### 3. performance.py - Performance Metrics & Session Management
+
+**File:** `dexproject/paper_trading/models/performance.py`
+
+**Purpose:** Tracks bot performance over time and manages trading session lifecycle.
+
+#### Models Included:
+
+##### PaperTradingSession
+Represents a complete bot trading session from start to stop.
+
+**Key Features:**
+- Tracks bot runtime and status
+- Links to strategy configuration used
+- Maintains high-level session statistics
+- Records session metadata for analysis
+- Handles session lifecycle (start, pause, stop, error)
+
+**Session Status Options:**
+- RUNNING - Bot actively trading
+- PAUSED - Temporarily suspended
+- STOPPED - Manually stopped
+- COMPLETED - Finished normally
+- ERROR - Terminated due to error
+
+**Important Fields:**
+- Unique session identifier (UUID)
+- Associated account and strategy
+- Start and stop timestamps
+- Last activity tracking
+- Trade counts (total, successful, failed)
+- Session metadata (JSON for custom data)
+- Error message storage
+
+**Key Methods:**
+- Success rate calculation
+- Session duration calculation in hours
+- Clean session stopping with error handling
+
+**Purpose:** Provides session-level grouping of trades and metrics, enabling analysis of bot performance over specific time periods.
+
+##### PaperPerformanceMetrics
+Comprehensive performance metrics calculated over specific time periods.
+
+**Key Features:**
+- Detailed performance analysis
+- Risk-adjusted return metrics
+- Win/loss statistics
+- P&L tracking and analysis
+- Historical metric storage
+
+**Trading Metrics:**
+- Total trades executed
+- Winning trades count
+- Losing trades count
+- Win rate percentage (0-100)
+
+**P&L Metrics:**
+- Total profit/loss in USD
+- Total P&L as percentage
+- Average winning trade amount
+- Average losing trade amount
+- Largest win recorded
+- Largest loss recorded
+
+**Risk Metrics:**
+- Maximum drawdown percentage
+- Sharpe ratio (risk-adjusted returns)
+- Profit factor (ratio of wins to losses)
+
+**Time Period:**
+- Period start timestamp
+- Period end timestamp
+- Metrics calculation timestamp
+
+**Automatic Calculation:**
+The model automatically calculates derived metrics on save:
+- Win rate from trade counts
+- Profit factor from win/loss averages
+- Handles edge cases (zero trades, zero losses)
+
+**Key Methods:**
+- Comprehensive metrics calculation
+- Automatic computation on save
+- Safe handling of division by zero
+
+**Database Optimization:**
+- Indexed for fast queries by session and time period
+- Indexed by key metrics (win rate, P&L percentage)
+
+**Purpose:** Provides detailed, time-based performance analysis that enables users to track improvement over time and evaluate strategy effectiveness.
+
+---
+
+### 4. autopilot.py - Auto Pilot Intelligence & Learning
+
+**File:** `dexproject/paper_trading/models/autopilot.py`
+
+**Purpose:** Implements the Auto Pilot system for intelligent parameter adaptation with complete transparency and learning capabilities.
+
+#### Models Included:
+
+##### AutoPilotLog
+Complete audit trail of all Auto Pilot parameter adjustments.
+
+**Key Features:**
+- Full transparency into Auto Pilot decisions
+- Records what changed and why
+- Tracks adjustment outcomes over time
+- Enables learning from past adjustments
+- Links to related sessions and configurations
+
+**Adjustment Types:**
+Auto Pilot can make various types of adjustments:
+- Position size increases/decreases
+- Confidence threshold increases/decreases
+- Trading frequency adjustments
+- Stop-loss tightening/loosening
+- Take-profit adjustments
+- Trading pause/resume
+- Gas strategy optimization
+- Risk tolerance adjustments
+
+**Adjustment Outcomes:**
+Tracked after sufficient time has passed:
+- PENDING - Too early to evaluate
+- POSITIVE - Improved performance
+- NEUTRAL - No significant change
+- NEGATIVE - Worsened performance
+- UNKNOWN - Insufficient data
+
+**Important Fields:**
+- Unique log identifier
+- Associated strategy and session
+- Timestamp of adjustment
+- Adjustment type and parameter name
+- Old value and new value
+- Percentage change
+- Detailed reasoning explanation
+- Trigger metric and threshold
+- Performance before adjustment
+- Performance after adjustment (filled later)
+- Outcome evaluation
+- Trades executed since adjustment
+- Market conditions context
+- Confidence in adjustment (0-100%)
+- Reversal tracking (links to reversed adjustments)
+
+**Key Features:**
+- Complete audit trail for compliance
+- Performance comparison before/after
+- Learning from outcomes
+- Reversal detection and tracking
+- Market condition correlation
+
+**Database Optimization:**
+- Indexed by strategy and timestamp
+- Indexed by adjustment type
+- Indexed by outcome for analysis
+- Indexed for session-based queries
+
+**Purpose:** Provides complete transparency into Auto Pilot's decision-making process, enabling users to understand and trust autonomous parameter changes.
+
+##### AutoPilotPerformanceSnapshot
+Periodic performance snapshots for learning and analysis.
+
+**Key Features:**
+- Regular performance sampling
+- Captures complete performance state
+- Links parameters to outcomes
+- Enables historical analysis
+- Supports machine learning
+
+**Performance Metrics:**
+Comprehensive set of metrics captured at snapshot time:
+- Win rate percentage
+- Total trades executed
+- Winning and losing trade counts
+- Total P&L in USD
+- Average profit per trade
+- Average win and loss amounts
+- Largest win and loss recorded
+- Maximum drawdown percentage
+- Sharpe ratio (risk-adjusted returns)
+- Profit factor
+
+**Market Context:**
+- Market volatility index (0-100)
+- Average gas price in period
+- Market trend (bullish/bearish/neutral)
+- Detailed market conditions (JSON)
+
+**Auto Pilot Context:**
+- Whether Auto Pilot was active
+- Number of adjustments made before snapshot
+- Type of most recent adjustment
+- Snapshot period duration in hours
+
+**Current Parameters:**
+- Complete parameter configuration at snapshot time (JSON)
+- Enables correlation of parameters with outcomes
+
+**Automatic Calculation:**
+The model automatically calculates derived metrics on save:
+- Win rate from trade counts
+- Average profit per trade
+- Profit factor from win/loss data
+
+**Key Methods:**
+- Comprehensive metrics calculation
+- Comparison to previous snapshot
+- Change detection and analysis
+- Automatic computation on save
+
+**Comparison Features:**
+Can compare to previous snapshot to detect:
+- Win rate changes
+- P&L changes
+- Trade volume changes
+- Sharpe ratio changes
+- Time difference between snapshots
+
+**Database Optimization:**
+- Indexed by strategy and timestamp
+- Indexed by Auto Pilot active status
+- Indexed by win rate for analysis
+- Session-based indexing
+
+**Purpose:** Provides the data foundation for Auto Pilot's learning system by capturing regular performance snapshots that can be analyzed to identify optimal parameter configurations.
+
+---
+
+## Key Relationships
+
+### Foreign Key Relationships:
+
+**PaperTradingAccount (Hub):**
+- Has many PaperTrades
+- Has many PaperPositions
+- Has many PaperTradingSessions
+- Has many PaperAIThoughtLogs
+- Has many PaperStrategyConfigurations
+- Has one PaperTradingConfig (OneToOne)
+
+**PaperStrategyConfiguration:**
+- Belongs to PaperTradingAccount
+- Has many PaperTradingSessions
+- Has many AutoPilotLogs
+- Has many AutoPilotPerformanceSnapshots
+
+**PaperTradingSession:**
+- Belongs to PaperTradingAccount
+- Belongs to PaperStrategyConfiguration (optional)
+- Has many PaperPerformanceMetrics
+- Has many AutoPilotLogs
+- Has many AutoPilotPerformanceSnapshots
+
+**PaperTrade:**
+- Belongs to PaperTradingAccount
+- Has many PaperAIThoughtLogs
+
+**PaperAIThoughtLog:**
+- Belongs to PaperTradingAccount
+- Belongs to PaperTrade (optional)
+
+**AutoPilotLog:**
+- Belongs to PaperStrategyConfiguration
+- Belongs to PaperTradingSession (optional)
+- Can reference previous AutoPilotLog (reversal tracking)
+
+**AutoPilotPerformanceSnapshot:**
+- Belongs to PaperStrategyConfiguration
+- Belongs to PaperTradingSession (optional)
+
+### Circular Import Prevention:
+
+The models use Django's string references for foreign keys to prevent circular import issues:
+- AutoPilot models use string references: `'paper_trading.PaperStrategyConfiguration'`
+- Performance models import from base and intelligence
+- Intelligence models import from base only
+- Base models have no model imports
+
+---
+
+## Database Schema
+
+### Tables Created:
+
+1. `paper_trading_accounts` - User accounts
+2. `paper_trades` - Individual trades
+3. `paper_positions` - Open/closed positions
+4. `paper_trading_configs` - Account configurations
+5. `paper_ai_thought_logs` - AI decision logs
+6. `paper_strategy_configs` - Strategy configurations
+7. `paper_trading_sessions` - Bot sessions
+8. `paper_performance_metrics` - Performance data
+9. `autopilot_logs` - Auto Pilot adjustments
+10. `autopilot_performance_snapshots` - Performance snapshots
+
+### Key Indexes:
+
+**Performance Optimization:**
+- All timestamp fields are indexed
+- Foreign key relationships are indexed
+- Frequently queried fields have dedicated indexes
+- Composite indexes for common query patterns
+
+**Specific Indexes:**
+- Account queries by user and active status
+- Trade queries by account and status
+- Position queries by token address
+- Session queries by status
+- Strategy queries by Auto Pilot status
+- Performance queries by win rate and P&L
+- AutoPilot queries by outcome and adjustment type
+
+### Unique Constraints:
+
+- Only one open position per token per account
+- Only one config per account
+- Unique strategy names per account
+
+---
+
+## Design Principles
+
+### 1. Separation of Concerns
+Each module has a clear, distinct responsibility:
+- **base** - Core data structures
+- **intelligence** - Decision making and configuration
+- **performance** - Metrics and tracking
+- **autopilot** - Autonomous learning
+
+### 2. Comprehensive Logging
+Every significant action is logged:
+- All trades recorded with full details
+- AI decisions captured with reasoning
+- Auto Pilot adjustments tracked with outcomes
+- Performance metrics calculated periodically
+
+### 3. Transparency
+Users can see everything the system does:
+- AI thought process fully exposed
+- Auto Pilot reasoning documented
+- Performance metrics clearly presented
+- Complete audit trail maintained
+
+### 4. Safety First
+Multiple layers of protection:
+- Parameter boundaries prevent dangerous values
+- Cooldown periods prevent over-adjustment
+- Daily limits cap autonomous changes
+- Auto-disable after consecutive failures
+- Extensive error handling and logging
+
+### 5. Realistic Simulation
+Paper trading mirrors real trading:
+- Gas costs simulated realistically
+- Slippage calculated per trade
+- Execution delays implemented
+- Random failures included
+- MEV competition simulated
+
+### 6. Extensibility
+The architecture supports future enhancements:
+- JSON fields for custom data
+- Metadata fields for flexibility
+- Strategy-agnostic design
+- Plugin-friendly structure
+
+### 7. Performance Optimization
+Database design optimized for queries:
+- Strategic indexing on hot paths
+- Composite indexes for common patterns
+- Efficient foreign key relationships
+- Minimal redundancy
+
+---
+
+## Use Cases
+
+### For Traders:
+- Test strategies without risking funds
+- Learn trading mechanics safely
+- Evaluate AI decision quality
+- Track performance over time
+- Understand AI reasoning process
+
+### For Developers:
+- Benchmark trading algorithms
+- Evaluate Auto Pilot effectiveness
+- Analyze parameter optimization
+- Study market simulation accuracy
+- Debug trading logic
+
+### For Researchers:
+- Collect training data for ML models
+- Study strategy effectiveness
+- Analyze risk management approaches
+- Evaluate autonomous trading systems
+- Research parameter optimization
+
+---
+
+## Data Flow
+
+### Trading Cycle:
+
+1. **Session Start** - PaperTradingSession created with strategy config
+2. **Market Analysis** - Bot analyzes market conditions
+3. **AI Decision** - PaperAIThoughtLog records reasoning
+4. **Trade Execution** - PaperTrade created and executed
+5. **Position Update** - PaperPosition opened or modified
+6. **Account Update** - PaperTradingAccount balance updated
+7. **Metrics Calculation** - PaperPerformanceMetrics generated periodically
+8. **Session End** - PaperTradingSession stopped
+
+### Auto Pilot Cycle:
+
+1. **Performance Monitoring** - AutoPilotPerformanceSnapshot created regularly
+2. **Analysis** - System analyzes recent performance
+3. **Decision** - Determine if adjustment needed
+4. **Adjustment** - Parameter changed if beneficial
+5. **Logging** - AutoPilotLog records complete context
+6. **Evaluation** - Outcome assessed after sufficient trades
+7. **Learning** - Results influence future adjustments
+
+---
+
+## Migration Compatibility
+
+These models are designed to work with Django migrations:
+- All fields have explicit help_text
+- Default values provided where appropriate
+- Nullable fields marked correctly
+- Indexes defined in Meta classes
+- Unique constraints properly configured
+
+**Important:** The models reference each other, so migration order matters:
+1. base models first (no dependencies)
+2. intelligence models second (depend on base)
+3. performance models third (depend on base and intelligence)
+4. autopilot models last (depend on intelligence and performance)
+
+---
+
+## Error Handling
+
+### Model-Level Protection:
+
+**Decimal Field Validation:**
+- All decimal calculations wrapped in try-except
+- Safe handling of division by zero
+- Default values for invalid operations
+- Quantize operations for precision control
+
+**Logging:**
+- Error logging with stack traces
+- Debug logging for state changes
+- Info logging for successful operations
+- Warning logging for edge cases
+
+**Database Operations:**
+- Update-specific fields where possible
+- Transaction safety considerations
+- Constraint violation handling
+
+---
+
+## Future Enhancements
+
+### Planned Features:
+
+**Machine Learning Integration:**
+- Train models on AutoPilotPerformanceSnapshot data
+- Predict optimal parameters for conditions
+- Automated strategy generation
+- Pattern recognition in market behavior
+
+**Advanced Analytics:**
+- Correlation analysis between parameters and outcomes
+- Market regime detection
+- Strategy comparison tools
+- Risk decomposition
+
+**Social Features:**
+- Share strategies with community
+- Compare performance with others
+- Strategy marketplace
+- Leaderboards
+
+**Extended Simulation:**
+- Multi-exchange simulation
+- Cross-chain trading
+- Advanced order types
+- Market making simulation
+
+---
+
+## Maintenance Notes
+
+### Regular Tasks:
+
+**Performance Monitoring:**
+- Monitor snapshot creation frequency
+- Verify metrics calculation accuracy
+- Check Auto Pilot adjustment effectiveness
+- Review error logs regularly
+
+**Data Cleanup:**
+- Archive old sessions periodically
+- Prune excessive performance snapshots
+- Clean up failed trades
+- Maintain index health
+
+**Optimization:**
+- Review query performance
+- Update indexes as needed
+- Optimize heavy calculations
+- Cache frequently accessed data
+
+---
+
+## File Statistics
+
+**Line Counts:**
+- base.py: ~723 lines
+- intelligence.py: ~639 lines
+- performance.py: ~430 lines
+- autopilot.py: ~649 lines
+- __init__.py: ~59 lines
+
+**Total Models:** 9 models across 4 files
+
+**Total Tables:** 10 database tables
+
+**Total Indexes:** 25+ database indexes
+
+---
+
+## Conclusion
+
+The Paper Trading Models package provides a complete, production-ready system for virtual cryptocurrency trading. The architecture emphasizes transparency, safety, and extensibility while maintaining high performance through strategic database design.
+
+The Auto Pilot system represents a significant innovation in autonomous trading, providing intelligent parameter optimization with complete transparency and safety controls. All AI decisions are logged with full reasoning, enabling users to learn from and trust the system.
+
+This documentation should be updated as the models evolve and new features are added.
+
+---
+
+**Package Version:** 1.0  
+**Last Updated:** 2025-01-26  
+**Maintained By:** DEX Project Team  
+**Django App:** paper_trading

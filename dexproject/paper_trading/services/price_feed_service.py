@@ -188,48 +188,65 @@ class PriceFeedService:
         return chain_names.get(chain_id, f'chain-{chain_id}')
 
     def _get_token_addresses(self) -> Dict[str, str]:
-        """Get token addresses for the current chain."""
+        """
+        Get token addresses for the current chain with checksum validation.
+        
+        Returns:
+            Dictionary mapping token symbols to checksummed addresses
+            
+        Raises:
+            ValueError: If an address fails checksum validation
+        """
+        from shared.web3_utils import to_checksum_ethereum_address
+        
+        def _checksum_or_raise(address: str, symbol: str) -> str:
+            """Helper to checksum address or raise if invalid."""
+            checksummed = to_checksum_ethereum_address(address)
+            if checksummed is None:
+                raise ValueError(f"Invalid address for {symbol}: {address}")
+            return checksummed
+        
         # BASE SEPOLIA (TESTNET) - Chain ID: 84532
         if self.chain_id == 84532:
             return {
-                'WETH': '0x4200000000000000000000000000000000000006',
-                'USDC': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-                'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+                'WETH': _checksum_or_raise('0x4200000000000000000000000000000000000006', 'WETH'),
+                'USDC': _checksum_or_raise('0x036CbD53842c5426634e7929541eC2318f3dCF7e', 'USDC'),
+                'DAI': _checksum_or_raise('0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', 'DAI'),
             }
         
         # ETHEREUM SEPOLIA (TESTNET) - Chain ID: 11155111
         elif self.chain_id == 11155111:
             return {
-                'WETH': '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
-                'USDC': '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
-                'DAI': '0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6',
-                'LINK': '0x779877A7B0D9E8603169DdbD7836e478b4624789',
-            }
-        
-        # BASE MAINNET - Chain ID: 8453
-        elif self.chain_id == 8453:
-            return {
-                'WETH': '0x4200000000000000000000000000000000000006',
-                'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-                'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
-                'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+                'WETH': _checksum_or_raise('0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14', 'WETH'),
+                'USDC': _checksum_or_raise('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', 'USDC'),
+                'DAI': _checksum_or_raise('0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6', 'DAI'),
+                'LINK': _checksum_or_raise('0x779877A7B0D9E8603169DdbD7836e478b4624789', 'LINK'),
             }
         
         # ETHEREUM MAINNET - Chain ID: 1
         elif self.chain_id == 1:
             return {
-                'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-                'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-                'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-                'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-                'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
-                'UNI': '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',
-                'LINK': '0x514910771AF9Ca656af840dff83E8264EcF986CA',
-                'AAVE': '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9',
-                'MATIC': '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0',
-                'ARB': '0xB50721BCf8d664c30412Cfbc6cf7a15145234ad1',
+                'WETH': _checksum_or_raise('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'WETH'),
+                'USDC': _checksum_or_raise('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 'USDC'),
+                'USDT': _checksum_or_raise('0xdAC17F958D2ee523a2206206994597C13D831ec7', 'USDT'),
+                'DAI': _checksum_or_raise('0x6B175474E89094C44Da98b954EedeAC495271d0F', 'DAI'),
+                'WBTC': _checksum_or_raise('0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', 'WBTC'),
+                'LINK': _checksum_or_raise('0x514910771AF9Ca656af840dff83E8264EcF986CA', 'LINK'),
+                'UNI': _checksum_or_raise('0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', 'UNI'),
+                'AAVE': _checksum_or_raise('0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', 'AAVE'),
+                'SNX': _checksum_or_raise('0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F', 'SNX'),
             }
         
+        # BASE MAINNET - Chain ID: 8453
+        elif self.chain_id == 8453:
+            return {
+                'WETH': _checksum_or_raise('0x4200000000000000000000000000000000000006', 'WETH'),
+                'USDC': _checksum_or_raise('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'USDC'),
+                'DAI': _checksum_or_raise('0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', 'DAI'),
+            }
+        
+        # Default: Empty dictionary for unsupported chains
+        logger.warning(f"No token addresses configured for chain {self.chain_id}")
         return {}
 
     def _get_coingecko_id(self, token_symbol: str) -> Optional[str]:
@@ -498,13 +515,44 @@ class PriceFeedService:
     # DATA SOURCE: COINGECKO API (SINGLE TOKEN)
     # =========================================================================
 
+    async def _get_or_create_session(self) -> aiohttp.ClientSession:
+        """
+        Get or create reusable aiohttp session to prevent memory leaks.
+        
+        Returns:
+            Active aiohttp.ClientSession instance
+        """
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+            logger.debug("[PRICE FEED] Created new aiohttp session")
+        return self._session
+
+    async def _enforce_rate_limit(self) -> None:
+        """
+        Enforce rate limiting for CoinGecko API calls.
+        
+        Waits if necessary to maintain rate limit compliance.
+        """
+        if self.last_coingecko_call:
+            elapsed = (datetime.now() - self.last_coingecko_call).total_seconds()
+            if elapsed < self.coingecko_rate_limit_seconds:
+                wait_time = self.coingecko_rate_limit_seconds - elapsed
+                logger.debug(f"[RATE LIMIT] Waiting {wait_time:.2f}s")
+                await asyncio.sleep(wait_time)
+        
+        self.last_coingecko_call = datetime.now()
+
+
+
     async def _fetch_from_coingecko(
-        self,
+        self,        
         token_symbol: str,
         token_address: str
     ) -> Optional[Decimal]:
         """Fetch single token price from CoinGecko API."""
         try:
+            await self._enforce_rate_limit()
             # Get CoinGecko ID for this token
             coin_id = self._get_coingecko_id(token_symbol)
             if not coin_id:
@@ -524,31 +572,29 @@ class PriceFeedService:
                 logger.debug(f"[PRICE FEED] Using CoinGecko API key for {token_symbol}")
 
             # Create a fresh timeout
-            timeout = aiohttp.ClientTimeout(total=10)
-
-            # Create fresh session with current event loop
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, params=params, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        if coin_id in data and 'usd' in data[coin_id]:
-                            price_usd = Decimal(str(data[coin_id]['usd']))
-                            logger.info(
-                                f"[PRICE FEED] ✅ Fetched price for {token_symbol}: "
-                                f"${price_usd:.2f}"
-                            )
-                            return price_usd
-                    elif response.status == 429:
-                        logger.warning(
-                            "[PRICE FEED] CoinGecko rate limit exceeded"
+            # Use reusable session to prevent memory leaks
+            session = await self._get_or_create_session()
+            async with session.get(url, params=params, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    if coin_id in data and 'usd' in data[coin_id]:
+                        price_usd = Decimal(str(data[coin_id]['usd']))
+                        logger.info(
+                            f"[PRICE FEED] ✅ Fetched price for {token_symbol}: "
+                            f"${price_usd:.2f}"
                         )
-                        return None
-                    else:
-                        logger.debug(
-                            f"[PRICE FEED] CoinGecko API error: {response.status}"
-                        )
-                        return None
+                        return price_usd
+                elif response.status == 429:
+                    logger.warning(
+                        "[PRICE FEED] CoinGecko rate limit exceeded"
+                    )
+                    return None
+                else:
+                    logger.debug(
+                        f"[PRICE FEED] CoinGecko API error: {response.status}"
+                    )
+                    return None
                         
         except asyncio.TimeoutError:
             logger.debug(f"[PRICE FEED] CoinGecko timeout for {token_symbol}")

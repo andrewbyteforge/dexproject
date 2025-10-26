@@ -50,7 +50,10 @@ from paper_trading.services.websocket_service import websocket_service
 
 # Import Transaction Manager status (optional)
 try:
-    from trading.services.transaction_manager import TransactionStatus
+    from trading.services.transaction_manager import (
+        TransactionStatus,
+        get_transaction_manager
+    )
     TRANSACTION_MANAGER_AVAILABLE = True
 except ImportError:
     TRANSACTION_MANAGER_AVAILABLE = False

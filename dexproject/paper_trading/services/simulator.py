@@ -636,14 +636,7 @@ class SimplePaperTradingSimulator:
     # POSITION MANAGEMENT WITH REAL PRICES
     # =========================================================================
     
-    def _update_position_with_real_price(
-        self,
-        account: PaperTradingAccount,
-        token_address: str,
-        token_symbol: str,
-        amount_usd: Decimal,
-        current_price: Decimal
-    ) -> Optional[PaperPosition]:
+    def _update_position(self, account, token_address, token_symbol, amount_usd, current_price):
         """
         Update or create position with REAL price tracking.
         
@@ -675,7 +668,7 @@ class SimplePaperTradingSimulator:
         try:
             with db_transaction.atomic():
                 # Get or create position
-                position, created = PaperPosition.objects.get_or_create(
+                position, created = PaperPosition.objects.select_for_update().get_or_create(
                     account=account,
                     token_address=token_address,
                     is_open=True,
@@ -747,36 +740,22 @@ class SimplePaperTradingSimulator:
             
         Returns:
             Token symbol in uppercase
-            
-        Note:
-            For proper address-to-symbol mapping, integrate with
-            trading.models.Token database or DEX token registry.
         """
         # If it's already a symbol (no 0x prefix), return it
         if not address.startswith('0x'):
             return address.upper()
         
-        # Common address mappings for known tokens
-        # TODO: Replace with database lookup from trading.models.Token
-        symbol_map = {
-            # Base Sepolia
-            '0x4200000000000000000000000000000000000006': 'WETH',
-            '0x036cbd53842c5426634e7929541ec2318f3dcf7e': 'USDC',
-            '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'DAI',
-            
-            # Ethereum Mainnet
-            '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': 'WETH',
-            '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': 'USDC',
-            '0xdac17f958d2ee523a2206206994597c13d831ec7': 'USDT',
-            '0x6b175474e89094c44da98b954eedeac495271d0f': 'DAI',
-        }
+        # Use price service's token addresses (single source of truth)
+        token_addresses = self.price_service._get_token_addresses()
         
-        # Lookup by address (case-insensitive)
-        symbol = symbol_map.get(address.lower())
-        if symbol:
-            return symbol
+        # Reverse lookup: address -> symbol
+        address_lower = address.lower()
+        for symbol, token_addr in token_addresses.items():
+            if token_addr.lower() == address_lower:
+                return symbol
         
-        # Fallback: use first 6 chars of address as symbol
+        # Fallback: use first 8 chars of address as symbol
+        logger.warning(f"Unknown token address: {address}")
         return address[:8].upper()
     
     def _usd_to_wei(self, usd_amount: Decimal) -> Decimal:

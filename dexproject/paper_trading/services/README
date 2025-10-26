@@ -1,0 +1,492 @@
+# Paper Trading Services Documentation
+
+This document explains the core services that power the paper trading system, including real-time price feeds, trade simulation, transaction management, and WebSocket notifications.
+
+---
+
+## 📁 File Structure
+
+```
+dexproject/
+├── paper_trading/
+│   └── services/
+│       ├── price_feed_service.py      # Real-time token price aggregation
+│       ├── simulator.py                # Paper trade execution engine
+│       └── websocket_service.py        # Real-time client notifications
+│
+└── trading/
+    └── services/
+        ├── transaction_manager.py       # Transaction lifecycle coordinator
+        ├── transaction_manager_base.py  # Core data structures & config
+        └── transaction_manager_retry.py # Retry logic & recovery
+```
+
+---
+
+## 🔍 Service Descriptions
+
+### `price_feed_service.py` - Real-Time Token Price Feed
+
+**Location:** `dexproject/paper_trading/services/price_feed_service.py`
+
+The Price Feed Service is an optimized token price aggregation system that reduces API calls by 90% through intelligent bulk fetching and multi-tier caching. It fetches real-time prices from CoinGecko with a two-tier cache strategy: a 60-second "fresh" cache for active use and a 4-minute "stale" cache as a fallback during API failures. The service uses a reusable aiohttp session to prevent memory leaks and implements rate limiting to stay within API quotas. All token addresses are checksummed for Web3 compatibility, and the service supports multiple chains (Ethereum Mainnet, Base, Sepolia testnets). Key features include stale-while-revalidate caching patterns, automatic stablecoin detection (USDC/USDT/DAI always return $1.00), and comprehensive error handling with graceful degradation when external APIs are unavailable.
+
+**Key Methods:**
+- `get_token_price(address, symbol)` - Fetch single token price with caching
+- `get_bulk_token_prices(tokens)` - Fetch multiple tokens in one API call (RECOMMENDED)
+- `get_cache_statistics()` - Monitor cache performance and API usage
+- `close()` - Cleanup aiohttp session (call on shutdown)
+
+**Configuration:**
+- `PRICE_CACHE_TTL_SECONDS` - Fresh cache duration (default: 60s)
+- `COIN_GECKO_API_KEY` - Optional CoinGecko API key for higher limits
+
+---
+
+### `simulator.py` - Paper Trading Execution Engine
+
+**Location:** `dexproject/paper_trading/services/simulator.py`
+
+The Paper Trading Simulator executes trades in a safe, simulated environment using real market data without spending actual money. It fetches live token prices from the Price Feed Service, calculates realistic gas costs based on current blockchain conditions, and simulates market slippage based on trade size and liquidity. The simulator maintains user positions with live profit/loss tracking, automatically updates account balances after each trade, and generates mock transaction hashes for realistic record-keeping. It uses Django's atomic transactions with `select_for_update()` to prevent race conditions when multiple trades execute simultaneously. The service integrates seamlessly with the paper trading database models (PaperTradingAccount, PaperTrade, PaperPosition) and provides comprehensive trade result data including execution time, gas costs, and slippage metrics.
+
+**Key Methods:**
+- `execute_trade(request)` - Main entry point for trade execution
+- `_update_position(account, token, amount, price)` - Position tracking with P&L
+- `_calculate_slippage(amount_usd)` - Realistic slippage simulation
+- `_get_token_symbol(address)` - Token address to symbol lookup
+
+**Trade Flow:**
+1. Validate account balance
+2. Fetch real token prices from Price Feed Service
+3. Calculate gas costs (uses real blockchain gas prices)
+4. Simulate slippage based on trade size
+5. Update account balance atomically
+6. Update or create position with P&L tracking
+7. Record trade in database
+8. Return execution result with metrics
+
+---
+
+### `websocket_service.py` - Real-Time Client Notifications
+
+**Location:** `dexproject/paper_trading/services/websocket_service.py`
+
+The WebSocket Notification Service provides centralized real-time updates to connected dashboard clients using Django Channels. It automatically serializes complex Python objects (Decimal, datetime, UUID) to JSON-compatible formats and manages room-based message routing where each paper trading account has its own channel. The service supports multiple message types including trade updates, portfolio changes, bot status updates, AI thought logs, performance metrics, and system alerts. Messages are timestamped automatically and sent asynchronously without blocking trade execution. The service handles channel layer unavailability gracefully by logging warnings but continuing to operate, making it safe to use even if WebSocket infrastructure isn't configured. It uses consistent room naming (`paper_trading_{account_id}`) and follows Django Channels conventions for message type formatting.
+
+**Key Methods:**
+- `send_update(account_id, message_type, data)` - Generic update sender
+- `send_trade_update(account_id, trade_data)` - Trade execution notifications
+- `send_thought_log(account_id, thought_data)` - AI decision transparency
+- `send_alert(account_id, alert_data)` - Critical notifications
+- `is_available()` - Check if WebSocket infrastructure is ready
+
+**Message Types:**
+- `trade_update` - Trade execution results
+- `portfolio_update` - Balance and position changes
+- `bot_status_update` - Bot state changes (running/stopped/paused)
+- `thought_log_created` - AI reasoning and decision-making
+- `performance_update` - Win rate, profit metrics, statistics
+- `alert_message` - Warnings, errors, critical notifications
+
+---
+
+### `transaction_manager.py` - Transaction Lifecycle Coordinator
+
+**Location:** `dexproject/trading/services/transaction_manager.py`
+
+The Transaction Manager is the central coordinator for all trading transaction operations, orchestrating the complete lifecycle from submission to confirmation. It integrates Phase 6A gas optimization (achieving 23.1% cost savings), DEX router service for swap execution, and real-time status monitoring with WebSocket broadcasts. The manager implements production-hardened circuit breakers to prevent cascade failures during network issues, includes comprehensive retry logic with exponential backoff and gas escalation, and monitors for stuck transactions with automatic replacement capabilities. It tracks all active transactions in memory, maintains detailed performance metrics (success rate, gas savings, execution times), and provides portfolio tracking integration for automatic balance updates. The service uses enhanced circuit breakers from the shared infrastructure to protect against transaction failures, gas price spikes, and DEX outages, with automatic recovery and half-open state testing.
+
+**Key Methods:**
+- `submit_transaction(request)` - Main entry point for transaction submission
+- `get_transaction_status(tx_id)` - Query transaction state
+- `cancel_transaction(tx_id)` - Attempt transaction cancellation
+- `replace_stuck_transaction(tx_id, gas_multiplier)` - Replace stuck transactions
+- `get_circuit_breaker_status()` - Monitor circuit breaker health
+- `shutdown()` - Graceful cleanup of background tasks
+
+**Transaction Lifecycle:**
+1. **Circuit Breaker Check** - Validate system health
+2. **Gas Optimization** - Use Phase 6A optimizer for best prices
+3. **Transaction Preparation** - Build and validate transaction
+4. **DEX Execution** - Submit through router with retry logic
+5. **Status Monitoring** - Track confirmation with mempool detection
+6. **Portfolio Update** - Record completed trades
+7. **WebSocket Broadcast** - Real-time UI updates
+
+**Circuit Breakers:**
+- `TransactionFailure` - Protects against repeated transaction failures
+- `GasPriceSpike` - Prevents execution during extreme gas costs
+- `DEXFailure` - Handles DEX downtime gracefully
+
+---
+
+### `transaction_manager_base.py` - Core Data Structures
+
+**Location:** `dexproject/trading/services/transaction_manager_base.py`
+
+This module contains all foundational data structures, enums, and configuration classes used across the transaction management system. It defines the complete transaction state machine with 13 status states (preparing, gas_optimizing, submitted, pending, confirmed, completed, failed, retrying, stuck, replaced, etc.), comprehensive retry configuration with 10+ tunable parameters including backoff timers and gas escalation rates, and detailed transaction state tracking that captures 30+ fields including gas metrics, timing data, and error information. The module provides error classification logic to intelligently categorize failures (out_of_gas, nonce_error, contract_revert, network_error) for appropriate retry decisions. It includes utility functions for gas price escalation calculations and exponential backoff with jitter, plus performance metrics tracking for monitoring system health. All data classes use Python dataclasses with type hints and include `to_dict()` serialization methods for API responses and logging.
+
+**Key Components:**
+- `TransactionStatus` - 13-state lifecycle enum
+- `TransactionState` - Complete transaction tracking (30+ fields)
+- `RetryConfiguration` - Configurable retry behavior
+- `TransactionSubmissionRequest` - Validated request structure
+- `TransactionManagerResult` - Standardized operation results
+- `PerformanceMetrics` - System health tracking
+- `ErrorClassification` - Intelligent error categorization
+
+**Retry Configuration Options:**
+- `max_retries` - Maximum retry attempts (default: 3)
+- `gas_escalation_percent` - Gas increase per retry (default: 15%)
+- `max_gas_price_gwei` - Safety ceiling (default: 500 gwei)
+- `stuck_transaction_minutes` - Time before considering stuck (default: 10 min)
+- `circuit_breaker_threshold` - Consecutive failures to trigger breaker (default: 5)
+
+---
+
+### `transaction_manager_retry.py` - Retry Logic & Recovery
+
+**Location:** `dexproject/trading/services/transaction_manager_retry.py`
+
+This module handles advanced retry logic, stuck transaction monitoring, nonce management, and recovery mechanisms for the transaction manager. The TransactionRetryManager implements intelligent retry decisions based on error classification, with exponential backoff (configurable 5s to 60s), gas price escalation (15% per retry), and circuit breaker integration to prevent cascade failures. It includes automatic retry scheduling with configurable backoff multipliers and jitter to prevent thundering herd issues, plus gas escalation that respects safety ceilings. The StuckTransactionMonitor runs as a background task, checking every 30 seconds for transactions that haven't confirmed within expected timeframes, detecting mempool drops, identifying nonce conflicts, and recognizing gas-too-low situations. When stuck transactions are detected, it automatically calculates replacement gas prices (1.5x multiplier) and triggers replacement transactions with higher gas to unstick them. The module tracks per-user consecutive failure counts for circuit breaker decisions and maintains separate circuit breaker state from the main transaction manager.
+
+**Key Components:**
+- `TransactionRetryManager` - Retry orchestration and gas escalation
+- `StuckTransactionMonitor` - Background monitoring (runs every 30s)
+- Circuit breaker logic - Prevents retry spam during outages
+- Nonce conflict resolution - Handles concurrent transaction issues
+
+**Retry Decision Logic:**
+```python
+# Automatically retries:
+- Out of gas errors (with increased gas limit)
+- Network timeouts and connection errors
+- Nonce errors (with nonce refresh)
+- Gas price too low (with 15% escalation)
+
+# Never retries:
+- Contract reverts (logic errors)
+- Insufficient funds (user needs to deposit)
+- Transactions beyond max_retries (default: 3)
+
+# Circuit breaker triggered after:
+- 5 consecutive failures
+- Opens for 5 minutes to allow recovery
+- Prevents new transactions during cooldown
+```
+
+**Stuck Transaction Detection:**
+- **Time-based**: No confirmation after 10 minutes
+- **Mempool check**: Transaction dropped from mempool
+- **Nonce conflict**: Another transaction used the same nonce
+- **Gas too low**: Current gas price far exceeds transaction gas
+
+---
+
+## 🔄 Service Integration Flow
+
+### Complete Trade Execution Pipeline
+
+```
+1. User initiates trade
+   └─> trade_executor.py
+   
+2. Transaction Manager receives request
+   └─> transaction_manager.py
+       ├─> Circuit breaker check (PASS/FAIL)
+       ├─> Gas optimization (23.1% savings)
+       ├─> DEX router execution
+       └─> Status monitoring
+   
+3. Simulator executes paper trade
+   └─> simulator.py
+       ├─> Price Feed Service (real prices)
+       ├─> Gas calculation (real network data)
+       ├─> Slippage simulation
+       └─> Position update (P&L tracking)
+   
+4. WebSocket broadcasts updates
+   └─> websocket_service.py
+       ├─> Trade update (execution result)
+       ├─> Portfolio update (new balance)
+       └─> Thought log (AI reasoning)
+   
+5. Retry manager monitors
+   └─> transaction_manager_retry.py
+       ├─> Stuck transaction detection
+       ├─> Automatic retry with gas escalation
+       └─> Circuit breaker protection
+```
+
+---
+
+## ⚙️ Configuration Requirements
+
+### Django Settings Required
+
+```python
+# settings.py
+
+# Price Feed Service
+PRICE_CACHE_TTL_SECONDS = 60  # Fresh cache duration
+COIN_GECKO_API_KEY = 'your_api_key_here'  # Optional, for higher limits
+DEFAULT_CHAIN_ID = 84532  # Base Sepolia testnet
+
+# WebSocket (Django Channels)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [('127.0.0.1', 6379)],
+        },
+    },
+}
+
+# Cache (for price feed)
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
+    }
+}
+```
+
+### Environment Variables
+
+```bash
+# .env
+COIN_GECKO_API_KEY=your_coingecko_api_key
+DEFAULT_CHAIN_ID=84532
+PRICE_CACHE_TTL_SECONDS=60
+```
+
+---
+
+## 🚨 Error Handling Patterns
+
+All services follow consistent error handling:
+
+### Recoverable Errors (Return Error Result)
+```python
+try:
+    result = await perform_operation()
+except ServiceException as e:
+    logger.error(f"Operation failed: {e}", exc_info=True)
+    return ErrorResult(success=False, error_message=str(e))
+```
+
+### Critical Errors (Must Propagate)
+```python
+try:
+    critical_operation()
+except Exception as e:
+    logger.critical(f"Critical failure: {e}", exc_info=True)
+    raise  # Re-raise to trigger alerts
+```
+
+### Silent Failures with Fallback
+```python
+try:
+    price = await fetch_from_api()
+except Exception as e:
+    logger.warning(f"API failed, using cache: {e}")
+    price = get_stale_cached_price()  # Fallback
+```
+
+---
+
+## 📊 Monitoring & Observability
+
+### Key Metrics to Track
+
+**Price Feed Service:**
+- Cache hit rate (target: >90%)
+- API call count (should be <1,100/day)
+- Stale cache usage (indicates API issues)
+- Average fetch latency
+
+**Simulator:**
+- Trade execution time (target: <500ms)
+- Position update failures
+- Slippage calculations (validate realism)
+
+**Transaction Manager:**
+- Transaction success rate (target: >95%)
+- Gas savings percentage (target: >20%)
+- Retry rate (monitor for issues if >10%)
+- Circuit breaker activations (should be rare)
+- Stuck transaction frequency
+
+**WebSocket Service:**
+- Message delivery failures
+- Channel layer availability
+- Average message latency
+
+### Logging Conventions
+
+All services use structured logging with consistent formats:
+
+```python
+# INFO level - Normal operations
+logger.info("Trade executed", extra={
+    'user_id': user.id,
+    'amount': amount,
+    'token': symbol,
+    'execution_time_ms': time_ms
+})
+
+# WARNING level - Degraded but functional
+logger.warning("Using stale cache", extra={
+    'token': symbol,
+    'age_seconds': cache_age
+})
+
+# ERROR level - Operation failed
+logger.error("Transaction failed", extra={
+    'tx_id': tx_id,
+    'error_type': error_type,
+    'retry_count': retry_count
+}, exc_info=True)
+
+# CRITICAL level - System-wide issue
+logger.critical("Circuit breaker opened", extra={
+    'breaker_name': breaker_name,
+    'failure_count': failures,
+    'timeout_seconds': timeout
+})
+```
+
+---
+
+## 🧪 Testing Recommendations
+
+### Unit Tests Needed
+
+**Price Feed Service:**
+- Cache hit/miss behavior
+- Rate limiting enforcement
+- Stale cache fallback
+- Address checksum validation
+- Session reuse (no memory leaks)
+
+**Simulator:**
+- Position calculations (P&L accuracy)
+- Slippage simulation
+- Gas cost estimation
+- Database transaction rollback
+- Race condition prevention
+
+**Transaction Manager:**
+- Gas escalation math
+- Retry decision logic
+- Circuit breaker transitions
+- Stuck transaction detection
+- Nonce conflict resolution
+
+**WebSocket Service:**
+- Data serialization (Decimal, datetime, UUID)
+- Message delivery
+- Channel layer unavailability handling
+- Room name consistency
+
+### Integration Tests Needed
+
+1. **End-to-end trade flow** - From request to confirmation
+2. **Retry with gas escalation** - Verify gas increases correctly
+3. **Stuck transaction replacement** - Automatic replacement works
+4. **Circuit breaker recovery** - System recovers from failures
+5. **WebSocket delivery** - Messages reach connected clients
+6. **Price feed failover** - Handles CoinGecko outages
+
+---
+
+## 🔧 Maintenance & Operations
+
+### Daily Operations
+
+1. **Monitor circuit breakers** - Check for frequent activations
+2. **Review retry rates** - High retry rate indicates issues
+3. **Validate price accuracy** - Spot-check against market prices
+4. **Check gas savings** - Ensure optimizer is working (>20%)
+
+### Weekly Operations
+
+1. **Review cache statistics** - Optimize TTL if needed
+2. **Analyze stuck transactions** - Identify patterns
+3. **Update token addresses** - Add new tokens as needed
+4. **Test WebSocket connectivity** - Verify real-time updates
+
+### Monthly Operations
+
+1. **Rotate API keys** - CoinGecko key rotation
+2. **Review and optimize** - Based on metrics
+3. **Update dependencies** - Security patches
+4. **Load testing** - Ensure system scales
+
+### Emergency Procedures
+
+**Circuit Breaker Stuck Open:**
+```python
+# Reset via Django shell
+from trading.services.transaction_manager import get_transaction_manager
+manager = await get_transaction_manager(chain_id=84532)
+manager._retry_manager._circuit_open = False
+manager._retry_manager._consecutive_failures = 0
+```
+
+**Price Feed Failures:**
+```python
+# Check cache statistics
+from paper_trading.services.price_feed_service import get_default_price_feed_service
+service = get_default_price_feed_service()
+stats = service.get_cache_statistics()
+print(stats)  # Look for high stale_cache_hits
+
+# Clear cache if stale
+from django.core.cache import cache
+cache.clear()
+```
+
+**WebSocket Not Working:**
+```python
+# Verify channel layer
+from channels.layers import get_channel_layer
+channel_layer = get_channel_layer()
+print(channel_layer)  # Should not be None
+
+# Test Redis connection
+import redis
+r = redis.Redis(host='localhost', port=6379)
+r.ping()  # Should return True
+```
+
+---
+
+## 📚 Additional Resources
+
+- **Django Channels Documentation**: https://channels.readthedocs.io/
+- **CoinGecko API Docs**: https://docs.coingecko.com/
+- **Web3.py Documentation**: https://web3py.readthedocs.io/
+- **Circuit Breaker Pattern**: https://martinfowler.com/bliki/CircuitBreaker.html
+
+---
+
+## 🤝 Contributing Guidelines
+
+When modifying these services:
+
+1. **Maintain type hints** - All functions must have proper annotations
+2. **Add docstrings** - Include examples for complex methods
+3. **Log appropriately** - Follow logging conventions above
+4. **Handle errors** - Use consistent error handling patterns
+5. **Write tests** - Unit tests for all new functionality
+6. **Update this README** - Document changes and new features
+
+---
+
+**Last Updated:** 2025-10-26  
+**Version:** 1.0  
+**Maintainer:** Development Team
