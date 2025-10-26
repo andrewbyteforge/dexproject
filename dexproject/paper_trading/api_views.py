@@ -94,15 +94,15 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
             'thoughts': [
                 {
                     'id': str(thought.thought_id),
-                    'metadata': thought.market_data or {},  # FIXED: Use market_data instead of metadata
+                    'metadata': thought.market_data or {},
                     'created_at': thought.created_at.isoformat(),
-                    'importance': float(thought.confidence_level),  # FIXED: Use confidence_level instead of importance_score
+                    'importance': float(thought.confidence_level) if thought.confidence_level else 50.0,
                     # Additional fields for dashboard display
-                    'decision_type': thought.market_data.get('decision_type', 'ANALYSIS') if thought.market_data else 'ANALYSIS',
-                    'token_symbol': thought.market_data.get('token_symbol', '') if thought.market_data else '',
-                    'lane_used': thought.market_data.get('lane_used', 'SMART') if thought.market_data else 'SMART',
-                    'confidence_percent': thought.market_data.get('confidence', 50) if thought.market_data else 50,
-                    'primary_reasoning': thought.reasoning[:200] if thought.reasoning else '',  # FIXED: Use reasoning instead of thought_content
+                    'decision_type': thought.decision_type or 'ANALYSIS',
+                    'token_symbol': thought.token_symbol or '',
+                    'lane_used': thought.lane_used or 'SMART',
+                    'confidence_percent': float(thought.confidence_level) if thought.confidence_level else 50.0,
+                    'primary_reasoning': thought.reasoning[:200] if thought.reasoning else '',
                     'timestamp': thought.created_at.isoformat(),
                 }
                 for thought in thoughts

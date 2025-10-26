@@ -835,7 +835,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         # Get active session for bot status
         active_session = PaperTradingSession.objects.filter(
             account=account,
-            status__in=["ACTIVE", "RUNNING", "STARTING"]
+            status__in=["RUNNING", "STARTING", "PAUSED"]
         ).first()
         
         # Load available strategies

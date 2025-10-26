@@ -90,7 +90,7 @@ def run_paper_trading_bot(
             }
 
         # Validate user owns the session
-        if session.account.user.id != user_id:
+        if session.account.user.pk != user_id:
             logger.error(f"User {user_id} does not own session {session_id}")
             return {
                 'success': False,
@@ -149,6 +149,7 @@ def run_paper_trading_bot(
 
         # Main execution loop
         tick_count = 0
+        initial_trades = session.total_trades or 0  # Store initial count before loop
         trades_executed = 0
         errors = []
 
@@ -181,12 +182,9 @@ def run_paper_trading_bot(
                     )
                     tick_count += 1
 
-                    # Track trades (check if any new trades were created this tick)
-                    # Note: This is a simplified check; in production you might track this better
-                    current_trade_count = session.total_trades
-                    if tick_count == 1:
-                        # Store initial trade count
-                        initial_trades = current_trade_count
+                    # Track new trades executed since start
+                    session.refresh_from_db()
+                    trades_executed = (session.total_trades or 0) - initial_trades
 
                     # Update cache with latest status
                     cache.set(cache_key, {

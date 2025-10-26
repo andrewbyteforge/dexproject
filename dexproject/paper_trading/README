@@ -1,0 +1,364 @@
+# Paper Trading App - File Structure
+
+## Core Configuration Files
+
+### `__init__.py`
+Empty package marker file. Required for Python to recognize the directory as a package.
+
+### `apps.py`
+Django app configuration with production-ready initialization.
+
+**Key Features:**
+- Configures decimal precision (28 digits) for financial calculations
+- Sets banker's rounding (ROUND_HALF_EVEN) to reduce bias
+- Registers Django signals on app startup
+- Validates type conversion utilities
+
+**Entry Point:** `PaperTradingConfig.ready()` - Called when Django initializes
+
+---
+
+## URL Routing
+
+### `urls.py`
+Complete URL configuration mapping URLs to views.
+
+**Dashboard Pages:**
+- `/` - Main dashboard
+- `/trades/` - Trade history with filters
+- `/portfolio/` - Portfolio positions view
+- `/configuration/` - Strategy configuration
+- `/analytics/` - Performance analytics dashboard
+
+**Data API Endpoints:**
+- `/api/ai-thoughts/` - Real-time AI decision stream
+- `/api/portfolio/` - Portfolio data
+- `/api/trades/` - Trade history with filters
+- `/api/trades/recent/` - Recent trades
+- `/api/positions/open/` - Current holdings
+- `/api/metrics/` - Key performance indicators
+- `/api/performance/` - Detailed statistics
+- `/api/prices/<token_symbol>/` - Token price data
+
+**Analytics APIs:**
+- `/api/analytics/data/` - Real-time analytics updates
+- `/api/analytics/export/` - Export analytics to CSV
+
+**Bot Control:**
+- `/api/bot/start/` - Start paper trading bot
+- `/api/bot/stop/` - Stop paper trading bot
+- `/api/bot/status/` - Get bot status
+
+**Configuration:**
+- `/api/configuration/` - Get/update strategy config
+- `/api/config/` - Shorter alias for configuration
+
+### `routing.py`
+WebSocket URL routing for real-time communication.
+
+**WebSocket Endpoint:**
+- `ws/paper-trading/` - Real-time dashboard updates
+
+---
+
+## View Layer
+
+### `views.py`
+Django views for rendering HTML dashboard pages.
+
+**Key Views:**
+- `paper_trading_dashboard()` - Main dashboard with portfolio summary
+- `trade_history()` - Paginated trade history with filtering
+- `portfolio_view()` - Portfolio positions and allocation
+- `configuration_view()` - Strategy configuration management
+- `analytics_view()` - Performance analytics dashboard
+
+**API Functions:**
+- `api_analytics_data()` - JSON endpoint for analytics updates
+- `api_analytics_export()` - CSV export of analytics data
+
+**Helper Functions:**
+- `format_trade_for_template()` - Safe trade data formatting
+- `format_position_for_template()` - Safe position data formatting
+- `calculate_portfolio_metrics()` - Portfolio performance calculations
+
+### `api_views.py`
+RESTful API endpoints for data access and bot control.
+
+**Data Endpoints:**
+- `api_ai_thoughts()` - AI decision logs (GET)
+- `api_portfolio_data()` - Portfolio state (GET)
+- `api_trades_data()` - Trade history with filters (GET)
+- `api_recent_trades()` - Recent trades (GET)
+- `api_open_positions()` - Current positions (GET)
+- `api_metrics()` - Dashboard KPIs (GET)
+- `api_performance_metrics()` - Detailed stats (GET)
+- `api_token_price()` - Token price lookup (GET)
+
+**Configuration Endpoints:**
+- `api_configuration()` - Get/update strategy config (GET/POST)
+
+**Bot Control Endpoints:**
+- `api_start_bot()` - Start bot with session (POST)
+- `api_stop_bot()` - Stop active sessions (POST)
+- `api_bot_status()` - Get bot status (GET)
+
+**Response Format:** All endpoints return JSON with consistent structure:
+```json
+{
+  "success": true,
+  "data": {...},
+  "timestamp": "ISO-8601"
+}
+```
+
+---
+
+## Real-Time Communication
+
+### `consumers.py`
+WebSocket consumer for real-time dashboard updates.
+
+**Features:**
+- Single-user auto-authentication
+- Real-time trade notifications
+- Position updates
+- Performance metrics streaming
+- AI thought process streaming
+- Bot status updates
+
+**Message Types (Client → Server):**
+- `ping` - Keepalive check
+- `request_portfolio_update` - Force portfolio refresh
+- `request_trade_history` - Get recent trades
+- `request_open_positions` - Get positions
+- `request_performance_metrics` - Get metrics
+
+**Message Types (Server → Client):**
+- `connection_confirmed` - Initial connection
+- `initial_snapshot` - Initial data load
+- `trade_executed` / `trade_update` - New trade notification
+- `position_updated` - Position change
+- `performance_update` - Metrics update
+- `ai_thought` - AI decision log
+- `portfolio_update` - Portfolio change
+- `session_update` - Bot session status
+
+**Key Methods:**
+- `connect()` - Handle WebSocket connection
+- `disconnect()` - Clean up on disconnect
+- `receive()` - Process client messages
+- `trade_update()` - Handle trade notifications
+- `performance_update()` - Handle performance updates
+
+---
+
+## Background Processing
+
+### `tasks.py`
+Celery tasks for background bot execution and data processing.
+
+**Main Tasks:**
+
+#### `run_paper_trading_bot(session_id, user_id, runtime_minutes)`
+Runs the paper trading bot for a session.
+
+**Parameters:**
+- `session_id` (str) - Trading session UUID
+- `user_id` (int) - User ID for authorization
+- `runtime_minutes` (int, optional) - Runtime limit or None for unlimited
+
+**Features:**
+- Bot lifecycle management
+- Real-time status caching
+- Graceful shutdown handling
+- Error recovery with retries
+
+**Example:**
+```python
+from paper_trading.tasks import run_paper_trading_bot
+
+task = run_paper_trading_bot.delay(
+    session_id="uuid-here",
+    user_id=1,
+    runtime_minutes=60
+)
+```
+
+#### `stop_paper_trading_bot(session_id, user_id, reason)`
+Stops an active bot session.
+
+#### `update_all_position_prices(chain_id)`
+Updates all open positions with current token prices (periodic task).
+
+**Scheduling:** Runs every 5 minutes via Celery Beat
+
+#### `update_single_position_price(position_id, chain_id)`
+Updates a single position with real-time price.
+
+---
+
+## Event Handling
+
+### `signals.py`
+Django signals for automated event handling and WebSocket notifications.
+
+**Signal Handlers:**
+
+**Account Signals:**
+- `paper_account_created_or_updated` - Account changes → WebSocket notification
+
+**Trade Signals:**
+- `paper_trade_created_or_updated` - Trade execution → WebSocket broadcast
+- `paper_trade_pre_save` - Trade validation before save
+
+**Position Signals:**
+- `paper_position_created_or_updated` - Position changes → WebSocket update
+- `paper_position_deleted` - Position closure → WebSocket notification
+
+**AI Thought Signals:**
+- `paper_ai_thought_created` - New AI decision → WebSocket broadcast
+
+**Performance Signals:**
+- `paper_performance_updated` - Metrics update → WebSocket notification
+
+**Features:**
+- Migration-safe (skips during makemigrations/migrate)
+- Uses `transaction.on_commit()` for reliable notifications
+- Centralized WebSocket service integration
+- Comprehensive error logging
+
+---
+
+## Admin Interface
+
+### `admin.py`
+Django admin configuration for all paper trading models.
+
+**Registered Models:**
+- `PaperTradingAccount` - Account management with performance display
+- `PaperTrade` - Trade records with execution details
+- `PaperPosition` - Position tracking with P&L display
+- `PaperTradingConfig` - Trading configuration
+- `PaperAIThoughtLog` - AI decision logs with confidence display
+- `PaperStrategyConfiguration` - Strategy presets
+- `PaperPerformanceMetrics` - Performance snapshots
+- `PaperTradingSession` - Trading sessions with controls
+- `AutoPilotLog` - Auto-pilot adjustment logs
+- `AutoPilotPerformanceSnapshot` - Auto-pilot performance tracking
+
+**Features:**
+- Color-coded win rates and P&L
+- Inline field editing
+- Advanced filtering options
+- Custom admin actions (e.g., stop sessions)
+- Readonly fields for audit trails
+
+---
+
+## Testing
+
+### `tests.py`
+Unit tests for core paper trading functionality.
+
+**Test Cases:**
+- `PaperTradingAccountTestCase` - Account creation and reset
+- Tests default balance initialization
+- Tests account reset functionality
+
+**Run Tests:**
+```bash
+python manage.py test paper_trading
+```
+
+---
+
+## Key Integration Points
+
+### Single-User Mode
+All views automatically create/retrieve a default account:
+```python
+from paper_trading.utils import get_single_trading_account
+
+account = get_single_trading_account()  # Auto-creates if needed
+```
+
+### WebSocket Integration
+Real-time updates via Django Channels:
+```javascript
+const ws = new WebSocket('ws://localhost:8000/ws/paper-trading/');
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === 'trade_executed') {
+    // Handle trade notification
+  }
+};
+```
+
+### Bot Control via API
+Start/stop bot programmatically:
+```bash
+# Start bot
+curl -X POST http://localhost:8000/paper-trading/api/bot/start/ \
+  -H "Content-Type: application/json" \
+  -d '{"runtime_minutes": 60}'
+
+# Stop bot
+curl -X POST http://localhost:8000/paper-trading/api/bot/stop/ \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "User requested stop"}'
+
+# Check status
+curl http://localhost:8000/paper-trading/api/bot/status/
+```
+
+### Celery Task Monitoring
+```python
+from celery.result import AsyncResult
+
+# Check task status
+result = AsyncResult(task_id)
+print(result.state)  # PENDING, STARTED, SUCCESS, FAILURE
+```
+
+---
+
+## File Dependencies
+
+```
+apps.py (initializes) → signals.py (registers handlers)
+                      → utils/type_utils.py (validates)
+
+urls.py → views.py (dashboard pages)
+       → api_views.py (REST endpoints)
+
+routing.py → consumers.py (WebSocket handling)
+
+signals.py → services/websocket_service.py (real-time updates)
+
+tasks.py → bot.py (trading logic)
+        → services/price_feed_service.py (price data)
+
+views.py & api_views.py → models.py (data access)
+                        → utils.py (helper functions)
+```
+
+---
+
+## Error Handling
+
+All files implement comprehensive error handling:
+- **Try-except blocks** around all database operations
+- **Logging** at appropriate levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- **Transaction safety** with `transaction.on_commit()`
+- **Graceful degradation** (fallback to default values)
+- **User-friendly error messages** via Django messages framework
+
+## Performance Considerations
+
+- **Database queries** use `select_related()` and `prefetch_related()` to reduce queries
+- **Caching** via Redis for bot status and frequently accessed data
+- **Pagination** for large datasets (trades, positions)
+- **Background tasks** for expensive operations (price updates, bot execution)
+- **Raw SQL** for complex aggregations to avoid ORM overhead
