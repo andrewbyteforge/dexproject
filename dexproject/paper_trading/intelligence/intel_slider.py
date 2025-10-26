@@ -1,26 +1,19 @@
 """
 Intel Slider System for Paper Trading Bot - MAIN ORCHESTRATOR
-
 This module provides the main IntelSliderEngine that coordinates all intelligence
 components using composition for clean separation of concerns.
-
 Integrates with real price feeds and market data for accurate trading decisions.
-
 File: dexproject/paper_trading/intelligence/intel_slider.py
 """
-
 import logging
 import asyncio
 from decimal import Decimal
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-
 # Django imports for timezone-aware datetimes
 from django.utils import timezone
-
 # Import price feed service for real data
 from paper_trading.services.price_feed_service import PriceFeedService
-
 # Import base classes and data structures
 from paper_trading.intelligence.base import (
     IntelligenceEngine,
@@ -28,24 +21,17 @@ from paper_trading.intelligence.base import (
     MarketContext,
     TradingDecision
 )
-
 # Import configuration
 from paper_trading.intelligence.intel_config import INTEL_CONFIGS, IntelLevelConfig
-
 # Import price history
 from paper_trading.intelligence.price_history import PriceHistory
-
 # Import analyzers
 from paper_trading.intelligence.analyzers import CompositeMarketAnalyzer
 from paper_trading.intelligence.decision_maker import DecisionMaker
 from paper_trading.intelligence.ml_features import MLFeatureCollector
-
 # Import type utilities
 from paper_trading.utils.type_utils import TypeConverter, MarketDataNormalizer
-
 logger = logging.getLogger(__name__)
-
-
 class IntelSliderEngine(IntelligenceEngine):
     """
     Main intelligence engine controlled by the Intel slider (1-10).
@@ -128,6 +114,20 @@ class IntelSliderEngine(IntelligenceEngine):
             f"(Chain: {chain_id})"
         )
     
+    @property
+    def analyzer(self):
+        """
+        Backward compatibility property for market_analyzer.py.
+        
+        Returns composite_analyzer to maintain compatibility with legacy code
+        that expects 'intelligence_engine.analyzer' instead of 
+        'intelligence_engine.composite_analyzer'.
+        
+        Returns:
+            CompositeMarketAnalyzer instance
+        """
+        return self.composite_analyzer
+    
     def _apply_strategy_config(self, strategy_config) -> None:
         """
         Apply configuration overrides from database.
@@ -176,6 +176,292 @@ class IntelSliderEngine(IntelligenceEngine):
                 exc_info=True
             )
     
+    async def analyze_market(
+        self,
+        market_context: MarketContext
+    ) -> MarketContext:
+        """
+        Analyze market conditions and enhance the market context.
+        
+        This method implements the abstract method from IntelligenceEngine.
+        It performs comprehensive market analysis including:
+        - Gas analysis (network conditions)
+        - Liquidity analysis (pool depth, slippage)
+        - Volatility analysis (price movements, trends)
+        - MEV analysis (threat assessment)
+        - Price history tracking
+        
+        Args:
+            market_context: Initial market context with basic token info
+            
+        Returns:
+            Enhanced market context with comprehensive analysis data
+            
+        Raises:
+            Exception: If critical analysis components fail
+        """
+        try:
+            self.logger.info(
+                f"[ANALYZE_MARKET] Starting market analysis for {market_context.token_symbol}"
+            )
+            
+            # Step 1: Run comprehensive market analysis using CompositeMarketAnalyzer
+            comprehensive_analysis = await self.composite_analyzer.run_comprehensive_analysis(
+                token_address=market_context.token_address or "",
+                token_symbol=market_context.token_symbol,
+                current_price=market_context.current_price
+            )
+            
+            self.logger.debug(
+                f"[ANALYZE_MARKET] Comprehensive analysis complete: "
+                f"Quality={comprehensive_analysis.get('data_quality', 'UNKNOWN')}"
+            )
+            
+            # Step 2: Fetch and update real token price
+            try:
+                real_price = await self.price_service.get_token_price(
+                    token_address=market_context.token_address or "",
+                    token_symbol=market_context.token_symbol
+                )
+                
+                if real_price and real_price > Decimal('0'):
+                    market_context.current_price = real_price
+                    self.logger.info(
+                        f"[ANALYZE_MARKET] Updated price for {market_context.token_symbol}: "
+                        f"${real_price:.6f}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"[ANALYZE_MARKET] Could not fetch price for {market_context.token_symbol}, "
+                        "using context price"
+                    )
+            except Exception as price_error:
+                self.logger.error(
+                    f"[ANALYZE_MARKET] Price fetch failed: {price_error}",
+                    exc_info=True
+                )
+            
+            # Step 3: Update price history
+            price_history = self._update_price_history(
+                market_context.token_symbol,
+                market_context.current_price
+            )
+            
+            # Step 4: Enhance market context with all analysis data
+            enhanced_context = self._enhance_market_context(
+                market_context,
+                comprehensive_analysis,
+                price_history
+            )
+            
+            # Step 5: Update market tracking
+            self.update_market_context(enhanced_context)
+            
+            self.logger.info(
+                f"[ANALYZE_MARKET] Market analysis complete for {market_context.token_symbol}: "
+                f"Gas={enhanced_context.gas_price_gwei:.2f}gwei, "
+                f"Liquidity=${enhanced_context.pool_liquidity_usd:.0f}, "
+                f"MEV={enhanced_context.mev_threat_level:.1f}"
+            )
+            
+            return enhanced_context
+            
+        except Exception as e:
+            self.logger.error(
+                f"[ANALYZE_MARKET] Critical error analyzing market: {e}",
+                exc_info=True
+            )
+            # Return original context if analysis fails
+            return market_context
+    
+    async def make_decision(
+        self,
+        market_context: MarketContext,
+        portfolio_value: Optional[Decimal] = None,
+        account_balance: Optional[Decimal] = None,
+        existing_positions: Optional[List[Any]] = None,
+        token_address: Optional[str] = None,
+        token_symbol: Optional[str] = None
+    ) -> TradingDecision:
+        """
+        Make a trading decision based on analyzed market context.
+        
+        This method implements the abstract method from IntelligenceEngine.
+        It uses the DecisionMaker to create a trading decision and then
+        applies intel-level adjustments.
+        
+        BACKWARD COMPATIBILITY: Accepts both 'portfolio_value' and 'account_balance'
+        parameters for compatibility with different calling conventions. Also accepts
+        legacy parameters (existing_positions, token_address, token_symbol) which
+        are handled gracefully but not currently used in decision logic.
+        
+        Args:
+            market_context: Analyzed market context with comprehensive data
+            portfolio_value: Current portfolio value in USD (preferred parameter)
+            account_balance: Current account balance (legacy parameter, maps to portfolio_value)
+            existing_positions: List of existing positions (legacy parameter, for future use)
+            token_address: Token address (legacy parameter, already in market_context)
+            token_symbol: Token symbol (legacy parameter, already in market_context)
+            
+        Returns:
+            Complete trading decision with reasoning and execution strategy
+            
+        Raises:
+            Exception: If decision-making fails critically
+        """
+        try:
+            # Handle backward compatibility: map account_balance to portfolio_value
+            if portfolio_value is None and account_balance is not None:
+                portfolio_value = account_balance
+                self.logger.debug(
+                    f"[MAKE_DECISION] Using account_balance as portfolio_value: ${account_balance:.2f}"
+                )
+            elif portfolio_value is None:
+                portfolio_value = Decimal('10000')  # Default fallback
+                self.logger.warning(
+                    "[MAKE_DECISION] No portfolio_value or account_balance provided, using default $10,000"
+                )
+            
+            # Log if legacy parameters were provided
+            if existing_positions is not None:
+                self.logger.debug(
+                    f"[MAKE_DECISION] Received {len(existing_positions)} existing positions (for future use)"
+                )
+            if token_address and token_address != market_context.token_address:
+                self.logger.debug(
+                    f"[MAKE_DECISION] Token address parameter provided but using value from market_context"
+                )
+            if token_symbol and token_symbol != market_context.token_symbol:
+                self.logger.debug(
+                    f"[MAKE_DECISION] Token symbol parameter provided but using value from market_context"
+                )
+            
+            self.logger.info(
+                f"[MAKE_DECISION] Creating decision for {market_context.token_symbol} "
+                f"(Portfolio: ${portfolio_value:.2f})"
+            )
+            
+            # Step 1: Check if we should skip due to poor data quality
+            if market_context.confidence_in_data < 40.0:
+                self.logger.warning(
+                    f"[MAKE_DECISION] Low data confidence ({market_context.confidence_in_data:.1f}%), "
+                    "skipping trade"
+                )
+                return self._create_skip_decision(
+                    market_context,
+                    f"Data confidence too low: {market_context.confidence_in_data:.1f}%"
+                )
+            
+            # Step 2: Build decision using DecisionMaker components
+            decision = self._build_decision_from_context(
+                market_context,
+                portfolio_value
+            )
+            
+            self.logger.debug(
+                f"[MAKE_DECISION] Base decision: {decision.action}, "
+                f"Confidence={decision.overall_confidence}%, "
+                f"Risk={decision.risk_score}, "
+                f"Opportunity={decision.opportunity_score}"
+            )
+            
+            # Step 4: Apply intel adjustments (if available)
+            try:
+                adjusted_decision = self.apply_intel_adjustments(decision) if hasattr(self, 'apply_intel_adjustments') else decision
+                self.logger.debug("[MAKE_DECISION] Intel adjustments: " + ("applied" if hasattr(self, 'apply_intel_adjustments') else "skipped (not available)"))
+            except Exception as e:
+                self.logger.warning(f"[MAKE_DECISION] Intel adjustment failed: {e}")
+                adjusted_decision = decision
+            
+            # Step 5: Store decision in history
+            self.historical_decisions.append(adjusted_decision)
+            if len(self.historical_decisions) > 100:
+                self.historical_decisions.pop(0)
+            
+            # Step 6: Collect ML features if Level 10
+            if self.intel_level == 10:
+                try:
+                    self.ml_collector.collect_features(
+                        market_context=market_context,
+                        decision=adjusted_decision
+                    )
+                    self.logger.debug(
+                        f"[MAKE_DECISION] ML features collected for training"
+                    )
+                except Exception as ml_error:
+                    self.logger.warning(
+                        f"[MAKE_DECISION] ML feature collection failed: {ml_error}"
+                    )
+            
+            self.logger.info(
+                f"[MAKE_DECISION] Final decision for {market_context.token_symbol}: "
+                f"{adjusted_decision.action} "
+                f"(Size: {adjusted_decision.position_size_percent}%, "
+                f"Confidence: {adjusted_decision.overall_confidence}%)"
+            )
+            
+            return adjusted_decision
+            
+        except Exception as e:
+            self.logger.error(
+                f"[MAKE_DECISION] Critical error making decision: {e}",
+                exc_info=True
+            )
+            # Return skip decision if decision-making fails
+            return self._create_skip_decision(
+                market_context,
+                f"Decision-making error: {str(e)}"
+            )
+    
+    def _build_decision_from_context(
+        self,
+        market_context: MarketContext,
+        portfolio_value: Decimal
+    ) -> TradingDecision:
+        """Build TradingDecision by orchestrating DecisionMaker components."""
+        # Build comprehensive analysis dict from context
+        comp_analysis = {
+            'gas_analysis': {'current_gas_gwei': float(market_context.gas_price_gwei), 'network_congestion': market_context.network_congestion},
+            'liquidity': {'pool_liquidity_usd': float(market_context.pool_liquidity_usd), 'expected_slippage_percent': float(market_context.expected_slippage), 'liquidity_depth_score': market_context.liquidity_depth_score},
+            'volatility': {'volatility_index': market_context.volatility_index, 'trend_direction': market_context.trend_direction},
+            'mev_analysis': {'threat_level': market_context.mev_threat_level, 'sandwich_attack_risk': market_context.sandwich_risk, 'frontrun_probability': market_context.frontrun_probability},
+            'market_state': {'chaos_event_detected': market_context.chaos_event_detected}
+        }
+        
+        # Calculate scores
+        risk_score = self.decision_maker.calculate_risk_score(market_context, comp_analysis)
+        opp_score = self.decision_maker.calculate_opportunity_score(market_context, comp_analysis)
+        conf_score = self.decision_maker.calculate_confidence_score(risk_score, opp_score, market_context)
+        action = self.decision_maker.determine_action(risk_score, opp_score, conf_score, market_context)
+        
+        # Position sizing
+        pos_pct = Decimal('0')
+        pos_usd = Decimal('0')
+        if action == 'BUY':
+            pos_pct = self.decision_maker.calculate_position_size(opp_score, risk_score, portfolio_value)
+            pos_usd = (pos_pct / Decimal('100')) * portfolio_value
+        
+        # Execution parameters
+        stop_loss = self.decision_maker.calculate_stop_loss(risk_score)
+        exec_mode, priv_relay, gas_strat, max_gas = self.decision_maker.determine_execution_strategy(market_context, risk_score)
+        
+        # Reasoning
+        reason = self.decision_maker.generate_reasoning(action, risk_score, opp_score, conf_score, market_context)
+        risk_facts = self.decision_maker.identify_risk_factors(market_context)
+        opp_facts = self.decision_maker.identify_opportunity_factors(market_context)
+        mitigations = self.decision_maker.generate_mitigation_strategies(market_context)
+        time_sens = self.decision_maker.assess_time_sensitivity(market_context)
+        
+        return TradingDecision(
+            action=action, token_address=market_context.token_address or "", token_symbol=market_context.token_symbol,
+            position_size_percent=pos_pct, position_size_usd=pos_usd, stop_loss_percent=stop_loss, take_profit_targets=[],
+            execution_mode=exec_mode, use_private_relay=priv_relay, gas_strategy=gas_strat, max_gas_price_gwei=max_gas,
+            overall_confidence=conf_score, risk_score=risk_score, opportunity_score=opp_score, primary_reasoning=reason,
+            risk_factors=risk_facts, opportunity_factors=opp_facts, mitigation_strategies=mitigations,
+            intel_level_used=self.intel_level, intel_adjustments={}, time_sensitivity=time_sens,
+            max_execution_time_ms=5000 if time_sens == 'critical' else 15000, processing_time_ms=0
+        )
+    
     async def analyze(
         self,
         market_context: MarketContext,
@@ -184,13 +470,10 @@ class IntelSliderEngine(IntelligenceEngine):
         """
         Main entry point: Analyze market and make trading decision.
         
-        This method coordinates all components to:
-        1. Run comprehensive market analysis (gas, liquidity, MEV, volatility)
-        2. Fetch real token price
-        3. Build enhanced market context
-        4. Calculate risk and opportunity scores
-        5. Make trading decision
-        6. Collect ML features (if Level 10)
+        This method orchestrates the full analysis-to-decision pipeline by:
+        1. Analyzing market conditions (analyze_market)
+        2. Making trading decision (make_decision)
+        3. Tracking performance metrics
         
         Args:
             market_context: Initial market context
@@ -207,248 +490,80 @@ class IntelSliderEngine(IntelligenceEngine):
                 f"(Intel Level {self.intel_level})"
             )
             
-            # Step 1: Fetch real price from price service
-            real_price = await self.price_service.get_token_price_usd(
-                market_context.token_address
-            )
+            # Step 1: Analyze market conditions
+            enhanced_context = await self.analyze_market(market_context)
             
-            if real_price and real_price > 0:
-                market_context.current_price = Decimal(str(real_price))
-                self._update_price_history(
-                    market_context.token_address,
-                    market_context.token_symbol,
-                    market_context.current_price
-                )
-                self.logger.info(
-                    f"[ANALYZE] Real price for {market_context.token_symbol}: "
-                    f"${market_context.current_price:.6f}"
-                )
-            else:
-                self.logger.warning(
-                    f"[ANALYZE] Could not fetch real price for {market_context.token_symbol}"
-                )
+            # Step 2: Make trading decision based on analysis
+            decision = await self.make_decision(enhanced_context, portfolio_value)
             
-            # Step 2: Get price history for trend analysis
-            price_history = self.price_history_cache.get(market_context.token_address)
-            
-            # Step 3: Run comprehensive market analysis using CompositeMarketAnalyzer
-            comprehensive_analysis = await self.composite_analyzer.analyze_comprehensive(
-                token_address=market_context.token_address,
-                trade_size_usd=Decimal('1000'),  # Default trade size for analysis
-                liquidity_usd=market_context.pool_liquidity_usd if market_context.pool_liquidity_usd > 0 else None,
-                volume_24h=market_context.volume_24h if market_context.volume_24h > 0 else None,
-                chain_id=self.chain_id,
-                price_history=[p for p in price_history.prices] if price_history else None,
-                current_price=market_context.current_price if market_context.current_price > 0 else None
-            )
-            
-            self.logger.debug(
-                f"[ANALYZE] Comprehensive analysis complete: "
-                f"Data quality={comprehensive_analysis.get('data_quality', 'UNKNOWN')}"
-            )
-            
-            # Step 4: Enhance market context with analysis results and price history
-            market_context = self._enhance_context_with_analysis(
-                market_context,
-                comprehensive_analysis,
-                price_history
-            )
-            
-            # Step 5: Calculate scores using decision maker
-            risk_score = self.decision_maker.calculate_risk_score(
-                market_context,
-                comprehensive_analysis
-            )
-            
-            opportunity_score = self.decision_maker.calculate_opportunity_score(
-                market_context,
-                comprehensive_analysis
-            )
-            
-            confidence_score = self.decision_maker.calculate_confidence_score(
-                risk_score,
-                opportunity_score,
-                market_context
-            )
-            
-            # Step 6: Determine action
-            action = self.decision_maker.determine_action(
-                risk_score,
-                opportunity_score,
-                confidence_score,
-                market_context
-            )
-            
-            # Step 7: Calculate position size and stop loss
-            position_size_percent = self.decision_maker.calculate_position_size(
-                risk_score,
-                opportunity_score,
-                market_context
-            )
-            
-            stop_loss_percent = self.decision_maker.calculate_stop_loss(risk_score)
-            
-            # Step 8: Calculate USD position size
-            position_size_usd = self.converter.safe_percentage(
-                portfolio_value,
-                position_size_percent
-            )
-            
-            # Enforce minimum position size
-            if position_size_usd < self.config.min_position_usd:
-                if action == 'BUY':
-                    self.logger.info(
-                        f"[ANALYZE] Position size ${position_size_usd:.2f} below "
-                        f"minimum ${self.config.min_position_usd:.2f}, adjusting to SKIP"
-                    )
-                    action = 'SKIP'
-            
-            # Step 9: Determine execution strategy
-            execution_strategy = self.decision_maker.determine_execution_strategy(
-                market_context,
-                action
-            )
-            
-            # Step 10: Generate reasoning and factors
-            reasoning = self.decision_maker.generate_reasoning(
-                action,
-                risk_score,
-                opportunity_score,
-                confidence_score,
-                market_context
-            )
-            
-            risk_factors = self.decision_maker.identify_risk_factors(market_context)
-            opportunity_factors = self.decision_maker.identify_opportunity_factors(
-                market_context
-            )
-            mitigation_strategies = self.decision_maker.generate_mitigation_strategies(
-                market_context
-            )
-            time_sensitivity = self.decision_maker.assess_time_sensitivity(market_context)
-            
-            # Step 11: Build trading decision
-            decision = TradingDecision(
-                action=action,
-                token_address=market_context.token_address,
-                token_symbol=market_context.token_symbol,
-                position_size_percent=position_size_percent,
-                position_size_usd=position_size_usd,
-                stop_loss_percent=stop_loss_percent,
-                take_profit_targets=[
-                    Decimal('5'),   # 5% profit
-                    Decimal('10'),  # 10% profit
-                    Decimal('20')   # 20% profit
-                ],
-                execution_mode=execution_strategy['mode'],
-                use_private_relay=execution_strategy['use_private_relay'],
-                gas_strategy=execution_strategy['gas_strategy'],
-                max_gas_price_gwei=execution_strategy['max_gas_gwei'],
-                overall_confidence=confidence_score,
-                risk_score=risk_score,
-                opportunity_score=opportunity_score,
-                primary_reasoning=reasoning,
-                risk_factors=risk_factors,
-                opportunity_factors=opportunity_factors,
-                mitigation_strategies=mitigation_strategies,
-                intel_level_used=self.intel_level,
-                intel_adjustments={},
-                time_sensitivity=time_sensitivity,
-                max_execution_time_ms=5000 if time_sensitivity == 'critical' else 10000,
-                processing_time_ms=0
-            )
-            
-            # Step 12: Apply intel level adjustments
-            decision = self.adjust_for_intel_level(decision)
-            
-            # Step 13: Calculate processing time
+            # Step 3: Calculate processing time
             end_time = timezone.now()
-            decision.processing_time_ms = (
-                (end_time - start_time).total_seconds() * 1000
-            )
+            processing_time_ms = (end_time - start_time).total_seconds() * 1000
+            decision.processing_time_ms = processing_time_ms
             
-            # Step 14: Store decision history
-            self.historical_decisions.append(decision)
-            if len(self.historical_decisions) > 100:
-                self.historical_decisions.pop(0)
+            # Step 4: Log performance metrics
+            self._track_performance({
+                'token_symbol': market_context.token_symbol,
+                'action': decision.action,
+                'confidence': float(decision.overall_confidence),
+                'risk_score': float(decision.risk_score),
+                'opportunity_score': float(decision.opportunity_score),
+                'processing_time_ms': processing_time_ms,
+                'intel_level': self.intel_level,
+                'timestamp': end_time
+            })
             
-            # Step 15: Update market context tracking
-            self.update_market_context(market_context)
-            
-            # Step 16: Collect ML features (Level 10 only)
-            self.ml_collector.collect_features(market_context, decision)
-            
-            # Log final decision
             self.logger.info(
-                f"[ANALYZE] Decision complete for {market_context.token_symbol}: "
-                f"Action={action}, Risk={risk_score:.1f}, "
-                f"Opportunity={opportunity_score:.1f}, "
-                f"Confidence={confidence_score:.1f}, "
-                f"Processing={decision.processing_time_ms:.0f}ms"
+                f"[ANALYZE] Analysis complete for {market_context.token_symbol}: "
+                f"{decision.action} decision in {processing_time_ms:.2f}ms"
             )
             
             return decision
             
         except Exception as e:
             self.logger.error(
-                f"[ANALYZE] Error analyzing {market_context.token_symbol}: {e}",
+                f"[ANALYZE] Fatal error in analysis pipeline: {e}",
                 exc_info=True
             )
             
-            # Return safe SKIP decision on error
+            # Return safe skip decision
             return self._create_skip_decision(
                 market_context,
-                f"Error during analysis: {str(e)}"
+                f"Analysis pipeline error: {str(e)}"
             )
     
     def _update_price_history(
         self,
-        token_address: str,
         token_symbol: str,
-        price: Decimal
-    ) -> None:
-        """
-        Update price history cache with new price.
-        
-        Args:
-            token_address: Token contract address
-            token_symbol: Token symbol
-            price: New price to add
-        """
+        current_price: Decimal
+    ) -> Optional[PriceHistory]:
+        """Update price history for a token."""
         try:
-            if token_address not in self.price_history_cache:
-                self.price_history_cache[token_address] = PriceHistory(
-                    token_address=token_address,
-                    token_symbol=token_symbol,
-                    prices=[],
-                    timestamps=[]
-                )
+            if token_symbol not in self.price_history_cache:
+                self.price_history_cache[token_symbol] = PriceHistory(token_symbol)
             
-            history = self.price_history_cache[token_address]
-            history.prices.append(price)
-            history.timestamps.append(timezone.now())
-            
-            # Keep only last 100 prices
-            if len(history.prices) > 100:
-                history.prices.pop(0)
-                history.timestamps.pop(0)
+            price_history = self.price_history_cache[token_symbol]
+            price_history.add_price(current_price)
             
             self.logger.debug(
-                f"[PRICE HISTORY] Updated {token_symbol}: "
-                f"{len(history.prices)} prices tracked"
+                f"[PRICE HISTORY] Updated for {token_symbol}: "
+                f"{len(price_history.prices)} data points"
             )
+            
+            return price_history
             
         except Exception as e:
             self.logger.error(
                 f"[PRICE HISTORY] Error updating: {e}",
                 exc_info=True
             )
+            return None
     
-    def _enhance_context_with_analysis(
+    def _enhance_market_context(
         self,
         context: MarketContext,
         comprehensive_analysis: Dict[str, Any],
-        price_history: Optional[PriceHistory]
+        price_history: Optional[PriceHistory] = None
     ) -> MarketContext:
         """
         Enhance market context with comprehensive analysis and price history.
@@ -559,7 +674,7 @@ class IntelSliderEngine(IntelligenceEngine):
         """
         return TradingDecision(
             action='SKIP',
-            token_address=context.token_address,
+            token_address=context.token_address or "",
             token_symbol=context.token_symbol,
             position_size_percent=Decimal('0'),
             position_size_usd=Decimal('0'),
@@ -582,6 +697,31 @@ class IntelSliderEngine(IntelligenceEngine):
             max_execution_time_ms=0,
             processing_time_ms=0
         )
+    
+    def _track_performance(self, metrics: Dict[str, Any]) -> None:
+        """
+        Track performance metrics for analysis.
+        
+        Args:
+            metrics: Performance metrics dictionary
+        """
+        try:
+            self.performance_history.append(metrics)
+            
+            # Keep only last 200 metrics
+            if len(self.performance_history) > 200:
+                self.performance_history.pop(0)
+            
+            self.logger.debug(
+                f"[PERFORMANCE] Tracked metrics: {metrics['action']} decision, "
+                f"{metrics['processing_time_ms']:.2f}ms"
+            )
+            
+        except Exception as e:
+            self.logger.error(
+                f"[PERFORMANCE] Error tracking metrics: {e}",
+                exc_info=True
+            )
     
     def update_market_context(self, market_context: MarketContext) -> None:
         """

@@ -2,7 +2,7 @@
 Enhanced Django settings for dexproject with Web3 integration, SIWE support, and Channels
 
 This settings file includes Web3 configuration, testnet support, SIWE wallet
-authentication, Django Channels for WebSocket support, and enhanced trading 
+authentication, Django Channels for WebSocket support, and enhanced trading
 engine settings for both development and production.
 
 UPDATED: PTphase3 - Added Django Channels and WebSocket configuration
@@ -42,18 +42,22 @@ logger = logging.getLogger(__name__)
 # HELPER FUNCTIONS FOR ENVIRONMENT VARIABLES
 # =============================================================================
 
+
 def get_env_int(key: str, default: str) -> int:
     """Safely convert environment variable to integer, handling float strings."""
     return int(float(os.getenv(key, default)))
+
 
 def get_env_decimal(key: str, default: str) -> Decimal:
     """Safely convert environment variable to Decimal."""
     return Decimal(os.getenv(key, default))
 
+
 def get_env_bool(key: str, default: str) -> bool:
     """Convert environment variable to boolean."""
     value = os.getenv(key, default).lower()
     return value in ('true', '1', 'yes', 'on')
+
 
 def get_env_list(key: str, default: str = '') -> list:
     """Convert environment variable to list, filtering empty values."""
@@ -62,13 +66,250 @@ def get_env_list(key: str, default: str = '') -> list:
         return []
     return [item.strip() for item in value.split(',') if item.strip()]
 
+
 # =============================================================================
 # ENVIRONMENT DETECTION
 # =============================================================================
 
 # Detect if we're running in production mode
 PRODUCTION_MODE = get_env_bool('PRODUCTION_MODE', 'False')
+DEBUG = get_env_bool('DEBUG', 'True') and not PRODUCTION_MODE
 TRADING_ENVIRONMENT = os.getenv('TRADING_ENVIRONMENT', 'development')  # development, staging, production
+
+# =============================================================================
+# PAPER TRADING CONFIGURATION HIERARCHY
+# =============================================================================
+#
+# This section implements a 3-tier configuration system:
+#   Tier 1: Constants (never change at runtime) - from paper_trading.constants
+#   Tier 2: Defaults (sensible defaults) - from paper_trading.defaults
+#   Tier 3: Runtime Configuration (environment-specific) - from env vars
+#
+# Import constants and defaults after Django apps are loaded to avoid import issues
+# These will be used throughout the paper trading system for type-safe configuration
+# =============================================================================
+
+# Lazy import wrapper to prevent import-time issues
+
+
+class LazyPaperTradingConfig:
+    """
+    Lazy configuration loader for paper trading.
+
+    This prevents import errors during Django initialization by deferring
+    imports until the configuration is actually accessed.
+    """
+    _constants = None
+    _defaults = None
+
+    @property
+    def constants(self):
+        """Get paper trading constants (Tier 1)."""
+        if self._constants is None:
+            try:
+                from paper_trading import constants
+                self._constants = constants
+            except ImportError as e:
+                logger.warning(f"Could not import paper_trading.constants: {e}")
+                self._constants = type('MockConstants', (), {})()
+        return self._constants
+
+    @property
+    def defaults(self):
+        """Get paper trading defaults (Tier 2)."""
+        if self._defaults is None:
+            try:
+                from paper_trading import defaults
+                self._defaults = defaults
+            except ImportError as e:
+                logger.warning(f"Could not import paper_trading.defaults: {e}")
+                self._defaults = type('MockDefaults', (), {})()
+        return self._defaults
+
+
+# Create lazy config instance
+_paper_trading_config = LazyPaperTradingConfig()
+
+# =============================================================================
+# PAPER TRADING SETTINGS (Tier 3: Environment-Specific)
+# =============================================================================
+
+PAPER_TRADING = {
+    # =========================================================================
+    # TIER 1: CONSTANTS (Never change at runtime)
+    # =========================================================================
+    # These come from paper_trading.constants module
+    # Access via: from paper_trading.constants import DecisionType, ConfidenceLevel
+
+    'CONSTANTS': {
+        'ENABLED': True,  # Enable constants module
+        'VALIDATE_ON_STARTUP': True,  # Validate constants during app initialization
+    },
+
+    # =========================================================================
+    # TIER 2: DEFAULTS (Sensible defaults that can be overridden)
+    # =========================================================================
+    # These come from paper_trading.defaults module
+
+    'DEFAULTS': {
+        # Account defaults
+        'INITIAL_BALANCE_USD': get_env_decimal('PAPER_INITIAL_BALANCE', '10000.0'),
+        'MIN_ACCOUNT_BALANCE_USD': get_env_decimal('PAPER_MIN_BALANCE', '100.0'),
+
+        # Position sizing defaults
+        'MAX_POSITION_SIZE_PERCENT': get_env_decimal('PAPER_MAX_POSITION_PERCENT', '25.0'),
+        'MIN_POSITION_SIZE_PERCENT': get_env_decimal('PAPER_MIN_POSITION_PERCENT', '1.0'),
+        'DEFAULT_POSITION_SIZE_PERCENT': get_env_decimal('PAPER_DEFAULT_POSITION_PERCENT', '10.0'),
+
+        # Risk management defaults
+        'DEFAULT_STOP_LOSS_PERCENT': get_env_decimal('PAPER_STOP_LOSS_PERCENT', '-5.0'),
+        'DEFAULT_TAKE_PROFIT_PERCENT': get_env_decimal('PAPER_TAKE_PROFIT_PERCENT', '10.0'),
+        'MAX_POSITION_HOLD_HOURS': get_env_int('PAPER_MAX_HOLD_HOURS', '72'),
+
+        # Trading limits
+        'MAX_DAILY_TRADES': get_env_int('PAPER_MAX_DAILY_TRADES', '50'),
+        'MAX_CONSECUTIVE_LOSSES': get_env_int('PAPER_MAX_CONSECUTIVE_LOSSES', '5'),
+
+        # Confidence thresholds
+        'MIN_CONFIDENCE_TO_TRADE': get_env_decimal('PAPER_MIN_CONFIDENCE', '60.0'),
+
+        # Timing defaults
+        'DEFAULT_TICK_INTERVAL_SECONDS': get_env_int('PAPER_TICK_INTERVAL', '15'),
+        'METRICS_UPDATE_INTERVAL_TICKS': get_env_int('PAPER_METRICS_INTERVAL_TICKS', '20'),
+
+        # Intelligence defaults
+        'DEFAULT_INTEL_LEVEL': get_env_int('PAPER_INTEL_LEVEL', '5'),
+        'MIN_INTEL_LEVEL': 1,
+        'MAX_INTEL_LEVEL': 10,
+        'PRICE_HISTORY_SIZE': get_env_int('PAPER_PRICE_HISTORY_SIZE', '100'),
+
+        # Network defaults
+        'DEFAULT_CHAIN_ID': get_env_int('PAPER_CHAIN_ID', '84532'),  # Base Sepolia
+        'DEFAULT_GAS_PRICE_GWEI': get_env_decimal('PAPER_DEFAULT_GAS_GWEI', '0.1'),
+        'DEFAULT_SLIPPAGE_PERCENT': get_env_decimal('PAPER_DEFAULT_SLIPPAGE', '0.5'),
+        'MAX_SLIPPAGE_PERCENT': get_env_decimal('PAPER_MAX_SLIPPAGE', '5.0'),
+
+        # Connection timeouts
+        'WEB3_CONNECTION_TIMEOUT_SECONDS': get_env_int('PAPER_WEB3_TIMEOUT', '30'),
+        'TRANSACTION_CONFIRMATION_TIMEOUT_SECONDS': get_env_int('PAPER_TX_TIMEOUT', '300'),
+    },
+
+    # =========================================================================
+    # TIER 3: FEATURES (Environment-specific toggles)
+    # =========================================================================
+    # These change based on environment (dev/staging/prod)
+
+    'FEATURES': {
+        # Data source configuration
+        'USE_REAL_PRICES': get_env_bool('PAPER_TRADING_USE_REAL_PRICES', 'True'),
+        'USE_REAL_BLOCKCHAIN_DATA': get_env_bool('PAPER_TRADING_USE_REAL_BLOCKCHAIN', 'True'),
+
+        # Optional service integrations
+        'USE_TX_MANAGER': get_env_bool('PAPER_TRADING_USE_TX_MANAGER', 'False'),
+        'ENABLE_CIRCUIT_BREAKERS': get_env_bool('PAPER_TRADING_CIRCUIT_BREAKERS', 'True'),
+
+        # Intelligence features
+        'ML_FEATURE_COLLECTION': get_env_bool('PAPER_TRADING_ML_FEATURES', 'False'),
+        'ENABLE_AUTO_PILOT': get_env_bool('PAPER_TRADING_AUTO_PILOT', 'False'),
+
+        # Monitoring and logging
+        'ENABLE_THOUGHT_LOGS': get_env_bool('PAPER_TRADING_THOUGHT_LOGS', 'True'),
+        'ENABLE_PERFORMANCE_METRICS': get_env_bool('PAPER_TRADING_METRICS', 'True'),
+        'ENABLE_WEBSOCKET_UPDATES': get_env_bool('PAPER_TRADING_WEBSOCKET', 'True'),
+
+        # Advanced features
+        'ENABLE_SMART_LANE': get_env_bool('PAPER_TRADING_SMART_LANE', 'False'),
+        'ENABLE_FAST_LANE': get_env_bool('PAPER_TRADING_FAST_LANE', 'True'),
+    },
+
+    # =========================================================================
+    # VALIDATION RULES
+    # =========================================================================
+
+    'VALIDATION': {
+        # Enforce strict validation in production
+        'STRICT_MODE': PRODUCTION_MODE,
+
+        # Validation options
+        'VALIDATE_SCORES': True,  # Validate confidence/risk/opportunity scores (0-100)
+        'VALIDATE_ADDRESSES': True,  # Validate token addresses (0x format)
+        'VALIDATE_DECIMALS': True,  # Validate decimal precision
+        'VALIDATE_FIELD_NAMES': True,  # Validate model field names at creation
+
+        # Auto-correction options
+        'AUTO_TRUNCATE_REASONING': True,  # Auto-truncate reasoning to 500 chars
+        'AUTO_CALCULATE_CONFIDENCE_LEVEL': True,  # Auto-calculate confidence level from percent
+        'AUTO_CLAMP_SCORES': True,  # Clamp scores to valid range instead of raising errors
+    },
+
+    # =========================================================================
+    # FACTORY FUNCTIONS
+    # =========================================================================
+
+    'FACTORIES': {
+        # Enforce factory usage (raise errors if models created directly)
+        'ENFORCE_FACTORY_USAGE': PRODUCTION_MODE,
+
+        # Factory validation
+        'VALIDATE_ON_CREATE': True,
+        'LOG_FACTORY_CALLS': DEBUG,
+    },
+
+    # =========================================================================
+    # MODEL FIELD MAPPING
+    # =========================================================================
+    # This section documents the correct field names for critical models
+    # Import from: paper_trading.constants.ThoughtLogFields
+
+    'FIELD_MAPPING': {
+        'PaperAIThoughtLog': {
+            'SCORING_FIELDS': [
+                'confidence_percent',  # Decimal(0-100)
+                'risk_score',         # Decimal(0-100)
+                'opportunity_score',  # Decimal(0-100)
+            ],
+            'TEXT_FIELDS': [
+                'primary_reasoning',  # Text (max 500 chars)
+                'strategy_name',      # CharField (max 100)
+            ],
+            'CHOICE_FIELDS': [
+                'decision_type',      # BUY, SELL, HOLD, SKIP
+                'confidence_level',   # VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW
+                'lane_used',         # FAST, SMART
+            ],
+        },
+    },
+}
+
+# =============================================================================
+# BACKWARD COMPATIBILITY HELPERS
+# =============================================================================
+# These provide backward compatibility with existing code that expects
+# specific settings keys
+
+# Legacy setting names (deprecated - use PAPER_TRADING dict instead)
+PAPER_INITIAL_BALANCE_USD = PAPER_TRADING['DEFAULTS']['INITIAL_BALANCE_USD']
+PAPER_MAX_POSITION_SIZE_PERCENT = PAPER_TRADING['DEFAULTS']['MAX_POSITION_SIZE_PERCENT']
+PAPER_DEFAULT_INTEL_LEVEL = PAPER_TRADING['DEFAULTS']['DEFAULT_INTEL_LEVEL']
+PAPER_USE_REAL_PRICES = PAPER_TRADING['FEATURES']['USE_REAL_PRICES']
+
+# Log paper trading configuration
+logger.info("=" * 80)
+logger.info("📊 PAPER TRADING CONFIGURATION")
+logger.info("=" * 80)
+logger.info(f"Initial Balance: ${PAPER_TRADING['DEFAULTS']['INITIAL_BALANCE_USD']}")
+logger.info(f"Max Position Size: {PAPER_TRADING['DEFAULTS']['MAX_POSITION_SIZE_PERCENT']}%")
+logger.info(f"Default Intel Level: {PAPER_TRADING['DEFAULTS']['DEFAULT_INTEL_LEVEL']}")
+logger.info(f"Max Daily Trades: {PAPER_TRADING['DEFAULTS']['MAX_DAILY_TRADES']}")
+logger.info(f"Stop Loss: {PAPER_TRADING['DEFAULTS']['DEFAULT_STOP_LOSS_PERCENT']}%")
+logger.info(f"Take Profit: {PAPER_TRADING['DEFAULTS']['DEFAULT_TAKE_PROFIT_PERCENT']}%")
+logger.info(f"Real Prices: {PAPER_TRADING['FEATURES']['USE_REAL_PRICES']}")
+logger.info(f"Real Blockchain Data: {PAPER_TRADING['FEATURES']['USE_REAL_BLOCKCHAIN_DATA']}")
+logger.info(f"TX Manager: {PAPER_TRADING['FEATURES']['USE_TX_MANAGER']}")
+logger.info(f"Circuit Breakers: {PAPER_TRADING['FEATURES']['ENABLE_CIRCUIT_BREAKERS']}")
+logger.info(f"Thought Logs: {PAPER_TRADING['FEATURES']['ENABLE_THOUGHT_LOGS']}")
+logger.info(f"Strict Validation: {PAPER_TRADING['VALIDATION']['STRICT_MODE']}")
+logger.info("=" * 80)
 
 # =============================================================================
 # CORE DJANGO SETTINGS
@@ -80,9 +321,6 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-test-key-for-development-o
 # Production secret key validation
 if PRODUCTION_MODE and SECRET_KEY == 'django-insecure-test-key-for-development-only':
     raise ValueError("Production mode requires a secure SECRET_KEY to be set!")
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = get_env_bool('DEBUG', 'True') and not PRODUCTION_MODE
 
 # ALLOWED_HOSTS configuration - Enhanced for production
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
@@ -191,7 +429,6 @@ DASHBOARD_SSE_UPDATE_INTERVAL = get_env_int('DASHBOARD_SSE_UPDATE_INTERVAL', '5'
 logger.info(f"📡 SSE Configuration: Enabled={SSE_ENABLED}, Max Iterations={SSE_MAX_ITERATIONS}, Interval={DASHBOARD_SSE_UPDATE_INTERVAL}s")
 
 
-
 # =============================================================================
 # DJANGO CHANNELS CONFIGURATION (WebSocket Support)
 # =============================================================================
@@ -270,11 +507,11 @@ DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite:///{BASE_DIR}/db.sqlite3')
 if DATABASE_URL.startswith('postgresql'):
     # PostgreSQL configuration for serious trading
     try:
-        import dj_database_url
+        import dj_database_url  # type: ignore[import-not-found]
         DATABASES = {
             'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
         }
-        
+
         # Production PostgreSQL optimizations
         DATABASES['default'].update({
             'ATOMIC_REQUESTS': True,
@@ -285,20 +522,20 @@ if DATABASE_URL.startswith('postgresql'):
                 'autocommit': True,
             }
         })
-        
+
         logger.info("Using PostgreSQL database for production trading")
-        
+
     except ImportError:
         logger.error("dj-database-url required for PostgreSQL. Install with: pip install dj-database-url")
         raise
-        
+
 elif DATABASE_URL.startswith('sqlite'):
     # Optimized SQLite configuration for trading operations
     db_path = BASE_DIR / 'db' / ('production.sqlite3' if PRODUCTION_MODE else 'development.sqlite3')
-    
+
     # Ensure db directory exists
     db_path.parent.mkdir(exist_ok=True)
-    
+
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -318,9 +555,9 @@ elif DATABASE_URL.startswith('sqlite'):
             'ATOMIC_REQUESTS': True,
         }
     }
-    
+
     logger.info(f"Using optimized SQLite database: {db_path}")
-    
+
 else:
     # Default SQLite fallback
     DATABASES = {
@@ -360,7 +597,7 @@ if PRODUCTION_MODE:
 
 # RPC URLs - Base Sepolia (Default)
 BASE_SEPOLIA_RPC_URL = os.getenv(
-    'BASE_SEPOLIA_RPC_URL', 
+    'BASE_SEPOLIA_RPC_URL',
     f'https://base-sepolia.g.alchemy.com/v2/{BASE_ALCHEMY_API_KEY}'
 )
 BASE_SEPOLIA_WS_URL = os.getenv(
@@ -395,11 +632,11 @@ SIWE_SESSION_TIMEOUT_HOURS = get_env_int('SIWE_SESSION_TIMEOUT_HOURS', '24')
 
 # Risk Management - Enhanced for production
 MAX_PORTFOLIO_SIZE_USD = get_env_decimal(
-    'MAX_PORTFOLIO_SIZE_USD', 
+    'MAX_PORTFOLIO_SIZE_USD',
     '1000' if PRODUCTION_MODE else '100'  # Higher limits in production
 )
 MAX_POSITION_SIZE_USD = get_env_decimal(
-    'MAX_POSITION_SIZE_USD', 
+    'MAX_POSITION_SIZE_USD',
     '100' if PRODUCTION_MODE else '10'
 )
 DAILY_LOSS_LIMIT_PERCENT = get_env_decimal('DAILY_LOSS_LIMIT_PERCENT', '5.0')
@@ -408,7 +645,7 @@ CIRCUIT_BREAKER_LOSS_PERCENT = get_env_decimal('CIRCUIT_BREAKER_LOSS_PERCENT', '
 # Trade Execution - Production optimized
 DEFAULT_SLIPPAGE_PERCENT = get_env_decimal('DEFAULT_SLIPPAGE_PERCENT', '1.0')
 MAX_GAS_PRICE_GWEI = get_env_decimal(
-    'MAX_GAS_PRICE_GWEI', 
+    'MAX_GAS_PRICE_GWEI',
     '50' if PRODUCTION_MODE else '10'  # Higher gas limits for production
 )
 EXECUTION_TIMEOUT = get_env_int('EXECUTION_TIMEOUT', '30')
@@ -430,14 +667,14 @@ FAST_LANE_SLA_MS = get_env_int('FAST_LANE_SLA_MS', '300')
 # Risk Cache Settings - Production optimized
 RISK_CACHE_TTL = get_env_int('RISK_CACHE_TTL', '3600')
 RISK_CACHE_MAX_SIZE = get_env_int(
-    'RISK_CACHE_MAX_SIZE', 
+    'RISK_CACHE_MAX_SIZE',
     '50000' if PRODUCTION_MODE else '10000'  # Larger cache in production
 )
 
 # Mempool Configuration
 ENABLE_MEMPOOL_SCANNING = get_env_bool('ENABLE_MEMPOOL_SCANNING', 'True')
 MEMPOOL_MAX_PENDING_TXS = get_env_int(
-    'MEMPOOL_MAX_PENDING_TXS', 
+    'MEMPOOL_MAX_PENDING_TXS',
     '5000' if PRODUCTION_MODE else '1000'
 )
 MEMPOOL_SCAN_INTERVAL_MS = get_env_int('MEMPOOL_SCAN_INTERVAL_MS', '100')
@@ -458,7 +695,7 @@ PROVIDER_RECOVERY_TIME = get_env_int('PROVIDER_RECOVERY_TIME', '300')
 DJANGO_REDIS_AVAILABLE = False
 if REDIS_AVAILABLE:
     try:
-        import django_redis
+        import django_redis  # noqa: F401
         DJANGO_REDIS_AVAILABLE = True
         logger.info("django-redis package available")
     except ImportError:
@@ -486,7 +723,7 @@ if REDIS_AVAILABLE and DJANGO_REDIS_AVAILABLE:
             'TIMEOUT': 300,  # 5 minutes default
         }
     }
-    
+
 elif REDIS_AVAILABLE:
     # Use basic Redis backend without django-redis features
     CACHES = {
@@ -504,7 +741,7 @@ elif REDIS_AVAILABLE:
             'TIMEOUT': 300,
         }
     }
-    
+
 else:
     # Fallback to in-memory cache
     CACHES = {
@@ -598,13 +835,13 @@ if PRODUCTION_MODE or not DEBUG:
     SECURE_HSTS_SECONDS = 31536000  # 1 year
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    
+
     # Session security
     SESSION_COOKIE_SECURE = False  # Set to True if using HTTPS
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Strict'
     SESSION_EXPIRE_AT_BROWSER_CLOSE = True
-    
+
     # CSRF protection
     CSRF_COOKIE_SECURE = False  # Set to True if using HTTPS
     CSRF_COOKIE_HTTPONLY = False
@@ -883,11 +1120,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 if DEBUG and TESTNET_MODE and not PRODUCTION_MODE:
     # Enable Django debug toolbar for development only
     try:
-        import debug_toolbar
+        import debug_toolbar  # noqa: F401  # type: ignore[import-not-found]
         INSTALLED_APPS.append('debug_toolbar')
         MIDDLEWARE.insert(0, 'debug_toolbar.middleware.DebugToolbarMiddleware')
         INTERNAL_IPS = ['127.0.0.1', 'localhost']
-        
+
         DEBUG_TOOLBAR_CONFIG = {
             'SHOW_TOOLBAR_CALLBACK': lambda request: True,
         }
@@ -901,15 +1138,15 @@ if DEBUG and TESTNET_MODE and not PRODUCTION_MODE:
 if PRODUCTION_MODE:
     # Production-specific apps
     try:
-        import django_extensions
+        import django_extensions  # noqa: F401  # type: ignore[import-not-found]
         INSTALLED_APPS.append('django_extensions')
     except ImportError:
         pass
-    
+
     # Performance monitoring
     ENABLE_PERFORMANCE_MONITORING = True
     PERFORMANCE_MONITORING_SAMPLE_RATE = 0.1  # 10% sampling
-    
+
     # Trading operation timeouts (stricter in production)
     TRADING_OPERATION_TIMEOUT = 60  # seconds
     GAS_OPTIMIZATION_TIMEOUT = 5    # seconds
@@ -923,7 +1160,7 @@ if PRODUCTION_MODE:
 if PRODUCTION_MODE:
     if not ALCHEMY_API_KEY or ALCHEMY_API_KEY == 'demo':
         raise ValueError("ALCHEMY_API_KEY must be set in production!")
-    
+
     if not BASE_ALCHEMY_API_KEY or BASE_ALCHEMY_API_KEY == 'demo':
         raise ValueError("BASE_ALCHEMY_API_KEY must be set in production!")
 
@@ -961,9 +1198,9 @@ if PRODUCTION_MODE:
     logger.info(f"💰 Max portfolio: ${MAX_PORTFOLIO_SIZE_USD}, Max position: ${MAX_POSITION_SIZE_USD}")
     logger.info(f"⛽ Max gas price: {MAX_GAS_PRICE_GWEI} gwei")
     logger.info(f"🕒 Fast lane target: {FAST_LANE_TARGET_MS}ms")
-    
+
 # PTphase3 specific logging
 logger.info("✅ PTphase3 WebSocket Support Configured")
-logger.info(f"   - Django Channels: Installed")
+logger.info("   - Django Channels: Installed")
 logger.info(f"   - Channel Layer: {'Redis' if REDIS_AVAILABLE else 'In-Memory'}")
 logger.info(f"   - WebSocket Logging: {LOGS_DIR / 'websocket'}")
