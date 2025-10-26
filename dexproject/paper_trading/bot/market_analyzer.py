@@ -774,6 +774,13 @@ class MarketAnalyzer:
                 win_rate = 0
                 avg_gas_savings = Decimal('0')
             
+            # Get starting balance from metadata (migration 0005 change)
+            # Note: starting_balance_usd was moved from session field to session.metadata
+            starting_balance = Decimal(str(self.session.metadata.get(
+                'starting_balance_usd',
+                float(self.account.initial_balance_usd)
+            )))
+            
             # Update or create metrics
             metrics, created = PaperPerformanceMetrics.objects.update_or_create(
                 account=self.account,
@@ -783,13 +790,11 @@ class MarketAnalyzer:
                     'losing_trades': total_trades - winning_trades,
                     'win_rate': Decimal(str(win_rate)),
                     'total_pnl_usd': (
-                        self.account.current_balance_usd -
-                        getattr(self.session, 'starting_balance_usd', self.account.current_balance_usd)
+                        self.account.current_balance_usd - starting_balance
                     ),
                     'total_pnl_percent': Decimal(str(
-                        ((self.account.current_balance_usd /
-                          getattr(self.session, 'starting_balance_usd', Decimal('10000'))) - 1) * 100
-                        if getattr(self.session, 'starting_balance_usd', Decimal('10000')) > 0
+                        ((self.account.current_balance_usd / starting_balance) - 1) * 100
+                        if starting_balance > 0
                         else 0
                     )),
                     'largest_win_usd': Decimal('0'),
@@ -816,7 +821,7 @@ class MarketAnalyzer:
                 metrics.losing_trades = total_trades - winning_trades
                 metrics.win_rate = Decimal(str(win_rate))
                 
-                starting_balance = getattr(self.session, 'starting_balance_usd', self.account.current_balance_usd)
+                # Use starting_balance calculated at top of function
                 metrics.total_pnl_usd = (
                     self.account.current_balance_usd - starting_balance
                 )

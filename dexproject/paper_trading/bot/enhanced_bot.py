@@ -747,16 +747,18 @@ class EnhancedPaperTradingBot:
                 'event_type': 'BOT_STARTUP'
             }
             
-            # Create thought log with CORRECT field names
+            # Create thought log with STANDARDIZED field names (matching market_analyzer and trade_executor)
             PaperAIThoughtLog.objects.create(
                 account=self.account,
                 paper_trade=None,
                 decision_type='SKIP',  # System event, not a trade
                 token_address='0x' + '0' * 40,  # System address
                 token_symbol='SYSTEM',
-                confidence_level=Decimal('100'),  # FIXED: Use Decimal, not string
-                reasoning=reasoning[:500],  # FIXED: Use 'reasoning', not 'primary_reasoning'
-                risk_assessment="Risk Score: 0, Opportunity Score: 100 - Bot startup with optimal configuration",  
+                confidence_level='VERY_HIGH',  # ✅ STRING (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW)
+                confidence_percent=Decimal('100'),  # ✅ DECIMAL (0-100)
+                risk_score=Decimal('0'),  # ✅ DECIMAL - no risk on startup
+                opportunity_score=Decimal('100'),  # ✅ DECIMAL - optimal startup
+                primary_reasoning=reasoning[:500],  # ✅ CORRECT field name (truncated to 500 chars)
                 key_factors=[
                     f"Intel Level: {self.intel_level}",
                     f"TX Manager: {'Enabled' if self.use_tx_manager else 'Disabled'}",
