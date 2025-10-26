@@ -103,11 +103,10 @@ class BaseAnalyzer(ABC):
         """
         self.config = config or {}
         self.logger = logging.getLogger(f'{__name__}.{self.__class__.__name__}')
-        # Use object type to avoid type issues with conditional imports
-        self._web3_client: Optional[object] = None
+        self._web3_client: Optional["Web3Client"] = None  # ✅ CORRECT - Use string literal
         self._web3_initialized = False
     
-    async def _ensure_web3_client(self, chain_id: int = 84532) -> Optional[Web3Client]:
+    async def _ensure_web3_client(self, chain_id: int = 84532) -> Optional["Web3Client"]:
         """
         Ensure Web3 client is initialized.
         
@@ -484,7 +483,7 @@ class RealLiquidityAnalyzer(BaseAnalyzer):
     
     async def _get_real_pool_liquidity(
         self,
-        web3_client: Web3Client,
+        web3_client: "Web3Client",
         token_address: str,
         chain_id: int
     ) -> Optional[Dict[str, Any]]:
