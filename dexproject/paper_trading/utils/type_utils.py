@@ -26,31 +26,43 @@ class TypeConverter:
     """
     
     @staticmethod
-    def to_decimal(value: NumericType, 
+    def to_decimal(value: NumericType,
                    default: Optional[Decimal] = None,
                    precision: Optional[int] = None) -> Decimal:
         """
         Convert any numeric type to Decimal safely.
         
+        This method never raises exceptions - it always returns a valid Decimal.
+        Perfect for production trading systems where stability is critical.
+    
         Args:
             value: Value to convert (int, float, Decimal, or string)
             default: Default value if conversion fails (defaults to Decimal('0'))
             precision: Optional decimal places to round to
-            
+        
         Returns:
-            Decimal representation of the value
+            Decimal representation of the value (always valid, never None)
             
-        Raises:
-            ValueError: If value cannot be converted and no default provided
+        Examples:
+            >>> to_decimal(123.45)
+            Decimal('123.45')
+            >>> to_decimal("1,234.56")
+            Decimal('1234.56')
+            >>> to_decimal(None)
+            Decimal('0')
+            >>> to_decimal("invalid", default=Decimal('100'))
+            Decimal('100')
+            >>> to_decimal(123.456789, precision=2)
+            Decimal('123.46')
         """
         if default is None:
             default = Decimal('0')
-            
+        
         try:
             # Handle None
             if value is None:
                 return default
-                
+            
             # Already a Decimal
             if isinstance(value, Decimal):
                 result = value
@@ -68,22 +80,20 @@ class TypeConverter:
                 # Try to convert unknown types
                 try:
                     result = Decimal(str(value))
-                except:
+                except Exception:
                     logger.warning(f"Cannot convert {type(value)} to Decimal, using default")
                     return default
-                    
+            
             # Apply precision if specified
             if precision is not None:
                 quantize_str = '0.' + '0' * precision
                 result = result.quantize(Decimal(quantize_str))
-                
-            return result
             
+            return result
+        
         except (InvalidOperation, ValueError, TypeError) as e:
             logger.error(f"Error converting {value} to Decimal: {e}")
-            if default is not None:
-                return default
-            raise ValueError(f"Cannot convert {value} to Decimal: {e}")
+            return default
     
     @staticmethod
     def to_float(value: NumericType, 
@@ -100,7 +110,7 @@ class TypeConverter:
         """
         if default is None:
             default = 0.0
-            
+        
         try:
             if value is None:
                 return default
@@ -137,7 +147,7 @@ class TypeConverter:
         if precision is not None:
             quantize_str = '0.' + '0' * precision
             result = result.quantize(Decimal(quantize_str))
-            
+        
         return result
     
     @staticmethod
@@ -159,20 +169,20 @@ class TypeConverter:
         """
         if default is None:
             default = Decimal('0')
-            
+        
         decimal_num = TypeConverter.to_decimal(numerator)
         decimal_den = TypeConverter.to_decimal(denominator)
         
         if decimal_den == 0:
             logger.warning("Division by zero attempted, returning default")
             return default
-            
+        
         result = decimal_num / decimal_den
         
         if precision is not None:
             quantize_str = '0.' + '0' * precision
             result = result.quantize(Decimal(quantize_str))
-            
+        
         return result
     
     @staticmethod
@@ -228,7 +238,7 @@ class MarketDataNormalizer:
                 value = getattr(context, field)
                 if value is not None and not isinstance(value, Decimal):
                     setattr(context, field, TypeConverter.to_decimal(value))
-                    
+        
         return context
     
     @staticmethod
@@ -253,7 +263,7 @@ class MarketDataNormalizer:
                 value = getattr(decision, field)
                 if value is not None and not isinstance(value, Decimal):
                     setattr(decision, field, TypeConverter.to_decimal(value))
-                    
+        
         return decision
 
 

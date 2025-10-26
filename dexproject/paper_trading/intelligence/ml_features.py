@@ -8,9 +8,7 @@ File: dexproject/paper_trading/intelligence/ml_features.py
 """
 
 import logging
-from decimal import Decimal
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+from typing import Dict, Any, List
 
 # Django imports
 from django.utils import timezone
@@ -261,7 +259,7 @@ class MLFeatureCollector:
         try:
             if self.intel_level != 10:
                 self.logger.warning(
-                    f"[ML COLLECTOR] Training data only available at Level 10"
+                    "[ML COLLECTOR] Training data only available at Level 10"
                 )
                 return None
             
