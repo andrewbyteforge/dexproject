@@ -138,6 +138,50 @@ DECISION_TYPES = [
 ]
 
 # =============================================================================
+# TOKEN ADDRESSES BY CHAIN
+# =============================================================================
+
+# Base Mainnet (8453)
+BASE_MAINNET_TOKENS = {
+    'WETH': '0x4200000000000000000000000000000000000006',
+    'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+    'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+}
+
+# Base Sepolia (84532) - Testnet
+BASE_SEPOLIA_TOKENS = {
+    'WETH': '0x4200000000000000000000000000000000000006',
+    'USDC': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+}
+
+# Ethereum Mainnet (1)
+ETHEREUM_MAINNET_TOKENS = {
+    'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    'WBTC': '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+}
+
+# Ethereum Sepolia (11155111) - Testnet
+ETHEREUM_SEPOLIA_TOKENS = {
+    'WETH': '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
+    'USDC': '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+    'DAI': '0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6',
+    'LINK': '0x779877A7B0D9E8603169DdbD7836e478b4624789',
+}
+
+# Master mapping: chain_id -> token addresses
+TOKEN_ADDRESSES_BY_CHAIN = {
+    8453: BASE_MAINNET_TOKENS,       # Base Mainnet
+    84532: BASE_SEPOLIA_TOKENS,      # Base Sepolia (testnet)
+    1: ETHEREUM_MAINNET_TOKENS,      # Ethereum Mainnet
+    11155111: ETHEREUM_SEPOLIA_TOKENS,  # Ethereum Sepolia (testnet)
+}
+
+# =============================================================================
 # FIELD LENGTHS AND CONSTRAINTS
 # =============================================================================
 
@@ -213,6 +257,30 @@ def get_redis_key(key_type: str, identifier: str = None) -> str:
         return f"{base_key}:{identifier}"
     
     return base_key
+
+def get_token_address(token_symbol: str, chain_id: int) -> Optional[str]:
+    """
+    Get token contract address for a specific symbol on a specific chain.
+    
+    This is the centralized location for all token addresses across chains.
+    Use this instead of hardcoding addresses in individual files.
+    
+    Args:
+        token_symbol: Token symbol (e.g., 'WETH', 'USDC', 'DAI')
+        chain_id: Blockchain network ID (e.g., 8453 for Base Mainnet)
+    
+    Returns:
+        Token contract address or None if not found
+        
+    Example:
+        >>> get_token_address('USDC', 8453)
+        '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+        
+        >>> get_token_address('WETH', 84532)
+        '0x4200000000000000000000000000000000000006'
+    """
+    chain_tokens = TOKEN_ADDRESSES_BY_CHAIN.get(chain_id, {})
+    return chain_tokens.get(token_symbol.upper())
 
 def validate_ethereum_address(address: str) -> bool:
     """

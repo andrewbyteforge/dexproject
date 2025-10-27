@@ -38,7 +38,7 @@ from paper_trading.intelligence.base import TradingDecision
 
 # Import WebSocket service
 from paper_trading.services.websocket_service import websocket_service
-
+from shared.constants import get_token_address
 # Import Transaction Manager (optional)
 try:
     from trading.services.transaction_manager import (
@@ -566,35 +566,38 @@ class TradeExecutor:
                 return None
 
             # Token addresses mapping
-            token_address_map = {
-                'WETH': '0x4200000000000000000000000000000000000006',  # Base WETH
-                'USDC': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',  # Base Sepolia USDC
-                'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',   # Base Sepolia DAI
-                'WBTC': '0x0000000000000000000000000000000000000000',
-                'UNI': '0x0000000000000000000000000000000000000001',
-                'AAVE': '0x0000000000000000000000000000000000000002',
-                'LINK': '0x0000000000000000000000000000000000000003',
-                'MATIC': '0x0000000000000000000000000000000000000004',
-                'ARB': '0x0000000000000000000000000000000000000005'
-            }
-
-            # For BUY: USDC -> Token, For SELL: Token -> USDC
+            # Get token addresses from centralized constants (shared/constants.py)
+            # This ensures we use the correct addresses for the current chain_id
             if trade_type == 'buy':
+                # BUY: USDC -> Token
                 token_in_symbol = 'USDC'
-                token_in_address = token_address_map['USDC']
+                token_in_address = get_token_address('USDC', self.chain_id)
                 token_out_symbol = token_symbol
-                token_out_address = token_address_map.get(
-                    token_symbol,
-                    decision.token_address
-                )
-            else:  # sell
+                token_out_address = get_token_address(token_symbol, self.chain_id)
+                
+                # Fallback: Use decision.token_address or zero address if not found
+                if not token_in_address:
+                    token_in_address = '0x0000000000000000000000000000000000000000'
+                    logger.warning(f"[TRADE] No USDC address found for chain {self.chain_id}, using zero address")
+                
+                if not token_out_address:
+                    token_out_address = decision.token_address if decision.token_address else '0x0000000000000000000000000000000000000000'
+                    logger.warning(f"[TRADE] No address found for {token_symbol} on chain {self.chain_id}, using fallback")
+            else:
+                # SELL: Token -> USDC
                 token_in_symbol = token_symbol
-                token_in_address = token_address_map.get(
-                    token_symbol,
-                    decision.token_address
-                )
+                token_in_address = get_token_address(token_symbol, self.chain_id)
                 token_out_symbol = 'USDC'
-                token_out_address = token_address_map['USDC']
+                token_out_address = get_token_address('USDC', self.chain_id)
+                
+                # Fallback: Use decision.token_address or zero address if not found
+                if not token_in_address:
+                    token_in_address = decision.token_address if decision.token_address else '0x0000000000000000000000000000000000000000'
+                    logger.warning(f"[TRADE] No address found for {token_symbol} on chain {self.chain_id}, using fallback")
+                
+                if not token_out_address:
+                    token_out_address = '0x0000000000000000000000000000000000000000'
+                    logger.warning(f"[TRADE] No USDC address found for chain {self.chain_id}, using zero address")
 
             # Calculate amounts
             amount_in_usd = decision.position_size_usd

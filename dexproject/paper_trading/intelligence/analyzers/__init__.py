@@ -13,6 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from abc import ABC, abstractmethod
+from typing import Dict, Any, List, Optional, Union, cast
 
 # Import defaults for data quality requirements
 from paper_trading.defaults import IntelligenceDefaults
@@ -910,44 +911,64 @@ class RealVolatilityAnalyzer(BaseAnalyzer):
 
     def _calculate_historical_volatility(
         self,
-        price_history: List[Dict[str, Any]]
+        price_history: Union[List[Decimal], List[Dict[str, Any]]]
     ) -> Decimal:
         """
         Calculate historical volatility from price data.
-
+        
+        Handles two formats:
+        - List of Decimal prices directly
+        - List of dicts with 'price' key
+        
         Args:
-            price_history: List of historical price points
-
+            price_history: Either list of Decimal prices or list of dicts with 'price' key
+            
         Returns:
-            Volatility as percentage
+            Volatility as percentage (annualized)
         """
-        if len(price_history) < 2:
+        if not price_history or len(price_history) < 2:
             return Decimal('0')  # Return 0 if insufficient data
-
-        # Extract prices
-        prices = [Decimal(str(point['price'])) for point in price_history]
-
-        # Calculate returns
-        returns = []
+        
+        # Extract prices - ensure we always get List[Decimal]
+        prices: List[Decimal] = []
+        
+        if isinstance(price_history[0], dict):
+            # Extract from dict format - cast to tell Pylance the type
+            dict_history = cast(List[Dict[str, Any]], price_history)
+            prices = [Decimal(str(point['price'])) for point in dict_history]
+        elif isinstance(price_history[0], Decimal):
+            # Already Decimals - cast to tell Pylance the type
+            decimal_history = cast(List[Decimal], price_history)
+            prices = list(decimal_history)
+        else:
+            # Fallback: try to convert whatever format we have
+            prices = [Decimal(str(p)) for p in price_history]
+        
+        # Validate we have prices after extraction
+        if not prices or len(prices) < 2:
+            return Decimal('0')
+        
+        # Calculate returns (percentage changes)
+        returns: List[Decimal] = []
         for i in range(1, len(prices)):
-            if prices[i-1] > 0:
+            if prices[i-1] > Decimal('0'):
                 ret = (prices[i] - prices[i-1]) / prices[i-1]
                 returns.append(ret)
-
+        
         if not returns:
             return Decimal('0')
-
+        
         # Calculate standard deviation of returns
         mean_return = sum(returns) / Decimal(len(returns))
         variance = sum((r - mean_return) ** 2 for r in returns) / Decimal(len(returns))
-
+        
         # Use math.sqrt for proper Decimal type handling
         std_dev = Decimal(str(math.sqrt(float(variance))))
-
+        
         # Annualize (assuming hourly data, convert to annual)
         # sqrt(8760 hours per year) ≈ 93.6
         annual_volatility = std_dev * Decimal('93.6') * Decimal('100')
-
+        
         return annual_volatility
 
     def _determine_trend(

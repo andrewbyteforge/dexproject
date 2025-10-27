@@ -16,7 +16,7 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from django.utils import timezone
-
+from django.conf import settings
 from paper_trading.models import (
     PaperTradingAccount,
     PaperTradingSession,
@@ -238,7 +238,7 @@ class Command(BaseCommand):
                     account_name=account.name,
                     intel_level=options['intel'],
                     use_real_prices=True,
-                    chain_id=84532  # Base Sepolia
+                    chain_id=settings.PAPER_TRADING['DEFAULTS']['DEFAULT_CHAIN_ID']  # ← NEW
                 )
                 
                 # Set tick interval if overridden

@@ -184,7 +184,7 @@ PAPER_TRADING = {
         'PRICE_HISTORY_SIZE': get_env_int('PAPER_PRICE_HISTORY_SIZE', '100'),
 
         # Network defaults
-        'DEFAULT_CHAIN_ID': get_env_int('PAPER_CHAIN_ID', '84532'),  # Base Sepolia
+        'DEFAULT_CHAIN_ID': get_env_int('PAPER_CHAIN_ID', '8453'),  # Base mainnet
         'DEFAULT_GAS_PRICE_GWEI': get_env_decimal('PAPER_DEFAULT_GAS_GWEI', '0.1'),
         'DEFAULT_SLIPPAGE_PERCENT': get_env_decimal('PAPER_DEFAULT_SLIPPAGE', '0.5'),
         'MAX_SLIPPAGE_PERCENT': get_env_decimal('PAPER_MAX_SLIPPAGE', '5.0'),
@@ -572,9 +572,9 @@ else:
 # =============================================================================
 
 # Testnet Configuration
-TESTNET_MODE = get_env_bool('TESTNET_MODE', 'True')
-DEFAULT_CHAIN_ID = get_env_int('DEFAULT_CHAIN_ID', '84532')  # Base Sepolia
-TARGET_CHAINS = get_env_list('TARGET_CHAINS', '84532,11155111')
+TESTNET_MODE = get_env_bool('TESTNET_MODE', 'False')  # Default to mainnet
+DEFAULT_CHAIN_ID = get_env_int('DEFAULT_CHAIN_ID', '8453')  # Base mainnet
+TARGET_CHAINS = get_env_list('TARGET_CHAINS', '8453,1,42161')  # Base, Ethereum, Arbitrum mainnet
 SUPPORTED_CHAINS = [int(chain_id) for chain_id in TARGET_CHAINS if chain_id]
 
 # Engine Configuration
@@ -615,13 +615,54 @@ SEPOLIA_WS_URL = os.getenv(
     f'wss://eth-sepolia.g.alchemy.com/v2/{ALCHEMY_API_KEY}'
 )
 
+
+# =============================================================================
+# MAINNET RPC URLS
+# =============================================================================
+
+# Base Mainnet (Chain ID: 8453)
+BASE_MAINNET_RPC_URL = os.getenv(
+    'BASE_MAINNET_RPC_URL',
+    f'https://base-mainnet.g.alchemy.com/v2/{BASE_ALCHEMY_API_KEY}'
+)
+BASE_MAINNET_WS_URL = os.getenv(
+    'BASE_MAINNET_WS_URL',
+    f'wss://base-mainnet.g.alchemy.com/v2/{BASE_ALCHEMY_API_KEY}'
+)
+
+# Ethereum Mainnet (Chain ID: 1)
+ETH_MAINNET_RPC_URL = os.getenv(
+    'ETH_MAINNET_RPC_URL',
+    f'https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}'
+)
+ETH_MAINNET_WS_URL = os.getenv(
+    'ETH_MAINNET_WS_URL',
+    f'wss://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}'
+)
+
+# Arbitrum Mainnet (Chain ID: 42161)
+ARB_MAINNET_RPC_URL = os.getenv(
+    'ARB_MAINNET_RPC_URL',
+    f'https://arb-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}'
+)
+ARB_MAINNET_WS_URL = os.getenv(
+    'ARB_MAINNET_WS_URL',
+    f'wss://arb-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}'
+)
+
+# Keep testnet URLs below for backward compatibility (commented out)
+# =============================================================================
+# TESTNET RPC URLS (For reference only - use when TESTNET_MODE=True)
+# =============================================================================
+
+
 # =============================================================================
 # SIWE (SIGN-IN WITH ETHEREUM) CONFIGURATION
 # =============================================================================
 
 # SIWE Configuration
 SIWE_DOMAIN = os.getenv('SIWE_DOMAIN', 'localhost:8000')
-SIWE_ALLOWED_CHAIN_IDS = get_env_list('SIWE_ALLOWED_CHAIN_IDS', '1,11155111,84532,8453')
+SIWE_ALLOWED_CHAIN_IDS = get_env_list('SIWE_ALLOWED_CHAIN_IDS', '1,8453,42161')  # Mainnet chains only
 
 # Session timeout for SIWE authentication (hours)
 SIWE_SESSION_TIMEOUT_HOURS = get_env_int('SIWE_SESSION_TIMEOUT_HOURS', '24')

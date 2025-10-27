@@ -14,7 +14,7 @@ import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 from decimal import Decimal
 from datetime import timedelta
-
+from django.conf import settings  # Add at top
 from celery import shared_task
 from django.utils import timezone
 from django.core.cache import cache
@@ -119,11 +119,12 @@ def run_paper_trading_bot(
 
         try:
             # Initialize bot with account_name (required parameter)
+            
             bot = EnhancedPaperTradingBot(
                 account_name=session.account.name,
-                intel_level=5,  # Default intel level
+                intel_level=5,
                 use_real_prices=True,
-                chain_id=84532  # Base Sepolia
+                chain_id=settings.PAPER_TRADING['DEFAULTS']['DEFAULT_CHAIN_ID']  # ← NEW
             )
 
             # Initialize bot systems

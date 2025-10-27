@@ -428,7 +428,7 @@ class EngineConfig:
                         ),
                         RPCProvider(
                             name="base_fallback",
-                            url=self._get_rpc_url_from_settings('BASE_RPC_URL_FALLBACK', 'https://base.blockpi.network/v1/rpc/public'),
+                            url=self._get_rpc_url_from_settings('BASE_RPC_URL_FALLBACK', 'https://mainnet.base.org'),  # ✅ FIXED
                             priority=2,
                             is_paid=False,
                         ),

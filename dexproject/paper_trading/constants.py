@@ -14,6 +14,13 @@ Usage:
     
     # Use:
     decision = DecisionType.BUY  # ✅ Type-safe, autocomplete
+
+Phase 9 Updates (October 2025):
+    - Added EMERGENCY_EXIT and UNKNOWN to DecisionType
+    - Added TrendDirection class for market trend constants
+    - Added TradeType class (lowercase for DB compatibility)
+    - Added PaperTradeStatus class (lowercase for DB compatibility)
+    - Added new validation functions
 """
 
 from decimal import Decimal
@@ -29,6 +36,8 @@ class DecisionType:
     Trading decision types.
     
     These match the DecisionType.choices in PaperAIThoughtLog model.
+    
+    Phase 9 Update: Added EMERGENCY_EXIT and UNKNOWN
     """
     BUY: Final[str] = 'BUY'
     SELL: Final[str] = 'SELL'
@@ -36,15 +45,17 @@ class DecisionType:
     SKIP: Final[str] = 'SKIP'
     STOP_LOSS: Final[str] = 'STOP_LOSS'
     TAKE_PROFIT: Final[str] = 'TAKE_PROFIT'
+    EMERGENCY_EXIT: Final[str] = 'EMERGENCY_EXIT'  # NEW: Phase 9
+    UNKNOWN: Final[str] = 'UNKNOWN'  # NEW: Phase 9 - For error cases/fallbacks
     
     # All valid decision types
-    ALL: Final[tuple] = (BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT)
+    ALL: Final[tuple] = (BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT, EMERGENCY_EXIT, UNKNOWN)
     
     # Actionable decisions (require execution)
-    ACTIONABLE: Final[tuple] = (BUY, SELL, STOP_LOSS, TAKE_PROFIT)
+    ACTIONABLE: Final[tuple] = (BUY, SELL, STOP_LOSS, TAKE_PROFIT, EMERGENCY_EXIT)
     
     # Non-actionable decisions
-    NON_ACTIONABLE: Final[tuple] = (HOLD, SKIP)
+    NON_ACTIONABLE: Final[tuple] = (HOLD, SKIP, UNKNOWN)
 
 
 # =============================================================================
@@ -79,7 +90,7 @@ class ConfidenceLevel:
         Convert confidence percentage to level string.
         
         Args:
-            confidence_percent: Confidence as decimal (0-100)
+            confidence_percent: Confidence as percentage (0-100)
             
         Returns:
             Confidence level string (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW)
@@ -97,11 +108,86 @@ class ConfidenceLevel:
 
 
 # =============================================================================
-# TRADING MODES
+# TREND DIRECTION (NEW - Phase 9)
+# =============================================================================
+
+class TrendDirection:
+    """
+    Market trend direction constants.
+    
+    Used in intelligence/base.py MarketContext for trend analysis.
+    Replaces hardcoded "neutral", "bullish" strings throughout codebase.
+    
+    Added: Phase 9 (October 2025)
+    """
+    BULLISH: Final[str] = 'BULLISH'
+    BEARISH: Final[str] = 'BEARISH'
+    NEUTRAL: Final[str] = 'NEUTRAL'
+    SIDEWAYS: Final[str] = 'SIDEWAYS'
+    VOLATILE: Final[str] = 'VOLATILE'
+    
+    # All valid trend directions
+    ALL: Final[tuple] = (BULLISH, BEARISH, NEUTRAL, SIDEWAYS, VOLATILE)
+
+
+# =============================================================================
+# TRADE TYPE (NEW - Phase 9)
+# =============================================================================
+
+class TradeType:
+    """
+    Trade type constants (lowercase for database compatibility).
+    
+    Note: These use lowercase to match existing database migrations.
+    For decision logic, use DecisionType class instead.
+    
+    Database field: PaperTrade.trade_type
+    Migration: 0005_*.py
+    
+    Added: Phase 9 (October 2025)
+    """
+    BUY: Final[str] = 'buy'
+    SELL: Final[str] = 'sell'
+    SWAP: Final[str] = 'swap'
+    
+    ALL: Final[tuple] = (BUY, SELL, SWAP)
+
+
+# =============================================================================
+# PAPER TRADE STATUS (NEW - Phase 9)
+# =============================================================================
+
+class PaperTradeStatus:
+    """
+    Paper trade status constants (lowercase for database compatibility).
+    
+    These match the status field in PaperTrade migrations.
+    Note lowercase to match database schema.
+    
+    Database field: PaperTrade.status
+    Migration: 0005_*.py
+    
+    Added: Phase 9 (October 2025)
+    """
+    PENDING: Final[str] = 'pending'
+    EXECUTING: Final[str] = 'executing'
+    COMPLETED: Final[str] = 'completed'
+    FAILED: Final[str] = 'failed'
+    CANCELLED: Final[str] = 'cancelled'
+    
+    ALL: Final[tuple] = (PENDING, EXECUTING, COMPLETED, FAILED, CANCELLED)
+
+
+# =============================================================================
+# TRADING MODE
 # =============================================================================
 
 class TradingMode:
-    """Trading execution modes."""
+    """
+    Trading mode presets.
+    
+    These define different risk/reward profiles for trading strategies.
+    """
     BALANCED: Final[str] = 'BALANCED'
     AGGRESSIVE: Final[str] = 'AGGRESSIVE'
     CONSERVATIVE: Final[str] = 'CONSERVATIVE'
@@ -112,11 +198,16 @@ class TradingMode:
 
 
 # =============================================================================
-# LANE TYPES
+# LANE TYPE
 # =============================================================================
 
 class LaneType:
-    """Intelligence lane types."""
+    """
+    Intelligence lane types for analysis speed vs depth.
+    
+    FAST: Quick analysis with basic checks
+    SMART: Comprehensive analysis with full intelligence
+    """
     FAST: Final[str] = 'FAST'
     SMART: Final[str] = 'SMART'
     
@@ -124,11 +215,15 @@ class LaneType:
 
 
 # =============================================================================
-# TRADE STATUS
+# TRADE STATUS (Uppercase)
 # =============================================================================
 
 class TradeStatus:
-    """Paper trade execution status."""
+    """
+    Trade execution status (uppercase for internal logic).
+    
+    Note: For database storage, use PaperTradeStatus (lowercase).
+    """
     PENDING: Final[str] = 'PENDING'
     EXECUTED: Final[str] = 'EXECUTED'
     FAILED: Final[str] = 'FAILED'
@@ -142,7 +237,11 @@ class TradeStatus:
 # =============================================================================
 
 class SessionStatus:
-    """Paper trading session status."""
+    """
+    Trading session status.
+    
+    These track the lifecycle state of a paper trading session.
+    """
     RUNNING: Final[str] = 'RUNNING'
     PAUSED: Final[str] = 'PAUSED'
     STOPPED: Final[str] = 'STOPPED'
@@ -237,6 +336,8 @@ class TradeFields:
 
 class StrategyConfigFields:
     """Field names for PaperStrategyConfiguration model."""
+    CONFIG_ID: Final[str] = 'config_id'
+    ACCOUNT: Final[str] = 'account'
     NAME: Final[str] = 'name'
     TRADING_MODE: Final[str] = 'trading_mode'
     MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
@@ -299,6 +400,51 @@ def validate_lane_type(lane_type: str) -> bool:
         True if valid, False otherwise
     """
     return lane_type in LaneType.ALL
+
+
+def validate_trend_direction(trend_direction: str) -> bool:
+    """
+    Validate if trend direction is valid.
+    
+    Args:
+        trend_direction: Trend direction string
+        
+    Returns:
+        True if valid, False otherwise
+        
+    Added: Phase 9 (October 2025)
+    """
+    return trend_direction in TrendDirection.ALL
+
+
+def validate_trade_type(trade_type: str) -> bool:
+    """
+    Validate if trade type is valid.
+    
+    Args:
+        trade_type: Trade type string (lowercase)
+        
+    Returns:
+        True if valid, False otherwise
+        
+    Added: Phase 9 (October 2025)
+    """
+    return trade_type in TradeType.ALL
+
+
+def validate_paper_trade_status(status: str) -> bool:
+    """
+    Validate if paper trade status is valid.
+    
+    Args:
+        status: Trade status string (lowercase)
+        
+    Returns:
+        True if valid, False otherwise
+        
+    Added: Phase 9 (October 2025)
+    """
+    return status in PaperTradeStatus.ALL
 
 
 # =============================================================================

@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 import aiohttp
 from django.conf import settings
 from django.core.cache import cache
-
+from shared.constants import TOKEN_ADDRESSES_BY_CHAIN
 # Import your existing Web3 infrastructure
 from shared.web3_utils import (
     Web3,
@@ -189,65 +189,105 @@ class PriceFeedService:
 
     def _get_token_addresses(self) -> Dict[str, str]:
         """
-        Get token addresses for the current chain with checksum validation.
+        Get token addresses for the current chain from centralized constants.
+        
+        Fetches addresses from TOKEN_ADDRESSES_BY_CHAIN and validates them
+        with checksum conversion. Invalid addresses are skipped with a warning
+        rather than crashing the entire service.
         
         Returns:
-            Dictionary mapping token symbols to checksummed addresses
+            Dictionary mapping token symbols to checksummed addresses.
+            Empty dict if no addresses configured for this chain.
             
-        Raises:
-            ValueError: If an address fails checksum validation
+        Notes:
+            - Uses centralized TOKEN_ADDRESSES_BY_CHAIN constant
+            - Automatically checksums all addresses for Web3 compatibility
+            - Skips invalid addresses instead of raising exceptions
+            - Logs warnings for any validation failures
+        
+        Example:
+            >>> service = PriceFeedService(chain_id=84532)
+            >>> addresses = service._get_token_addresses()
+            >>> addresses['WETH']
+            '0x4200000000000000000000000000000000000006'
         """
         from shared.web3_utils import to_checksum_ethereum_address
         
         def _checksum_or_raise(address: str, symbol: str) -> str:
-            """Helper to checksum address or raise if invalid."""
+            """
+            Helper function to checksum an address or raise if invalid.
+            
+            Args:
+                address: The Ethereum address to checksum
+                symbol: The token symbol (for error messages)
+                
+            Returns:
+                Checksummed address string
+                
+            Raises:
+                ValueError: If address is invalid and cannot be checksummed
+            """
             checksummed = to_checksum_ethereum_address(address)
             if checksummed is None:
                 raise ValueError(f"Invalid address for {symbol}: {address}")
             return checksummed
         
-        # BASE SEPOLIA (TESTNET) - Chain ID: 84532
-        if self.chain_id == 84532:
-            return {
-                'WETH': _checksum_or_raise('0x4200000000000000000000000000000000000006', 'WETH'),
-                'USDC': _checksum_or_raise('0x036CbD53842c5426634e7929541eC2318f3dCF7e', 'USDC'),
-                'DAI': _checksum_or_raise('0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', 'DAI'),
-            }
+        # Get addresses from centralized constants for this chain
+        chain_tokens = TOKEN_ADDRESSES_BY_CHAIN.get(self.chain_id, {})
         
-        # ETHEREUM SEPOLIA (TESTNET) - Chain ID: 11155111
-        elif self.chain_id == 11155111:
-            return {
-                'WETH': _checksum_or_raise('0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14', 'WETH'),
-                'USDC': _checksum_or_raise('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', 'USDC'),
-                'DAI': _checksum_or_raise('0x3e622317f8C93f7328350cF0B56d9eD4C620C5d6', 'DAI'),
-                'LINK': _checksum_or_raise('0x779877A7B0D9E8603169DdbD7836e478b4624789', 'LINK'),
-            }
+        # Log if no addresses found for this chain
+        if not chain_tokens:
+            logger.warning(
+                f"[PRICE FEED] No token addresses configured for chain {self.chain_id} "
+                f"in TOKEN_ADDRESSES_BY_CHAIN constant"
+            )
+            return {}
         
-        # ETHEREUM MAINNET - Chain ID: 1
-        elif self.chain_id == 1:
-            return {
-                'WETH': _checksum_or_raise('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'WETH'),
-                'USDC': _checksum_or_raise('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 'USDC'),
-                'USDT': _checksum_or_raise('0xdAC17F958D2ee523a2206206994597C13D831ec7', 'USDT'),
-                'DAI': _checksum_or_raise('0x6B175474E89094C44Da98b954EedeAC495271d0F', 'DAI'),
-                'WBTC': _checksum_or_raise('0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', 'WBTC'),
-                'LINK': _checksum_or_raise('0x514910771AF9Ca656af840dff83E8264EcF986CA', 'LINK'),
-                'UNI': _checksum_or_raise('0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', 'UNI'),
-                'AAVE': _checksum_or_raise('0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', 'AAVE'),
-                'SNX': _checksum_or_raise('0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F', 'SNX'),
-            }
+        # Checksum all addresses for Web3 compatibility
+        checksummed_tokens: Dict[str, str] = {}
+        for symbol, address in chain_tokens.items():
+            try:
+                checksummed_tokens[symbol] = _checksum_or_raise(address, symbol)
+            except ValueError as e:
+                # Skip invalid addresses with warning instead of crashing
+                logger.warning(
+                    f"[PRICE FEED] Skipping invalid address for {symbol} "
+                    f"on chain {self.chain_id}: {e}"
+                )
+                continue
         
-        # BASE MAINNET - Chain ID: 8453
-        elif self.chain_id == 8453:
-            return {
-                'WETH': _checksum_or_raise('0x4200000000000000000000000000000000000006', 'WETH'),
-                'USDC': _checksum_or_raise('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'USDC'),
-                'DAI': _checksum_or_raise('0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', 'DAI'),
-            }
+        # Log success
+        logger.info(
+            f"[PRICE FEED] Loaded {len(checksummed_tokens)} token addresses "
+            f"for chain {self.chain_id}: {', '.join(checksummed_tokens.keys())}"
+        )
         
-        # Default: Empty dictionary for unsupported chains
-        logger.warning(f"No token addresses configured for chain {self.chain_id}")
-        return {}
+        return checksummed_tokens
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     def _get_coingecko_id(self, token_symbol: str) -> Optional[str]:
         """Map token symbol to CoinGecko API ID."""

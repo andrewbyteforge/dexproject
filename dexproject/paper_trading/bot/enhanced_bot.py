@@ -713,11 +713,37 @@ class EnhancedPaperTradingBot:
             return
 
         try:
-            self.circuit_breaker_manager = CircuitBreakerManager()
-            logger.info("[BREAKER] Circuit breaker manager initialized")
+            # ✅ NEW: Create config object from Django settings
+            from django.conf import settings
+            
+            # Simple config object with required attributes
+            class PortfolioConfig:
+                """Minimal config for circuit breaker."""
+                def __init__(self):
+                    self.max_portfolio_size_usd = settings.MAX_PORTFOLIO_SIZE_USD
+                    self.daily_loss_limit_percent = settings.DAILY_LOSS_LIMIT_PERCENT
+                    self.circuit_breaker_loss_percent = settings.CIRCUIT_BREAKER_LOSS_PERCENT
+            
+            # Create config and pass to circuit breaker
+            portfolio_config = PortfolioConfig()
+            self.circuit_breaker_manager = CircuitBreakerManager(portfolio_config=portfolio_config)  # ✅ WITH CONFIG
+            
+            logger.info(
+                f"[BREAKER] Circuit breaker manager initialized with config "
+                f"(Daily limit: {settings.DAILY_LOSS_LIMIT_PERCENT}%, "
+                f"Circuit breaker: {settings.CIRCUIT_BREAKER_LOSS_PERCENT}%)"
+            )
         except Exception as e:
             logger.warning(f"[BREAKER] Could not initialize circuit breaker: {e}")
             self.circuit_breaker_enabled = False
+
+
+
+
+
+
+
+
 
     def _initialize_price_manager(self) -> None:
         """
