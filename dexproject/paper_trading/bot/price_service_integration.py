@@ -282,6 +282,58 @@ class RealPriceManager:
             self.failed_updates += 1
             return results
     
+    def update_prices(self) -> Dict[str, bool]:
+        """
+        Synchronous wrapper for update_all_prices().
+        
+        This method provides a synchronous interface for updating all token prices,
+        making it compatible with synchronous code that cannot use async/await.
+        
+        This is called by market_analyzer during each tick to refresh prices.
+        
+        Returns:
+            Dictionary mapping token symbols to update success status
+            
+        Example:
+            >>> manager = RealPriceManager(use_real_prices=True)
+            >>> results = manager.update_prices()  # Sync call
+            >>> print(f"Updated {sum(results.values())} tokens successfully")
+            Updated 9 tokens successfully
+            
+        Note:
+            Internally calls the async update_all_prices() method using
+            async_to_sync wrapper for compatibility with synchronous code.
+            
+        Raises:
+            No exceptions raised - errors are logged and return False for
+            failed tokens in the results dictionary.
+        """
+        try:
+            logger.debug("[PRICE MANAGER] Synchronous update_prices() called")
+            
+            # Use async_to_sync to call the async method synchronously
+            results = async_to_sync(self.update_all_prices)()
+            
+            logger.debug(
+                f"[PRICE MANAGER] Sync update completed: "
+                f"{sum(results.values())}/{len(results)} successful"
+            )
+            
+            return results
+            
+        except Exception as e:
+            logger.error(
+                f"[PRICE MANAGER] Error in update_prices wrapper: {e}",
+                exc_info=True
+            )
+            # Return failure for all tokens on error
+            return {token['symbol']: False for token in self.token_list}
+
+
+
+
+
+
     async def _update_all_prices_bulk(self) -> Dict[str, bool]:
         """
         Update all token prices using a SINGLE bulk API call.

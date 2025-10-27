@@ -8,8 +8,7 @@ File: dexproject/paper_trading/signals.py
 """
 import sys
 import logging
-from typing import Any, Optional
-from decimal import Decimal
+from typing import Any
 from django.db.models.signals import post_save, pre_save, post_delete
 from django.dispatch import receiver
 from django.db import transaction
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Check if we're running a migration-related command
 # This prevents signals from executing during makemigrations/migrate
 RUNNING_MIGRATION = any(
-    cmd in sys.argv 
+    cmd in sys.argv
     for cmd in ['makemigrations', 'migrate', 'showmigrations', 'sqlmigrate']
 )
 
@@ -391,14 +390,24 @@ def paper_ai_thought_created(
             'decision_type': instance.decision_type,
             'token_symbol': instance.token_symbol,
             'token_address': instance.token_address,
-            'confidence_level': float(instance.confidence_level) if instance.confidence_level else None,
-            'reasoning': instance.reasoning,
-            'risk_assessment': instance.risk_assessment,
+            # Confidence fields (fixed: use confidence_percent for float, confidence_level for string)
+            'confidence_percent': float(instance.confidence_percent) if instance.confidence_percent else None,
+            'confidence_level': instance.confidence_level,  # String: 'VERY_HIGH', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'
+            # Risk and opportunity scores
+            'risk_score': float(instance.risk_score) if instance.risk_score else None,
+            'opportunity_score': float(instance.opportunity_score) if instance.opportunity_score else None,
+            # Reasoning field (fixed: use primary_reasoning not reasoning)
+            'primary_reasoning': instance.primary_reasoning,
+            # Strategy and context
             'strategy_name': instance.strategy_name,
             'lane_used': instance.lane_used,
+            # Signal lists
             'key_factors': instance.key_factors,
             'positive_signals': instance.positive_signals,
             'negative_signals': instance.negative_signals,
+            # Market data (includes additional context)
+            'market_data': instance.market_data,
+            # Timestamp
             'created_at': instance.created_at.isoformat() if instance.created_at else None,
         }
         
@@ -413,7 +422,8 @@ def paper_ai_thought_created(
                     
                 logger.debug(
                     f"AI thought logged: decision={instance.decision_type}, "
-                    f"token={instance.token_symbol}, confidence={instance.confidence_level}"
+                    f"token={instance.token_symbol}, "
+                    f"confidence={instance.confidence_percent}% ({instance.confidence_level})"
                 )
                 
             except Exception as e:

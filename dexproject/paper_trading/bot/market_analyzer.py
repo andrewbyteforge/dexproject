@@ -326,12 +326,18 @@ class MarketAnalyzer:
                 # mev_analysis = real_analysis.get('mev_analysis', {})  # Available if needed
 
                 # Extract real values
-                liquidity_usd = Decimal(str(
-                    liquidity_analysis.get('pool_liquidity_usd', 5000000)
-                ))
-                volatility = Decimal(str(
-                    volatility_analysis.get('volatility_24h_percent', 15.0)
-                )) / Decimal('100')  # Convert to decimal (15% -> 0.15)
+                # Extract real values - handle None properly
+                liquidity_value = liquidity_analysis.get('pool_liquidity_usd')
+                if liquidity_value is None or (isinstance(liquidity_value, float) and (liquidity_value != liquidity_value)):  # Check for None or NaN
+                    liquidity_usd = Decimal('5000000')  # Default fallback
+                else:
+                    liquidity_usd = Decimal(str(liquidity_value))
+
+                volatility_value = volatility_analysis.get('volatility_24h_percent', 15.0)
+                if volatility_value is None or (isinstance(volatility_value, float) and (volatility_value != volatility_value)):  # Check for None or NaN
+                    volatility = Decimal('0.15')  # 15% default
+                else:
+                    volatility = Decimal(str(volatility_value)) / Decimal('100')  # Convert to decimal (15% -> 0.15) # Convert to decimal (15% -> 0.15)
                 trend_direction = volatility_analysis.get('trend_direction', 'neutral')
 
                 # Calculate volume estimate from liquidity and volatility

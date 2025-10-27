@@ -90,10 +90,11 @@ from paper_trading.intelligence.intel_slider import IntelSliderEngine  # noqa: E
 # ENGINE CONFIG IMPORTS (✅ ADDED FOR FIX)
 # ============================================================================
 try:
-    from engine.config import config as engine_config, get_config  # noqa: E402
+    import engine.config as engine_config_module  # noqa: E402
+    from engine.config import get_config  # noqa: E402
     ENGINE_CONFIG_AVAILABLE = True
 except ImportError:
-    engine_config = None  # type: ignore
+    engine_config_module = None  # type: ignore
     get_config = None  # type: ignore
     ENGINE_CONFIG_AVAILABLE = False
     logging.warning("Engine config module not available - real blockchain data will be limited")
@@ -266,27 +267,40 @@ class EnhancedPaperTradingBot:
             return
 
         try:
-            # Check if config is already initialized
-            if engine_config is not None:
+            # ✅ FIX: Access the module's config attribute, not the imported reference
+            if engine_config_module is None:
+                logger.error("[ENGINE_CONFIG] Engine config module is not available")
+                return
+
+            # Check if config is already initialized by accessing module attribute
+            if hasattr(engine_config_module, 'config') and engine_config_module.config is not None:
                 logger.info("[ENGINE_CONFIG] ✅ Engine config already initialized")
                 return
 
             logger.info("[ENGINE_CONFIG] Initializing engine configuration for Web3 connectivity...")
 
-            # ✅ FIX: Check that get_config is not None before calling
+            # Check that get_config is not None before calling
             if get_config is None:
                 logger.error("[ENGINE_CONFIG] get_config function is not available")
                 return
 
             # Initialize the config asynchronously using async_to_sync
-            # This will populate the global engine_config variable
+            # This will populate the global config variable in engine.config module
             async_to_sync(get_config)()
 
-            logger.info("[ENGINE_CONFIG] ✅ Engine config initialized successfully!")
-            logger.info(
-                "[ENGINE_CONFIG] Analyzers can now access real blockchain data "
-                "(gas prices, liquidity, volatility)"
-            )
+            # ✅ VERIFY: Check that config was actually set
+            if hasattr(engine_config_module, 'config') and engine_config_module.config is not None:
+                logger.info("[ENGINE_CONFIG] ✅ Engine config initialized successfully!")
+                logger.info(
+                    f"[ENGINE_CONFIG] Loaded {len(engine_config_module.config.chains)} chain configurations"
+                )
+                logger.info(
+                    "[ENGINE_CONFIG] Analyzers can now access real blockchain data "
+                    "(gas prices, liquidity, volatility)"
+                )
+            else:
+                logger.error("[ENGINE_CONFIG] ❌ Config initialization failed - config is still None")
+                logger.warning("[ENGINE_CONFIG] Bot will continue but analyzers will use fallback data")
 
         except Exception as e:
             logger.error(
@@ -506,7 +520,7 @@ class EnhancedPaperTradingBot:
                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
                 "use_real_prices": self.use_real_prices,
                 "chain_id": self.chain_id,
-                "engine_config_initialized": ENGINE_CONFIG_AVAILABLE and engine_config is not None
+                "engine_config_initialized": ENGINE_CONFIG_AVAILABLE and engine_config_module is not None and hasattr(engine_config_module, 'config') and engine_config_module.config is not None
             }
 
             def json_safe(obj: Any) -> Any:
@@ -621,7 +635,7 @@ class EnhancedPaperTradingBot:
                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
                 "use_real_prices": self.use_real_prices,
                 "chain_id": self.chain_id,
-                "engine_config_status": "initialized" if (ENGINE_CONFIG_AVAILABLE and engine_config is not None) else "unavailable",
+                "engine_config_status": "initialized" if (ENGINE_CONFIG_AVAILABLE and engine_config_module is not None and hasattr(engine_config_module, 'config') and engine_config_module.config is not None) else "unavailable",
                 "intel_config_summary": {
                     "risk_tolerance": risk_tolerance,
                     "trade_frequency": trade_freq,
@@ -652,7 +666,7 @@ class EnhancedPaperTradingBot:
                     "take_profit_percent": Decimal("10.0"),
                     "max_daily_trades": 50,
                     "confidence_threshold": Decimal(str(confidence_threshold)),
-                    "token_addresses": token_addresses,
+                    "allowed_tokens": token_addresses,
                     "custom_parameters": custom_parameters,
                     "is_active": True
                 }
@@ -820,7 +834,12 @@ class EnhancedPaperTradingBot:
             from paper_trading.models import PaperAIThoughtLog  # noqa: E402
 
             # Build reasoning text
-            engine_config_status = "INITIALIZED" if (ENGINE_CONFIG_AVAILABLE and engine_config is not None) else "UNAVAILABLE"
+            engine_config_status = "INITIALIZED" if (
+                ENGINE_CONFIG_AVAILABLE and
+                engine_config_module is not None and
+                hasattr(engine_config_module, 'config') and
+                engine_config_module.config is not None
+            ) else "UNAVAILABLE"
 
             reasoning = (
                 f"Bot initialized with Intel Level {self.intel_level}. "

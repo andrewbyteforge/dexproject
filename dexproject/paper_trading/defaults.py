@@ -8,7 +8,7 @@ Location: paper_trading/defaults.py
 
 Usage:
     from paper_trading.defaults import TradingDefaults, IntelligenceDefaults
-    
+
     initial_balance = TradingDefaults.INITIAL_BALANCE_USD
 """
 
@@ -23,26 +23,26 @@ from typing import Final
 class TradingDefaults:
     """
     Default values for trading parameters.
-    
+
     These are sensible defaults for paper trading that can be overridden
     via environment variables or database configuration.
     """
     # Account settings
     INITIAL_BALANCE_USD: Final[Decimal] = Decimal('10000.00')
-    
+
     # Position sizing
     MAX_POSITION_SIZE_PERCENT: Final[Decimal] = Decimal('10.0')
     MIN_POSITION_SIZE_USD: Final[Decimal] = Decimal('10.00')
-    
+
     # Risk management
     DEFAULT_STOP_LOSS_PERCENT: Final[Decimal] = Decimal('2.0')
     DEFAULT_TAKE_PROFIT_PERCENT: Final[Decimal] = Decimal('5.0')
     MAX_DAILY_LOSS_PERCENT: Final[Decimal] = Decimal('5.0')
-    
+
     # Trade limits
     MAX_DAILY_TRADES: Final[int] = 50
     MIN_TRADE_INTERVAL_MINUTES: Final[int] = 5
-    
+
     # Execution parameters
     DEFAULT_TICK_INTERVAL_SECONDS: Final[int] = 60
     MAX_TOKENS_PER_TICK: Final[int] = 5
@@ -51,7 +51,6 @@ class TradingDefaults:
 # =============================================================================
 # INTELLIGENCE DEFAULTS
 # =============================================================================
-
 class IntelligenceDefaults:
     """
     Default values for intelligence and analysis parameters.
@@ -60,21 +59,50 @@ class IntelligenceDefaults:
     DEFAULT_INTEL_LEVEL: Final[int] = 3
     MIN_INTEL_LEVEL: Final[int] = 1
     MAX_INTEL_LEVEL: Final[int] = 5
-    
+
     # Analysis thresholds
     MIN_CONFIDENCE_TO_TRADE: Final[Decimal] = Decimal('70.0')
     MIN_OPPORTUNITY_SCORE: Final[Decimal] = Decimal('50.0')
     MAX_RISK_SCORE: Final[Decimal] = Decimal('70.0')
-    
+
     # Market data
     PRICE_HISTORY_SIZE: Final[int] = 100
     LIQUIDITY_CHECK_DEPTH: Final[int] = 5
-    
+
     # Chain configuration
     DEFAULT_CHAIN_ID: Final[int] = 84532  # Base Sepolia
-    
+
     # Lane configuration
     DEFAULT_LANE: Final[str] = 'FAST'
+
+    # =========================================================================
+    # DATA QUALITY REQUIREMENTS
+    # =========================================================================
+
+    # Minimum data quality to execute trades
+    MIN_DATA_QUALITY_TO_TRADE: Final[str] = 'GOOD'
+    """Only trade when data quality is GOOD or better (EXCELLENT, GOOD, FAIR, POOR)"""
+
+    # Required data sources (fail if unavailable)
+    REQUIRE_REAL_LIQUIDITY_DATA: Final[bool] = True
+    """Require real liquidity data from DEX pools to trade"""
+
+    REQUIRE_REAL_VOLATILITY_DATA: Final[bool] = True
+    """Require real price history for volatility calculations"""
+
+    REQUIRE_REAL_GAS_DATA: Final[bool] = True
+    """Require real blockchain gas price data"""
+
+    # Fail-safe behavior
+    SKIP_TRADE_ON_MISSING_DATA: Final[bool] = True
+    """Skip trades when required data is unavailable (recommended: True)"""
+
+    # Data quality thresholds
+    DATA_QUALITY_GOOD_MIN_SAMPLES: Final[int] = 10
+    """Minimum price samples needed for 'GOOD' data quality rating"""
+
+    DATA_QUALITY_FAIR_MIN_SAMPLES: Final[int] = 2
+    """Minimum price samples needed for 'FAIR' data quality rating"""
 
 
 # =============================================================================
@@ -89,15 +117,15 @@ class NetworkDefaults:
     DEFAULT_GAS_PRICE_GWEI: Final[Decimal] = Decimal('0.1')
     MAX_GAS_PRICE_GWEI: Final[Decimal] = Decimal('10.0')
     GAS_PRICE_PERCENTILE: Final[int] = 50  # Use median gas price
-    
+
     # Slippage
     DEFAULT_SLIPPAGE_PERCENT: Final[Decimal] = Decimal('0.5')
     MAX_SLIPPAGE_PERCENT: Final[Decimal] = Decimal('5.0')
-    
+
     # Timeouts
     WEB3_CONNECTION_TIMEOUT_SECONDS: Final[int] = 30
     TRANSACTION_CONFIRMATION_TIMEOUT_SECONDS: Final[int] = 300
-    
+
     # RPC configuration
     MAX_RPC_RETRIES: Final[int] = 3
     RPC_RETRY_DELAY_SECONDS: Final[int] = 2
@@ -115,15 +143,15 @@ class PerformanceDefaults:
     PRICE_CACHE_TTL_SECONDS: Final[int] = 300  # 5 minutes
     RISK_CACHE_TTL_SECONDS: Final[int] = 3600  # 1 hour
     MARKET_DATA_CACHE_TTL_SECONDS: Final[int] = 60  # 1 minute
-    
+
     # Fast Lane targets
     FAST_LANE_TARGET_MS: Final[int] = 500
     FAST_LANE_SLA_MS: Final[int] = 300
-    
+
     # Smart Lane targets
     SMART_LANE_TARGET_MS: Final[int] = 5000
     SMART_LANE_SLA_MS: Final[int] = 3000
-    
+
     # Circuit breaker settings
     CIRCUIT_BREAKER_THRESHOLD: Final[int] = 5
     CIRCUIT_BREAKER_RECOVERY_TIME_SECONDS: Final[int] = 60
@@ -140,11 +168,11 @@ class SessionDefaults:
     # Session duration
     DEFAULT_SESSION_DURATION_HOURS: Final[int] = 24
     MAX_SESSION_DURATION_HOURS: Final[int] = 168  # 1 week
-    
+
     # Monitoring
     HEALTH_CHECK_INTERVAL_SECONDS: Final[int] = 30
     METRICS_UPDATE_INTERVAL_SECONDS: Final[int] = 60
-    
+
     # Dashboard updates
     DASHBOARD_UPDATE_INTERVAL_SECONDS: Final[int] = 2
 
@@ -156,10 +184,10 @@ class SessionDefaults:
 def get_default_config() -> dict:
     """
     Get complete default configuration as dictionary.
-    
+
     This can be used to initialize configuration objects or as a reference
     for what values are available.
-    
+
     Returns:
         Dictionary of default configuration values organized by category
     """
@@ -187,6 +215,11 @@ def get_default_config() -> dict:
             'liquidity_check_depth': IntelligenceDefaults.LIQUIDITY_CHECK_DEPTH,
             'default_chain_id': IntelligenceDefaults.DEFAULT_CHAIN_ID,
             'default_lane': IntelligenceDefaults.DEFAULT_LANE,
+            'min_data_quality_to_trade': IntelligenceDefaults.MIN_DATA_QUALITY_TO_TRADE,
+            'require_real_liquidity_data': IntelligenceDefaults.REQUIRE_REAL_LIQUIDITY_DATA,
+            'require_real_volatility_data': IntelligenceDefaults.REQUIRE_REAL_VOLATILITY_DATA,
+            'require_real_gas_data': IntelligenceDefaults.REQUIRE_REAL_GAS_DATA,
+            'skip_trade_on_missing_data': IntelligenceDefaults.SKIP_TRADE_ON_MISSING_DATA,
         },
         'network': {
             'default_gas_price_gwei': float(NetworkDefaults.DEFAULT_GAS_PRICE_GWEI),

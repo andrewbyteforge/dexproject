@@ -29,20 +29,25 @@ class PaperAIThoughtLog(models.Model):
     """
     Records the AI's reasoning process for each paper trading decision.
     
-    Provides transparency into the bot's decision-making process by logging
+    Provides complete transparency into the bot's decision-making process by logging
     all analysis, risk assessments, and reasoning for each trade decision.
-    This helps users understand why the bot made specific decisions.
+    This helps users understand why the bot made specific choices.
+    
+    UPDATED: Fixed to match database migration schema exactly.
+    Uses constants from paper_trading.constants for field name consistency.
     
     Attributes:
         thought_id: Unique identifier (UUID)
         account: Associated trading account
         paper_trade: Associated trade (if executed)
-        decision_type: Type of decision (BUY/SELL/HOLD/SKIP)
+        decision_type: Type of decision (BUY/SELL/HOLD/SKIP/STOP_LOSS/TAKE_PROFIT)
         token_address: Token being analyzed
         token_symbol: Token symbol
-        confidence_level: Confidence percentage (0-100)
-        reasoning: Detailed reasoning text
-        risk_assessment: Risk analysis
+        confidence_level: Confidence category (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW)
+        confidence_percent: Exact confidence percentage (0-100)
+        risk_score: Risk assessment score (0-100, higher is riskier)
+        opportunity_score: Opportunity assessment score (0-100)
+        primary_reasoning: Primary reasoning for the decision (1-3 sentences)
         key_factors: Important decision factors (JSON list)
         positive_signals: Bullish signals detected (JSON list)
         negative_signals: Bearish signals detected (JSON list)
@@ -50,7 +55,7 @@ class PaperAIThoughtLog(models.Model):
         strategy_name: Strategy used
         lane_used: Fast Lane or Smart Lane
         created_at: When the thought was generated
-        analysis_time_ms: Time taken for analysis
+        analysis_time_ms: Time taken for analysis in milliseconds
     """
     
     class DecisionType(models.TextChoices):
@@ -59,8 +64,21 @@ class PaperAIThoughtLog(models.Model):
         SELL = 'SELL', 'Sell'
         HOLD = 'HOLD', 'Hold'
         SKIP = 'SKIP', 'Skip'
+        STOP_LOSS = 'STOP_LOSS', 'Stop Loss'
+        TAKE_PROFIT = 'TAKE_PROFIT', 'Take Profit'
     
-    # Identity
+    class ConfidenceLevel(models.TextChoices):
+        """Confidence level categories."""
+        VERY_HIGH = 'VERY_HIGH', 'Very High (90-100%)'
+        HIGH = 'HIGH', 'High (70-90%)'
+        MEDIUM = 'MEDIUM', 'Medium (50-70%)'
+        LOW = 'LOW', 'Low (30-50%)'
+        VERY_LOW = 'VERY_LOW', 'Very Low (<30%)'
+    
+    # =========================================================================
+    # IDENTITY FIELDS
+    # =========================================================================
+    
     thought_id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -84,16 +102,19 @@ class PaperAIThoughtLog(models.Model):
         help_text="Associated paper trade (if executed)"
     )
     
-    # Decision details
+    # =========================================================================
+    # DECISION FIELDS
+    # =========================================================================
+    
     decision_type = models.CharField(
-        max_length=10,
+        max_length=20,
         choices=DecisionType.choices,
-        help_text="Type of decision"
+        help_text="Type of decision made"
     )
     
     token_address = models.CharField(
         max_length=42,
-        help_text="Token contract address"
+        help_text="Token being analyzed"
     )
     
     token_symbol = models.CharField(
@@ -101,23 +122,45 @@ class PaperAIThoughtLog(models.Model):
         help_text="Token symbol"
     )
     
-    # Analysis
-    confidence_level = models.DecimalField(
+    # =========================================================================
+    # CONFIDENCE AND SCORING FIELDS (FIXED TO MATCH MIGRATION)
+    # =========================================================================
+    
+    confidence_level = models.CharField(
+        max_length=20,
+        choices=ConfidenceLevel.choices,
+        help_text="Confidence level category"
+    )
+    
+    confidence_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
-        help_text="Confidence percentage (0-100)"
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Exact confidence percentage (0-100)"
     )
     
-    reasoning = models.TextField(
-        help_text="AI reasoning for the decision"
+    risk_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Risk assessment score (0-100, higher is riskier)"
     )
     
-    risk_assessment = models.TextField(
-        blank=True,
-        help_text="Risk analysis"
+    opportunity_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Opportunity assessment score (0-100)"
     )
     
-    # Factors
+    # =========================================================================
+    # REASONING FIELDS
+    # =========================================================================
+    
+    primary_reasoning = models.TextField(
+        help_text="Primary reasoning for the decision (1-3 sentences)"
+    )
+    
     key_factors = models.JSONField(
         default=list,
         help_text="Key factors that influenced the decision"
@@ -133,13 +176,15 @@ class PaperAIThoughtLog(models.Model):
         help_text="Negative signals/risks identified"
     )
     
-    # Market data snapshot
+    # =========================================================================
+    # CONTEXT FIELDS
+    # =========================================================================
+    
     market_data = models.JSONField(
         default=dict,
         help_text="Market data snapshot at decision time"
     )
     
-    # Strategy context
     strategy_name = models.CharField(
         max_length=100,
         blank=True,
@@ -153,7 +198,10 @@ class PaperAIThoughtLog(models.Model):
         help_text="Which lane was used for analysis"
     )
     
-    # Timing
+    # =========================================================================
+    # TIMING FIELDS
+    # =========================================================================
+    
     created_at = models.DateTimeField(
         auto_now_add=True,
         help_text="When the thought was generated"
@@ -181,7 +229,7 @@ class PaperAIThoughtLog(models.Model):
         """String representation."""
         return (
             f"Thought: {self.decision_type} {self.token_symbol} "
-            f"({self.confidence_level}%)"
+            f"({self.confidence_percent}% confidence)"
         )
 
 
@@ -292,6 +340,16 @@ class PaperStrategyConfiguration(models.Model):
         default=TradingMode.MODERATE,
         help_text="Trading mode"
     )
+
+    intel_level = models.IntegerField(
+        default=5,
+        validators=[
+            MinValueValidator(1),
+            MaxValueValidator(10)
+        ],
+        help_text='Intelligence level (1-10) controlling bot decision-making behavior'
+    )
+
     
     # Lane preferences
     use_fast_lane = models.BooleanField(

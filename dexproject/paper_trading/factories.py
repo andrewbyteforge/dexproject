@@ -23,7 +23,7 @@ Usage:
         ...
     )
 """
-
+import math  # Add to imports at top
 from decimal import Decimal
 from typing import Optional, Dict, Any, List
 import logging
@@ -32,6 +32,7 @@ from django.utils import timezone
 
 from paper_trading.constants import (
     DecisionType,
+    ConfidenceLevel,
     TradeFields,
     LaneType,
     TradeStatus,
@@ -39,6 +40,34 @@ from paper_trading.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# JSON SANITIZER
+# =============================================================================
+
+def sanitize_for_json(data: Any) -> Any:
+    """
+    Sanitize data for JSON serialization by converting NaN, Infinity, and None.
+    
+    Args:
+        data: Any data structure (dict, list, or primitive)
+        
+    Returns:
+        JSON-safe version of the data
+    """
+    if isinstance(data, dict):
+        return {k: sanitize_for_json(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_for_json(item) for item in data]
+    elif isinstance(data, float):
+        if math.isnan(data) or math.isinf(data):
+            return None  # Convert NaN/Infinity to None
+        return data
+    elif data is None:
+        return None
+    else:
+        return data
+
 
 
 # =============================================================================
@@ -68,6 +97,7 @@ def create_thought_log(
     Create a PaperAIThoughtLog with validated fields.
 
     This factory prevents field name mismatches and ensures proper data types.
+    All field names match the actual PaperAIThoughtLog model definition.
 
     Args:
         account: PaperTradingAccount instance
@@ -93,6 +123,14 @@ def create_thought_log(
     Raises:
         ValueError: If decision_type is invalid
         ImportError: If PaperAIThoughtLog model cannot be imported
+
+    Note:
+        This function was updated to match the actual PaperAIThoughtLog model fields.
+        Key changes:
+        - Uses 'primary_reasoning' (not 'reasoning')
+        - Uses separate 'risk_score' and 'opportunity_score' fields
+        - Converts 'confidence_percent' to 'confidence_level' string
+        - Removed 'risk_assessment' field (doesn't exist in model)
     """
     try:
         from paper_trading.models.intelligence import PaperAIThoughtLog
@@ -119,44 +157,56 @@ def create_thought_log(
     if market_data is None:
         market_data = {}
 
-    # Add risk and opportunity scores to market_data since they're not separate fields
-    market_data['risk_score'] = float(risk_score)
-    market_data['opportunity_score'] = float(opportunity_score)
-
-    # Truncate primary_reasoning to 500 characters
+    # Truncate primary_reasoning to avoid text field overflow
     reasoning_text = primary_reasoning[:500]
 
-    # Build risk assessment text
+    # Build risk assessment summary text for market_data reference
     risk_assessment_text = (
         f"Risk Score: {risk_score}/100\n"
         f"Opportunity Score: {opportunity_score}/100\n"
         f"Confidence: {confidence_percent}%"
     )
 
-    # Build kwargs using ACTUAL model field names
+    # Store risk assessment summary in market_data for reference
+    # (The model doesn't have a 'risk_assessment' field, so we store it here)
+    market_data['risk_assessment_summary'] = risk_assessment_text
+    # Add risk and opportunity scores to market_data since they're not separate fields
+    market_data['risk_score'] = float(risk_score)
+    market_data['opportunity_score'] = float(opportunity_score)
+
+    market_data = sanitize_for_json(market_data)
+
+    # Convert confidence percentage to confidence level string
+    # Converts 75.0 -> 'HIGH', 90.0 -> 'VERY_HIGH', etc.
+    confidence_level_str = ConfidenceLevel.from_percentage(confidence_percent)
+
+    # Build kwargs using ACTUAL model field names from PaperAIThoughtLog
+    # Every field here matches exactly what's defined in models/intelligence.py
     kwargs = {
-        'account': account,
-        'paper_trade': paper_trade,
-        'decision_type': decision_type,
-        'token_address': token_address,
-        'token_symbol': token_symbol,
-        'confidence_level': confidence_percent,  # ✅ Model has this as DecimalField
-        'reasoning': reasoning_text,  # ✅ Changed from primary_reasoning
-        'risk_assessment': risk_assessment_text,  # ✅ Combine risk info as text
-        'key_factors': key_factors,
-        'positive_signals': positive_signals,
-        'negative_signals': negative_signals,
-        'market_data': market_data,
-        'strategy_name': strategy_name,
-        'lane_used': lane_used,
-        'analysis_time_ms': analysis_time_ms,
+        'account': account,  # ForeignKey
+        'paper_trade': paper_trade,  # ForeignKey (nullable)
+        'decision_type': decision_type,  # CharField with choices
+        'token_address': token_address,  # CharField(max_length=42)
+        'token_symbol': token_symbol,  # CharField(max_length=20)
+        'confidence_level': confidence_level_str,  # CharField: 'VERY_HIGH', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'
+        'confidence_percent': confidence_percent,  # DecimalField: 0-100
+        'risk_score': risk_score,  # DecimalField: 0-100
+        'opportunity_score': opportunity_score,  # DecimalField: 0-100
+        'primary_reasoning': reasoning_text,  # TextField: main reasoning text
+        'key_factors': key_factors,  # JSONField: list of strings
+        'positive_signals': positive_signals,  # JSONField: list of strings
+        'negative_signals': negative_signals,  # JSONField: list of strings
+        'market_data': market_data,  # JSONField: dict
+        'strategy_name': strategy_name,  # CharField(max_length=100)
+        'lane_used': lane_used,  # CharField: 'FAST' or 'SMART'
+        'analysis_time_ms': analysis_time_ms,  # IntegerField: milliseconds
     }
 
     try:
         thought_log = PaperAIThoughtLog.objects.create(**kwargs)
         logger.debug(
             f"Created thought log: {decision_type} for {token_symbol} "
-            f"with confidence {confidence_percent}%"
+            f"with confidence {confidence_percent}% (level: {confidence_level_str})"
         )
         return thought_log
     except Exception as e:
@@ -167,6 +217,9 @@ def create_thought_log(
                 'decision_type': decision_type,
                 'token_symbol': token_symbol,
                 'confidence_percent': float(confidence_percent),
+                'confidence_level': confidence_level_str,
+                'risk_score': float(risk_score),
+                'opportunity_score': float(opportunity_score),
             }
         )
         raise
@@ -224,6 +277,10 @@ def create_paper_trade(
 
     Returns:
         PaperTrade instance
+
+    Raises:
+        ValueError: If decision_type is invalid
+        ImportError: If PaperTrade model cannot be imported
     """
     try:
         from paper_trading.models.trades import PaperTrade  # type: ignore[import-not-found]
@@ -378,6 +435,7 @@ def create_thought_log_from_decision(
         strategy_name=strategy_name,
         lane_used=lane_used,
         analysis_time_ms=analysis_time_ms,
+        
     )
 
 
@@ -403,11 +461,15 @@ def safe_create_thought_log(
         token_address: Token address
         token_symbol: Token symbol
         confidence_percent: Confidence percentage
-        reasoning: Primary reasoning
+        reasoning: Primary reasoning (will be used as primary_reasoning)
         **kwargs: Additional arguments for create_thought_log
 
     Returns:
         PaperAIThoughtLog instance or None if creation failed
+
+    Note:
+        The 'reasoning' parameter is mapped to 'primary_reasoning'
+        to match the model field name.
     """
     try:
         # Set defaults for required fields if not provided
@@ -422,7 +484,7 @@ def safe_create_thought_log(
             confidence_percent=confidence_percent,
             risk_score=risk_score,
             opportunity_score=opportunity_score,
-            primary_reasoning=reasoning,
+            primary_reasoning=reasoning,  # Map 'reasoning' to 'primary_reasoning'
             **kwargs
         )
     except Exception as e:
