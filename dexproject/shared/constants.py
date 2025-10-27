@@ -48,6 +48,7 @@ REDIS_KEYS = {
     'engine_status': 'dex_bot:engine:status',
     'engine_heartbeat': 'dex_bot:engine:heartbeat',
     'engine_config': 'dex_bot:engine:config',
+    'config': 'config_cache',
     
     # Risk assessment caching
     'risk_cache': 'dex_bot:risk:token',
@@ -147,6 +148,8 @@ BASE_MAINNET_TOKENS = {
     'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
     'cbETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+    'WBTC': '0x0555E30da8f98308EdB960aa94C0Db47230d2B9c',
+    'UNI': '0xbe06c18ff1cceffb23e4407d857aa1a730c8ab3c',
 }
 
 # Base Sepolia (84532) - Testnet

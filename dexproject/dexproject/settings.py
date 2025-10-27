@@ -572,9 +572,17 @@ else:
 # =============================================================================
 
 # Testnet Configuration
-TESTNET_MODE = get_env_bool('TESTNET_MODE', 'False')  # Default to mainnet
-DEFAULT_CHAIN_ID = get_env_int('DEFAULT_CHAIN_ID', '8453')  # Base mainnet
-TARGET_CHAINS = get_env_list('TARGET_CHAINS', '8453,1,42161')  # Base, Ethereum, Arbitrum mainnet
+TESTNET_MODE = get_env_bool('TESTNET_MODE', 'False')
+# Chain configuration based on testnet mode
+if TESTNET_MODE:
+    # Testnet defaults: Base Sepolia, Sepolia, Arbitrum Sepolia
+    DEFAULT_CHAIN_ID = get_env_int('DEFAULT_CHAIN_ID', '84532')  # Base Sepolia
+    TARGET_CHAINS = get_env_list('TARGET_CHAINS', '84532,11155111,421614')
+else:
+    # Mainnet defaults: Base, Ethereum, Arbitrum
+    DEFAULT_CHAIN_ID = get_env_int('DEFAULT_CHAIN_ID', '8453')  # Base mainnet
+    TARGET_CHAINS = get_env_list('TARGET_CHAINS', '8453,1,42161')
+
 SUPPORTED_CHAINS = [int(chain_id) for chain_id in TARGET_CHAINS if chain_id]
 
 # Engine Configuration

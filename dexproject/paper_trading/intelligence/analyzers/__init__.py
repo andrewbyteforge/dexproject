@@ -115,7 +115,7 @@ class BaseAnalyzer(ABC):
         self._web3_client: Optional[Any] = None
         self._web3_initialized = False
 
-    async def _ensure_web3_client(self, chain_id: int = 84532) -> Optional[Any]:
+    async def _ensure_web3_client(self, chain_id: int = 8453) -> Optional[Any]:
         """
         Ensure Web3 client is initialized with lazy config initialization.
 
@@ -142,20 +142,20 @@ class BaseAnalyzer(ABC):
             if engine_config_module is None:
                 self.logger.error("Engine config module is None")
                 return None
-
+            
             # Get the config from the module
             engine_config = getattr(engine_config_module, 'config', None)
-
+            
             # If config is None, try to initialize it
             if engine_config is None:
                 self.logger.info("[WEB3] Engine config not initialized, initializing now...")
                 if get_config is not None:
-                    # Import async_to_sync for calling async get_config
-                    from asgiref.sync import async_to_sync
-                    async_to_sync(get_config)()
+                    # ✅ FIXED: Directly await get_config since we're already in an async method
+                    # No need for async_to_sync - we're already in an async context
+                    await get_config()
                     # Get config again after initialization
                     engine_config = getattr(engine_config_module, 'config', None)
-
+                
                 # If still None after initialization attempt, give up
                 if engine_config is None:
                     self.logger.error("Failed to initialize engine config")
@@ -164,7 +164,10 @@ class BaseAnalyzer(ABC):
             # Get chain config
             chain_config = engine_config.get_chain_config(chain_id)
             if not chain_config:
-                self.logger.error(f"No config for chain {chain_id}")
+                self.logger.warning(
+                    f"[WEB3] No configuration found for chain {chain_id}. "
+                    f"Available chains: {list(engine_config.chain_configs.keys())}"
+                )
                 return None
 
             # Check if Web3Client is available (not None)
@@ -244,7 +247,7 @@ class RealGasAnalyzer(BaseAnalyzer):
     async def analyze(
         self,
         token_address: str,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -444,7 +447,7 @@ class RealLiquidityAnalyzer(BaseAnalyzer):
     async def analyze(
         self,
         token_address: str,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         trade_size_usd: Decimal = Decimal('1000'),
         **kwargs
     ) -> Dict[str, Any]:
@@ -1461,7 +1464,7 @@ class CompositeMarketAnalyzer(BaseAnalyzer):
     async def analyze_comprehensive(
         self,
         token_address: str,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         trade_size_usd: Decimal = Decimal('1000'),
         price_history: Optional[List[Dict[str, Any]]] = None,
         current_price: Optional[Decimal] = None,

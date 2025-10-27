@@ -59,6 +59,18 @@ class EngineConfig:
         self.logger = logger
         self._redis_client = None
         self._chain_config_bridge = None
+
+        # FIX REDIS KEY MISMATCH FIRST (before anything else)
+        try:
+            from shared.constants import REDIS_KEYS
+            if 'config' not in REDIS_KEYS:
+                if 'config_cache' in REDIS_KEYS:
+                    REDIS_KEYS['config'] = REDIS_KEYS['config_cache']
+                else:
+                    REDIS_KEYS['config'] = 'config_cache'  # Fallback
+                logger.debug("Fixed Redis key mapping for chain config bridge")
+        except Exception as e:
+            logger.warning(f"Could not fix REDIS_KEYS: {e}")
         
         # Load engine-specific configuration first
         self.load_engine_config()
@@ -99,9 +111,9 @@ class EngineConfig:
             else:
                 # Fallback based on testnet mode
                 if self.testnet_mode:
-                    default_chains = "11155111,84532,421614"  # Sepolia, Base Sepolia, Arbitrum Sepolia
+                    default_chains = "11155111,84532"  # Sepolia, Base Sepolia
                 else:
-                    default_chains = "1,8453,42161"  # Ethereum, Base, Arbitrum
+                    default_chains = "1,8453"  # Ethereum, Base
                     
         except Exception as e:
             logger.warning(f"Could not access Django settings for chains: {e}")

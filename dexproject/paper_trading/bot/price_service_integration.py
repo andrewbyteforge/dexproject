@@ -27,7 +27,7 @@ from asgiref.sync import async_to_sync
 
 from django.core.cache import cache
 from django.utils import timezone
-
+from shared.constants import TOKEN_ADDRESSES_BY_CHAIN, get_token_address  
 # Import the OPTIMIZED price feed service with bulk fetching
 from paper_trading.services.price_feed_service import (
     PriceFeedService,
@@ -43,71 +43,96 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Default token list for paper trading (Base Sepolia testnet addresses)
-DEFAULT_TOKEN_LIST = [
-    {
-        'symbol': 'WETH',
-        'address': '0x4200000000000000000000000000000000000006',
-        'price': Decimal('2500'),
-        'decimals': 18,
-        'coingecko_id': 'ethereum'
-    },
-    {
-        'symbol': 'USDC',
-        'address': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-        'price': Decimal('1.00'),
-        'decimals': 6,
-        'coingecko_id': 'usd-coin'
-    },
-    {
-        'symbol': 'DAI',
-        'address': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
-        'price': Decimal('1.00'),
-        'decimals': 18,
-        'coingecko_id': 'dai'
-    },
-    {
-        'symbol': 'WBTC',
-        'address': '0x0000000000000000000000000000000000000000',
-        'price': Decimal('45000'),
-        'decimals': 8,
-        'coingecko_id': 'wrapped-bitcoin'
-    },
-    {
-        'symbol': 'UNI',
-        'address': '0x0000000000000000000000000000000000000001',
-        'price': Decimal('6.50'),
-        'decimals': 18,
-        'coingecko_id': 'uniswap'
-    },
-    {
-        'symbol': 'AAVE',
-        'address': '0x0000000000000000000000000000000000000002',
-        'price': Decimal('95'),
-        'decimals': 18,
-        'coingecko_id': 'aave'
-    },
-    {
-        'symbol': 'LINK',
-        'address': '0x0000000000000000000000000000000000000003',
-        'price': Decimal('15'),
-        'decimals': 18,
-        'coingecko_id': 'chainlink'
-    },
-    {
-        'symbol': 'MATIC',
-        'address': '0x0000000000000000000000000000000000000004',
-        'price': Decimal('0.85'),
-        'decimals': 18,
-        'coingecko_id': 'matic-network'
-    },
-    {
-        'symbol': 'ARB',
-        'address': '0x0000000000000000000000000000000000000005',
-        'price': Decimal('1.20'),
-        'decimals': 18,
-        'coingecko_id': 'arbitrum'
+# =============================================================================
+# CONSTANTS
+# =============================================================================
+
+# Import centralized token addresses
+from shared.constants import TOKEN_ADDRESSES_BY_CHAIN, get_token_address
+
+
+def build_default_token_list(chain_id: int = 8453) -> List[Dict[str, Any]]:
+    """
+    Build token list dynamically from centralized constants.
+    
+    This ensures bot always uses valid addresses for the current chain,
+    eliminating hardcoded addresses and placeholder values.
+    
+    Args:
+        chain_id: Blockchain network ID (default: Base Mainnet 8453)
+        
+    Returns:
+        List of token dictionaries with symbol, address, decimals, coingecko_id
+        
+    Example:
+        >>> tokens = build_default_token_list(8453)
+        >>> len(tokens)
+        6  # WETH, USDC, DAI, cbETH, WBTC, UNI on Base Mainnet
+    """
+    # Get tokens for this chain from centralized constants
+    chain_tokens = TOKEN_ADDRESSES_BY_CHAIN.get(chain_id, {})
+    
+    if not chain_tokens:
+        logger.warning(
+            f"[TOKEN LIST] No tokens configured for chain {chain_id}, "
+            f"using empty list"
+        )
+        return []
+    
+    # CoinGecko ID mapping (centralized)
+    coingecko_ids: Dict[str, str] = {
+        'WETH': 'ethereum',
+        'ETH': 'ethereum',
+        'USDC': 'usd-coin',
+        'USDT': 'tether',
+        'DAI': 'dai',
+        'cbETH': 'coinbase-wrapped-staked-eth',
+        'WBTC': 'wrapped-bitcoin',
+        'UNI': 'uniswap',
+        'LINK': 'chainlink',
+        'AAVE': 'aave',
+        'MATIC': 'polygon-ecosystem-token',
+        'ARB': 'arbitrum',
     }
-]
+    
+    # Default decimals for common tokens
+    default_decimals: Dict[str, int] = {
+        'WETH': 18,
+        'ETH': 18,
+        'USDC': 6,
+        'USDT': 6,
+        'DAI': 18,
+        'cbETH': 18,
+        'WBTC': 8,
+        'UNI': 18,
+        'LINK': 18,
+        'AAVE': 18,
+        'MATIC': 18,
+        'ARB': 18,
+    }
+    
+    # Build token list from available tokens on this chain
+    token_list: List[Dict[str, Any]] = []
+    for symbol, address in chain_tokens.items():
+        token_list.append({
+            'symbol': symbol,
+            'address': address,
+            'price': Decimal('0'),  # Will be fetched from API
+            'decimals': default_decimals.get(symbol, 18),
+            'coingecko_id': coingecko_ids.get(symbol, symbol.lower()),
+        })
+    
+    logger.info(
+        f"[TOKEN LIST] Built dynamic list for chain {chain_id}: "
+        f"{len(token_list)} tokens ({', '.join(t['symbol'] for t in token_list)})"
+    )
+    
+    return token_list
+
+
+# Build DEFAULT_TOKEN_LIST dynamically from centralized constants
+# This will update automatically when constants.py is updated
+DEFAULT_TOKEN_LIST = build_default_token_list(chain_id=8453)  # Base Mainnet
 
 # Price update interval (seconds)
 PRICE_UPDATE_INTERVAL = 5  # Update prices every 5 seconds

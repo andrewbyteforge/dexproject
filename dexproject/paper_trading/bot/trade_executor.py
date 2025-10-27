@@ -38,7 +38,10 @@ from paper_trading.intelligence.base import TradingDecision
 
 # Import WebSocket service
 from paper_trading.services.websocket_service import websocket_service
+
+# Import centralized token addresses
 from shared.constants import get_token_address
+
 # Import Transaction Manager (optional)
 try:
     from trading.services.transaction_manager import (
@@ -76,6 +79,42 @@ except ImportError:
     CIRCUIT_BREAKER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _get_token_address_for_trade(symbol: str, chain_id: int) -> str:
+    """
+    Get token address from centralized constants with proper error handling.
+    
+    This function ensures that trades are only created with valid addresses
+    from our centralized constants, preventing the use of placeholder or
+    incorrect addresses.
+    
+    Args:
+        symbol: Token symbol (e.g., 'WETH', 'USDC')
+        chain_id: Blockchain network ID
+        
+    Returns:
+        Token contract address
+        
+    Raises:
+        ValueError: If token not available on this chain
+        
+    Example:
+        >>> address = _get_token_address_for_trade('WETH', 8453)
+        >>> address
+        '0x4200000000000000000000000000000000000006'
+    """
+    address = get_token_address(symbol, chain_id)
+    if not address:
+        raise ValueError(
+            f"Token {symbol} not available on chain {chain_id}. "
+            f"Check TOKEN_ADDRESSES_BY_CHAIN in shared/constants.py"
+        )
+    return address
 
 
 # =============================================================================
@@ -568,36 +607,25 @@ class TradeExecutor:
             # Token addresses mapping
             # Get token addresses from centralized constants (shared/constants.py)
             # This ensures we use the correct addresses for the current chain_id
-            if trade_type == 'buy':
-                # BUY: USDC -> Token
-                token_in_symbol = 'USDC'
-                token_in_address = get_token_address('USDC', self.chain_id)
-                token_out_symbol = token_symbol
-                token_out_address = get_token_address(token_symbol, self.chain_id)
-                
-                # Fallback: Use decision.token_address or zero address if not found
-                if not token_in_address:
-                    token_in_address = '0x0000000000000000000000000000000000000000'
-                    logger.warning(f"[TRADE] No USDC address found for chain {self.chain_id}, using zero address")
-                
-                if not token_out_address:
-                    token_out_address = decision.token_address if decision.token_address else '0x0000000000000000000000000000000000000000'
-                    logger.warning(f"[TRADE] No address found for {token_symbol} on chain {self.chain_id}, using fallback")
-            else:
-                # SELL: Token -> USDC
-                token_in_symbol = token_symbol
-                token_in_address = get_token_address(token_symbol, self.chain_id)
-                token_out_symbol = 'USDC'
-                token_out_address = get_token_address('USDC', self.chain_id)
-                
-                # Fallback: Use decision.token_address or zero address if not found
-                if not token_in_address:
-                    token_in_address = decision.token_address if decision.token_address else '0x0000000000000000000000000000000000000000'
-                    logger.warning(f"[TRADE] No address found for {token_symbol} on chain {self.chain_id}, using fallback")
-                
-                if not token_out_address:
-                    token_out_address = '0x0000000000000000000000000000000000000000'
-                    logger.warning(f"[TRADE] No USDC address found for chain {self.chain_id}, using zero address")
+            # We use error handling to prevent trades with invalid addresses
+            try:
+                if trade_type == 'buy':
+                    # BUY: USDC -> Token
+                    token_in_symbol = 'USDC'
+                    token_in_address = _get_token_address_for_trade('USDC', self.chain_id)
+                    token_out_symbol = token_symbol
+                    token_out_address = _get_token_address_for_trade(token_symbol, self.chain_id)
+                else:
+                    # SELL: Token -> USDC
+                    token_in_symbol = token_symbol
+                    token_in_address = _get_token_address_for_trade(token_symbol, self.chain_id)
+                    token_out_symbol = 'USDC'
+                    token_out_address = _get_token_address_for_trade('USDC', self.chain_id)
+            except ValueError as e:
+                logger.error(
+                    f"[TRADE] Cannot create trade for {token_symbol}: {e}"
+                )
+                return None
 
             # Calculate amounts
             amount_in_usd = decision.position_size_usd

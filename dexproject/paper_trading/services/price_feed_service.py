@@ -17,13 +17,16 @@ File: dexproject/paper_trading/services/price_feed_service.py
 import logging
 import asyncio
 from decimal import Decimal
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 import aiohttp
 from django.conf import settings
 from django.core.cache import cache
+
+# Import centralized token addresses from shared constants
 from shared.constants import TOKEN_ADDRESSES_BY_CHAIN
-# Import your existing Web3 infrastructure
+
+# Import existing Web3 infrastructure
 from shared.web3_utils import (
     Web3,
     is_address,
@@ -32,10 +35,6 @@ from shared.web3_utils import (
 
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
 
 # =============================================================================
 # CACHE CONFIGURATION
@@ -50,7 +49,7 @@ PRICE_CACHE_TTL = int(getattr(settings, 'PRICE_CACHE_TTL_SECONDS', 60))
 # If API fails, we can serve data up to this age
 STALE_CACHE_TTL = PRICE_CACHE_TTL * 4  # 4 minutes by default
 
-# Cache key prefix for Redis
+# Cache key prefixes for Redis
 PRICE_CACHE_PREFIX = "token_price"
 STALE_CACHE_PREFIX = "token_price_stale"
 BULK_CACHE_PREFIX = "bulk_token_prices"
@@ -62,7 +61,7 @@ STABLECOIN_CACHE_TTL = 3600  # 1 hour
 COINGECKO_API_BASE = "https://api.coingecko.com/api/v3"
 
 # Supported chains for price lookup
-SUPPORTED_CHAINS = {
+SUPPORTED_CHAINS: Dict[int, str] = {
     1: "ethereum",      # Ethereum Mainnet
     8453: "base",       # Base Mainnet
     11155111: "sepolia",  # Ethereum Sepolia
@@ -70,7 +69,7 @@ SUPPORTED_CHAINS = {
 }
 
 # Known stablecoins (always return $1.00)
-STABLECOINS = {
+STABLECOINS: Dict[str, Decimal] = {
     "USDC": Decimal("1.00"),
     "USDT": Decimal("1.00"),
     "DAI": Decimal("1.00"),
@@ -122,7 +121,7 @@ class PriceFeedService:
         self,
         chain_id: int,
         web3_client: Optional[Any] = None
-    ):
+    ) -> None:
         """
         Initialize price feed service for a specific chain.
         
@@ -130,40 +129,40 @@ class PriceFeedService:
             chain_id: Blockchain network ID (e.g., 84532 for Base Sepolia)
             web3_client: Optional Web3Client for DEX quotes
         """
-        self.chain_id = chain_id
-        self.chain_name = self._get_chain_name(chain_id)
+        self.chain_id: int = chain_id
+        self.chain_name: str = self._get_chain_name(chain_id)
         
-        # Token addresses for this chain
-        self.token_addresses = self._get_token_addresses()
+        # Token addresses for this chain (from centralized constants)
+        self.token_addresses: Dict[str, str] = self._get_token_addresses()
         
         # Price cache - stores last known prices
         self.price_cache: Dict[str, Decimal] = {}
         self.last_update: Dict[str, datetime] = {}
         
         # Cache statistics tracking
-        self.cache_hits = 0
-        self.cache_misses = 0
-        self.stale_cache_hits = 0
-        self.api_call_count = 0
-        self.bulk_api_calls = 0
+        self.cache_hits: int = 0
+        self.cache_misses: int = 0
+        self.stale_cache_hits: int = 0
+        self.api_call_count: int = 0
+        self.bulk_api_calls: int = 0
         
         # CoinGecko API Configuration  
-        self.coingecko_base_url = "https://api.coingecko.com/api/v3"
-        self.coingecko_api_key = getattr(settings, 'COIN_GECKO_API_KEY', None)
+        self.coingecko_base_url: str = "https://api.coingecko.com/api/v3"
+        self.coingecko_api_key: Optional[str] = getattr(settings, 'COIN_GECKO_API_KEY', None)
         
         # Rate limiting for CoinGecko free tier
         self.last_coingecko_call: Optional[datetime] = None
-        self.coingecko_rate_limit_seconds = 1.5
+        self.coingecko_rate_limit_seconds: float = 1.5
         
         # Request timeout configuration
-        self.request_timeout_seconds = 10
+        self.request_timeout_seconds: int = 10
         
         # Session holder (lazy initialization)
         self._session: Optional[aiohttp.ClientSession] = None
         
         # Web3 infrastructure for DEX quotes (optional)
-        self.web3_client = web3_client
-        self.dex_quotes_enabled = web3_client is not None
+        self.web3_client: Optional[Any] = web3_client
+        self.dex_quotes_enabled: bool = web3_client is not None
         
         logger.info(
             f"[PRICE FEED] Initialized OPTIMIZED service for chain {chain_id} ({self.chain_name}), "
@@ -172,8 +171,16 @@ class PriceFeedService:
         )    
 
     def _get_chain_name(self, chain_id: int) -> str:
-        """Get human-readable chain name from chain ID."""
-        chain_names = {
+        """
+        Get human-readable chain name from chain ID.
+        
+        Args:
+            chain_id: Blockchain network ID
+            
+        Returns:
+            Human-readable chain name
+        """
+        chain_names: Dict[int, str] = {
             1: 'mainnet',
             5: 'goerli',
             11155111: 'sepolia',
@@ -211,8 +218,6 @@ class PriceFeedService:
             >>> addresses['WETH']
             '0x4200000000000000000000000000000000000006'
         """
-        from shared.web3_utils import to_checksum_ethereum_address
-        
         def _checksum_or_raise(address: str, symbol: str) -> str:
             """
             Helper function to checksum an address or raise if invalid.
@@ -233,7 +238,7 @@ class PriceFeedService:
             return checksummed
         
         # Get addresses from centralized constants for this chain
-        chain_tokens = TOKEN_ADDRESSES_BY_CHAIN.get(self.chain_id, {})
+        chain_tokens: Dict[str, str] = TOKEN_ADDRESSES_BY_CHAIN.get(self.chain_id, {})
         
         # Log if no addresses found for this chain
         if not chain_tokens:
@@ -264,303 +269,40 @@ class PriceFeedService:
         
         return checksummed_tokens
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     def _get_coingecko_id(self, token_symbol: str) -> Optional[str]:
-        """Map token symbol to CoinGecko API ID."""
-        coingecko_mapping = {
+        """
+        Map token symbol to CoinGecko API ID.
+        
+        Args:
+            token_symbol: Token symbol (e.g., 'WETH', 'USDC')
+            
+        Returns:
+            CoinGecko API ID or None if not found
+        """
+        # Mapping of token symbols to CoinGecko IDs
+        coingecko_ids: Dict[str, str] = {
             'WETH': 'ethereum',
             'ETH': 'ethereum',
-            'WBTC': 'wrapped-bitcoin',
-            'BTC': 'bitcoin',
             'USDC': 'usd-coin',
             'USDT': 'tether',
             'DAI': 'dai',
+            'WBTC': 'wrapped-bitcoin',
+            'LINK': 'chainlink',
             'UNI': 'uniswap',
             'AAVE': 'aave',
-            'LINK': 'chainlink',
-            'MATIC': 'polygon-ecosystem-token',
-            'POL': 'polygon-ecosystem-token', 
-            'ARB': 'arbitrum',
-            'OP': 'optimism',
-            'AVAX': 'avalanche-2',
-            'SOL': 'solana',
-            'DOT': 'polkadot',
-            'ATOM': 'cosmos',
-            'FTM': 'fantom',
-            'ALGO': 'algorand',
+            'SNX': 'havven',
             'cbETH': 'coinbase-wrapped-staked-eth',
         }
-        
-        return coingecko_mapping.get(token_symbol.upper())
-
-    async def close(self):
-        """Close aiohttp session and cleanup resources."""
-        if self._session and not self._session.closed:
-            await self._session.close()
-            logger.debug("[PRICE FEED] Session closed")
-
-    # =========================================================================
-    # OPTIMIZED: BULK PRICE FETCHING (NEW METHOD)
-    # =========================================================================
-
-    async def get_bulk_token_prices(
-        self,
-        tokens: List[tuple[str, str]]  # List of (symbol, address) tuples
-    ) -> Dict[str, Optional[Decimal]]:
-        """
-        Fetch prices for multiple tokens in a SINGLE API call.
-        
-        This is the OPTIMIZED way to fetch prices - reduces API calls by 90%.
-        Instead of making 9 separate API calls for 9 tokens, this makes just 1 call.
-        
-        Args:
-            tokens: List of (symbol, address) tuples
-                Example: [('WETH', '0x4200...'), ('USDC', '0x036C...')]
-        
-        Returns:
-            Dictionary mapping symbols to prices
-                Example: {'WETH': Decimal('2543.50'), 'USDC': Decimal('1.00')}
-        """
-        try:
-            results = {}
-            
-            # Check bulk cache first
-            bulk_cache_key = f"{BULK_CACHE_PREFIX}:{self.chain_id}"
-            cached_bulk = cache.get(bulk_cache_key)
-            
-            if cached_bulk is not None:
-                self.cache_hits += len(tokens)
-                logger.info(
-                    f"[BULK CACHE HIT] Retrieved {len(tokens)} prices from cache"
-                )
-                return {
-                    symbol: Decimal(str(cached_bulk.get(symbol, 0)))
-                    for symbol, _ in tokens
-                    if symbol in cached_bulk
-                }
-            
-            # Cache miss - fetch from API
-            self.cache_misses += len(tokens)
-            logger.debug(
-                f"[BULK FETCH] Cache miss, fetching {len(tokens)} tokens from CoinGecko..."
-            )
-            
-            # Quick return for stablecoins
-            for symbol, address in tokens:
-                if symbol.upper() in STABLECOINS:
-                    results[symbol] = STABLECOINS[symbol.upper()]
-            
-            # Get non-stablecoin tokens
-            non_stable_tokens = [
-                (symbol, address) for symbol, address in tokens
-                if symbol.upper() not in STABLECOINS
-            ]
-            
-            if not non_stable_tokens:
-                return results
-            
-            # Build CoinGecko IDs list
-            coin_ids = []
-            symbol_to_id = {}
-            
-            for symbol, address in non_stable_tokens:
-                coin_id = self._get_coingecko_id(symbol)
-                if coin_id:
-                    coin_ids.append(coin_id)
-                    symbol_to_id[coin_id] = symbol
-            
-            if not coin_ids:
-                logger.warning("[BULK FETCH] No valid CoinGecko IDs found")
-                return results
-            
-            # Make SINGLE API call for ALL tokens
-            url = f"{self.coingecko_base_url}/simple/price"
-            params = {
-                'ids': ','.join(coin_ids),  # ✅ Comma-separated list
-                'vs_currencies': 'usd'
-            }
-            
-            # Build headers with API key
-            headers = {}
-            if self.coingecko_api_key:
-                headers['x-cg-demo-api-key'] = self.coingecko_api_key
-                logger.debug(f"[BULK FETCH] Using API key for {len(coin_ids)} tokens")
-            
-            # Track API call
-            self.api_call_count += 1
-            self.bulk_api_calls += 1
-            
-            # Create fresh timeout
-            timeout = aiohttp.ClientTimeout(total=10)
-            
-            # Make the API call
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, params=params, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        # Parse results
-                        for coin_id, price_data in data.items():
-                            if 'usd' in price_data:
-                                symbol = symbol_to_id.get(coin_id)
-                                if symbol:
-                                    price_usd = Decimal(str(price_data['usd']))
-                                    results[symbol] = price_usd
-                        
-                        logger.info(
-                            f"[BULK FETCH] ✅ Fetched {len(results)} prices in 1 API call"
-                        )
-                        
-                        # Cache the bulk results
-                        cache_data = {
-                            symbol: float(price)
-                            for symbol, price in results.items()
-                        }
-                        cache.set(bulk_cache_key, cache_data, timeout=PRICE_CACHE_TTL)
-                        
-                        # Also cache individual prices
-                        for symbol, price in results.items():
-                            address = next(
-                                (addr for sym, addr in tokens if sym == symbol),
-                                None
-                            )
-                            if address:
-                                self._cache_price(address, price)
-                        
-                        return results
-                        
-                    elif response.status == 429:
-                        logger.warning("[BULK FETCH] CoinGecko rate limit exceeded")
-                        return results
-                    else:
-                        logger.debug(
-                            f"[BULK FETCH] CoinGecko API error: {response.status}"
-                        )
-                        return results
-                        
-        except asyncio.TimeoutError:
-            logger.debug("[BULK FETCH] CoinGecko timeout")
-            return results
-        except Exception as e:
-            logger.error(f"[BULK FETCH] Error: {e}", exc_info=True)
-            return results
-
-    # =========================================================================
-    # MAIN PRICE FETCHING METHOD (SINGLE TOKEN)
-    # =========================================================================
-
-    async def get_token_price(
-        self,
-        token_address: str,
-        token_symbol: Optional[str] = None
-    ) -> Optional[Decimal]:
-        """
-        Get the current USD price for a single token.
-        
-        Note: For multiple tokens, use get_bulk_token_prices() instead
-        to reduce API calls by 90%.
-        
-        Args:
-            token_address: Token contract address
-            token_symbol: Token symbol (helps with CoinGecko lookup)
-        
-        Returns:
-            Token price in USD or None if all sources fail
-        """
-        try:
-            # Quick return for known stablecoins
-            if token_symbol and token_symbol.upper() in STABLECOINS:
-                return STABLECOINS[token_symbol.upper()]
-            
-            # Check fresh cache first
-            cached_price = self._get_cached_price(token_address)
-            if cached_price is not None:
-                return cached_price
-            
-            # Fresh cache miss - fetch from APIs
-            logger.debug(
-                f"[PRICE FEED] Cache miss for {token_symbol or token_address}, "
-                f"fetching from CoinGecko..."
-            )
-            
-            # Track API call
-            self.api_call_count += 1
-            
-            price = None
-            if token_symbol:
-                price = await self._fetch_from_coingecko(
-                    token_symbol=token_symbol,
-                    token_address=token_address
-                )
-            
-            # If API calls failed, try stale cache as last resort
-            if price is None:
-                logger.warning(
-                    f"[PRICE FEED] API failed for {token_symbol or token_address}, "
-                    f"checking stale cache..."
-                )
-                price = self._get_stale_cached_price(token_address)
-                
-                if price is not None:
-                    return price
-            
-            # Cache the result if we got fresh data from API
-            if price is not None:
-                self._cache_price(token_address, price)
-                logger.info(
-                    f"[PRICE FEED] ✅ Fetched price for "
-                    f"{token_symbol or token_address[:10]}: ${price:.2f}"
-                )
-            else:
-                logger.error(
-                    f"[PRICE FEED] ❌ Failed to fetch price for "
-                    f"{token_symbol or token_address} from all sources"
-                )
-            
-            return price
-            
-        except Exception as e:
-            logger.error(
-                f"[PRICE FEED] Unexpected error fetching price for "
-                f"{token_symbol or token_address}: {e}",
-                exc_info=True
-            )
-            return None
-    
-    # =========================================================================
-    # DATA SOURCE: COINGECKO API (SINGLE TOKEN)
-    # =========================================================================
+        return coingecko_ids.get(token_symbol.upper())
 
     async def _get_or_create_session(self) -> aiohttp.ClientSession:
         """
-        Get or create reusable aiohttp session to prevent memory leaks.
+        Get or create aiohttp session (lazy initialization).
+        
+        This prevents memory leaks by reusing the same session across requests.
         
         Returns:
-            Active aiohttp.ClientSession instance
+            Active aiohttp ClientSession
         """
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
@@ -568,14 +310,221 @@ class PriceFeedService:
             logger.debug("[PRICE FEED] Created new aiohttp session")
         return self._session
 
+    async def close(self) -> None:
+        """
+        Close aiohttp session and cleanup resources.
+        
+        Should be called when service is no longer needed to prevent resource leaks.
+        """
+        if self._session and not self._session.closed:
+            await self._session.close()
+            logger.debug("[PRICE FEED] Closed aiohttp session")
+
+    # =========================================================================
+    # PUBLIC API METHODS
+    # =========================================================================
+
+    async def get_token_price(
+        self,
+        token_address: str,
+        token_symbol: str
+    ) -> Optional[Decimal]:
+        """
+        Get current price for a single token with caching.
+        
+        This method checks cache first, then falls back to API if needed.
+        For multiple tokens, use get_bulk_token_prices() instead for better performance.
+        
+        Args:
+            token_address: Token contract address
+            token_symbol: Token symbol (e.g., 'WETH', 'USDC')
+            
+        Returns:
+            Token price in USD as Decimal, or None if unavailable
+            
+        Example:
+            >>> price = await service.get_token_price(
+            ...     "0x4200000000000000000000000000000000000006",
+            ...     "WETH"
+            ... )
+            >>> print(f"${price:.2f}")
+            $2543.50
+        """
+        # Check if it's a stablecoin (instant return)
+        if token_symbol.upper() in STABLECOINS:
+            logger.debug(f"[PRICE FEED] {token_symbol} is stablecoin, returning $1.00")
+            return STABLECOINS[token_symbol.upper()]
+        
+        # Try fresh cache first
+        cached_price = self._get_cached_price(token_address)
+        if cached_price is not None:
+            return cached_price
+        
+        # Cache miss - fetch from API
+        logger.debug(
+            f"[PRICE FEED] Cache miss for {token_symbol}, fetching from API"
+        )
+        
+        try:
+            price = await self._fetch_from_coingecko(token_symbol, token_address)
+            
+            if price is not None:
+                # Cache the new price
+                self._cache_price(token_address, price)
+                self.api_call_count += 1
+                return price
+            else:
+                # API failed - try stale cache as fallback
+                stale_price = self._get_stale_cached_price(token_address)
+                if stale_price is not None:
+                    logger.info(
+                        f"[PRICE FEED] Using stale cache for {token_symbol} "
+                        f"(API unavailable)"
+                    )
+                    return stale_price
+                
+                logger.warning(
+                    f"[PRICE FEED] No price available for {token_symbol} "
+                    f"(API failed, no cache)"
+                )
+                return None
+                
+        except Exception as e:
+            logger.error(
+                f"[PRICE FEED] Error fetching price for {token_symbol}: {e}",
+                exc_info=True
+            )
+            
+            # Try stale cache on error
+            stale_price = self._get_stale_cached_price(token_address)
+            if stale_price is not None:
+                logger.info(
+                    f"[PRICE FEED] Using stale cache for {token_symbol} (error recovery)"
+                )
+                return stale_price
+            
+            return None
+
+    async def get_bulk_token_prices(
+        self,
+        tokens: List[Tuple[str, str]]
+    ) -> Dict[str, Optional[Decimal]]:
+        """
+        Get prices for multiple tokens in a single API call (RECOMMENDED).
+        
+        This is the OPTIMIZED way to fetch prices - uses 1 API call instead of N.
+        
+        Args:
+            tokens: List of (symbol, address) tuples
+            
+        Returns:
+            Dictionary mapping symbols to prices (or None if unavailable)
+            
+        Example:
+            >>> prices = await service.get_bulk_token_prices([
+            ...     ('WETH', '0x4200...'),
+            ...     ('USDC', '0x036C...'),
+            ...     ('DAI', '0x50c5...')
+            ... ])
+            >>> prices
+            {'WETH': Decimal('2543.50'), 'USDC': Decimal('1.00'), 'DAI': Decimal('1.00')}
+        """
+        if not tokens:
+            logger.warning("[PRICE FEED] get_bulk_token_prices called with empty list")
+            return {}
+        
+        logger.info(
+            f"[PRICE FEED] Fetching bulk prices for {len(tokens)} tokens: "
+            f"{', '.join(sym for sym, _ in tokens)}"
+        )
+        
+        results: Dict[str, Optional[Decimal]] = {}
+        tokens_to_fetch: List[Tuple[str, str]] = []
+        
+        # Step 1: Check cache for each token
+        for symbol, address in tokens:
+            # Stablecoins always return $1.00
+            if symbol.upper() in STABLECOINS:
+                results[symbol] = STABLECOINS[symbol.upper()]
+                logger.debug(f"[PRICE FEED] {symbol} is stablecoin")
+                continue
+            
+            # Check fresh cache
+            cached_price = self._get_cached_price(address)
+            if cached_price is not None:
+                results[symbol] = cached_price
+                logger.debug(f"[PRICE FEED] Cache hit for {symbol}")
+            else:
+                # Need to fetch this token
+                tokens_to_fetch.append((symbol, address))
+        
+        # Step 2: Fetch uncached tokens in bulk (1 API call)
+        if tokens_to_fetch:
+            logger.info(
+                f"[PRICE FEED] Need to fetch {len(tokens_to_fetch)} tokens from API: "
+                f"{', '.join(sym for sym, _ in tokens_to_fetch)}"
+            )
+            
+            try:
+                fetched_prices = await self._fetch_bulk_from_coingecko(tokens_to_fetch)
+                self.bulk_api_calls += 1
+                
+                # Cache and add fetched prices to results
+                for symbol, price in fetched_prices.items():
+                    if price is not None:
+                        # Find address for this symbol
+                        address = next(
+                            (addr for sym, addr in tokens_to_fetch if sym == symbol),
+                            None
+                        )
+                        if address:
+                            self._cache_price(address, price)
+                        results[symbol] = price
+                    else:
+                        # Try stale cache as fallback
+                        address = next(
+                            (addr for sym, addr in tokens_to_fetch if sym == symbol),
+                            None
+                        )
+                        if address:
+                            stale_price = self._get_stale_cached_price(address)
+                            results[symbol] = stale_price
+                        else:
+                            results[symbol] = None
+                            
+            except Exception as e:
+                logger.error(
+                    f"[PRICE FEED] Bulk fetch failed: {e}",
+                    exc_info=True
+                )
+                
+                # Fallback to stale cache for failed tokens
+                for symbol, address in tokens_to_fetch:
+                    if symbol not in results:
+                        stale_price = self._get_stale_cached_price(address)
+                        results[symbol] = stale_price
+        
+        # Log summary
+        successful = sum(1 for p in results.values() if p is not None)
+        logger.info(
+            f"[PRICE FEED] Bulk fetch complete: {successful}/{len(tokens)} prices retrieved"
+        )
+        
+        return results
+
+    # =========================================================================
+    # COINGECKO API METHODS
+    # =========================================================================
+
     async def _enforce_rate_limit(self) -> None:
         """
         Enforce rate limiting for CoinGecko API calls.
         
-        Waits if necessary to maintain rate limit compliance.
+        Waits if necessary to respect the rate limit.
         """
-        if self.last_coingecko_call:
+        if self.last_coingecko_call is not None:
             elapsed = (datetime.now() - self.last_coingecko_call).total_seconds()
+            
             if elapsed < self.coingecko_rate_limit_seconds:
                 wait_time = self.coingecko_rate_limit_seconds - elapsed
                 logger.debug(f"[RATE LIMIT] Waiting {wait_time:.2f}s")
@@ -583,16 +532,24 @@ class PriceFeedService:
         
         self.last_coingecko_call = datetime.now()
 
-
-
     async def _fetch_from_coingecko(
         self,        
         token_symbol: str,
         token_address: str
     ) -> Optional[Decimal]:
-        """Fetch single token price from CoinGecko API."""
+        """
+        Fetch single token price from CoinGecko API.
+        
+        Args:
+            token_symbol: Token symbol
+            token_address: Token contract address
+            
+        Returns:
+            Price in USD or None if unavailable
+        """
         try:
             await self._enforce_rate_limit()
+            
             # Get CoinGecko ID for this token
             coin_id = self._get_coingecko_id(token_symbol)
             if not coin_id:
@@ -606,12 +563,11 @@ class PriceFeedService:
             }
 
             # Build headers with API key (Demo tier)
-            headers = {}
+            headers: Dict[str, str] = {}
             if self.coingecko_api_key:
                 headers['x-cg-demo-api-key'] = self.coingecko_api_key
                 logger.debug(f"[PRICE FEED] Using CoinGecko API key for {token_symbol}")
 
-            # Create a fresh timeout
             # Use reusable session to prevent memory leaks
             session = await self._get_or_create_session()
             async with session.get(url, params=params, headers=headers) as response:
@@ -649,16 +605,109 @@ class PriceFeedService:
             raise
         except Exception as e:
             logger.error(
-                f"[PRICE FEED] CoinGecko API error: {e}"
+                f"[PRICE FEED] CoinGecko API error: {e}",
+                exc_info=True
             )
             return None
+
+    async def _fetch_bulk_from_coingecko(
+        self,
+        tokens: List[Tuple[str, str]]
+    ) -> Dict[str, Optional[Decimal]]:
+        """
+        Fetch multiple token prices in a single CoinGecko API call.
+        
+        This is the KEY OPTIMIZATION that reduces API usage by 90%.
+        
+        Args:
+            tokens: List of (symbol, address) tuples to fetch
+            
+        Returns:
+            Dictionary mapping symbols to prices
+        """
+        if not tokens:
+            return {}
+        
+        try:
+            await self._enforce_rate_limit()
+            
+            # Build list of CoinGecko IDs
+            coin_ids: List[str] = []
+            symbol_to_coin_id: Dict[str, str] = {}
+            
+            for symbol, address in tokens:
+                coin_id = self._get_coingecko_id(symbol)
+                if coin_id:
+                    coin_ids.append(coin_id)
+                    symbol_to_coin_id[coin_id] = symbol
+            
+            if not coin_ids:
+                logger.warning("[PRICE FEED] No valid CoinGecko IDs in bulk request")
+                return {symbol: None for symbol, _ in tokens}
+            
+            # Make single bulk API call
+            url = f"{self.coingecko_base_url}/simple/price"
+            params = {
+                'ids': ','.join(coin_ids),
+                'vs_currencies': 'usd'
+            }
+            
+            headers: Dict[str, str] = {}
+            if self.coingecko_api_key:
+                headers['x-cg-demo-api-key'] = self.coingecko_api_key
+            
+            session = await self._get_or_create_session()
+            async with session.get(url, params=params, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    results: Dict[str, Optional[Decimal]] = {}
+                    for coin_id, symbol in symbol_to_coin_id.items():
+                        if coin_id in data and 'usd' in data[coin_id]:
+                            price = Decimal(str(data[coin_id]['usd']))
+                            results[symbol] = price
+                            logger.debug(
+                                f"[PRICE FEED] Bulk fetch: {symbol} = ${price:.2f}"
+                            )
+                        else:
+                            results[symbol] = None
+                    
+                    logger.info(
+                        f"[PRICE FEED] ✅ Bulk fetch succeeded: "
+                        f"{len(results)}/{len(tokens)} prices"
+                    )
+                    return results
+                    
+                elif response.status == 429:
+                    logger.warning("[PRICE FEED] CoinGecko rate limit in bulk fetch")
+                    return {symbol: None for symbol, _ in tokens}
+                else:
+                    logger.warning(
+                        f"[PRICE FEED] CoinGecko bulk fetch error: {response.status}"
+                    )
+                    return {symbol: None for symbol, _ in tokens}
+                    
+        except Exception as e:
+            logger.error(
+                f"[PRICE FEED] Bulk fetch exception: {e}",
+                exc_info=True
+            )
+            return {symbol: None for symbol, _ in tokens}
 
     # =========================================================================
     # CACHING METHODS (ENHANCED WITH STALE-WHILE-REVALIDATE)
     # =========================================================================
 
     def _get_cached_price(self, token_address: str) -> Optional[Decimal]:
-        """Get cached price from Redis with fresh/stale distinction."""
+        """
+        Get cached price from Redis with fresh/stale distinction.
+        
+        Args:
+            token_address: Token contract address
+            
+        Returns:
+            Cached price or None if not in fresh cache
+        """
         try:
             # Try fresh cache first
             cache_key = f"{PRICE_CACHE_PREFIX}:{self.chain_id}:{token_address.lower()}"
@@ -681,7 +730,15 @@ class PriceFeedService:
             return None
     
     def _get_stale_cached_price(self, token_address: str) -> Optional[Decimal]:
-        """Get stale cached price as fallback when API fails."""
+        """
+        Get stale cached price as fallback when API fails.
+        
+        Args:
+            token_address: Token contract address
+            
+        Returns:
+            Stale cached price or None if not available
+        """
         try:
             stale_key = f"{STALE_CACHE_PREFIX}:{self.chain_id}:{token_address.lower()}"
             stale_value = cache.get(stale_key)
@@ -701,7 +758,13 @@ class PriceFeedService:
             return None
     
     def _cache_price(self, token_address: str, price: Decimal) -> None:
-        """Cache price in Redis with both fresh and stale TTLs."""
+        """
+        Cache price in Redis with both fresh and stale TTLs.
+        
+        Args:
+            token_address: Token contract address
+            price: Price to cache
+        """
         try:
             # Store in fresh cache
             fresh_key = f"{PRICE_CACHE_PREFIX}:{self.chain_id}:{token_address.lower()}"
@@ -720,7 +783,12 @@ class PriceFeedService:
             logger.warning(f"[PRICE FEED] Cache storage error: {e}")
     
     def get_cache_statistics(self) -> Dict[str, Any]:
-        """Get cache performance statistics."""
+        """
+        Get cache performance statistics.
+        
+        Returns:
+            Dictionary containing cache metrics and performance data
+        """
         total_requests = self.cache_hits + self.cache_misses
         hit_rate = (self.cache_hits / total_requests * 100) if total_requests > 0 else 0
         
@@ -747,7 +815,12 @@ _default_price_feed_service: Optional[PriceFeedService] = None
 
 
 def get_default_price_feed_service() -> PriceFeedService:
-    """Get or create the default price feed service instance."""
+    """
+    Get or create the default price feed service instance.
+    
+    Returns:
+        Singleton PriceFeedService instance
+    """
     global _default_price_feed_service
     
     if _default_price_feed_service is None:
@@ -761,7 +834,7 @@ def get_default_price_feed_service() -> PriceFeedService:
 
 
 async def get_bulk_token_prices_simple(
-    tokens: List[tuple[str, str]],
+    tokens: List[Tuple[str, str]],
     chain_id: int = 84532
 ) -> Dict[str, Optional[Decimal]]:
     """
