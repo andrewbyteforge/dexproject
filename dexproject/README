@@ -1,0 +1,1049 @@
+# DEX Auto-Trading Engine
+
+A sophisticated autonomous trading platform for decentralized exchanges (DEXs) with intelligent decision-making, comprehensive risk management, and advanced paper trading simulation capabilities.
+
+---
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Applications](#applications)
+  - [Paper Trading](#paper-trading-application)
+  - [Trading](#trading-application)
+  - [Dashboard](#dashboard-application)
+  - [Risk Management](#risk-management-application)
+  - [Wallet](#wallet-application)
+  - [Analytics](#analytics-application)
+  - [Engine](#engine)
+  - [Shared Components](#shared-components)
+- [Configuration](#configuration)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+
+---
+
+## Project Overview
+
+The DEX Auto-Trading Engine is a production-ready autonomous trading system designed for decentralized cryptocurrency exchanges. The platform enables users to test trading strategies without financial risk through comprehensive paper trading simulation, while providing a robust foundation for eventual live trading execution.
+
+### Goals
+
+- **Risk-Free Learning**: Enable traders to develop and refine strategies through realistic simulation
+- **Intelligent Automation**: Provide AI-driven decision-making with configurable intelligence levels (1-10)
+- **Transparency**: Expose complete AI reasoning and decision-making processes
+- **Safety First**: Implement multiple layers of protection including circuit breakers and risk management
+- **Production Ready**: Build enterprise-grade infrastructure with comprehensive monitoring and error handling
+
+### Target Audience
+
+- **Traders**: Test strategies and learn trading mechanics safely
+- **Developers**: Build and benchmark trading algorithms
+- **Researchers**: Collect ML training data and analyze strategy effectiveness
+
+---
+
+## Key Features
+
+### Paper Trading System
+- **Realistic Simulation**: Accurate gas costs, slippage, and execution delays
+- **Virtual Accounts**: Multiple accounts per user for strategy testing
+- **Complete Trade Lifecycle**: From pending to executed with full state tracking
+- **Position Management**: Real-time P&L calculations and auto-close triggers
+- **Performance Analytics**: Comprehensive metrics including Sharpe ratio, win rate, and drawdown
+
+### Intelligence System
+- **10-Level Intelligence Slider**: From ultra-conservative (Level 1) to fully autonomous AI (Level 10)
+- **AI Thought Logging**: Complete transparency into every trading decision
+- **Multi-Lane Analysis**: Fast Lane (sub-300ms) and Smart Lane (comprehensive analysis)
+- **Auto Pilot**: Autonomous parameter optimization with safety limits
+- **Market Context**: Real-time price feeds, volatility analysis, and trend detection
+
+### Trading Infrastructure
+- **Multi-Chain Support**: Ethereum, Base, and other EVM-compatible networks
+- **DEX Integration**: Uniswap V2/V3 router support with automatic failover
+- **Gas Optimization**: Intelligent gas strategies with target 23% savings
+- **Transaction Management**: Retry logic, mempool monitoring, and stuck transaction recovery
+- **Circuit Breakers**: Automatic system protection against failures and anomalies
+
+### Real-Time Features
+- **WebSocket Updates**: Live dashboard updates via Django Channels
+- **Price Feed Service**: Real-time token prices from multiple sources (CoinGecko, Alchemy)
+- **Mempool Monitoring**: Track pending transactions for MEV protection
+- **Performance Metrics**: Prometheus-based monitoring with visual dashboards
+
+---
+
+## Architecture
+
+### High-Level Overview
+
+The system follows a modular architecture with clear separation of concerns:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    User Interface                       │
+│              (Django Templates + WebSocket)             │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────────┐
+│                  Django Backend                         │
+│  ┌──────────┬──────────┬──────────┬──────────────────┐ │
+│  │Dashboard │  Paper   │ Trading  │  Risk Management │ │
+│  │          │ Trading  │          │                  │ │
+│  └──────────┴──────────┴──────────┴──────────────────┘ │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────────┐
+│              Service Layer                              │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │ Transaction Manager │ DEX Router │ Portfolio       │ │
+│  │ Gas Optimizer      │ Price Feed │ Circuit Breakers│ │
+│  └────────────────────────────────────────────────────┘ │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────────┐
+│                 Engine Layer (Async)                    │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │ Web3 Client │ Wallet Manager │ Provider Manager   │ │
+│  │ Mempool Monitor │ MEV Protection │ Smart Lane     │ │
+│  └────────────────────────────────────────────────────┘ │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────────┐
+│           Infrastructure Layer                          │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │ PostgreSQL │ Redis │ Celery │ Prometheus          │ │
+│  │ Django Channels │ WebSocket │ Alchemy/Ankr RPC   │ │
+│  └────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Design Principles
+
+1. **Separation of Concerns**: Each module has a single, well-defined responsibility
+2. **Asynchronous Core**: Latency-critical operations use async/await patterns
+3. **Type Safety**: Comprehensive type hints throughout with zero Pylance errors
+4. **Error Handling**: Defensive programming with extensive logging
+5. **Testability**: Dependency injection and modular design for easy testing
+6. **Scalability**: Horizontal scaling support through Celery task queues
+
+---
+
+## Applications
+
+### Paper Trading Application
+
+The paper trading app is the core simulation engine, enabling risk-free strategy testing with realistic market conditions.
+
+#### Directory Structure
+
+```
+paper_trading/
+├── __init__.py                 # Package initialization
+├── apps.py                     # Django app configuration
+├── models/                     # Database models (4 modules)
+│   ├── __init__.py
+│   ├── base.py                # Core models (Account, Trade, Position, Config)
+│   ├── intelligence.py        # AI decision tracking and strategy config
+│   ├── performance.py         # Metrics and session management
+│   ├── autopilot.py           # Autonomous parameter optimization
+│   └── README                 # Comprehensive models documentation
+├── bot/                       # Trading bot implementation
+│   ├── __init__.py
+│   ├── enhanced_bot.py        # Main bot orchestrator
+│   ├── market_analyzer.py     # Market analysis and decision coordination
+│   ├── position_manager.py    # Position lifecycle management
+│   ├── trade_executor.py      # Trade execution engine
+│   ├── price_service_integration.py  # Real-time price feeds
+│   └── README                 # Bot architecture documentation
+├── intelligence/              # AI decision-making system
+│   ├── __init__.py
+│   ├── engine.py              # Main intelligence engine
+│   ├── base.py                # Base classes and data structures
+│   ├── market_analyzer.py     # Composite market analysis
+│   ├── decision_maker.py      # Trading decision logic (888 lines)
+│   ├── config.py              # Intelligence level configurations
+│   ├── price_history.py       # Price tracking and trend analysis
+│   ├── ml_features.py         # ML training data collection (Level 10)
+│   └── README                 # Intelligence system documentation
+├── services/                  # Business logic services
+│   ├── __init__.py
+│   ├── price_feed_service.py  # Multi-source price aggregation
+│   ├── websocket_service.py   # Real-time WebSocket updates
+│   └── README                 # Services documentation
+├── config/                    # Configuration management
+│   ├── __init__.py
+│   ├── type_config.py         # Decimal precision and type handling
+│   └── README                 # Configuration system documentation
+├── utils/                     # Utility functions
+│   ├── __init__.py
+│   ├── type_utils.py          # Type conversion and validation
+│   └── README                 # Utilities documentation
+├── templates/paper_trading/   # Django templates
+│   ├── dashboard.html         # Main dashboard with live metrics
+│   ├── configuration.html     # Bot configuration panel
+│   ├── portfolio.html         # Position tracking and P&L
+│   ├── trade_history.html     # Complete trade history viewer
+│   ├── error.html             # Error page template
+│   └── README                 # Templates documentation
+├── management/commands/       # Django management commands
+│   ├── __init__.py
+│   └── run_paper_bot.py       # Command to run paper trading bot
+├── constants.py               # Centralized string literals and field names
+├── defaults.py                # Default configuration values
+├── factories.py               # Type-safe model creation functions
+├── admin.py                   # Django admin configuration
+├── views.py                   # HTTP request handlers
+├── api_views.py               # REST API endpoints
+├── urls.py                    # URL routing configuration
+├── routing.py                 # WebSocket routing
+├── consumers.py               # WebSocket consumer handlers
+├── signals.py                 # Django signal handlers
+├── tasks.py                   # Celery background tasks
+└── README                     # Application overview documentation
+```
+
+#### Core Components
+
+##### Models Module (`models/`)
+
+**base.py** - Core Trading Infrastructure
+- `PaperTradingAccount`: Virtual trading accounts with balance tracking and P&L calculation
+- `PaperTrade`: Individual trade records with realistic simulation (gas, slippage, timing)
+- `PaperPosition`: Position tracking with real-time unrealized P&L
+- `PaperTradingConfig`: Per-account simulation parameters
+
+**intelligence.py** - AI Decision Tracking
+- `PaperAIThoughtLog`: Complete AI reasoning transparency for every decision
+- `PaperStrategyConfiguration`: Comprehensive bot configuration with Auto Pilot support
+  - Trading modes: Conservative/Moderate/Aggressive/Custom
+  - Lane selection: Fast Lane and Smart Lane toggles
+  - Risk parameters: position size, stop-loss, take-profit, daily limits
+  - Auto Pilot: autonomous parameter optimization with safety limits
+
+**performance.py** - Metrics and Sessions
+- `PaperTradingSession`: Complete bot session lifecycle tracking
+- `PaperPerformanceMetrics`: Comprehensive performance analysis
+  - Trading metrics: win rate, total trades, P&L
+  - Risk metrics: Sharpe ratio, max drawdown, profit factor
+  - Time-based analysis for performance tracking
+
+**autopilot.py** - Autonomous Learning
+- `AutoPilotLog`: Complete audit trail of parameter adjustments with reasoning
+- `AutoPilotPerformanceSnapshot`: Periodic performance snapshots for learning
+  - Captures metrics before/after adjustments
+  - Enables learning from outcomes
+  - Tracks market conditions correlation
+
+##### Bot Module (`bot/`)
+
+**enhanced_bot.py** - Main Orchestrator
+- Coordinates all trading components
+- Manages bot lifecycle (startup, run loop, shutdown)
+- Handles signal management for graceful termination
+- Integrates Django models with trading logic
+- Implements main tick-based execution loop
+
+**market_analyzer.py** - Market Analysis Coordinator
+- Coordinates all components on each tick
+- Updates prices via price manager
+- Updates position values and P&L
+- Checks auto-close conditions (stop-loss, take-profit)
+- Analyzes tokens with Intelligence Engine
+- Executes trades via trade executor
+- Calculates performance metrics periodically
+
+**position_manager.py** - Position Lifecycle Manager
+- Loads and caches open positions from database
+- Updates position prices on every tick
+- Opens new positions or adds to existing ones
+- Closes or reduces positions (full/partial sales)
+- Implements auto-close triggers
+- Updates account-level P&L
+- Provides portfolio state queries
+
+**trade_executor.py** - Trade Execution Engine
+- Routes trades to Transaction Manager or legacy execution
+- Creates paper trade records in database
+- Generates AI thought logs for executed trades
+- Validates circuit breaker status before execution
+- Tracks trade statistics and gas savings
+- Enforces daily trade limits
+
+**price_service_integration.py** - Price Feed Manager
+- Fetches real-time prices from multiple sources
+- 90% API call reduction through bulk fetching
+- Maintains price history for trend analysis
+- Supports mock price simulation for testing
+- Handles API failures with automatic fallback
+- Tracks API usage statistics
+
+##### Intelligence Module (`intelligence/`)
+
+**engine.py** - Main Intelligence Engine
+- Coordinates market analysis and decision-making
+- Implements 10-level intelligence slider
+- Routes decisions to Fast Lane or Smart Lane
+- Updates market context for trend tracking
+- Collects ML training data at Level 10
+- Manages lane-specific thresholds
+
+**market_analyzer.py** - Composite Market Analysis
+- Technical analysis: moving averages, RSI, Bollinger Bands
+- Sentiment analysis: social media and news sentiment
+- Pattern detection: support/resistance, chart patterns
+- Risk assessment: volatility, liquidity, market cap
+- Provides comprehensive market context
+
+**decision_maker.py** - Trading Decision Logic (888 lines)
+- Analyzes market context with intelligence-specific logic
+- Generates buy/sell/hold/skip decisions
+- Calculates confidence scores (0-100%)
+- Determines position sizes based on risk
+- Provides detailed reasoning for transparency
+- Adjusts strategy based on intelligence level
+
+**config.py** - Intelligence Level Configurations
+- Defines 10 intelligence levels with unique personalities
+- Level 1: Ultra-conservative (20% risk tolerance)
+- Level 5: Balanced default (50% risk tolerance)
+- Level 10: Fully autonomous AI (100% risk tolerance)
+- Configures risk tolerance, position sizes, confidence thresholds
+- Sets MEV protection and gas strategies
+
+**price_history.py** - Price Tracking
+- Maintains time-series price records
+- Calculates price change percentages
+- Detects trending up/down patterns
+- Measures volatility (coefficient of variation)
+- Supports historical analysis
+
+**ml_features.py** - ML Training Data Collection
+- Collects features at Intelligence Level 10
+- Captures market context and decision data
+- Builds training datasets for ML models
+- Maintains in-memory sample buffer
+- Exports data for model training
+
+##### Services Module (`services/`)
+
+**price_feed_service.py** - Multi-Source Price Aggregation
+- Fetches prices from CoinGecko, Alchemy, DEX
+- Implements fallback chain for reliability
+- Supports multiple token addresses
+- Async/sync operation modes
+- Cache integration for performance
+
+**websocket_service.py** - Real-Time Updates
+- Broadcasts trade updates to connected clients
+- Sends position updates and P&L changes
+- Notifies of bot status changes
+- Uses Django Channels for WebSocket communication
+- Handles connection lifecycle
+
+##### Configuration Module (`config/`)
+
+**type_config.py** - Decimal Precision Management
+- Enforces 28-digit decimal precision
+- Implements banker's rounding (ROUND_HALF_EVEN)
+- Provides type converters for safe casting
+- Validates numeric ranges
+- Ensures financial calculation accuracy
+
+##### Core Files
+
+**constants.py** - Centralized Constants (Phase 8)
+- String literals for decision types, confidence levels, trading modes
+- Field names for all models to prevent typos
+- Validation functions for enums
+- Helper functions for confidence level conversion
+- Single source of truth for all string constants
+
+**defaults.py** - Default Configuration (Phase 8)
+- Trading configuration defaults
+- Intelligence system defaults
+- Auto Pilot defaults
+- Risk management defaults
+- Provides sensible defaults overridable by environment
+
+**factories.py** - Type-Safe Model Creation (Phase 8)
+- Safe factory functions for all models
+- Prevents "unexpected keyword argument" errors
+- Type-safe wrappers with validation
+- Automatic field name mapping
+- Reduces boilerplate code
+
+**views.py** - HTTP Request Handlers
+- Dashboard view with real-time metrics
+- Configuration panel for bot settings
+- Portfolio view with positions and P&L
+- Trade history with filtering
+- Error handling and user feedback
+
+**api_views.py** - REST API Endpoints
+- Start/stop bot operations
+- Update configuration settings
+- Query account and position data
+- Retrieve performance metrics
+- WebSocket connection management
+
+**consumers.py** - WebSocket Handlers
+- Handles WebSocket connections
+- Routes messages to appropriate handlers
+- Sends real-time updates to clients
+- Manages connection lifecycle
+- Broadcasts to groups
+
+**signals.py** - Django Signal Handlers
+- Initializes decimal precision on app ready
+- Registers signal handlers for model events
+- Validates type conversion utilities
+- Manages app lifecycle events
+
+**tasks.py** - Celery Background Tasks
+- Price update tasks
+- Performance metric calculation
+- Auto Pilot adjustment tasks
+- Cleanup tasks for old data
+- Scheduled periodic tasks
+
+#### Key Features
+
+**Realistic Simulation**
+- Accurate gas cost calculation in USD
+- Slippage percentage simulation
+- Execution time delays (50-500ms)
+- Random failure scenarios (~3% failure rate)
+- Mock blockchain data (tx hashes, block numbers)
+
+**Complete Transparency**
+- Every AI decision logged with full reasoning
+- Positive and negative signals captured
+- Market data snapshot at decision time
+- Confidence levels and risk assessment
+- Links decisions to actual trades
+
+**Safety Mechanisms**
+- Circuit breakers prevent dangerous trading
+- Daily trade limits cap activity
+- Stop-loss and take-profit auto-close
+- Maximum position size constraints
+- Cooldown periods for Auto Pilot
+
+**Auto Pilot System**
+- Autonomous parameter optimization
+- Performance-based learning
+- Gradual adaptation with safety limits
+- Complete audit trail of adjustments
+- Learning from adjustment outcomes
+
+---
+
+### Trading Application
+
+Core trading functionality for real trade execution, position tracking, and portfolio management.
+
+#### Directory Structure
+
+```
+trading/
+├── models.py                   # Trading models (Chain, DEX, Token, TradingPair, Strategy, Trade, Position)
+├── services/                   # Trading services
+│   ├── transaction_manager.py # Central transaction coordinator with retry logic
+│   ├── transaction_manager_base.py  # Core data structures and configuration
+│   ├── transaction_manager_retry.py # Retry logic and stuck transaction recovery
+│   ├── dex_router_service.py  # DEX interaction (Uniswap V2/V3)
+│   ├── gas_optimizer.py       # Gas price optimization strategies
+│   ├── portfolio_service.py   # Portfolio tracking and updates
+│   └── README                  # Services documentation
+├── management/commands/        # Management commands
+│   ├── test_transaction_manager.py  # Transaction pipeline testing
+│   └── verify_paper_trading.py      # Paper trading verification
+├── admin.py                    # Django admin configuration
+├── views.py                    # Trading API views
+├── urls.py                     # URL routing
+└── tasks.py                    # Celery tasks for trade execution
+```
+
+#### Key Components
+
+**transaction_manager.py** - Transaction Coordinator
+- Central entry point for all transaction operations
+- Circuit breaker integration for system protection
+- Gas optimization with Phase 6A optimizer
+- Retry logic with exponential backoff
+- Mempool monitoring for dropped transactions
+- WebSocket broadcasting for real-time updates
+- Portfolio tracking integration
+
+**dex_router_service.py** - DEX Integration
+- Uniswap V2/V3 router support
+- Swap execution (ETH↔Tokens, Token↔Token)
+- Quote fetching for price estimation
+- Slippage protection
+- Deadline management
+- Multi-version DEX support
+
+**gas_optimizer.py** - Gas Optimization
+- Multiple gas strategies (Instant, Fast, Standard, Slow, Custom)
+- Real-time gas price fetching
+- Gas savings tracking (target 23%)
+- Network condition awareness
+- Safety ceilings for max gas price
+
+**portfolio_service.py** - Portfolio Management
+- Real-time position tracking
+- Trade recording and history
+- P&L calculation
+- Portfolio value aggregation
+- Transaction integration
+
+---
+
+### Dashboard Application
+
+Main user interface providing real-time monitoring, configuration, and control of the trading system.
+
+#### Key Components
+
+- **Home Dashboard**: System overview with metrics and status
+- **Mode Selection**: Paper/Shadow/Live trading mode switching
+- **Configuration Panel**: Bot settings and parameter tuning
+- **Mempool Monitor**: Real-time pending transaction tracking
+- **Activity Log**: Historical events and trading activity
+- **Performance Charts**: Visual analytics and metrics
+
+---
+
+### Risk Management Application
+
+Comprehensive risk assessment and protection systems.
+
+#### Key Components
+
+- **Token Risk Analysis**: Honeypot detection, liquidity checks, contract verification
+- **MEV Protection**: Front-running detection and sandwich attack prevention
+- **Circuit Breakers**: Automatic system protection against failures
+- **Risk Scoring**: Multi-factor risk assessment
+- **Alert System**: Real-time risk notifications
+
+---
+
+### Wallet Application
+
+Wallet management and SIWE (Sign-In With Ethereum) authentication.
+
+#### Key Components
+
+- **Wallet Connection**: MetaMask and WalletConnect integration
+- **SIWE Authentication**: Secure wallet-based login
+- **Multi-Wallet Support**: Manage multiple wallet addresses
+- **Transaction Signing**: Secure transaction authorization
+- **Balance Tracking**: Real-time wallet balance monitoring
+
+---
+
+### Analytics Application
+
+Monitoring and observability infrastructure with Prometheus integration.
+
+#### Key Components
+
+- **Prometheus Metrics**: System-wide metric collection
+- **Visual Dashboards**: Real-time performance monitoring
+- **Query Performance**: Database operation tracking
+- **HTTP Request Tracking**: Automatic request monitoring
+- **Custom Metrics**: Application-specific metric collection
+
+---
+
+### Engine
+
+Core async trading engine handling latency-critical operations.
+
+#### Directory Structure
+
+```
+engine/
+├── config.py                   # Engine configuration management
+├── web3_client.py              # Web3 provider integration
+├── wallet_manager.py           # Wallet operations and signing
+├── utils.py                    # Utility functions and circuit breakers
+├── execution.py                # Trade execution engine
+├── portfolio.py                # Portfolio management and circuit breakers
+├── risk.py                     # Risk assessment engine
+├── mempool/                    # Mempool monitoring
+│   ├── monitor.py             # Real-time transaction monitoring
+│   ├── analyzer.py            # Transaction analysis
+│   └── __init__.py
+├── smart_lane/                 # Smart Lane comprehensive analysis
+│   ├── pipeline.py            # Analysis pipeline
+│   ├── strategies.py          # Trading strategies
+│   └── test_pipeline.py       # Pipeline validation tests
+└── __init__.py
+```
+
+#### Key Components
+
+**web3_client.py** - Blockchain Integration
+- Multi-provider support (Alchemy, Ankr, Infura)
+- Automatic failover and health checks
+- Connection pooling
+- POA middleware for Base network
+- Transaction broadcasting
+
+**wallet_manager.py** - Wallet Operations
+- Secure key management
+- Transaction signing
+- Nonce management
+- Multiple wallet types (Hot, Cold, Trading)
+- Balance queries
+
+**mempool/monitor.py** - Mempool Monitoring
+- Real-time pending transaction tracking
+- WebSocket connection management
+- Transaction filtering (DEX-only, high-value)
+- MEV threat detection
+- Performance tracking
+
+**smart_lane/** - Comprehensive Analysis
+- Multi-timeframe technical analysis
+- On-chain analytics integration
+- Market sentiment analysis
+- Advanced pattern detection
+- Strategy backtesting framework
+
+---
+
+### Shared Components
+
+Common utilities and infrastructure shared across applications.
+
+#### Directory Structure
+
+```
+shared/
+├── redis_client.py             # Redis connection management
+├── chain_config_bridge.py      # Django-Engine configuration bridge
+├── schemas.py                  # Common data structures
+├── circuit_breakers/           # Circuit breaker system
+│   ├── models.py              # Circuit breaker state models
+│   ├── manager.py             # Circuit breaker management
+│   └── apps.py                # Django app configuration
+└── __init__.py
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+The system uses environment variables for configuration. All variables can be set in a `.env` file in the project root.
+
+#### Core Engine Settings
+
+```bash
+# Trading Mode
+TRADING_MODE=PAPER              # PAPER | SHADOW | LIVE
+ENGINE_NAME=dex-trading-engine
+LOG_LEVEL=INFO                  # DEBUG | INFO | WARNING | ERROR
+
+# Network Configuration
+TESTNET_MODE=True              # Enable testnet mode
+DEFAULT_CHAIN_ID=84532         # Base Sepolia
+TARGET_CHAINS=84532,11155111,421614  # Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia
+```
+
+#### API Keys
+
+```bash
+# Alchemy API Keys (Primary)
+ALCHEMY_API_KEY=your_ethereum_key
+BASE_ALCHEMY_API_KEY=your_base_key
+
+# Ankr API Key (Failover)
+ANKR_API_KEY=your_ankr_key
+
+# Infura Project ID (Failover)
+INFURA_PROJECT_ID=your_infura_id
+```
+
+#### RPC Endpoints
+
+```bash
+# Base Sepolia (Default Chain)
+BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY
+BASE_SEPOLIA_WS_URL=wss://base-sepolia.g.alchemy.com/v2/YOUR_KEY
+BASE_RPC_URL_FALLBACK=https://sepolia.base.org
+
+# Ethereum Sepolia
+SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+SEPOLIA_WS_URL=wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+SEPOLIA_RPC_URL_FALLBACK=https://rpc.sepolia.org
+
+# Arbitrum Sepolia
+ARBITRUM_SEPOLIA_RPC_URL=https://arbitrum-sepolia.g.alchemy.com/v2/YOUR_KEY
+ARBITRUM_SEPOLIA_WS_URL=wss://arbitrum-sepolia.g.alchemy.com/v2/YOUR_KEY
+```
+
+#### Paper Trading Configuration
+
+```bash
+# Paper Trading Defaults
+PAPER_TRADING_INITIAL_BALANCE=10000.00  # Starting balance in USD
+PAPER_TRADING_MAX_POSITION_SIZE=20.0    # Max position size as % of balance
+PAPER_TRADING_STOP_LOSS_PERCENT=5.0     # Default stop-loss percentage
+PAPER_TRADING_TAKE_PROFIT_PERCENT=10.0  # Default take-profit percentage
+PAPER_TRADING_MAX_DAILY_TRADES=50       # Maximum trades per day
+PAPER_TRADING_GAS_MULTIPLIER=1.1        # Gas cost simulation multiplier
+PAPER_TRADING_BASE_SLIPPAGE=0.3         # Base slippage percentage
+PAPER_TRADING_EXECUTION_DELAY_MS=150    # Simulated execution delay
+
+# Intelligence System
+PAPER_TRADING_DEFAULT_INTEL_LEVEL=5     # Default intelligence level (1-10)
+PAPER_TRADING_FAST_LANE_THRESHOLD=100.0 # Fast Lane max trade size USD
+PAPER_TRADING_CONFIDENCE_THRESHOLD=60.0 # Minimum confidence for execution
+
+# Auto Pilot
+PAPER_TRADING_AUTOPILOT_ENABLED=False          # Enable Auto Pilot by default
+PAPER_TRADING_AUTOPILOT_LEARNING_RATE=0.05    # Learning rate for adjustments
+PAPER_TRADING_AUTOPILOT_COOLDOWN_MINUTES=60   # Cooldown between adjustments
+PAPER_TRADING_AUTOPILOT_MAX_DAILY_ADJUSTMENTS=10  # Max adjustments per day
+```
+
+#### Trading Engine Settings
+
+```bash
+# Gas Configuration
+DEFAULT_GAS_STRATEGY=FAST      # INSTANT | FAST | STANDARD | SLOW | CUSTOM
+GAS_PRICE_MULTIPLIER=1.1       # Gas price multiplier for speed
+MAX_GAS_PRICE_GWEI=500         # Maximum gas price ceiling
+GAS_OPTIMIZATION_TARGET=23.1   # Target gas savings percentage
+
+# Transaction Management
+TRADING_MAX_CONCURRENT_TX=10   # Maximum concurrent transactions
+TRADING_TX_TIMEOUT=300         # Transaction timeout in seconds
+TX_RETRY_MAX_ATTEMPTS=3        # Maximum retry attempts
+TX_RETRY_BASE_DELAY=5          # Base delay between retries (seconds)
+TX_RETRY_GAS_ESCALATION=15     # Gas price increase per retry (%)
+
+# Circuit Breakers
+CIRCUIT_BREAKER_ENABLED=True           # Enable circuit breaker protection
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=5    # Consecutive failures to trigger
+CIRCUIT_BREAKER_RECOVERY_TIME=300      # Recovery time in seconds
+CIRCUIT_BREAKER_HALF_OPEN_REQUESTS=3   # Requests in half-open state
+
+# Mempool Monitoring
+MEMPOOL_MONITORING_ENABLED=True        # Enable mempool monitoring
+MEMPOOL_MAX_PENDING_TX=10000          # Maximum pending transactions to track
+MEMPOOL_TX_TTL_SECONDS=300            # Transaction time-to-live
+```
+
+#### Django Settings
+
+```bash
+# Django Configuration
+SECRET_KEY=your_secret_key_here
+DEBUG=False
+ALLOWED_HOSTS=localhost,127.0.0.1,yourdomain.com
+
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/dexproject
+# Or for SQLite (development): sqlite:///db.sqlite3
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
+REDIS_MAX_CONNECTIONS=50
+
+# Celery
+CELERY_BROKER_URL=redis://localhost:6379/1
+CELERY_RESULT_BACKEND=redis://localhost:6379/2
+```
+
+#### Security Settings
+
+```bash
+# SIWE Authentication
+SIWE_DOMAIN=yourdomain.com
+SIWE_ALLOWED_CHAIN_IDS=1,8453,84532,11155111
+SIWE_SESSION_EXPIRY=86400      # 24 hours in seconds
+
+# Wallet Security
+WALLET_ENCRYPTION_KEY=your_encryption_key
+PRIVATE_KEY_STORAGE=ENCRYPTED  # ENCRYPTED | KMS | HARDWARE
+```
+
+#### Monitoring and Logging
+
+```bash
+# Prometheus Metrics
+ENABLE_PROMETHEUS_METRICS=True
+PROMETHEUS_PORT=9090
+METRICS_EXPORT_INTERVAL=15     # Seconds
+
+# Logging
+LOG_FILE=logs/dexproject.log
+LOG_MAX_SIZE=104857600         # 100MB
+LOG_BACKUP_COUNT=10
+LOG_FORMAT=json                # json | text
+```
+
+### Configuration Files
+
+Beyond environment variables, the system uses several configuration files:
+
+#### constants.py (Paper Trading)
+- Centralized string literals and field names
+- Prevents typos and enables IDE autocomplete
+- Validation functions for enums
+- Single source of truth for constants
+
+#### defaults.py (Paper Trading)
+- Default configuration values
+- Fallback values when environment variables not set
+- Sensible defaults for all system parameters
+
+#### settings.py (Django)
+- Main Django configuration
+- Application registration
+- Middleware configuration
+- Database and cache setup
+- ASGI/Channels configuration
+
+---
+
+## Technology Stack
+
+### Backend Framework
+- **Django 5.2.6**: Web framework and ORM
+- **Python 3.11+**: Core programming language
+- **ASGI/Daphne**: Async server for WebSocket support
+- **Django Channels**: WebSocket and real-time communication
+
+### Blockchain Integration
+- **Web3.py 7.13.0**: Ethereum interaction library
+- **eth-typing**: Ethereum type definitions
+- **eth-utils**: Ethereum utility functions
+- **POA Middleware**: Proof of Authority chain support (Base)
+
+### Async Infrastructure
+- **asyncio**: Python async framework
+- **asgiref**: ASGI utilities and sync_to_async wrappers
+- **aiohttp**: Async HTTP client
+
+### Data Management
+- **PostgreSQL**: Production database (recommended)
+- **SQLite**: Development database
+- **Redis 7.0+**: Caching and Channels layer
+- **django-redis**: Redis cache backend
+
+### Task Queue
+- **Celery 5.3+**: Distributed task queue
+- **Redis**: Celery broker and result backend
+- **celery-beat**: Periodic task scheduler
+
+### Monitoring and Metrics
+- **Prometheus**: Metrics collection
+- **django-prometheus**: Django integration
+- **Grafana**: Metrics visualization (optional)
+
+### API and Data
+- **Django REST Framework**: REST API support
+- **CoinGecko API**: Token price data
+- **Alchemy API**: Blockchain RPC provider
+- **Ankr API**: Backup RPC provider
+
+### Development Tools
+- **Pylance**: Type checking and IntelliSense
+- **flake8**: Code linting
+- **python-dotenv**: Environment variable management
+- **ipython**: Interactive Python shell
+
+### Frontend (Dashboard)
+- **Django Templates**: Server-side rendering
+- **Bootstrap 5**: UI framework
+- **Chart.js**: Data visualization
+- **WebSocket API**: Real-time updates
+
+---
+
+## Project Structure
+
+```
+dexproject/
+├── dexproject/                 # Django project settings
+│   ├── settings.py            # Main configuration
+│   ├── urls.py                # URL routing
+│   ├── asgi.py                # ASGI configuration
+│   └── wsgi.py                # WSGI configuration
+│
+├── paper_trading/             # Paper trading application (detailed above)
+│   ├── bot/                   # Trading bot implementation
+│   ├── intelligence/          # AI decision-making system
+│   ├── models/                # Database models
+│   ├── services/              # Business logic services
+│   ├── config/                # Configuration management
+│   ├── utils/                 # Utility functions
+│   ├── templates/             # Django templates
+│   └── management/            # Django commands
+│
+├── trading/                   # Real trading application
+│   ├── services/              # Trading services
+│   │   ├── transaction_manager.py
+│   │   ├── dex_router_service.py
+│   │   ├── gas_optimizer.py
+│   │   └── portfolio_service.py
+│   ├── models.py
+│   ├── views.py
+│   └── tasks.py
+│
+├── dashboard/                 # User interface application
+│   ├── views/                 # View handlers
+│   ├── templates/             # UI templates
+│   ├── static/                # Static assets
+│   └── tasks.py               # Background tasks
+│
+├── risk/                      # Risk management application
+│   ├── models.py
+│   ├── views.py
+│   └── tasks/                 # Risk assessment tasks
+│
+├── wallet/                    # Wallet management application
+│   ├── auth.py                # SIWE authentication
+│   ├── models.py
+│   └── views.py
+│
+├── analytics/                 # Monitoring and analytics
+│   ├── prometheus.py          # Metrics collection
+│   ├── views.py               # Dashboard views
+│   └── templates/             # Monitoring dashboards
+│
+├── engine/                    # Async trading engine
+│   ├── config.py              # Engine configuration
+│   ├── web3_client.py         # Web3 integration
+│   ├── wallet_manager.py      # Wallet operations
+│   ├── mempool/               # Mempool monitoring
+│   └── smart_lane/            # Smart Lane analysis
+│
+├── shared/                    # Shared utilities
+│   ├── redis_client.py        # Redis integration
+│   ├── chain_config_bridge.py # Config bridge
+│   ├── circuit_breakers/      # Circuit breaker system
+│   └── schemas.py             # Common data structures
+│
+├── scripts/                   # Utility scripts
+│   ├── setup_paper_trading_commands.py
+│   ├── create_paper_trading_app.py
+│   ├── update_env_config.py
+│   └── test_*.py              # Various test scripts
+│
+├── docs/                      # Documentation
+│   └── project_status_oct2025.md
+│
+├── static/                    # Static files (CSS, JS, images)
+├── media/                     # User-uploaded media
+├── logs/                      # Application logs
+│
+├── manage.py                  # Django management script
+├── requirements.txt           # Python dependencies
+├── .env.example               # Environment variable template
+├── .gitignore                 # Git ignore rules
+└── README.md                  # This file
+```
+
+---
+
+## Quick Reference
+
+### Key Management Commands
+
+```bash
+# Run paper trading bot
+python manage.py run_paper_bot
+
+# Verify paper trading setup
+python manage.py verify_paper_trading --create-test-data
+
+# Test transaction manager
+python manage.py test_transaction_manager
+
+# Run Django development server
+python manage.py runserver
+
+# Run Celery worker
+celery -A dexproject worker -l info
+
+# Run Celery beat (periodic tasks)
+celery -A dexproject beat -l info
+
+# Run Django shell
+python manage.py shell
+
+# Create superuser
+python manage.py createsuperuser
+
+# Make migrations
+python manage.py makemigrations
+
+# Apply migrations
+python manage.py migrate
+```
+
+### Important URLs
+
+```
+Admin Interface:        http://localhost:8000/admin/
+Dashboard:              http://localhost:8000/dashboard/
+Paper Trading:          http://localhost:8000/paper-trading/
+Analytics:              http://localhost:8000/analytics/
+API Trading:            http://localhost:8000/api/trading/
+API Risk:               http://localhost:8000/api/risk/
+API Wallet:             http://localhost:8000/api/wallet/
+```
+
+### Default Credentials
+
+When creating a test user with `verify_paper_trading`:
+- Username: testuser
+- Password: testpass123
+
+---
+
+## Support and Documentation
+
+For detailed documentation on specific components:
+
+- **Paper Trading Models**: See `paper_trading/models/README`
+- **Trading Bot Architecture**: See `paper_trading/bot/README`
+- **Intelligence System**: See `paper_trading/intelligence/README`
+- **Configuration System**: See `paper_trading/config/README`
+- **Trading Services**: See `trading/services/README`
+- **Template System**: See `paper_trading/templates/paper_trading/README`
+- **Utilities**: See `paper_trading/utils/README`
+
+---
+
+## License
+
+[Specify your license here]
+
+---
+
+## Contributors
+
+[List contributors here]
+
+---
+
+## Version
+
+Current Version: 1.0.0 (Production Ready)
+
+Last Updated: October 2025
+
+---
+
+**Note**: This is a comprehensive trading platform with real financial implications. Always test thoroughly in paper trading mode before considering any live trading operations. The system includes multiple safety mechanisms, but trading cryptocurrency carries inherent risks.
