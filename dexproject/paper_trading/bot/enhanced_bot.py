@@ -23,6 +23,10 @@ File: dexproject/paper_trading/bot/enhanced_bot.py
 # ============================================================================
 import sys
 import io
+import asyncio
+from contextlib import suppress
+from typing import Any, Awaitable, Callable
+
 
 # Force UTF-8 encoding for Windows console to support emoji logging
 if sys.platform == 'win32':
@@ -520,7 +524,8 @@ class EnhancedPaperTradingBot:
                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
                 "use_real_prices": self.use_real_prices,
                 "chain_id": self.chain_id,
-                "engine_config_initialized": ENGINE_CONFIG_AVAILABLE and engine_config_module is not None and hasattr(engine_config_module, 'config') and engine_config_module.config is not None
+                "engine_config_initialized": ENGINE_CONFIG_AVAILABLE and engine_config_module is not None and hasattr(
+                    engine_config_module, 'config') and engine_config_module.config is not None
             }
 
             def json_safe(obj: Any) -> Any:
@@ -635,7 +640,8 @@ class EnhancedPaperTradingBot:
                 "circuit_breaker_enabled": self.circuit_breaker_enabled,
                 "use_real_prices": self.use_real_prices,
                 "chain_id": self.chain_id,
-                "engine_config_status": "initialized" if (ENGINE_CONFIG_AVAILABLE and engine_config_module is not None and hasattr(engine_config_module, 'config') and engine_config_module.config is not None) else "unavailable",
+                "engine_config_status": "initialized" if (ENGINE_CONFIG_AVAILABLE and engine_config_module is not None and hasattr(
+                    engine_config_module, 'config') and engine_config_module.config is not None) else "unavailable",
                 "intel_config_summary": {
                     "risk_tolerance": risk_tolerance,
                     "trade_frequency": trade_freq,
@@ -736,14 +742,6 @@ class EnhancedPaperTradingBot:
         except Exception as e:
             logger.warning(f"[BREAKER] Could not initialize circuit breaker: {e}")
             self.circuit_breaker_enabled = False
-
-
-
-
-
-
-
-
 
     def _initialize_price_manager(self) -> None:
         """
@@ -975,41 +973,133 @@ class EnhancedPaperTradingBot:
 
     def shutdown(self) -> None:
         """
-        Gracefully shut down the bot and cleanup resources.
+        Gracefully shut down the bot, cancel background tasks, and close resources.
 
-        This method:
-            1. Sets running flag to False
-            2. Updates session status to COMPLETED
-            3. Logs final statistics
-            4. Closes all open positions
-            5. Saves final state
+        This is safe to call from a sync context (manage.py command). It:
+        1) Stops the run loop.
+        2) Cancels any registered asyncio tasks (self._tasks if present).
+        3) Closes async/sync resources (price manager, analyzer, tx executor,
+            websocket service, redis client, web3 provider) without raising.
+        4) Marks the session as completed and logs final stats.
         """
         logger.info("[BOT] Shutting down gracefully...")
+        # Signal loops to stop
+        setattr(self, "_stopping", True)
         self.running = False
 
+        # Cancel any background asyncio tasks we may have registered
+        tasks = getattr(self, "_tasks", None)
+        if tasks:
+            for t in list(tasks):
+                if t and not t.done():
+                    t.cancel()
+
+        # --- helpers -------------------------------------------------------------
+        async def _maybe_call(func: Callable[..., Any]) -> None:
+            try:
+                result = func()
+                if asyncio.iscoroutine(result) or isinstance(result, Awaitable):
+                    with suppress(Exception):
+                        await result
+            except Exception:
+                # Swallow during shutdown; we want best-effort cleanup
+                pass
+
+        async def _maybe_close(obj: Any) -> None:
+            if obj is None:
+                return
+            # Prefer async aclose()
+            aclose = getattr(obj, "aclose", None)
+            if callable(aclose):
+                await _maybe_call(aclose)
+                return
+            # Fallback to async close()
+            close = getattr(obj, "close", None)
+            if callable(close):
+                await _maybe_call(close)
+
+        async def _close_resources_async() -> None:
+            # Price manager may own an HTTP client and its own aclose/close
+            with suppress(Exception):
+                pm = getattr(self, "price_manager", None)
+                if pm is not None:
+                    client = getattr(pm, "client", None)
+                    await _maybe_close(client)
+                    await _maybe_close(pm)
+
+            # Market analyzer may keep timers/clients
+            with suppress(Exception):
+                analyzer = getattr(self, "market_analyzer", None)
+                await _maybe_close(analyzer)
+
+            # Trade executor / tx manager (web3 providers or HTTP clients)
+            with suppress(Exception):
+                executor = getattr(self, "trade_executor", None)
+                await _maybe_close(executor)
+
+            # WebSocket service (Channels/clients)
+            with suppress(Exception):
+                ws = getattr(self, "websocket_service", None)
+                await _maybe_close(ws)
+
+            # Generic http/session attribute if you added one
+            with suppress(Exception):
+                http = getattr(self, "http", None)
+                await _maybe_close(http)
+
+            # Redis client if present
+            with suppress(Exception):
+                redis_client = getattr(self, "redis_client", None)
+                await _maybe_close(redis_client)
+
+            # Web3 provider/client best-effort close
+            with suppress(Exception):
+                web3c = getattr(self, "web3_client", None)
+                if web3c is not None:
+                    provider = getattr(web3c, "provider", None)
+                    await _maybe_close(provider)
+                    await _maybe_close(web3c)
+
+            # Give cancelled tasks a moment to settle
+            await asyncio.sleep(0.05)
+
+        # Run async cleanup whether or not an event loop is running
         try:
-            # Close session (✅ FIXED: use stopped_at, not ended_at)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Schedule and briefly yield; we still continue to DB cleanup below
+            loop.create_task(_close_resources_async())
+        else:
+            asyncio.run(_close_resources_async())
+
+        # --- DB/session & final stats -------------------------------------------
+        try:
             if self.session:
                 self.session.status = 'COMPLETED'
                 self.session.stopped_at = timezone.now()
                 self.session.save()
                 logger.info(f"[SESSION] Closed session: {self.session.session_id}")
 
-            # Log final statistics
             if self.account:
                 logger.info(f"[STATS] Final balance: ${self.account.current_balance_usd:,.2f}")
                 logger.info(f"[STATS] Total trades: {self.account.total_trades}")
                 logger.info(f"[STATS] Winning trades: {self.account.winning_trades}")
                 logger.info(f"[STATS] Losing trades: {self.account.losing_trades}")
-
                 if self.account.total_trades > 0:
                     win_rate = (self.account.winning_trades / self.account.total_trades) * 100
                     logger.info(f"[STATS] Win rate: {win_rate:.1f}%")
 
             logger.info("[BOT] ✅ Shutdown complete")
-
         except Exception as e:
             logger.error(f"[BOT] Error during shutdown: {e}", exc_info=True)
+
+
+
+
+
 
 
 # =============================================================================

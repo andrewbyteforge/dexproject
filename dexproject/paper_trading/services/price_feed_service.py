@@ -13,7 +13,9 @@ KEY IMPROVEMENTS:
 
 File: dexproject/paper_trading/services/price_feed_service.py
 """
-
+import asyncio
+from contextlib import suppress
+from typing import Any, Awaitable, Callable, Optional
 import logging
 import asyncio
 from decimal import Decimal
@@ -594,7 +596,7 @@ class PriceFeedService:
             await self._enforce_rate_limit()
             
             # Get CoinGecko ID for this token
-            coin_id = self._get_coingecko_id(token_symbol)
+            coin_id = self._get_coingecko_id(token_symbol, token_address, self.chain_id)  # ✅ All 3 params
             if not coin_id:
                 logger.debug(f"[PRICE FEED] No CoinGecko ID for {token_symbol}")
                 return None
@@ -679,7 +681,7 @@ class PriceFeedService:
             symbol_to_coin_id: Dict[str, str] = {}
             
             for symbol, address in tokens:
-                coin_id = self._get_coingecko_id(symbol)
+                coin_id = self._get_coingecko_id(symbol, address, self.chain_id)
                 if coin_id:
                     coin_ids.append(coin_id)
                     symbol_to_coin_id[coin_id] = symbol

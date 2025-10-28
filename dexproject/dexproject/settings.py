@@ -18,6 +18,9 @@ import os
 import sys
 from pathlib import Path
 import logging
+import asyncio
+from contextlib import suppress
+from typing import Any, Awaitable, Callable, Optional
 
 # Load environment variables from .env file
 try:
@@ -36,6 +39,23 @@ from decimal import Decimal
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+# --- Windows-safe per-process log files (no rotation) ---
+LOGS_DIR = BASE_DIR / "logs"
+(LOGS_DIR / "trading").mkdir(parents=True, exist_ok=True)
+(LOGS_DIR / "performance").mkdir(parents=True, exist_ok=True)
+(LOGS_DIR / "security").mkdir(parents=True, exist_ok=True)
+(LOGS_DIR / "debug").mkdir(parents=True, exist_ok=True)
+(LOGS_DIR / "websocket").mkdir(parents=True, exist_ok=True)
+
+# One log file per process avoids os.rename() during rollover on Windows
+_PID = os.getpid()
+LOG_DEBUG_FILE = LOGS_DIR / "debug" / f"debug_{_PID}.log"
+LOG_TRADING_FILE = LOGS_DIR / "trading" / f"trading_{_PID}.log"
+LOG_WEBSOCKET_FILE = LOGS_DIR / "websocket" / f"websocket_{_PID}.log"
+LOG_PERF_FILE = LOGS_DIR / "performance" / f"performance_{_PID}.log"
+LOG_ERROR_FILE = LOGS_DIR / f"error_{_PID}.log"
+LOG_SECURITY_FILE = LOGS_DIR / "security" / f"security_{_PID}.log"
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -921,194 +941,202 @@ if PRODUCTION_MODE:
 # LOGGING CONFIGURATION - ENHANCED FOR TRADING OPERATIONS WITH UTF-8 SUPPORT
 # =============================================================================
 
-# Create logs directory structure
-LOGS_DIR = BASE_DIR / 'logs'
-LOGS_DIR.mkdir(exist_ok=True)
-
-# Create subdirectories for different log types
-for log_dir in ['trading', 'performance', 'security', 'debug', 'websocket']:
-    (LOGS_DIR / log_dir).mkdir(exist_ok=True)
 
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '[{levelname}] {asctime} {name} {process:d} {thread:d} {message}',
-            'style': '{',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": (
+                "[{levelname}] {asctime} {name} {process:d} {thread:d} {message}"
+            ),
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
-        'simple': {
-            'format': '[{levelname}] {asctime} {name} {message}',
-            'style': '{',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
+        "simple": {
+            "format": "[{levelname}] {asctime} {name} {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
-        'trading': {
-            'format': '[TRADE] {asctime} {levelname} {name} | {message}',
-            'style': '{',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
+        "trading": {
+            "format": "[TRADE] {asctime} {levelname} {name} | {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
-        'websocket': {
-            'format': '[WS] {asctime} {levelname} {name} | {message}',
-            'style': '{',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
+        "websocket": {
+            "format": "[WS] {asctime} {levelname} {name} | {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
-        'performance': {
-            'format': '[PERF] {asctime} {levelname} {name} | {message}',
-            'style': '{',
-            'datefmt': '%Y-%m-%d %H:%M:%S',
+        "performance": {
+            "format": "[PERF] {asctime} {levelname} {name} | {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
         },
-        'json': {
-            'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}',
-            'datefmt': '%Y-%m-%dT%H:%M:%S',
-        },
-    },
-    'filters': {
-        'require_debug_false': {
-            '()': 'django.utils.log.RequireDebugFalse',
-        },
-        'require_debug_true': {
-            '()': 'django.utils.log.RequireDebugTrue',
+        "json": {
+            "format": (
+                '{{"timestamp":"{asctime}","level":"{levelname}",'
+                '"logger":"{name}","message":"{message}"}}'
+            ),
+            "style": "{",
+            "datefmt": "%Y-%m-%dT%H:%M:%S",
         },
     },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'stream': sys.stdout,  # Explicit stdout with UTF-8 encoding
-            'formatter': 'simple',
-            'level': 'INFO',
+    "filters": {
+        "require_debug_false": {"()": "django.utils.log.RequireDebugFalse"},
+        "require_debug_true": {"()": "django.utils.log.RequireDebugTrue"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "stream": sys.stdout,
+            "formatter": "simple",
+            "level": "INFO",
         },
-        'console_debug': {
-            'class': 'logging.StreamHandler',
-            'stream': sys.stdout,  # Explicit stdout with UTF-8 encoding
-            'formatter': 'verbose',
-            'level': 'DEBUG',
-            'filters': ['require_debug_true'],
+        "console_debug": {
+            "class": "logging.StreamHandler",
+            "stream": sys.stdout,
+            "formatter": "verbose",
+            "level": "DEBUG",
+            "filters": ["require_debug_true"],
         },
-        'file_debug': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOGS_DIR / 'debug' / 'debug.log',
-            'maxBytes': 50 * 1024 * 1024,  # 50MB
-            'backupCount': 10,
-            'formatter': 'verbose',
-            'level': 'DEBUG',
-            'encoding': 'utf-8',  # UTF-8 encoding for file
+        # --- Windows-safe file handlers (no rotation, per-process filenames) ---
+        "file_debug": {
+            "class": "logging.FileHandler",
+            "filename": str(LOG_DEBUG_FILE),
+            "formatter": "verbose",
+            "level": "DEBUG",
+            "encoding": "utf-8",
+            "delay": True,
         },
-        'file_trading': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOGS_DIR / 'trading' / 'trading.log',
-            'maxBytes': 100 * 1024 * 1024,  # 100MB
-            'backupCount': 20,
-            'formatter': 'trading',
-            'level': 'INFO',
-            'encoding': 'utf-8',  # UTF-8 encoding for file
+        "file_trading": {
+            "class": "logging.FileHandler",
+            "filename": str(LOG_TRADING_FILE),
+            "formatter": "trading",
+            "level": "INFO",
+            "encoding": "utf-8",
+            "delay": True,
         },
-        'file_websocket': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOGS_DIR / 'websocket' / 'websocket.log',
-            'maxBytes': 50 * 1024 * 1024,  # 50MB
-            'backupCount': 10,
-            'formatter': 'websocket',
-            'level': 'INFO',
-            'encoding': 'utf-8',  # UTF-8 encoding for file
+        "file_websocket": {
+            "class": "logging.FileHandler",
+            "filename": str(LOG_WEBSOCKET_FILE),
+            "formatter": "websocket",
+            "level": "INFO",
+            "encoding": "utf-8",
+            "delay": True,
         },
-        'file_performance': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOGS_DIR / 'performance' / 'performance.log',
-            'maxBytes': 50 * 1024 * 1024,  # 50MB
-            'backupCount': 10,
-            'formatter': 'performance',
-            'level': 'INFO',
-            'encoding': 'utf-8',  # UTF-8 encoding for file
+        "file_performance": {
+            "class": "logging.FileHandler",
+            "filename": str(LOG_PERF_FILE),
+            "formatter": "performance",
+            "level": "INFO",
+            "encoding": "utf-8",
+            "delay": True,
         },
-        'file_error': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOGS_DIR / 'error.log',
-            'maxBytes': 50 * 1024 * 1024,  # 50MB
-            'backupCount': 10,
-            'formatter': 'verbose',
-            'level': 'ERROR',
-            'encoding': 'utf-8',  # UTF-8 encoding for file
+        "file_error": {
+            "class": "logging.FileHandler",
+            "filename": str(LOG_ERROR_FILE),
+            "formatter": "verbose",
+            "level": "ERROR",
+            "encoding": "utf-8",
+            "delay": True,
         },
-        'file_security': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOGS_DIR / 'security' / 'security.log',
-            'maxBytes': 50 * 1024 * 1024,  # 50MB
-            'backupCount': 20,
-            'formatter': 'json',
-            'level': 'WARNING',
-            'encoding': 'utf-8',  # UTF-8 encoding for file
+        "file_security": {
+            "class": "logging.FileHandler",
+            "filename": str(LOG_SECURITY_FILE),
+            "formatter": "json",
+            "level": "WARNING",
+            "encoding": "utf-8",
+            "delay": True,
         },
     },
-    'root': {
-        'handlers': ['console', 'file_debug', 'file_error'] if DEBUG else ['console', 'file_error'],
-        'level': 'DEBUG' if DEBUG else 'INFO',
+    "root": {
+        "handlers": (["console", "file_debug", "file_error"]
+                     if DEBUG else ["console", "file_error"]),
+        "level": "DEBUG" if DEBUG else "INFO",
     },
-    'loggers': {
-        'django': {
-            'handlers': ['console', 'file_debug'] if DEBUG else ['console'],
-            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
-            'propagate': False,
+    "loggers": {
+        # Project areas
+        "django": {
+            "handlers": ["console", "file_debug"] if DEBUG else ["console"],
+            "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
+            "propagate": False,
         },
-        'channels': {
-            'handlers': ['console', 'file_websocket'],
-            'level': 'INFO',
-            'propagate': False,
+        "channels": {
+            "handlers": ["console", "file_websocket"],
+            "level": "INFO",
+            "propagate": False,
         },
-        'daphne': {
-            'handlers': ['console', 'file_websocket'],
-            'level': 'INFO',
-            'propagate': False,
+        "daphne": {
+            "handlers": ["console", "file_websocket"],
+            "level": "INFO",
+            "propagate": False,
         },
-        'paper_trading.consumers': {
-            'handlers': ['console', 'file_websocket', 'file_trading'],
-            'level': 'DEBUG',
-            'propagate': False,
+        "paper_trading.consumers": {
+            "handlers": ["console", "file_websocket", "file_trading"],
+            "level": "DEBUG",
+            "propagate": False,
         },
-        'paper_trading': {
-            'handlers': ['console', 'file_trading', 'file_error'],
-            'level': 'DEBUG',
-            'propagate': False,
+        "paper_trading": {
+            "handlers": ["console", "file_trading", "file_error"],
+            "level": "DEBUG",
+            "propagate": False,
         },
-        'trading': {
-            'handlers': ['console', 'file_trading', 'file_error'],
-            'level': 'DEBUG',
-            'propagate': False,
+        "trading": {
+            "handlers": ["console", "file_trading", "file_error"],
+            "level": "DEBUG",
+            "propagate": False,
         },
-        'engine': {
-            'handlers': ['console', 'file_trading', 'file_error'],
-            'level': os.getenv('ENGINE_LOG_LEVEL', 'DEBUG'),
-            'propagate': False,
+        "engine": {
+            "handlers": ["console", "file_trading", "file_error"],
+            "level": os.getenv("ENGINE_LOG_LEVEL", "DEBUG"),
+            "propagate": False,
         },
-        'performance': {
-            'handlers': ['file_performance'],
-            'level': 'INFO',
-            'propagate': False,
+        "performance": {
+            "handlers": ["file_performance"],
+            "level": "INFO",
+            "propagate": False,
         },
-        'security': {
-            'handlers': ['file_security', 'console'],
-            'level': 'WARNING',
-            'propagate': False,
+        "security": {
+            "handlers": ["file_security", "console"],
+            "level": "WARNING",
+            "propagate": False,
         },
-        'portfolio': {
-            'handlers': ['console', 'file_trading', 'file_error'],
-            'level': 'DEBUG',
-            'propagate': False,
+        "analytics": {
+            "handlers": ["console", "file_performance"],
+            "level": "DEBUG",
+            "propagate": False,
         },
-        'gas_optimizer': {
-            'handlers': ['console', 'file_trading', 'file_performance'],
-            'level': 'DEBUG',
-            'propagate': False,
+        "analytics.metrics": {
+            "handlers": ["console", "file_performance"],
+            "level": "INFO",
+            "propagate": False,
         },
-        'analytics': {
-            'handlers': ['console', 'file_performance'],
-            'level': 'DEBUG',
-            'propagate': False,
+        # Quiet very chatty dependencies to reduce file churn
+        "urllib3": {
+            "handlers": ["file_debug"],
+            "level": "WARNING",
+            "propagate": False,
         },
-        'analytics.metrics': {
-            'handlers': ['console', 'file_performance'],
-            'level': 'INFO',
-            'propagate': False,
+        "requests": {
+            "handlers": ["file_debug"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "web3": {
+            "handlers": ["file_debug"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "aiohttp": {
+            "handlers": ["file_debug"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django.db.backends": {
+            "handlers": ["file_debug"],
+            "level": "WARNING",
+            "propagate": False,
         },
     },
 }
