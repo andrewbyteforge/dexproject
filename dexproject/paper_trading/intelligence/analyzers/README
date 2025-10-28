@@ -1,0 +1,449 @@
+# Market Analyzers Module Summary
+
+## Overview
+This module provides modular market analysis components for paper trading intelligence, using real blockchain data from Uniswap V3 and network RPC queries.
+
+---
+
+## File Summaries
+
+### 1. `__init__.py` - Module Initialization & Public API
+
+**Purpose**: Centralizes imports and provides clean public API for all analyzer components.
+
+**Key Features**:
+- Imports all analyzer classes for easy access
+- Imports constants (factory addresses, ABIs, fee tiers)
+- Logs initialization status showing engine config availability
+- Exports public API via `__all__`
+
+**Key Components**:
+- `_log_initialization()`: Logs module startup status and data sources
+- Checks `ENGINE_CONFIG_MODULE_AVAILABLE` flag to determine if blockchain connectivity is available
+
+**Exported Classes**:
+- `BaseAnalyzer` - Abstract base class
+- `RealGasAnalyzer` - Network gas conditions
+- `RealLiquidityAnalyzer` - Uniswap V3 pool liquidity
+- `RealVolatilityAnalyzer` - Price volatility and trends
+- `MEVThreatDetector` - MEV threat analysis
+- `MarketStateAnalyzer` - Overall market conditions
+- `CompositeMarketAnalyzer` - Comprehensive analysis coordinator
+
+---
+
+### 2. `base.py` - Base Analyzer Abstract Class
+
+**Purpose**: Provides foundation for all market analyzers with shared functionality.
+
+**Key Class**: `BaseAnalyzer` (ABC)
+
+**Key Features**:
+- Abstract `analyze()` method that all subclasses must implement
+- Lazy Web3 client initialization and caching
+- Shared configuration and logging setup
+- Handles engine config module availability gracefully
+
+**Key Methods**:
+- `__init__(config)`: Initialize with optional configuration
+- `_ensure_web3_client(chain_id)`: Lazy-load and cache Web3 client with on-demand config initialization
+- `analyze(token_address, **kwargs)`: Abstract method for subclasses to implement
+
+**Important Details**:
+- Web3 client is cached after first successful initialization
+- Handles engine config being `None` at import time by initializing on-demand
+- Returns `None` if Web3 infrastructure is unavailable
+
+---
+
+### 3. `composite_analyzer.py` - Composite Market Analyzer
+
+**Purpose**: Orchestrates all analysis components to provide comprehensive market intelligence.
+
+**Key Class**: `CompositeMarketAnalyzer(BaseAnalyzer)`
+
+**Coordinates**:
+- Gas analysis (network conditions)
+- Liquidity analysis (pool depth)
+- Volatility analysis (price movements)
+- MEV analysis (threat detection)
+- Market state analysis (overall conditions)
+
+**Key Methods**:
+- `__init__(config)`: Initializes all sub-analyzers with shared config
+- `analyze_comprehensive(token_address, chain_id, trade_size_usd, ...)`: Main analysis orchestrator
+- `analyze(token_address, **kwargs)`: Backward-compatible wrapper
+- `_calculate_composite_scores(...)`: Calculates weighted risk/opportunity scores
+- `_assess_overall_quality(...)`: Determines overall data quality from all analyzers
+
+**Composite Scoring Weights**:
+- **Risk**: MEV (30%), Liquidity (30%), Volatility (25%), Gas (15%)
+- **Opportunity**: Liquidity (40%), Stability (20%), MEV (20%), Gas (20%)
+
+**Returns**:
+- Individual analyzer results
+- Composite scores (overall_risk, overall_opportunity, overall_confidence)
+- Data quality assessment
+- Favorable conditions indicator
+
+---
+
+### 4. `constants.py` - Uniswap V3 Constants & Configuration
+
+**Purpose**: Centralizes all Uniswap V3 related constants and contract information.
+
+**Key Constants**:
+
+**Engine Availability**:
+- `ENGINE_CONFIG_MODULE_AVAILABLE`: Boolean flag indicating if engine.config is available
+- `engine_config_module`: Reference to engine.config module (or None)
+- `get_config`: Reference to config initialization function (or None)
+- `Web3Client`: Reference to Web3Client class (or None)
+
+**Uniswap V3 Factory Addresses** (`UNISWAP_V3_FACTORY`):
+- Base Sepolia (84532)
+- Ethereum Sepolia (11155111)
+- Base Mainnet (8453)
+- Ethereum Mainnet (1)
+
+**Contract ABIs**:
+- `FACTORY_ABI`: Minimal ABI for pool lookup (`getPool` function)
+- `POOL_ABI`: Minimal ABI for liquidity and price data (`liquidity`, `slot0` functions)
+
+**Fee Tiers** (`FEE_TIERS`):
+- 500 (0.05%)
+- 3000 (0.30%)
+- 10000 (1.00%)
+
+**Important**: Gracefully handles missing engine module with try/except at import time
+
+---
+
+### 5. `gas_analyzer.py` - Real Gas Analyzer
+
+**Purpose**: Analyzes network gas conditions using real blockchain data.
+
+**Key Class**: `RealGasAnalyzer(BaseAnalyzer)`
+
+**Data Sources**:
+- Queries current gas prices from blockchain RPC
+- Extracts base fee and priority fee (EIP-1559)
+- Reads latest block information
+
+**Key Methods**:
+- `analyze(token_address, chain_id, **kwargs)`: Main analysis method
+- `_calculate_congestion(gas_price_gwei)`: Maps gas prices to congestion levels (0-100%)
+- `_categorize_gas_cost(gas_price_gwei)`: Categorizes as low/medium/high/extreme
+
+**Gas Thresholds** (configurable):
+- Low: < 0.5 gwei
+- Medium: 0.5-2 gwei
+- High: 2-5 gwei
+- Extreme: > 5 gwei
+
+**Returns**:
+- `gas_price_gwei`: Current gas price
+- `base_fee_gwei`: Base fee (EIP-1559)
+- `priority_fee_gwei`: Priority fee
+- `network_congestion`: Congestion level (0-100)
+- `cost_category`: Gas cost category
+- `data_quality`: EXCELLENT, NO_DATA, or ERROR
+- `data_source`: blockchain_rpc, none, or error
+
+**Behavior**:
+- Returns NO_DATA if Web3 unavailable and `SKIP_TRADE_ON_MISSING_DATA=True`
+- Returns zeros if Web3 unavailable and `SKIP_TRADE_ON_MISSING_DATA=False`
+
+---
+
+### 6. `liquidity_analyzer.py` - Real Liquidity Analyzer
+
+**Purpose**: Analyzes Uniswap V3 pool liquidity using real blockchain queries.
+
+**Key Class**: `RealLiquidityAnalyzer(BaseAnalyzer)`
+
+**Data Sources**:
+- Queries Uniswap V3 factory for pool addresses
+- Queries pool contracts for liquidity data
+- Calculates liquidity depth and price impact
+
+**Key Methods**:
+- `analyze(token_address, chain_id, trade_size_usd, **kwargs)`: Main analysis method
+- `_find_best_pool(...)`: Searches across fee tiers for pool with highest liquidity
+- `_query_pool_liquidity(pool_address)`: Gets liquidity from pool contract
+- `_calculate_liquidity_score(...)`: Calculates depth score (0-100)
+- `_calculate_price_impact(...)`: Estimates price impact percentage
+- `_assess_pool_quality(...)`: Determines if pool is suitable for trading
+
+**Pool Quality Criteria**:
+- Minimum liquidity threshold: $10,000 USD
+- Calculates liquidity depth score based on trade size
+- Assesses price impact for trade execution
+
+**Returns**:
+- `pool_address`: Best pool found (or None)
+- `pool_liquidity_usd`: Liquidity in USD
+- `liquidity_depth_score`: Score 0-100 (higher is better)
+- `estimated_price_impact`: Expected slippage percentage
+- `sufficient_for_trade`: Boolean indicating if pool can handle trade
+- `data_quality`: EXCELLENT, NO_POOL_FOUND, NO_DATA, or ERROR
+- `data_source`: blockchain_query, none, or error
+
+**Fee Tier Priority**: 3000 (0.3%), 500 (0.05%), 10000 (1%)
+
+---
+
+### 7. `market_state.py` - Market State Analyzer
+
+**Purpose**: Analyzes overall market state and trading conditions.
+
+**Key Class**: `MarketStateAnalyzer(BaseAnalyzer)`
+
+**Evaluates**:
+- Market sentiment (bullish/bearish/neutral/uncertain)
+- Trading conditions quality
+- Market stability
+- Optimal trading windows
+
+**Key Methods**:
+- `analyze(token_address, volatility_index, trend_direction, volume_24h, **kwargs)`: Main analysis
+- `_determine_sentiment(trend_direction, volatility_index)`: Determines market sentiment
+- `_assess_trading_conditions(volatility_index, volume_24h)`: Assesses condition quality
+- `_calculate_stability(volatility_index)`: Calculates stability score (inverse of volatility)
+- `_is_optimal_for_trading(sentiment, conditions, stability)`: Determines if conditions are favorable
+
+**Sentiment Logic**:
+- High volatility (>60%) → Uncertain
+- Otherwise follows trend direction
+
+**Trading Conditions**:
+- Excellent: Low volatility (<20%) + High volume (>$100k)
+- Good: Moderate volatility (<40%) + Decent volume (>$50k)
+- Fair: Moderate volatility (<60%)
+- Poor: High volatility (>60%)
+
+**Returns**:
+- `market_sentiment`: bullish, bearish, neutral, or uncertain
+- `trading_conditions`: excellent, good, fair, or poor
+- `market_stability`: Stability score (0-100)
+- `optimal_for_trading`: Boolean
+- `data_quality`: GOOD or ERROR
+- `data_source`: composite_analysis or error
+
+---
+
+### 8. `mev_detector.py` - MEV Threat Detector
+
+**Purpose**: Detects MEV (Maximal Extractable Value) threats using market heuristics.
+
+**Key Class**: `MEVThreatDetector(BaseAnalyzer)`
+
+**Analyzes**:
+- Sandwich attack probability
+- Front-running risk
+- Overall MEV threat level
+- Protection strategy recommendations
+
+**Key Methods**:
+- `analyze(token_address, liquidity_usd, volume_24h, trade_size_usd, **kwargs)`: Main analysis
+- `_calculate_sandwich_risk(trade_size_usd, liquidity_usd)`: Calculates sandwich attack risk
+- `_calculate_frontrun_risk(volume_24h, liquidity_usd)`: Calculates front-running risk
+- `_recommend_protection(threat_level)`: Recommends protection strategy
+
+**Sandwich Risk Logic**:
+- Based on trade size as % of liquidity
+- < 1% of pool → Low risk (10%)
+- 1-5% of pool → Increasing risk (30-80%)
+- > 5% of pool → High risk (80-100%)
+
+**Front-running Risk Logic**:
+- Based on volume/liquidity ratio
+- Higher ratio = more MEV bot activity
+- Low activity (<0.5 ratio) → 20% risk
+- Very high activity (>5 ratio) → 80% risk
+
+**Threat Calculation**:
+- Overall threat = (sandwich_risk × 0.6) + (frontrun_risk × 0.4)
+- Sandwich attacks weighted higher as they're more common
+
+**Protection Recommendations**:
+- < 30% threat → Standard transaction
+- 30-60% threat → Private RPC
+- > 60% threat → Flashbots protect
+
+**Returns**:
+- `threat_level`: Overall MEV threat (0-100)
+- `sandwich_risk`: Sandwich attack risk (0-100)
+- `frontrun_risk`: Front-running risk (0-100)
+- `recommended_protection`: standard, private_rpc, or flashbots
+- `data_quality`: GOOD or ERROR
+- `data_source`: heuristic_analysis or error
+
+---
+
+### 9. `volatility_analyzer.py` - Real Volatility Analyzer
+
+**Purpose**: Analyzes price volatility using real historical price data.
+
+**Key Class**: `RealVolatilityAnalyzer(BaseAnalyzer)`
+
+**Calculates**:
+- Historical volatility from price movements
+- Price trends and momentum
+- Volatility indices
+- Risk metrics
+
+**Key Methods**:
+- `analyze(token_address, price_history, current_price, **kwargs)`: Main analysis
+- `_calculate_historical_volatility(price_history)`: Calculates annualized volatility
+- `_determine_trend(price_history, current_price)`: Determines bullish/bearish/neutral
+- `_calculate_momentum(price_history)`: Calculates momentum score (-100 to +100)
+- `_calculate_volatility_index(volatility_percent)`: Converts to 0-100 scale
+- `_categorize_volatility(volatility_percent)`: Categorizes as low/medium/high/extreme
+
+**Price History Format**:
+Accepts two formats:
+1. List of Decimals (prices directly)
+2. List of dicts with 'price' key
+
+**Volatility Calculation**:
+- Calculates returns (percentage changes between prices)
+- Computes standard deviation of returns
+- Annualizes assuming hourly data (×93.6 for 8760 hours/year)
+
+**Trend Logic**:
+- Compares current price to historical average
+- > +5% change → Bullish
+- < -5% change → Bearish
+- Otherwise → Neutral
+
+**Momentum Calculation**:
+- Percentage change from first to last price
+- Scaled to -100 (strong bearish) to +100 (strong bullish)
+
+**Volatility Thresholds**:
+- Low: < 5%
+- Medium: 5-15%
+- High: 15-30%
+- Extreme: > 30%
+
+**Returns**:
+- `volatility_index`: Overall volatility score (0-100)
+- `volatility_percent`: Historical volatility percentage
+- `trend_direction`: bullish, bearish, neutral, or unknown
+- `price_momentum`: Momentum score (-100 to +100)
+- `volatility_category`: low, medium, high, or extreme
+- `data_points`: Number of price points analyzed
+- `data_quality`: EXCELLENT, INSUFFICIENT_DATA, NO_DATA, or ERROR
+- `data_source`: historical_prices, none, or error
+
+**Behavior**:
+- Requires at least 2 price points for calculation
+- Returns NO_DATA if insufficient data and `SKIP_TRADE_ON_MISSING_DATA=True`
+- Returns zeros if insufficient data and `SKIP_TRADE_ON_MISSING_DATA=False`
+
+---
+
+## Common Patterns Across Analyzers
+
+### Data Quality Levels
+All analyzers return consistent data quality indicators:
+- `EXCELLENT`: Real data from blockchain/calculations
+- `GOOD`: Heuristic analysis with reasonable accuracy
+- `FAIR`: Partial or estimated data
+- `POOR`: Low confidence data
+- `NO_DATA`: No data available
+- `INSUFFICIENT_DATA`: Not enough data points
+- `NO_POOL_FOUND`: Specific to liquidity (no Uniswap pool)
+- `ERROR`: Analysis failed with exception
+
+### Data Source Types
+- `blockchain_rpc`: Direct blockchain queries
+- `blockchain_query`: Contract queries (Uniswap)
+- `historical_prices`: Price history calculations
+- `heuristic_analysis`: Smart estimation logic
+- `composite_analysis`: Combined from multiple sources
+- `none`: No data source available
+- `error`: Error during analysis
+
+### Configuration
+All analyzers accept optional `config` dictionary in `__init__()` for customization of thresholds and parameters.
+
+### Error Handling
+- All analyzers have comprehensive try/except blocks
+- Errors are logged with `exc_info=True` for stack traces
+- Return dictionaries with `data_quality: 'ERROR'` and `error` message field
+- Gracefully handle missing Web3 infrastructure
+
+### SKIP_TRADE_ON_MISSING_DATA Behavior
+When `IntelligenceDefaults.SKIP_TRADE_ON_MISSING_DATA = True`:
+- Analyzers return `NO_DATA` quality with `None` values
+- Allows trading system to skip trades when real data unavailable
+- Prevents trading on incomplete/unreliable information
+
+When `False`:
+- Analyzers return zero/neutral values when data unavailable
+- Allows trading to proceed (with caution)
+
+---
+
+## Dependencies
+
+### Internal Dependencies
+- `paper_trading.defaults.IntelligenceDefaults`: Configuration flags
+- `paper_trading.intelligence.analyzers.base.BaseAnalyzer`: Base class
+- `paper_trading.intelligence.analyzers.constants`: Constants and config availability
+
+### External Dependencies (Conditional)
+- `engine.config`: Chain configuration (lazy-loaded)
+- `engine.web3_client.Web3Client`: Blockchain connectivity
+
+### Standard Library
+- `logging`: Structured logging throughout
+- `abc`: Abstract base class functionality
+- `typing`: Type hints for all methods
+- `decimal.Decimal`: Precise financial calculations
+- `datetime`: Timestamps for analysis results
+- `math`: Mathematical calculations (sqrt for volatility)
+
+---
+
+## Usage Example
+
+```python
+from paper_trading.intelligence.analyzers import CompositeMarketAnalyzer
+from decimal import Decimal
+
+# Initialize composite analyzer
+analyzer = CompositeMarketAnalyzer()
+
+# Perform comprehensive analysis
+result = await analyzer.analyze_comprehensive(
+    token_address="0x123...",
+    chain_id=8453,  # Base Mainnet
+    trade_size_usd=Decimal('1000'),
+    price_history=[...],  # Historical prices
+    current_price=Decimal('1.50')
+)
+
+# Check results
+print(f"Overall Risk: {result['composite_scores']['overall_risk']}")
+print(f"Overall Opportunity: {result['composite_scores']['overall_opportunity']}")
+print(f"Data Quality: {result['data_quality']}")
+print(f"Favorable Conditions: {result['composite_scores']['favorable_conditions']}")
+```
+
+---
+
+## Key Design Principles
+
+1. **Real Data First**: Prioritizes real blockchain data over estimates
+2. **Graceful Degradation**: Handles missing infrastructure without crashes
+3. **Lazy Initialization**: Web3 client initialized on-demand to handle timing issues
+4. **Consistent Interface**: All analyzers follow same pattern via BaseAnalyzer
+5. **Quality Indicators**: Every result includes data_quality and data_source
+6. **Comprehensive Logging**: Structured logging for observability
+7. **Type Safety**: Full type hints for Pylance compatibility
+8. **Error Resilience**: Try/except blocks with informative error messages
+9. **Modular Design**: Each analyzer is independent and can be used standalone
+10. **Configuration Flexibility**: Thresholds and parameters can be customized
