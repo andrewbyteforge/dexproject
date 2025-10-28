@@ -1,26 +1,18 @@
 """
-Paper Trading Constants - String Literals and Field Names
+Paper Trading Constants - Enhanced with API Field Names
 
 This module contains all constant values used throughout the paper trading system.
 These prevent typos, enable IDE autocomplete, and serve as single source of truth.
 
+ENHANCED: Added API request/response field names and configuration constants
+
 Location: paper_trading/constants.py
 
 Usage:
-    from paper_trading.constants import DecisionType, ConfidenceLevel, ThoughtLogFields
-    
-    # Instead of:
-    decision = "BUY"  # ❌ Typo-prone
-    
-    # Use:
-    decision = DecisionType.BUY  # ✅ Type-safe, autocomplete
-
-Phase 9 Updates (October 2025):
-    - Added EMERGENCY_EXIT and UNKNOWN to DecisionType
-    - Added TrendDirection class for market trend constants
-    - Added TradeType class (lowercase for DB compatibility)
-    - Added PaperTradeStatus class (lowercase for DB compatibility)
-    - Added new validation functions
+    from paper_trading.constants import (
+        DecisionType, ConfidenceLevel, ThoughtLogFields,
+        ConfigAPIFields, BotControlFields
+    )
 """
 
 from decimal import Decimal
@@ -36,8 +28,6 @@ class DecisionType:
     Trading decision types.
     
     These match the DecisionType.choices in PaperAIThoughtLog model.
-    
-    Phase 9 Update: Added EMERGENCY_EXIT and UNKNOWN
     """
     BUY: Final[str] = 'BUY'
     SELL: Final[str] = 'SELL'
@@ -45,17 +35,15 @@ class DecisionType:
     SKIP: Final[str] = 'SKIP'
     STOP_LOSS: Final[str] = 'STOP_LOSS'
     TAKE_PROFIT: Final[str] = 'TAKE_PROFIT'
-    EMERGENCY_EXIT: Final[str] = 'EMERGENCY_EXIT'  # NEW: Phase 9
-    UNKNOWN: Final[str] = 'UNKNOWN'  # NEW: Phase 9 - For error cases/fallbacks
     
     # All valid decision types
-    ALL: Final[tuple] = (BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT, EMERGENCY_EXIT, UNKNOWN)
+    ALL: Final[tuple] = (BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT)
     
     # Actionable decisions (require execution)
-    ACTIONABLE: Final[tuple] = (BUY, SELL, STOP_LOSS, TAKE_PROFIT, EMERGENCY_EXIT)
+    ACTIONABLE: Final[tuple] = (BUY, SELL, STOP_LOSS, TAKE_PROFIT)
     
     # Non-actionable decisions
-    NON_ACTIONABLE: Final[tuple] = (HOLD, SKIP, UNKNOWN)
+    NON_ACTIONABLE: Final[tuple] = (HOLD, SKIP)
 
 
 # =============================================================================
@@ -90,7 +78,7 @@ class ConfidenceLevel:
         Convert confidence percentage to level string.
         
         Args:
-            confidence_percent: Confidence as percentage (0-100)
+            confidence_percent: Confidence as decimal (0-100)
             
         Returns:
             Confidence level string (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW)
@@ -108,106 +96,25 @@ class ConfidenceLevel:
 
 
 # =============================================================================
-# TREND DIRECTION (NEW - Phase 9)
-# =============================================================================
-
-class TrendDirection:
-    """
-    Market trend direction constants.
-    
-    Used in intelligence/base.py MarketContext for trend analysis.
-    Replaces hardcoded "neutral", "bullish" strings throughout codebase.
-    
-    Added: Phase 9 (October 2025)
-    """
-    BULLISH: Final[str] = 'BULLISH'
-    BEARISH: Final[str] = 'BEARISH'
-    NEUTRAL: Final[str] = 'NEUTRAL'
-    SIDEWAYS: Final[str] = 'SIDEWAYS'
-    VOLATILE: Final[str] = 'VOLATILE'
-    
-    # All valid trend directions
-    ALL: Final[tuple] = (BULLISH, BEARISH, NEUTRAL, SIDEWAYS, VOLATILE)
-
-
-# =============================================================================
-# TRADE TYPE (NEW - Phase 9)
-# =============================================================================
-
-class TradeType:
-    """
-    Trade type constants (lowercase for database compatibility).
-    
-    Note: These use lowercase to match existing database migrations.
-    For decision logic, use DecisionType class instead.
-    
-    Database field: PaperTrade.trade_type
-    Migration: 0005_*.py
-    
-    Added: Phase 9 (October 2025)
-    """
-    BUY: Final[str] = 'buy'
-    SELL: Final[str] = 'sell'
-    SWAP: Final[str] = 'swap'
-    
-    ALL: Final[tuple] = (BUY, SELL, SWAP)
-
-
-# =============================================================================
-# PAPER TRADE STATUS (NEW - Phase 9)
-# =============================================================================
-
-class PaperTradeStatus:
-    """
-    Paper trade status constants (lowercase for database compatibility).
-    
-    These match the status field in PaperTrade migrations.
-    Note lowercase to match database schema.
-    
-    Database field: PaperTrade.status
-    Migration: 0005_*.py
-    
-    Added: Phase 9 (October 2025)
-    """
-    PENDING: Final[str] = 'pending'
-    EXECUTING: Final[str] = 'executing'
-    COMPLETED: Final[str] = 'completed'
-    FAILED: Final[str] = 'failed'
-    CANCELLED: Final[str] = 'cancelled'
-    
-    ALL: Final[tuple] = (PENDING, EXECUTING, COMPLETED, FAILED, CANCELLED)
-
-
-# =============================================================================
-# TRADING MODE
+# TRADING MODES
 # =============================================================================
 
 class TradingMode:
-    """
-    Trading mode presets.
-    
-    These define different risk/reward profiles for trading strategies.
-    """
-    BALANCED: Final[str] = 'BALANCED'
-    AGGRESSIVE: Final[str] = 'AGGRESSIVE'
+    """Trading execution modes for PaperStrategyConfiguration."""
     CONSERVATIVE: Final[str] = 'CONSERVATIVE'
-    SCALPER: Final[str] = 'SCALPER'
-    SWING: Final[str] = 'SWING'
+    MODERATE: Final[str] = 'MODERATE'
+    AGGRESSIVE: Final[str] = 'AGGRESSIVE'
+    CUSTOM: Final[str] = 'CUSTOM'
     
-    ALL: Final[tuple] = (BALANCED, AGGRESSIVE, CONSERVATIVE, SCALPER, SWING)
+    ALL: Final[tuple] = (CONSERVATIVE, MODERATE, AGGRESSIVE, CUSTOM)
 
 
 # =============================================================================
-# LANE TYPE
+# LANE TYPES
 # =============================================================================
 
 class LaneType:
-    """
-    Intelligence lane types for analysis speed vs depth.
-    
-    FAST: Quick analysis with basic checks
-    SMART: Comprehensive analysis with full intelligence
-    """
+    """Intelligence lane types."""
     FAST: Final[str] = 'FAST'
     SMART: Final[str] = 'SMART'
     
@@ -215,15 +122,11 @@ class LaneType:
 
 
 # =============================================================================
-# TRADE STATUS (Uppercase)
+# TRADE STATUS
 # =============================================================================
 
 class TradeStatus:
-    """
-    Trade execution status (uppercase for internal logic).
-    
-    Note: For database storage, use PaperTradeStatus (lowercase).
-    """
+    """Paper trade execution status."""
     PENDING: Final[str] = 'PENDING'
     EXECUTED: Final[str] = 'EXECUTED'
     FAILED: Final[str] = 'FAILED'
@@ -237,18 +140,15 @@ class TradeStatus:
 # =============================================================================
 
 class SessionStatus:
-    """
-    Trading session status.
-    
-    These track the lifecycle state of a paper trading session.
-    """
+    """Paper trading session status."""
+    STARTING: Final[str] = 'STARTING'
     RUNNING: Final[str] = 'RUNNING'
     PAUSED: Final[str] = 'PAUSED'
     STOPPED: Final[str] = 'STOPPED'
     COMPLETED: Final[str] = 'COMPLETED'
     ERROR: Final[str] = 'ERROR'
     
-    ALL: Final[tuple] = (RUNNING, PAUSED, STOPPED, COMPLETED, ERROR)
+    ALL: Final[tuple] = (STARTING, RUNNING, PAUSED, STOPPED, COMPLETED, ERROR)
 
 
 # =============================================================================
@@ -260,21 +160,6 @@ class ThoughtLogFields:
     Field names for PaperAIThoughtLog model.
     
     Use these instead of string literals to prevent field name mismatches.
-    
-    Example:
-        # Instead of:
-        PaperAIThoughtLog.objects.create(
-            confidence_percent=90,  # ❌ Might typo as "confidence_percentage"
-            risk_score=50
-        )
-        
-        # Use:
-        PaperAIThoughtLog.objects.create(
-            **{
-                ThoughtLogFields.CONFIDENCE_PERCENT: 90,  # ✅ IDE autocomplete
-                ThoughtLogFields.RISK_SCORE: 50
-            }
-        )
     """
     # Identity
     THOUGHT_ID: Final[str] = 'thought_id'
@@ -339,11 +224,99 @@ class StrategyConfigFields:
     CONFIG_ID: Final[str] = 'config_id'
     ACCOUNT: Final[str] = 'account'
     NAME: Final[str] = 'name'
+    IS_ACTIVE: Final[str] = 'is_active'
+    TRADING_MODE: Final[str] = 'trading_mode'
+    USE_FAST_LANE: Final[str] = 'use_fast_lane'
+    USE_SMART_LANE: Final[str] = 'use_smart_lane'
+    FAST_LANE_THRESHOLD_USD: Final[str] = 'fast_lane_threshold_usd'
+    MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
+    STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
+    TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
+    MAX_DAILY_TRADES: Final[str] = 'max_daily_trades'
+    MAX_CONCURRENT_POSITIONS: Final[str] = 'max_concurrent_positions'
+    MIN_LIQUIDITY_USD: Final[str] = 'min_liquidity_usd'
+    MAX_SLIPPAGE_PERCENT: Final[str] = 'max_slippage_percent'
+    CONFIDENCE_THRESHOLD: Final[str] = 'confidence_threshold'
+    ALLOWED_TOKENS: Final[str] = 'allowed_tokens'
+    BLOCKED_TOKENS: Final[str] = 'blocked_tokens'
+    CUSTOM_PARAMETERS: Final[str] = 'custom_parameters'
+    CREATED_AT: Final[str] = 'created_at'
+    UPDATED_AT: Final[str] = 'updated_at'
+
+
+# =============================================================================
+# API REQUEST/RESPONSE FIELD NAMES
+# =============================================================================
+
+class ConfigAPIFields:
+    """
+    Field names for Configuration API requests and responses.
+    
+    Used in api/config_api.py for GET/POST /api/configuration/
+    """
+    # Request fields (POST body)
+    NAME: Final[str] = 'name'
     TRADING_MODE: Final[str] = 'trading_mode'
     MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
+    MAX_DAILY_TRADES: Final[str] = 'max_daily_trades'
+    MAX_CONCURRENT_POSITIONS: Final[str] = 'max_concurrent_positions'
+    CONFIDENCE_THRESHOLD: Final[str] = 'confidence_threshold'
+    USE_FAST_LANE: Final[str] = 'use_fast_lane'
+    USE_SMART_LANE: Final[str] = 'use_smart_lane'
+    
+    # Response fields (GET response)
+    CONFIG_ID: Final[str] = 'config_id'
     IS_ACTIVE: Final[str] = 'is_active'
+    CREATED_AT: Final[str] = 'created_at'
+    UPDATED_AT: Final[str] = 'updated_at'
+
+
+class BotControlFields:
+    """
+    Field names for Bot Control API requests and responses.
+    
+    Used in api/bot_control_api.py for bot lifecycle management.
+    """
+    # Start bot request fields
+    RUNTIME_MINUTES: Final[str] = 'runtime_minutes'
+    CONFIG: Final[str] = 'config'
+    SESSION_NAME: Final[str] = 'session_name'
+    
+    # Bot status response fields
+    SESSION_ID: Final[str] = 'session_id'
+    TASK_ID: Final[str] = 'task_id'
+    STATUS: Final[str] = 'status'
+    MESSAGE: Final[str] = 'message'
+    ACCOUNT_BALANCE: Final[str] = 'account_balance'
+    STARTED_AT: Final[str] = 'started_at'
+    STOPPED_AT: Final[str] = 'stopped_at'
+    
+    # Stop bot request fields
+    REASON: Final[str] = 'reason'
+
+
+class SessionMetadataFields:
+    """
+    Field names for PaperTradingSession.metadata JSON field.
+    
+    Stores runtime configuration and state information.
+    """
+    CONFIG_SNAPSHOT: Final[str] = 'config_snapshot'
+    STARTING_BALANCE_USD: Final[str] = 'starting_balance_usd'
+    SESSION_NAME: Final[str] = 'session_name'
+    CELERY_TASK_ID: Final[str] = 'celery_task_id'
+    STARTED_AT: Final[str] = 'started_at'
+    
+    # Configuration parameters passed to bot
+    INTEL_LEVEL: Final[str] = 'intel_level'
+    TRADING_MODE: Final[str] = 'trading_mode'
+    MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
+    STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
+    TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
+    MAX_DAILY_TRADES: Final[str] = 'max_daily_trades'
+    CONFIDENCE_THRESHOLD: Final[str] = 'confidence_threshold'
 
 
 # =============================================================================
@@ -402,49 +375,17 @@ def validate_lane_type(lane_type: str) -> bool:
     return lane_type in LaneType.ALL
 
 
-def validate_trend_direction(trend_direction: str) -> bool:
+def validate_session_status(status: str) -> bool:
     """
-    Validate if trend direction is valid.
+    Validate if session status is valid.
     
     Args:
-        trend_direction: Trend direction string
+        status: Session status string
         
     Returns:
         True if valid, False otherwise
-        
-    Added: Phase 9 (October 2025)
     """
-    return trend_direction in TrendDirection.ALL
-
-
-def validate_trade_type(trade_type: str) -> bool:
-    """
-    Validate if trade type is valid.
-    
-    Args:
-        trade_type: Trade type string (lowercase)
-        
-    Returns:
-        True if valid, False otherwise
-        
-    Added: Phase 9 (October 2025)
-    """
-    return trade_type in TradeType.ALL
-
-
-def validate_paper_trade_status(status: str) -> bool:
-    """
-    Validate if paper trade status is valid.
-    
-    Args:
-        status: Trade status string (lowercase)
-        
-    Returns:
-        True if valid, False otherwise
-        
-    Added: Phase 9 (October 2025)
-    """
-    return status in PaperTradeStatus.ALL
+    return status in SessionStatus.ALL
 
 
 # =============================================================================
@@ -462,3 +403,22 @@ def get_confidence_level_from_percent(percent: float) -> str:
         Confidence level string
     """
     return ConfidenceLevel.from_percentage(Decimal(str(percent)))
+
+
+def get_intel_level_from_trading_mode(trading_mode: str) -> int:
+    """
+    Map trading mode to intel level for bot initialization.
+    
+    Args:
+        trading_mode: Trading mode (CONSERVATIVE, MODERATE, AGGRESSIVE, CUSTOM)
+        
+    Returns:
+        Intel level (1-10)
+    """
+    mode_to_intel = {
+        TradingMode.CONSERVATIVE: 3,  # Low risk, careful analysis
+        TradingMode.MODERATE: 5,      # Balanced approach
+        TradingMode.AGGRESSIVE: 8,    # High risk, faster execution
+        TradingMode.CUSTOM: 5,        # Default to moderate for custom
+    }
+    return mode_to_intel.get(trading_mode, 5)  # Default to 5 if unknown
