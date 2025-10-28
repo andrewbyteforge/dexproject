@@ -286,9 +286,14 @@ class RedisClient:
     async def _message_listener(self) -> None:
         """Background task to listen for Redis pub/sub messages."""
         self.logger.info("Redis message listener started")
-        
+    
         while self._connected:
             try:
+                # Only attempt to get messages if we have active subscriptions
+                if not self._subscriptions:
+                    await asyncio.sleep(1.0)
+                    continue
+                
                 message = await self.pubsub.get_message(timeout=1.0)
                 
                 if message is None:

@@ -9,10 +9,72 @@ File: risk/tasks/execution.py
 
 import logging
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from celery import group
 
 logger = logging.getLogger(__name__)
+
+
+def get_quote_tokens_for_chain(chain_id: Optional[int] = None) -> List[str]:
+    """
+    Get list of quote tokens (WETH, USDC, etc.) for a specific chain.
+    
+    These tokens should NOT be analyzed themselves since they are the
+    base pairing tokens used to measure liquidity.
+    
+    Args:
+        chain_id: Blockchain chain ID (optional, returns all if None)
+        
+    Returns:
+        List of quote token addresses (lowercase)
+    """
+    # Quote tokens per chain (lowercase for comparison)
+    quote_tokens = {
+        1: [  # Ethereum Mainnet
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
+            "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT
+        ],
+        8453: [  # Base Mainnet
+            "0x4200000000000000000000000000000000000006",  # WETH
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",  # USDC
+        ],
+        84532: [  # Base Sepolia
+            "0x4200000000000000000000000000000000000006",  # WETH
+            "0x036cbd53842c5426634e7929541ec2318f3dcf7e",  # USDC
+        ],
+        11155111: [  # Ethereum Sepolia
+            "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",  # WETH
+            "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",  # USDC
+        ]
+    }
+    
+    if chain_id is not None:
+        return quote_tokens.get(chain_id, [])
+    else:
+        # Return all quote tokens from all chains
+        all_tokens = []
+        for tokens in quote_tokens.values():
+            all_tokens.extend(tokens)
+        return list(set(all_tokens))
+
+
+def is_quote_token(token_address: str, chain_id: Optional[int] = None) -> bool:
+    """
+    Check if a token is a quote token (WETH, USDC, etc.).
+    
+    Quote tokens should not be analyzed for liquidity since they
+    are the pairing tokens used to measure liquidity.
+    
+    Args:
+        token_address: Token address to check
+        chain_id: Optional chain ID for chain-specific check
+        
+    Returns:
+        True if token is a quote token, False otherwise
+    """
+    quote_tokens = get_quote_tokens_for_chain(chain_id)
+    return token_address.lower() in quote_tokens
 
 
 def execute_parallel_risk_checks(
@@ -58,14 +120,20 @@ def execute_parallel_risk_checks(
             )
         
         if 'LIQUIDITY' in all_checks:
-            task_list.append(
-                liquidity.liquidity_check.s(
-                    pair_address,
-                    token_address,
-                    risk_config.get('min_liquidity_usd', 10000),
-                    risk_config.get('max_slippage_percent', 5.0)
+            # Skip liquidity check if token IS a quote token (WETH/USDC)
+            # Quote tokens shouldn't be analyzed since they ARE the pairing token
+            if not is_quote_token(token_address):
+                task_list.append(
+                    liquidity.liquidity_check.s(
+                        pair_address,
+                        token_address,
+                        risk_config.get('min_liquidity_usd', 10000),
+                        risk_config.get('max_slippage_percent', 5.0)
+                    )
                 )
-            )
+                logger.debug(f"Added LIQUIDITY check for token {token_address[:10]}...")
+            else:
+                logger.info(f"Skipping LIQUIDITY check - {token_address[:10]}... is a quote token")
         
         if 'OWNERSHIP' in all_checks:
             task_list.append(
@@ -179,11 +247,22 @@ def execute_sequential_risk_checks(
                         token_address, pair_address, use_advanced_simulation=include_advanced
                     )
                 elif check_type == 'LIQUIDITY':
-                    result = liquidity.liquidity_check(
-                        pair_address, token_address,
-                        risk_config.get('min_liquidity_usd', 10000),
-                        risk_config.get('max_slippage_percent', 5.0)
-                    )
+                    # Skip liquidity check if token IS a quote token (WETH/USDC)
+                    if not is_quote_token(token_address):
+                        result = liquidity.liquidity_check(
+                            pair_address, token_address,
+                            risk_config.get('min_liquidity_usd', 10000),
+                            risk_config.get('max_slippage_percent', 5.0)
+                        )
+                    else:
+                        logger.info(f"Skipping LIQUIDITY check - {token_address[:10]}... is a quote token")
+                        # Create a passing result for quote tokens since they don't need liquidity analysis
+                        result = {
+                            'check_type': 'LIQUIDITY',
+                            'status': 'SKIPPED',
+                            'risk_score': 0,  # No risk for quote tokens
+                            'details': {'reason': 'Token is a quote token (WETH/USDC)'}
+                        }
                 elif check_type == 'OWNERSHIP':
                     result = ownership.ownership_check(
                         token_address, check_admin_functions=True,

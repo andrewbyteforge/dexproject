@@ -224,11 +224,12 @@ class DjangoGasOptimizer:
             self.logger.error(f"Gas optimizer initialization error: {e}", exc_info=True)
             return False
     
-    def _get_or_create_engine_config(self):
-        """Get or create a basic engine configuration."""
+    def _get_or_create_engine_config(self) -> Optional[Any]:
+        """Get or create engine configuration."""
         try:
-            # Try to use existing config first
-            if config and hasattr(config, 'chain_configs'):
+            from engine.config import config
+            
+            if config and hasattr(config, 'chains'):  # ✅ CORRECT
                 return config
             
             # Create a minimal config for testing

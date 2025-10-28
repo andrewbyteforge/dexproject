@@ -162,11 +162,12 @@ class BaseAnalyzer(ABC):
                     return None
 
             # Get chain config
+            # Get chain config
             chain_config = engine_config.get_chain_config(chain_id)
             if not chain_config:
                 self.logger.warning(
                     f"[WEB3] No configuration found for chain {chain_id}. "
-                    f"Available chains: {list(engine_config.chain_configs.keys())}"
+                    f"Available chains: {list(engine_config.chains.keys())}"  # ✅ CORRECT
                 )
                 return None
 

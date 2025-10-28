@@ -76,6 +76,7 @@ PRODUCTION_MODE = get_env_bool('PRODUCTION_MODE', 'False')
 DEBUG = get_env_bool('DEBUG', 'True') and not PRODUCTION_MODE
 TRADING_ENVIRONMENT = os.getenv('TRADING_ENVIRONMENT', 'development')  # development, staging, production
 
+TESTNET_MODE = get_env_bool('TESTNET_MODE', 'False')
 # =============================================================================
 # PAPER TRADING CONFIGURATION HIERARCHY
 # =============================================================================
@@ -184,7 +185,7 @@ PAPER_TRADING = {
         'PRICE_HISTORY_SIZE': get_env_int('PAPER_PRICE_HISTORY_SIZE', '100'),
 
         # Network defaults
-        'DEFAULT_CHAIN_ID': get_env_int('PAPER_CHAIN_ID', '8453'),  # Base mainnet
+        'DEFAULT_CHAIN_ID': get_env_int('PAPER_CHAIN_ID', '84532' if TESTNET_MODE else '8453'),  # ✅ CORRECT
         'DEFAULT_GAS_PRICE_GWEI': get_env_decimal('PAPER_DEFAULT_GAS_GWEI', '0.1'),
         'DEFAULT_SLIPPAGE_PERCENT': get_env_decimal('PAPER_DEFAULT_SLIPPAGE', '0.5'),
         'MAX_SLIPPAGE_PERCENT': get_env_decimal('PAPER_MAX_SLIPPAGE', '5.0'),
@@ -572,7 +573,7 @@ else:
 # =============================================================================
 
 # Testnet Configuration
-TESTNET_MODE = get_env_bool('TESTNET_MODE', 'False')
+# TESTNET_MODE = get_env_bool('TESTNET_MODE', 'False')
 # Chain configuration based on testnet mode
 if TESTNET_MODE:
     # Testnet defaults: Base Sepolia, Sepolia, Arbitrum Sepolia

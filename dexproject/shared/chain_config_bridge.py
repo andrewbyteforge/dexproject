@@ -269,22 +269,6 @@ class ChainConfigBridge:
                 self.logger.error(f"Failed to fetch from Django models: {e}")
                 raise
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     def _build_rpc_providers(self, chain) -> List[RPCProvider]:
         """Build RPC providers list from Django Chain model."""
         providers = []
@@ -341,6 +325,12 @@ class ChainConfigBridge:
     
     def _get_fallback_configs(self) -> Dict[int, ChainConfig]:
         """Get fallback hardcoded configurations."""
+        import os
+        
+        # Get API keys from environment
+        base_alchemy_key = os.getenv('BASE_MAINNET_RPC_URL', '').split('/v2/')[-1] or 'demo'
+        eth_alchemy_key = os.getenv('ETH_MAINNET_RPC_URL', '').split('/v2/')[-1] or 'demo'
+        
         self.logger.warning("Using fallback configurations - update Django models for production!")
         
         return {
@@ -351,7 +341,7 @@ class ChainConfigBridge:
                 rpc_providers=[
                     RPCProvider(
                         name="base_alchemy",
-                        url="https://base-mainnet.g.alchemy.com/v2/demo",
+                        url=f"https://base-mainnet.g.alchemy.com/v2/{base_alchemy_key}",  # ← Fixed!
                         priority=1,
                         is_paid=True,
                     ),
@@ -378,7 +368,7 @@ class ChainConfigBridge:
                 rpc_providers=[
                     RPCProvider(
                         name="ethereum_alchemy",
-                        url="https://eth-mainnet.g.alchemy.com/v2/demo",
+                        url=f"https://eth-mainnet.g.alchemy.com/v2/{eth_alchemy_key}",
                         priority=1,
                         is_paid=True,
                     ),

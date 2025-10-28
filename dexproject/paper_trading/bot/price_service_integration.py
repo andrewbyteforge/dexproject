@@ -132,7 +132,7 @@ def build_default_token_list(chain_id: int = 8453) -> List[Dict[str, Any]]:
 
 # Build DEFAULT_TOKEN_LIST dynamically from centralized constants
 # This will update automatically when constants.py is updated
-DEFAULT_TOKEN_LIST = build_default_token_list(chain_id=8453)  # Base Mainnet
+# DEFAULT_TOKEN_LIST = build_default_token_list(chain_id=8453)  # Base Mainnet
 
 # Price update interval (seconds)
 PRICE_UPDATE_INTERVAL = 5  # Update prices every 5 seconds
@@ -191,11 +191,15 @@ class RealPriceManager:
         Args:
             use_real_prices: If True, fetch real prices; if False, use mock simulation
             chain_id: Blockchain network ID for price fetching
-            token_list: Custom token list (uses DEFAULT_TOKEN_LIST if None)
+            token_list: Custom token list (builds dynamically for chain_id if None)
         """
         self.use_real_prices = use_real_prices
         self.chain_id = chain_id
-        self.token_list = token_list or self._clone_token_list(DEFAULT_TOKEN_LIST)
+        
+        # Build token list dynamically for the specified chain_id
+        if token_list is None:
+            token_list = build_default_token_list(chain_id=chain_id)  # ✅ CORRECT
+        self.token_list = self._clone_token_list(token_list)
         
         # Price feed service (initialized lazily)
         self._price_service: Optional[PriceFeedService] = None

@@ -740,6 +740,7 @@ class ChainConfig:
     uniswap_v3_router: Optional[str] = None
     sushiswap_router: Optional[str] = None
 
+
 # Predefined chain configurations
 CHAIN_CONFIGS = {
     1: ChainConfig(
