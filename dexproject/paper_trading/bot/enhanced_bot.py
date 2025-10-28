@@ -1096,15 +1096,10 @@ class EnhancedPaperTradingBot:
         except Exception as e:
             logger.error(f"[BOT] Error during shutdown: {e}", exc_info=True)
 
-
-
-
-
-
-
 # =============================================================================
 # MAIN ENTRY POINT (for standalone execution)
 # =============================================================================
+
 
 if __name__ == '__main__':
     import argparse
