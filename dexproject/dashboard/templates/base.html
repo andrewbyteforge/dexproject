@@ -446,10 +446,18 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     
     <!-- Wallet Connection JavaScript -->
-    <script src="{% static 'js/wallet-connection.js' %}"></script>
-    <script src="{% static 'js/common-utils.js' %}"></script>
-    <script src="{% static 'js/api-constants.js' %}"></script>
-    <script src="{% static 'js/form-constants.js' %}"></script>
+<!-- JavaScript Dependencies - Load in correct order -->
+<!-- 1. Common utilities FIRST -->
+<script src="{% static 'js/common-utils.js' %}"></script>
+
+<!-- 2. API constants SECOND -->
+<script src="{% static 'js/api-constants.js' %}"></script>
+
+<!-- 3. Form constants THIRD (includes LOCAL_STORAGE_KEYS, MESSAGE_TYPES) -->
+<script src="{% static 'js/form-constants.js' %}"></script>
+
+<!-- 4. Wallet connection LAST (uses all the above) -->
+<script src="{% static 'js/wallet-connection.js' %}"></script>
     
     <!-- Custom JavaScript -->
     <script>

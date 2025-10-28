@@ -1,119 +1,44 @@
 /**
- * Wallet Connection Module
+ * Wallet Connection Module - REFACTORED
  * 
  * Complete frontend implementation for SIWE (Sign-In with Ethereum) wallet connection.
  * Integrates with MetaMask, WalletConnect, and other Web3 providers.
  * 
- * REFACTORED VERSION - Uses centralized constants and utilities
- * 
- * Dependencies:
- * - common-utils.js (must be loaded before this file)
- *   - Uses: getCSRFToken(), showToast()
+ * Phase 5.1B Frontend Implementation - REFACTORED VERSION
  * 
  * Updates include:
- * - Centralized constants for API endpoints, element IDs, localStorage keys
- * - Removed duplicate utility functions (getCSRFToken, getCookie)
- * - Uses shared showToast() for all notifications
  * - Session persistence using localStorage
  * - Automatic reconnection on page load
  * - Retry logic for database lock errors
  * - Better error handling for signature issues
  * - Maintains connection across page navigation
+ * - Uses centralized constants for maintainability
  * 
- * File: dexproject/static/js/wallet-connection.js
+ * DEPENDENCIES (must be loaded before this file):
+ * - common-utils.js - Utility functions (getCSRFToken, showToast, etc.)
+ * - api-constants.js - API endpoints and chain configurations
+ * - form-constants.js - Element IDs, event names, localStorage keys
+ * 
+ * File: static/js/wallet-connection.js
  */
 
 'use strict';
 
+
 // ============================================================================
-// WALLET CONSTANTS
+// CONSTANTS - Using window scope directly
+// All constants are loaded from external files and attached to window.
+// We reference them as window.CONSTANT for reliability and timing independence.
 // ============================================================================
 
-const WALLET_CONSTANTS = {
-    // API Endpoints
-    API: {
-        WALLET_INFO: '/api/wallet/info/',
-        SIWE_CHALLENGE: '/api/wallet/siwe/challenge/',
-        SIWE_VERIFY: '/api/wallet/siwe/verify/',
-        DISCONNECT: '/api/wallet/disconnect/'
-    },
-
-    // Element IDs
-    ELEMENTS: {
-        STATUS_MESSAGE: 'wallet-status-message',
-        NAV_INDICATOR: 'wallet-nav-indicator',
-        CONNECT_BTN: 'wallet-connect-btn',
-        DISCONNECT_BTN: 'wallet-disconnect-btn',
-        ADDRESS_DISPLAY: 'wallet-address-display',
-        CHAIN_DISPLAY: 'wallet-chain-display',
-        WALLET_MODAL: 'walletModal'
-    },
-
-    // Data Attributes for Buttons
-    ACTIONS: {
-        CONNECT: 'connect-wallet',
-        DISCONNECT: 'disconnect-wallet'
-    },
-
-    // localStorage Keys
-    STORAGE: {
-        SESSION: 'walletSession',
-        SESSION_MAX_AGE_MS: 24 * 60 * 60 * 1000 // 24 hours
-    },
-
-    // Custom Events
-    EVENTS: {
-        CONNECTED: 'wallet:connected',
-        DISCONNECTED: 'wallet:disconnected',
-        CHAIN_CHANGED: 'wallet:chainChanged',
-        ACCOUNT_CHANGED: 'wallet:accountChanged'
-    },
-
-    // Supported Blockchain Networks
-    CHAINS: {
-        84532: {
-            name: 'Base Sepolia',
-            rpcUrl: 'https://sepolia.base.org',
-            blockExplorer: 'https://sepolia.basescan.org',
-            currency: 'ETH'
-        },
-        11155111: {
-            name: 'Ethereum Sepolia',
-            rpcUrl: 'https://sepolia.infura.io/v3/YOUR_INFURA_KEY',
-            blockExplorer: 'https://sepolia.etherscan.io',
-            currency: 'ETH'
-        },
-        1: {
-            name: 'Ethereum Mainnet',
-            rpcUrl: 'https://mainnet.infura.io/v3/YOUR_INFURA_KEY',
-            blockExplorer: 'https://etherscan.io',
-            currency: 'ETH'
-        },
-        8453: {
-            name: 'Base Mainnet',
-            rpcUrl: 'https://mainnet.base.org',
-            blockExplorer: 'https://basescan.org',
-            currency: 'ETH'
-        }
-    },
-
-    // Default Configuration
-    DEFAULT_CHAIN_ID: 84532, // Base Sepolia for development
-
-    // Retry Configuration
-    MAX_RETRIES: 3,
-    RETRY_DELAY_MS: 1000,
-
-    // Status CSS Classes
-    STATUS_CLASSES: {
-        OPERATIONAL: 'status-indicator status-operational',
-        ERROR: 'status-indicator status-error'
-    }
+// Wallet provider constants (local to this file)
+const WALLET_PROVIDERS = {
+    METAMASK: 'MetaMask',
+    COINBASE_WALLET: 'Coinbase Wallet',
+    WALLETCONNECT: 'WalletConnect',
+    INJECTED: 'Injected',
+    UNKNOWN: 'Unknown'
 };
-
-// ============================================================================
-// WALLET CONNECTION MANAGER CLASS
-// ============================================================================
 
 class WalletConnectionManager {
     constructor() {
@@ -127,15 +52,15 @@ class WalletConnectionManager {
         this.sessionId = null;
         this.walletId = null;
 
-        // Retry configuration
-        this.maxRetries = WALLET_CONSTANTS.MAX_RETRIES;
-        this.retryDelay = WALLET_CONSTANTS.RETRY_DELAY_MS;
+        // Retry configuration for database locks
+        this.maxRetries = 3;
+        this.retryDelay = 1000; // Base delay in milliseconds
 
-        // Supported chains
-        this.supportedChains = WALLET_CONSTANTS.CHAINS;
+        // Use centralized chain configurations
+        this.supportedChains = window.window.CHAIN_CONFIGS || {};
 
         // Default to Base Sepolia for development
-        this.targetChainId = WALLET_CONSTANTS.DEFAULT_CHAIN_ID;
+        this.targetChainId = window.API_ENDPOINTS?.CHAIN_SETTINGS?.DEFAULT_CHAIN_ID || 84532;
 
         this.init();
     }
@@ -164,22 +89,18 @@ class WalletConnectionManager {
         console.log('✅ Wallet Connection Manager initialized');
     }
 
-    // ========================================================================
-    // SESSION MANAGEMENT
-    // ========================================================================
-
     /**
      * Check localStorage for saved wallet session
      */
     async checkLocalStorageSession() {
         try {
-            const savedSession = localStorage.getItem(WALLET_CONSTANTS.STORAGE.SESSION);
+            const savedSession = localStorage.getItem(window.LOCAL_STORAGE_KEYS.WALLET_SESSION);
             if (savedSession) {
                 const session = JSON.parse(savedSession);
 
                 // Check if session is less than 24 hours old
                 const sessionAge = Date.now() - session.timestamp;
-                if (sessionAge < WALLET_CONSTANTS.STORAGE.SESSION_MAX_AGE_MS) {
+                if (sessionAge < 24 * 60 * 60 * 1000) {
                     console.log('📦 Found saved wallet session in localStorage');
 
                     // Try to reconnect with saved session
@@ -187,12 +108,12 @@ class WalletConnectionManager {
                 } else {
                     // Session expired, clear it
                     console.log('⏰ Saved session expired, clearing...');
-                    localStorage.removeItem(WALLET_CONSTANTS.STORAGE.SESSION);
+                    localStorage.removeItem(window.LOCAL_STORAGE_KEYS.WALLET_SESSION);
                 }
             }
         } catch (error) {
             console.error('Error checking localStorage session:', error);
-            localStorage.removeItem(WALLET_CONSTANTS.STORAGE.SESSION);
+            localStorage.removeItem(window.LOCAL_STORAGE_KEYS.WALLET_SESSION);
         }
     }
 
@@ -226,12 +147,12 @@ class WalletConnectionManager {
                     await this.verifyBackendSession();
                 } else {
                     // Wallet changed or disconnected, clear saved session
-                    localStorage.removeItem(WALLET_CONSTANTS.STORAGE.SESSION);
+                    localStorage.removeItem(window.LOCAL_STORAGE_KEYS.WALLET_SESSION);
                 }
             }
         } catch (error) {
             console.error('Failed to reconnect with saved session:', error);
-            localStorage.removeItem(WALLET_CONSTANTS.STORAGE.SESSION);
+            localStorage.removeItem(window.LOCAL_STORAGE_KEYS.WALLET_SESSION);
         }
     }
 
@@ -240,9 +161,9 @@ class WalletConnectionManager {
      */
     async verifyBackendSession() {
         try {
-            const response = await fetch(WALLET_CONSTANTS.API.WALLET_INFO, {
+            const response = await fetch(window.API_ENDPOINTS.WALLET.INFO, {
                 headers: {
-                    'X-CSRFToken': getCSRFToken()
+                    'X-CSRFToken': window.getCSRFToken()
                 }
             });
 
@@ -253,27 +174,6 @@ class WalletConnectionManager {
             }
         } catch (error) {
             console.error('Failed to verify backend session:', error);
-        }
-    }
-
-    /**
-     * Save current session to localStorage
-     */
-    saveSessionToLocalStorage() {
-        try {
-            const session = {
-                walletAddress: this.walletAddress,
-                chainId: this.chainId,
-                walletType: this.walletType,
-                sessionId: this.sessionId,
-                walletId: this.walletId,
-                timestamp: Date.now()
-            };
-
-            localStorage.setItem(WALLET_CONSTANTS.STORAGE.SESSION, JSON.stringify(session));
-            console.log('💾 Session saved to localStorage');
-        } catch (error) {
-            console.error('Failed to save session to localStorage:', error);
         }
     }
 
@@ -293,13 +193,571 @@ class WalletConnectionManager {
     }
 
     /**
+     * Setup page visibility listener for reconnection
+     */
+    setupVisibilityListener() {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && this.isConnected) {
+                // Page became visible and we think we're connected
+                // Verify the connection is still valid
+                this.verifyConnection();
+            }
+        });
+
+        // Also check on focus
+        window.addEventListener('focus', () => {
+            if (this.isConnected) {
+                this.verifyConnection();
+            }
+        });
+    }
+
+    /**
+     * Verify current connection is still valid
+     */
+    async verifyConnection() {
+        if (!this.provider || !window.ethereum) return;
+
+        try {
+            const accounts = await window.ethereum.request({
+                method: 'eth_accounts'
+            });
+
+            if (accounts.length === 0 ||
+                accounts[0].toLowerCase() !== this.walletAddress?.toLowerCase()) {
+                // Connection lost or account changed
+                console.log('⚠️ Connection lost or account changed');
+                this.handleDisconnection();
+            }
+        } catch (error) {
+            console.error('Error verifying connection:', error);
+        }
+    }
+
+    /**
+     * Setup event listeners for UI interactions
+     */
+    setupEventListeners() {
+        // Connect wallet button
+        document.addEventListener('click', (e) => {
+            if (e.target.matches(window.DATA_ACTIONS.CONNECT_WALLET)) {
+                e.preventDefault();
+                this.connectWallet();
+            }
+
+            if (e.target.matches(window.DATA_ACTIONS.DISCONNECT_WALLET)) {
+                e.preventDefault();
+                this.disconnectWallet();
+            }
+
+            if (e.target.matches(window.DATA_ACTIONS.SWITCH_CHAIN)) {
+                e.preventDefault();
+                const chainId = parseInt(e.target.dataset.chainId);
+                if (chainId) {
+                    this.switchChain(chainId);
+                }
+            }
+        });
+    }
+
+    /**
+     * Setup wallet provider event listeners
+     */
+    setupWalletListeners() {
+        if (window.ethereum) {
+            // Account changed
+            window.ethereum.on('accountsChanged', (accounts) => {
+                console.log('👤 Account changed:', accounts);
+                if (accounts.length === 0) {
+                    this.handleDisconnection();
+                } else if (accounts[0].toLowerCase() !== this.walletAddress?.toLowerCase()) {
+                    // Account switched, reconnect with new account
+                    this.handleAccountChange(accounts[0]);
+                }
+            });
+
+            // Chain changed
+            window.ethereum.on('chainChanged', (chainId) => {
+                console.log('⛓️ Chain changed:', chainId);
+                this.handleChainChange(parseInt(chainId, 16));
+            });
+
+            // Disconnect
+            window.ethereum.on('disconnect', () => {
+                console.log('🔌 Provider disconnected');
+                this.handleDisconnection();
+            });
+        }
+    }
+
+    /**
+     * Connect wallet
+     */
+    async connectWallet() {
+        try {
+            this.showStatus(window.MESSAGE_TYPES.LOADING, window.WALLET_STATUS_MESSAGES.CONNECTING);
+
+            // Detect wallet provider
+            const provider = await this.detectProvider();
+            if (!provider) {
+                this.showStatus(window.MESSAGE_TYPES.ERROR, window.WALLET_STATUS_MESSAGES.NO_WALLET);
+                return;
+            }
+
+            this.provider = provider;
+
+            // Request account access
+            const accounts = await provider.request({
+                method: 'eth_requestAccounts'
+            });
+
+            if (accounts.length === 0) {
+                throw new Error('No accounts found');
+            }
+
+            this.walletAddress = accounts[0];
+
+            // Get current chain
+            const chainId = await provider.request({
+                method: 'eth_chainId'
+            });
+            this.chainId = parseInt(chainId, 16);
+
+            // Check if chain is supported
+            if (!window.CHAIN_UTILS.isChainSupported(this.chainId)) {
+                this.showStatus(window.MESSAGE_TYPES.WARNING, window.WALLET_STATUS_MESSAGES.UNSUPPORTED_CHAIN);
+                await this.switchChain(this.targetChainId);
+                return;
+            }
+
+            // Detect wallet type
+            this.walletType = this.detectWalletType();
+
+            // Authenticate with SIWE
+            await this.authenticateWithSIWE();
+
+        } catch (error) {
+            console.error('Failed to connect wallet:', error);
+
+            if (error.code === 4001) {
+                this.showStatus(window.MESSAGE_TYPES.WARNING, window.WALLET_STATUS_MESSAGES.REJECTED);
+            } else {
+                this.showStatus(window.MESSAGE_TYPES.ERROR, `${window.WALLET_STATUS_MESSAGES.ERROR}: ${error.message}`);
+            }
+        }
+    }
+
+    /**
+     * Authenticate using SIWE (Sign-In with Ethereum)
+     */
+    async authenticateWithSIWE() {
+        let retryCount = 0;
+
+        while (retryCount < this.maxRetries) {
+            try {
+                this.showStatus(window.MESSAGE_TYPES.LOADING, window.WALLET_STATUS_MESSAGES.SIGNING);
+
+                // Get challenge from backend
+                const challengeResponse = await fetch(window.API_ENDPOINTS.WALLET.SIWE_CHALLENGE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': window.getCSRFToken()
+                    },
+                    body: JSON.stringify({
+                        wallet_address: this.walletAddress,  // ← CORRECT KEY
+                        chain_id: this.chainId
+                    })
+                });
+
+                if (!challengeResponse.ok) {
+                    const errorData = await challengeResponse.json();
+                    throw new Error(errorData.error || 'Failed to get SIWE challenge');
+                }
+
+                const challengeData = await challengeResponse.json();
+                const { message, nonce } = challengeData;
+
+
+                // ADD THESE DEBUG LINES:
+                console.log('🔍 SIWE Challenge received:', challengeData);
+                console.log('📝 Message to sign:', message);
+                console.log('🎲 Nonce:', nonce);
+
+                console.log('🎲 Nonce:', nonce);
+
+                // ADD THIS:
+                console.log('🚀 Requesting signature from MetaMask...');
+
+                // Declare signature variable outside the Promise.race
+                let signature;
+
+                const signaturePromise = this.provider.request({
+                    method: 'personal_sign',
+                    params: [message, this.walletAddress]
+                });
+
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('Signature request timed out after 60 seconds')), 60000);
+                });
+
+                // Now assign to the outer signature variable
+                signature = await Promise.race([signaturePromise, timeoutPromise]);
+                console.log('✅ Signature received:', signature.substring(0, 20) + '...');
+
+                this.showStatus(window.MESSAGE_TYPES.LOADING, 'Verifying signature...');
+
+                // Verify signature with backend
+                const verifyResponse = await fetch(window.API_ENDPOINTS.WALLET.SIWE_VERIFY, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': window.getCSRFToken()
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        signature: signature,
+                        wallet_address: this.walletAddress,  // ← CORRECT
+                        chain_id: this.chainId,
+                        wallet_type: this.walletType
+                    })
+                });
+
+                if (!verifyResponse.ok) {
+                    const errorData = await verifyResponse.json();
+                    throw new Error(errorData.error || 'Failed to verify signature');
+                }
+
+                const verifyData = await verifyResponse.json();
+
+                // Store session data
+                this.sessionId = verifyData.session_id;
+                this.walletId = verifyData.wallet_id;
+                this.isConnected = true;
+
+                // Save to localStorage for persistence
+                this.saveSessionToLocalStorage();
+
+                // Update UI
+                this.updateConnectionUI();
+
+                // Dispatch connection event
+                this.dispatchConnectionEvent(window.CUSTOM_EVENTS.WALLET_CONNECTED, {
+                    address: this.walletAddress,
+                    chainId: this.chainId,
+                    walletType: this.walletType
+                });
+
+                this.showStatus(window.MESSAGE_TYPES.SUCCESS, window.WALLET_STATUS_MESSAGES.CONNECTED);
+
+                console.log('✅ Wallet connected successfully');
+                break;
+
+            } catch (error) {
+                console.error(`SIWE authentication attempt ${retryCount + 1} failed:`, error);
+
+                // Check for database lock errors
+                if (error.message && error.message.includes('database is locked')) {
+                    retryCount++;
+                    if (retryCount < this.maxRetries) {
+                        const delay = this.retryDelay * Math.pow(2, retryCount - 1);
+                        console.log(`⏳ Retrying in ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        continue;
+                    }
+                }
+
+                // Max retries reached or non-recoverable error
+                if (error.code === 4001) {
+                    this.showStatus(window.MESSAGE_TYPES.WARNING, window.WALLET_STATUS_MESSAGES.REJECTED);
+                } else {
+                    this.showStatus(window.MESSAGE_TYPES.ERROR, `${window.WALLET_STATUS_MESSAGES.ERROR}: ${error.message}`);
+                }
+                break;
+            }
+        }
+    }
+
+    /**
+     * Save session to localStorage
+     */
+    saveSessionToLocalStorage() {
+        try {
+            const sessionData = {
+                walletAddress: this.walletAddress,
+                chainId: this.chainId,
+                walletType: this.walletType,
+                sessionId: this.sessionId,
+                walletId: this.walletId,
+                timestamp: Date.now()
+            };
+
+            localStorage.setItem(window.LOCAL_STORAGE_KEYS.WALLET_SESSION, JSON.stringify(sessionData));
+            localStorage.setItem(window.LOCAL_STORAGE_KEYS.LAST_CONNECTED_ADDRESS, this.walletAddress);
+            localStorage.setItem(window.LOCAL_STORAGE_KEYS.PREFERRED_WALLET, this.walletType);
+
+            console.log('💾 Session saved to localStorage');
+        } catch (error) {
+            console.error('Failed to save session to localStorage:', error);
+        }
+    }
+
+    /**
+     * Disconnect wallet
+     */
+    async disconnectWallet() {
+        try {
+            this.showStatus(window.MESSAGE_TYPES.LOADING, window.WALLET_STATUS_MESSAGES.DISCONNECTING);
+
+            // Call backend disconnect endpoint
+            await fetch(window.API_ENDPOINTS.WALLET.DISCONNECT, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': window.getCSRFToken()
+                }
+            });
+
+            // Clear local state
+            this.handleDisconnection();
+
+            this.showStatus(window.MESSAGE_TYPES.SUCCESS, window.WALLET_STATUS_MESSAGES.DISCONNECTED);
+
+        } catch (error) {
+            console.error('Failed to disconnect wallet:', error);
+            // Still clear local state even if backend call fails
+            this.handleDisconnection();
+            this.showStatus(window.MESSAGE_TYPES.ERROR, `${window.WALLET_STATUS_MESSAGES.ERROR}: ${error.message}`);
+        }
+    }
+
+    /**
+     * Handle wallet disconnection
+     */
+    handleDisconnection() {
+        // Clear state
+        this.isConnected = false;
+        this.walletAddress = null;
+        this.walletType = null;
+        this.chainId = null;
+        this.provider = null;
+        this.sessionId = null;
+        this.walletId = null;
+
+        // Clear localStorage
+        localStorage.removeItem(window.LOCAL_STORAGE_KEYS.WALLET_SESSION);
+
+        // Update UI
+        this.updateConnectionUI();
+
+        // Dispatch disconnection event
+        this.dispatchConnectionEvent(window.CUSTOM_EVENTS.WALLET_DISCONNECTED);
+
+        console.log('👋 Wallet disconnected');
+    }
+
+    /**
+     * Handle account change
+     */
+    async handleAccountChange(newAddress) {
+        console.log('🔄 Handling account change:', newAddress);
+
+        // Disconnect old session
+        await this.disconnectWallet();
+
+        // Connect with new account
+        this.walletAddress = newAddress;
+        await this.authenticateWithSIWE();
+
+        // Dispatch account change event
+        this.dispatchConnectionEvent(window.CUSTOM_EVENTS.WALLET_ACCOUNT_CHANGED, {
+            address: newAddress
+        });
+    }
+
+    /**
+     * Handle chain change
+     */
+    handleChainChange(newChainId) {
+        console.log('⛓️ Handling chain change:', newChainId);
+
+        this.chainId = newChainId;
+
+        // Update UI
+        this.updateConnectionUI();
+
+        // Check if chain is supported
+        if (!window.CHAIN_UTILS.isChainSupported(newChainId)) {
+            this.showStatus(window.MESSAGE_TYPES.WARNING, window.WALLET_STATUS_MESSAGES.UNSUPPORTED_CHAIN);
+        }
+
+        // Dispatch chain change event
+        this.dispatchConnectionEvent(window.CUSTOM_EVENTS.WALLET_CHAIN_CHANGED, {
+            chainId: newChainId
+        });
+    }
+
+    /**
+     * Switch to a different chain
+     */
+    async switchChain(chainId) {
+        try {
+            this.showStatus(window.MESSAGE_TYPES.LOADING, window.WALLET_STATUS_MESSAGES.SWITCHING_CHAIN);
+
+            const chainConfig = window.CHAIN_UTILS.getChainConfig(chainId);
+            if (!chainConfig) {
+                throw new Error(`Chain ${chainId} not supported`);
+            }
+
+            const hexChainId = chainConfig.hexChainId;
+
+            try {
+                // Try to switch to the chain
+                await this.provider.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: hexChainId }]
+                });
+
+            } catch (switchError) {
+                // Chain not added to wallet, try to add it
+                if (switchError.code === 4902) {
+                    await this.provider.request({
+                        method: 'wallet_addEthereumChain',
+                        params: [{
+                            chainId: hexChainId,
+                            chainName: chainConfig.name,
+                            nativeCurrency: {
+                                name: chainConfig.currency,
+                                symbol: chainConfig.currency,
+                                decimals: 18
+                            },
+                            rpcUrls: [chainConfig.rpcUrl],
+                            blockExplorerUrls: [chainConfig.blockExplorer]
+                        }]
+                    });
+                } else {
+                    throw switchError;
+                }
+            }
+
+            this.chainId = chainId;
+            this.showStatus(window.MESSAGE_TYPES.SUCCESS, window.WALLET_STATUS_MESSAGES.CHAIN_SWITCHED);
+
+        } catch (error) {
+            console.error('Failed to switch chain:', error);
+
+            if (error.code === 4001) {
+                this.showStatus(window.MESSAGE_TYPES.WARNING, window.WALLET_STATUS_MESSAGES.REJECTED);
+            } else {
+                this.showStatus(window.MESSAGE_TYPES.ERROR, `${window.WALLET_STATUS_MESSAGES.ERROR}: ${error.message}`);
+            }
+        }
+    }
+
+    /**
+     * Detect wallet provider
+     */
+    async detectProvider() {
+        // Check for MetaMask
+        if (window.ethereum && window.ethereum.isMetaMask) {
+            console.log('🦊 MetaMask detected');
+            return window.ethereum;
+        }
+
+        // Check for generic injected provider
+        if (window.ethereum) {
+            console.log('🔌 Injected wallet detected');
+            return window.ethereum;
+        }
+
+        // No wallet found
+        console.log('❌ No wallet provider found');
+        return null;
+    }
+
+    /**
+     * Detect wallet type
+     */
+    detectWalletType() {
+        if (window.ethereum) {
+            if (window.ethereum.isMetaMask) {
+                return WALLET_PROVIDERS.METAMASK;
+            }
+            if (window.ethereum.isCoinbaseWallet) {
+                return WALLET_PROVIDERS.COINBASE_WALLET;
+            }
+            return WALLET_PROVIDERS.INJECTED;
+        }
+        return WALLET_PROVIDERS.UNKNOWN;
+    }
+
+    /**
+     * Update connection UI
+     */
+    updateConnectionUI() {
+        // Update wallet address display
+        const addressDisplay = document.getElementById(window.ELEMENT_IDS.WALLET_ADDRESS_DISPLAY);
+        if (addressDisplay) {
+            addressDisplay.textContent = this.isConnected ?
+                this.formatAddress(this.walletAddress) :
+                'Not Connected';
+        }
+
+        // Update chain display
+        const chainDisplay = document.getElementById(window.ELEMENT_IDS.WALLET_CHAIN_DISPLAY);
+        if (chainDisplay && this.isConnected) {
+            const chainConfig = window.CHAIN_UTILS.getChainConfig(this.chainId);
+            chainDisplay.textContent = chainConfig ? chainConfig.name : `Chain ${this.chainId}`;
+        }
+
+        // Toggle connect/disconnect buttons
+        const connectBtn = document.querySelector(window.DATA_ACTIONS.CONNECT_WALLET);
+        const disconnectBtn = document.querySelector(window.DATA_ACTIONS.DISCONNECT_WALLET);
+
+        if (connectBtn) {
+            connectBtn.style.display = this.isConnected ? 'none' : 'block';
+        }
+
+        if (disconnectBtn) {
+            disconnectBtn.style.display = this.isConnected ? 'block' : 'none';
+        }
+
+        // Update wallet info container
+        const infoContainer = document.getElementById(window.ELEMENT_IDS.WALLET_INFO_CONTAINER);
+        if (infoContainer) {
+            if (this.isConnected) {
+                infoContainer.classList.remove(window.CSS_CLASSES.HIDDEN);
+                infoContainer.classList.add(window.CSS_CLASSES.VISIBLE);
+            } else {
+                infoContainer.classList.add(window.CSS_CLASSES.HIDDEN);
+                infoContainer.classList.remove(window.CSS_CLASSES.VISIBLE);
+            }
+        }
+
+        // Update connection indicator in navigation
+        const navIndicator = document.getElementById(window.ELEMENT_IDS.WALLET_NAV_INDICATOR);
+        if (navIndicator) {
+            navIndicator.className = this.isConnected ?
+                `status-indicator ${window.CSS_CLASSES.STATUS_OPERATIONAL}` :
+                `status-indicator ${window.CSS_CLASSES.STATUS_ERROR}`;
+        }
+    }
+
+    /**
+     * Format wallet address for display
+     */
+    formatAddress(address) {
+        if (!address) return '';
+        return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    }
+
+    /**
      * Check session status with backend
      */
     async checkSessionStatus() {
         try {
-            const response = await fetch(WALLET_CONSTANTS.API.WALLET_INFO, {
+            const response = await fetch(window.API_ENDPOINTS.WALLET.INFO, {
                 headers: {
-                    'X-CSRFToken': getCSRFToken()
+                    'X-CSRFToken': window.getCSRFToken()
                 }
             });
 
@@ -356,572 +814,6 @@ class WalletConnectionManager {
         console.log('✅ Wallet connection restored');
     }
 
-    // ========================================================================
-    // EVENT LISTENERS
-    // ========================================================================
-
-    /**
-     * Setup event listeners for UI interactions
-     */
-    setupEventListeners() {
-        // Connect wallet button
-        document.addEventListener('click', (e) => {
-            if (e.target.matches(`[data-action="${WALLET_CONSTANTS.ACTIONS.CONNECT}"]`)) {
-                e.preventDefault();
-                this.connectWallet();
-            }
-
-            if (e.target.matches(`[data-action="${WALLET_CONSTANTS.ACTIONS.DISCONNECT}"]`)) {
-                e.preventDefault();
-                this.disconnectWallet();
-            }
-        });
-    }
-
-    /**
-     * Setup wallet provider event listeners
-     */
-    setupWalletListeners() {
-        if (!window.ethereum) return;
-
-        // Account changed
-        window.ethereum.on('accountsChanged', (accounts) => {
-            console.log('👤 Account changed:', accounts);
-
-            if (accounts.length === 0) {
-                // User disconnected wallet
-                this.handleDisconnection();
-            } else if (accounts[0].toLowerCase() !== this.walletAddress?.toLowerCase()) {
-                // User switched accounts
-                this.handleAccountChange(accounts[0]);
-            }
-        });
-
-        // Chain changed
-        window.ethereum.on('chainChanged', (chainId) => {
-            console.log('⛓️ Chain changed:', chainId);
-            this.handleChainChange(parseInt(chainId, 16));
-        });
-
-        // Disconnect
-        window.ethereum.on('disconnect', () => {
-            console.log('🔌 Wallet disconnected');
-            this.handleDisconnection();
-        });
-    }
-
-    /**
-     * Setup page visibility listener for reconnection
-     */
-    setupVisibilityListener() {
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && this.isConnected) {
-                // Page became visible and we think we're connected
-                // Verify the connection is still valid
-                this.verifyConnection();
-            }
-        });
-
-        // Also check on focus
-        window.addEventListener('focus', () => {
-            if (this.isConnected) {
-                this.verifyConnection();
-            }
-        });
-    }
-
-    /**
-     * Verify current connection is still valid
-     */
-    async verifyConnection() {
-        if (!this.provider || !window.ethereum) return;
-
-        try {
-            const accounts = await window.ethereum.request({
-                method: 'eth_accounts'
-            });
-
-            if (accounts.length === 0 ||
-                accounts[0].toLowerCase() !== this.walletAddress?.toLowerCase()) {
-                // Connection lost or account changed
-                console.log('⚠️ Connection lost or account changed');
-                this.handleDisconnection();
-            }
-        } catch (error) {
-            console.error('Error verifying connection:', error);
-        }
-    }
-
-    // ========================================================================
-    // WALLET CONNECTION
-    // ========================================================================
-
-    /**
-     * Connect wallet
-     */
-    async connectWallet() {
-        try {
-            showToast('Connecting wallet...', 'info');
-
-            // Detect provider
-            const provider = await this.detectProvider();
-            if (!provider) {
-                showToast('No Web3 wallet detected. Please install MetaMask or another Web3 wallet.', 'error');
-                return;
-            }
-
-            this.provider = provider;
-
-            // Request accounts
-            const accounts = await provider.request({
-                method: 'eth_requestAccounts'
-            });
-
-            if (accounts.length === 0) {
-                showToast('No accounts found. Please unlock your wallet.', 'error');
-                return;
-            }
-
-            this.walletAddress = accounts[0];
-
-            // Get chain ID
-            const chainId = await provider.request({
-                method: 'eth_chainId'
-            });
-            this.chainId = parseInt(chainId, 16);
-
-            // Detect wallet type
-            this.walletType = this.detectWalletType(provider);
-
-            console.log('✅ Wallet connected:', {
-                address: this.walletAddress,
-                chainId: this.chainId,
-                walletType: this.walletType
-            });
-
-            // Check if we're on the correct chain
-            if (this.chainId !== this.targetChainId) {
-                await this.switchToTargetChain();
-            }
-
-            // Authenticate with SIWE
-            await this.authenticateWithSIWE();
-
-        } catch (error) {
-            console.error('Failed to connect wallet:', error);
-
-            if (error.code === 4001) {
-                showToast('Connection request rejected', 'warning');
-            } else {
-                showToast(`Failed to connect wallet: ${error.message}`, 'error');
-            }
-        }
-    }
-
-    /**
-     * Detect Web3 provider
-     */
-    async detectProvider() {
-        if (window.ethereum) {
-            return window.ethereum;
-        }
-
-        // Check for other providers
-        if (window.web3) {
-            return window.web3.currentProvider;
-        }
-
-        return null;
-    }
-
-    /**
-     * Detect wallet type
-     */
-    detectWalletType(provider) {
-        if (provider.isMetaMask) {
-            return 'metamask';
-        }
-
-        if (provider.isCoinbaseWallet) {
-            return 'coinbase';
-        }
-
-        if (provider.isWalletConnect) {
-            return 'walletconnect';
-        }
-
-        return 'unknown';
-    }
-
-    /**
-     * Switch to target chain
-     */
-    async switchToTargetChain() {
-        try {
-            showToast('Switching to correct network...', 'info');
-
-            const chainIdHex = '0x' + this.targetChainId.toString(16);
-
-            await this.provider.request({
-                method: 'wallet_switchEthereumChain',
-                params: [{ chainId: chainIdHex }]
-            });
-
-            this.chainId = this.targetChainId;
-            showToast('Network switched successfully', 'success');
-
-        } catch (error) {
-            // Chain not added, try to add it
-            if (error.code === 4902) {
-                await this.addChainToWallet();
-            } else {
-                console.error('Failed to switch chain:', error);
-                showToast('Failed to switch network. Please switch manually in your wallet.', 'error');
-                throw error;
-            }
-        }
-    }
-
-    /**
-     * Add chain to wallet
-     */
-    async addChainToWallet() {
-        try {
-            const chainConfig = this.supportedChains[this.targetChainId];
-            if (!chainConfig) {
-                throw new Error('Unsupported chain');
-            }
-
-            const chainIdHex = '0x' + this.targetChainId.toString(16);
-
-            await this.provider.request({
-                method: 'wallet_addEthereumChain',
-                params: [{
-                    chainId: chainIdHex,
-                    chainName: chainConfig.name,
-                    rpcUrls: [chainConfig.rpcUrl],
-                    blockExplorerUrls: [chainConfig.blockExplorer],
-                    nativeCurrency: {
-                        name: chainConfig.currency,
-                        symbol: chainConfig.currency,
-                        decimals: 18
-                    }
-                }]
-            });
-
-            this.chainId = this.targetChainId;
-            showToast('Network added and switched successfully', 'success');
-
-        } catch (error) {
-            console.error('Failed to add chain:', error);
-            showToast('Failed to add network. Please add manually in your wallet.', 'error');
-            throw error;
-        }
-    }
-
-    // ========================================================================
-    // SIWE AUTHENTICATION
-    // ========================================================================
-
-    /**
-     * Authenticate with Sign-In with Ethereum (SIWE)
-     */
-    async authenticateWithSIWE() {
-        try {
-            showToast('Requesting signature...', 'info');
-
-            // Get challenge from backend with retry logic
-            const challenge = await this.getChallenge();
-
-            // Sign the challenge
-            const signature = await this.signChallenge(challenge);
-
-            // Verify signature with backend with retry logic
-            const result = await this.verifySignature(signature, challenge);
-
-            if (result.success) {
-                this.isConnected = true;
-                this.sessionId = result.session_id;
-                this.walletId = result.wallet_id;
-
-                // Save to localStorage
-                this.saveSessionToLocalStorage();
-
-                this.updateConnectionUI();
-                this.dispatchConnectionEvent(WALLET_CONSTANTS.EVENTS.CONNECTED, {
-                    address: this.walletAddress,
-                    chainId: this.chainId,
-                    walletType: this.walletType
-                });
-
-                showToast('Wallet connected successfully!', 'success');
-            } else {
-                throw new Error(result.error || 'Authentication failed');
-            }
-
-        } catch (error) {
-            console.error('SIWE authentication failed:', error);
-
-            if (error.code === 4001) {
-                showToast('Signature request rejected', 'warning');
-            } else {
-                showToast(`Authentication failed: ${error.message}`, 'error');
-            }
-
-            // Clear partial connection state
-            this.isConnected = false;
-            this.walletAddress = null;
-            this.chainId = null;
-        }
-    }
-
-    /**
-     * Get SIWE challenge from backend with retry logic
-     */
-    async getChallenge(retryCount = 0) {
-        try {
-            const response = await fetch(WALLET_CONSTANTS.API.SIWE_CHALLENGE, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCSRFToken()
-                },
-                body: JSON.stringify({
-                    address: this.walletAddress,
-                    chain_id: this.chainId
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to get challenge');
-            }
-
-            return await response.json();
-
-        } catch (error) {
-            // Retry logic for database locks
-            if (error.message.includes('database') && retryCount < this.maxRetries) {
-                console.log(`⏳ Database busy, retrying... (${retryCount + 1}/${this.maxRetries})`);
-                await this.sleep(this.retryDelay * (retryCount + 1));
-                return this.getChallenge(retryCount + 1);
-            }
-
-            throw error;
-        }
-    }
-
-    /**
-     * Sign SIWE challenge
-     */
-    async signChallenge(challenge) {
-        try {
-            const signature = await this.provider.request({
-                method: 'personal_sign',
-                params: [challenge.message, this.walletAddress]
-            });
-
-            return signature;
-
-        } catch (error) {
-            console.error('Failed to sign challenge:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Verify signature with backend with retry logic
-     */
-    async verifySignature(signature, challenge, retryCount = 0) {
-        try {
-            const response = await fetch(WALLET_CONSTANTS.API.SIWE_VERIFY, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCSRFToken()
-                },
-                body: JSON.stringify({
-                    message: challenge.message,
-                    signature: signature,
-                    address: this.walletAddress,
-                    chain_id: this.chainId,
-                    wallet_type: this.walletType
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Verification failed');
-            }
-
-            return await response.json();
-
-        } catch (error) {
-            // Retry logic for database locks
-            if (error.message.includes('database') && retryCount < this.maxRetries) {
-                console.log(`⏳ Database busy, retrying... (${retryCount + 1}/${this.maxRetries})`);
-                await this.sleep(this.retryDelay * (retryCount + 1));
-                return this.verifySignature(signature, challenge, retryCount + 1);
-            }
-
-            throw error;
-        }
-    }
-
-    // ========================================================================
-    // WALLET DISCONNECTION
-    // ========================================================================
-
-    /**
-     * Disconnect wallet
-     */
-    async disconnectWallet() {
-        try {
-            showToast('Disconnecting wallet...', 'info');
-
-            // Call backend to clear session
-            const response = await fetch(WALLET_CONSTANTS.API.DISCONNECT, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCSRFToken()
-                }
-            });
-
-            if (!response.ok) {
-                console.error('Failed to disconnect from backend');
-            }
-
-            // Clear local state
-            this.handleDisconnection();
-
-            showToast('Wallet disconnected', 'success');
-
-        } catch (error) {
-            console.error('Failed to disconnect wallet:', error);
-            showToast('Error disconnecting wallet', 'error');
-
-            // Clear local state anyway
-            this.handleDisconnection();
-        }
-    }
-
-    /**
-     * Handle wallet disconnection
-     */
-    handleDisconnection() {
-        this.isConnected = false;
-        this.walletAddress = null;
-        this.walletType = null;
-        this.chainId = null;
-        this.provider = null;
-        this.sessionId = null;
-        this.walletId = null;
-
-        // Clear localStorage
-        localStorage.removeItem(WALLET_CONSTANTS.STORAGE.SESSION);
-
-        this.updateConnectionUI();
-
-        this.dispatchConnectionEvent(WALLET_CONSTANTS.EVENTS.DISCONNECTED);
-
-        console.log('🔌 Wallet disconnected and session cleared');
-    }
-
-    /**
-     * Handle account change
-     */
-    async handleAccountChange(newAccount) {
-        console.log('👤 Account changed to:', newAccount);
-
-        // Disconnect old account
-        await this.disconnectWallet();
-
-        // Show notification
-        showToast('Wallet account changed. Please reconnect.', 'warning');
-
-        this.dispatchConnectionEvent(WALLET_CONSTANTS.EVENTS.ACCOUNT_CHANGED, {
-            newAccount: newAccount
-        });
-    }
-
-    /**
-     * Handle chain change
-     */
-    handleChainChange(newChainId) {
-        this.chainId = newChainId;
-
-        this.updateConnectionUI();
-
-        this.dispatchConnectionEvent(WALLET_CONSTANTS.EVENTS.CHAIN_CHANGED, {
-            chainId: newChainId
-        });
-
-        // Check if we're on the correct chain
-        if (newChainId !== this.targetChainId) {
-            showToast(`Please switch to ${this.supportedChains[this.targetChainId]?.name || 'the correct network'}`, 'warning');
-        }
-    }
-
-    // ========================================================================
-    // UI UPDATES
-    // ========================================================================
-
-    /**
-     * Update connection UI
-     */
-    updateConnectionUI() {
-        // Update connect button
-        const connectBtn = document.getElementById(WALLET_CONSTANTS.ELEMENTS.CONNECT_BTN);
-        if (connectBtn) {
-            connectBtn.style.display = this.isConnected ? 'none' : 'block';
-        }
-
-        // Update disconnect button
-        const disconnectBtn = document.getElementById(WALLET_CONSTANTS.ELEMENTS.DISCONNECT_BTN);
-        if (disconnectBtn) {
-            disconnectBtn.style.display = this.isConnected ? 'block' : 'none';
-        }
-
-        // Update address display
-        const addressDisplay = document.getElementById(WALLET_CONSTANTS.ELEMENTS.ADDRESS_DISPLAY);
-        if (addressDisplay) {
-            addressDisplay.textContent = this.isConnected ?
-                this.formatAddress(this.walletAddress) : '';
-        }
-
-        // Update chain display
-        const chainDisplay = document.getElementById(WALLET_CONSTANTS.ELEMENTS.CHAIN_DISPLAY);
-        if (chainDisplay) {
-            if (this.isConnected && this.chainId) {
-                const chainInfo = this.supportedChains[this.chainId];
-                chainDisplay.textContent = chainInfo ? chainInfo.name : `Chain ${this.chainId}`;
-            } else {
-                chainDisplay.textContent = '';
-            }
-        }
-
-        // Update connection indicator in navigation
-        const navIndicator = document.getElementById(WALLET_CONSTANTS.ELEMENTS.NAV_INDICATOR);
-        if (navIndicator) {
-            navIndicator.className = this.isConnected ?
-                WALLET_CONSTANTS.STATUS_CLASSES.OPERATIONAL :
-                WALLET_CONSTANTS.STATUS_CLASSES.ERROR;
-        }
-    }
-
-    /**
-     * Format wallet address for display
-     */
-    formatAddress(address) {
-        if (!address) return '';
-        return `${address.slice(0, 6)}...${address.slice(-4)}`;
-    }
-
-    // ========================================================================
-    // EVENT DISPATCHING
-    // ========================================================================
-
     /**
      * Dispatch custom wallet events
      */
@@ -935,15 +827,33 @@ class WalletConnectionManager {
         document.dispatchEvent(event);
     }
 
-    // ========================================================================
-    // UTILITY METHODS
-    // ========================================================================
-
     /**
-     * Sleep utility for retry logic
+     * Update status display - uses centralized showToast from common-utils.js
      */
-    sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+    showStatus(type, message) {
+        const statusEl = document.getElementById(window.ELEMENT_IDS.WALLET_STATUS_MESSAGE);
+        if (statusEl) {
+            statusEl.textContent = message;
+            statusEl.className = `wallet-status-message ${type}`;
+            statusEl.style.display = message ? 'block' : 'none';
+        }
+
+        // Also show toast notification
+        if (window.showToast && message) {
+            window.showToast(message, type);
+        }
+
+        // Console log with emoji
+        if (message) {
+            const emoji = {
+                loading: '⏳',
+                success: '✅',
+                error: '❌',
+                warning: '⚠️',
+                info: 'ℹ️'
+            };
+            console.log(`${emoji[type] || '📝'} ${message}`);
+        }
     }
 
     /**
@@ -983,7 +893,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.walletManager = new WalletConnectionManager();
 
     // Listen for wallet events
-    document.addEventListener(WALLET_CONSTANTS.EVENTS.CONNECTED, (event) => {
+    document.addEventListener(window.CUSTOM_EVENTS.WALLET_CONNECTED, (event) => {
         console.log('🎉 Wallet connected event:', event.detail);
 
         // Reload page data if needed
@@ -992,7 +902,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    document.addEventListener(WALLET_CONSTANTS.EVENTS.DISCONNECTED, (event) => {
+    document.addEventListener(window.CUSTOM_EVENTS.WALLET_DISCONNECTED, (event) => {
         console.log('👋 Wallet disconnected event:', event.detail);
 
         // Handle disconnection in UI
@@ -1001,7 +911,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    document.addEventListener(WALLET_CONSTANTS.EVENTS.CHAIN_CHANGED, (event) => {
+    document.addEventListener(window.CUSTOM_EVENTS.WALLET_CHAIN_CHANGED, (event) => {
         console.log('⛓️ Chain changed event:', event.detail);
 
         // Handle chain change in UI
@@ -1014,15 +924,11 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================================================
-// EXPORTS
+// EXPORT FOR MODULE USE
 // ============================================================================
 
-// Export for module use
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        WalletConnectionManager,
-        WALLET_CONSTANTS
-    };
+    module.exports = WalletConnectionManager;
 }
 
-console.log('💼 Wallet Connection Module v2.0 (Refactored) loaded successfully');
+console.log('✅ Wallet Connection Manager v2.0 loaded successfully (refactored with centralized constants)');

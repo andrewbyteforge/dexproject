@@ -127,14 +127,179 @@ const WALLET_API = {
     INFO: '/api/wallet/info/',
     BALANCE: '/api/wallet/balance/',
 
-    // Authentication
-    AUTH_SIWE_GENERATE: '/api/wallet/auth/siwe/generate/',
-    AUTH_SIWE_AUTHENTICATE: '/api/wallet/auth/siwe/authenticate/',
+    // Authentication - SIWE (Sign-In with Ethereum)
+    SIWE_CHALLENGE: '/api/wallet/auth/siwe/generate/',
+    SIWE_VERIFY: '/api/wallet/auth/siwe/authenticate/',
     AUTH_LOGOUT: '/api/wallet/auth/logout/',
 
     // Wallet operations
     CONNECT: '/api/wallet/connect/',
     DISCONNECT: '/api/wallet/disconnect/',
+};
+
+// ============================================================================
+// CHAIN CONFIGURATIONS
+// ============================================================================
+
+/**
+ * Blockchain network configurations
+ * Includes chain IDs, RPC URLs, block explorers, and native currencies
+ */
+const CHAIN_CONFIGS = {
+    // Base Sepolia Testnet
+    84532: {
+        chainId: 84532,
+        chainIdHex: '0x14a34',
+        name: 'Base Sepolia',
+        displayName: 'Base Sepolia Testnet',
+        rpcUrls: ['https://sepolia.base.org'],
+        blockExplorerUrls: ['https://sepolia.basescan.org'],
+        nativeCurrency: {
+            name: 'Ethereum',
+            symbol: 'ETH',
+            decimals: 18
+        },
+        isTestnet: true,
+        networkType: 'testnet'
+    },
+
+    // Base Mainnet
+    8453: {
+        chainId: 8453,
+        chainIdHex: '0x2105',
+        name: 'Base',
+        displayName: 'Base Mainnet',
+        rpcUrls: ['https://mainnet.base.org'],
+        blockExplorerUrls: ['https://basescan.org'],
+        nativeCurrency: {
+            name: 'Ethereum',
+            symbol: 'ETH',
+            decimals: 18
+        },
+        isTestnet: false,
+        networkType: 'mainnet'
+    },
+
+    // Ethereum Mainnet
+    1: {
+        chainId: 1,
+        chainIdHex: '0x1',
+        name: 'Ethereum',
+        displayName: 'Ethereum Mainnet',
+        rpcUrls: ['https://eth.llamarpc.com'],
+        blockExplorerUrls: ['https://etherscan.io'],
+        nativeCurrency: {
+            name: 'Ethereum',
+            symbol: 'ETH',
+            decimals: 18
+        },
+        isTestnet: false,
+        networkType: 'mainnet'
+    },
+
+    // Ethereum Sepolia Testnet
+    11155111: {
+        chainId: 11155111,
+        chainIdHex: '0xaa36a7',
+        name: 'Sepolia',
+        displayName: 'Ethereum Sepolia Testnet',
+        rpcUrls: ['https://rpc.sepolia.org'],
+        blockExplorerUrls: ['https://sepolia.etherscan.io'],
+        nativeCurrency: {
+            name: 'Ethereum',
+            symbol: 'ETH',
+            decimals: 18
+        },
+        isTestnet: true,
+        networkType: 'testnet'
+    }
+};
+
+/**
+ * Chain utility functions
+ * Helper methods for working with blockchain networks
+ */
+const CHAIN_UTILS = {
+    /**
+     * Get chain configuration by ID
+     * @param {number} chainId - Chain ID
+     * @returns {Object|null} Chain configuration or null
+     */
+    getChainConfig: (chainId) => {
+        return CHAIN_CONFIGS[chainId] || null;
+    },
+
+    /**
+     * Check if chain is supported
+     * @param {number} chainId - Chain ID to check
+     * @returns {boolean} True if supported
+     */
+    isChainSupported: (chainId) => {
+        return chainId in CHAIN_CONFIGS;
+    },
+
+    /**
+     * Get chain name by ID
+     * @param {number} chainId - Chain ID
+     * @returns {string} Chain name or 'Unknown'
+     */
+    getChainName: (chainId) => {
+        const config = CHAIN_CONFIGS[chainId];
+        return config ? config.name : 'Unknown';
+    },
+
+    /**
+     * Get chain display name by ID
+     * @param {number} chainId - Chain ID
+     * @returns {string} Chain display name
+     */
+    getChainDisplayName: (chainId) => {
+        const config = CHAIN_CONFIGS[chainId];
+        return config ? config.displayName : `Chain ${chainId}`;
+    },
+
+    /**
+     * Check if chain is a testnet
+     * @param {number} chainId - Chain ID
+     * @returns {boolean} True if testnet
+     */
+    isTestnet: (chainId) => {
+        const config = CHAIN_CONFIGS[chainId];
+        return config ? config.isTestnet : false;
+    },
+
+    /**
+     * Get all supported chain IDs
+     * @returns {Array<number>} Array of chain IDs
+     */
+    getSupportedChains: () => {
+        return Object.keys(CHAIN_CONFIGS).map(Number);
+    },
+
+    /**
+     * Format chain ID to hex string
+     * @param {number} chainId - Chain ID
+     * @returns {string} Hex chain ID
+     */
+    chainIdToHex: (chainId) => {
+        return '0x' + chainId.toString(16);
+    },
+
+    /**
+     * Parse hex chain ID to decimal
+     * @param {string} hexChainId - Hex chain ID
+     * @returns {number} Decimal chain ID
+     */
+    hexToChainId: (hexChainId) => {
+        return parseInt(hexChainId, 16);
+    }
+};
+
+// Chain settings
+const CHAIN_SETTINGS = {
+    DEFAULT_CHAIN_ID: 84532,  // Base Sepolia for development
+    FALLBACK_CHAIN_ID: 1,     // Ethereum Mainnet as fallback
+    SUPPORTED_CHAINS: [84532, 8453, 1, 11155111]
 };
 
 // ============================================================================
@@ -293,7 +458,8 @@ const API_ENDPOINTS = {
     WEBSOCKET: WEBSOCKET_ENDPOINTS,
     PATTERNS: DJANGO_URL_PATTERNS,
     RESPONSE: API_RESPONSE,
-    UTILS: API_UTILS
+    UTILS: API_UTILS,
+    CHAIN_SETTINGS: CHAIN_SETTINGS
 };
 
 // ============================================================================
@@ -310,6 +476,9 @@ window.TRADING_API = TRADING_API;
 window.WALLET_API = WALLET_API;
 window.WEBSOCKET_ENDPOINTS = WEBSOCKET_ENDPOINTS;
 window.API_UTILS = API_UTILS;
+window.CHAIN_CONFIGS = CHAIN_CONFIGS;        // ← CRITICAL!
+window.CHAIN_UTILS = CHAIN_UTILS;            // ← CRITICAL!
+window.CHAIN_SETTINGS = CHAIN_SETTINGS;      // ← CRITICAL!
 
 // Export for module systems
 if (typeof module !== 'undefined' && module.exports) {
@@ -324,7 +493,10 @@ if (typeof module !== 'undefined' && module.exports) {
         WEBSOCKET_ENDPOINTS,
         DJANGO_URL_PATTERNS,
         API_RESPONSE,
-        API_UTILS
+        API_UTILS,
+        CHAIN_CONFIGS,
+        CHAIN_UTILS,
+        CHAIN_SETTINGS
     };
 }
 
@@ -342,7 +514,8 @@ function initializeApiConstants() {
         dashboard: Object.keys(DASHBOARD_API).length,
         paperTrading: Object.keys(PAPER_TRADING_API).length,
         trading: Object.keys(TRADING_API).length,
-        wallet: Object.keys(WALLET_API).length
+        wallet: Object.keys(WALLET_API).length,
+        chains: Object.keys(CHAIN_CONFIGS).length
     });
 }
 
