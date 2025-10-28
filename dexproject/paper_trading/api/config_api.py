@@ -37,6 +37,103 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# CONFIGURATION LOGGING HELPER
+# =============================================================================
+
+def log_configuration_changes(
+    before_config: Dict[str, Any],
+    after_config: Dict[str, Any],
+    config_name: str
+) -> None:
+    """
+    Log configuration changes with before/after comparison.
+    Only logs fields that actually changed.
+    
+    Args:
+        before_config: Original configuration values
+        after_config: New configuration values
+        config_name: Name of the configuration
+    """
+    logger.info("=" * 70)
+    logger.info(f"📊 Configuration Saved: '{config_name}'")
+    logger.info("=" * 70)
+    
+    # Define all fields to track with their display names and formatting
+    fields_to_track = {
+        'trading_mode': ('Trading Mode', ''),
+        'use_fast_lane': ('Fast Lane', ''),
+        'use_smart_lane': ('Smart Lane', ''),
+        'max_position_size_percent': ('Max Position Size', '%'),
+        'max_daily_trades': ('Max Daily Trades', ''),
+        'confidence_threshold': ('Confidence Threshold', '%'),
+        'stop_loss_percent': ('Stop Loss', '%'),
+        'take_profit_percent': ('Take Profit', '%'),
+        'max_concurrent_positions': ('Max Concurrent Positions', ''),
+        'min_liquidity_usd': ('Min Liquidity', ' USD'),
+        'max_slippage_percent': ('Max Slippage', '%'),
+        'fast_lane_threshold_usd': ('Fast Lane Threshold', ' USD'),
+    }
+    
+    changes_detected = False
+    
+    for field_key, (field_label, suffix) in fields_to_track.items():
+        before_val = before_config.get(field_key)
+        after_val = after_config.get(field_key)
+        
+        # Skip if both are None or missing
+        if before_val is None and after_val is None:
+            continue
+        
+        # Convert to comparable types
+        if before_val is not None and after_val is not None:
+            # Handle boolean fields
+            if isinstance(before_val, bool) or isinstance(after_val, bool):
+                before_str = "✓ Enabled" if before_val else "✗ Disabled"
+                after_str = "✓ Enabled" if after_val else "✗ Disabled"
+                if before_val != after_val:
+                    logger.info(f"  • {field_label:.<35} {before_str} → {after_str}")
+                    changes_detected = True
+                continue
+            
+            # Handle numeric fields
+            try:
+                before_num = float(before_val)
+                after_num = float(after_val)
+                
+                if before_num != after_num:
+                    # Determine direction indicator
+                    if after_num > before_num:
+                        indicator = "↗"
+                    elif after_num < before_num:
+                        indicator = "↘"
+                    else:
+                        indicator = "→"
+                    
+                    logger.info(
+                        f"  • {field_label:.<35} "
+                        f"{before_num}{suffix} {indicator} {after_num}{suffix}"
+                    )
+                    changes_detected = True
+            except (ValueError, TypeError):
+                # Handle string fields (like trading_mode)
+                if str(before_val) != str(after_val):
+                    logger.info(
+                        f"  • {field_label:.<35} "
+                        f"{before_val} → {after_val}"
+                    )
+                    changes_detected = True
+        elif before_val is None and after_val is not None:
+            # New field added
+            logger.info(f"  • {field_label:.<35} NEW: {after_val}{suffix}")
+            changes_detected = True
+    
+    if not changes_detected:
+        logger.info("  • No changes detected")
+    
+    logger.info("=" * 70)
+
+
+# =============================================================================
 # CONFIGURATION API
 # =============================================================================
 
@@ -183,7 +280,55 @@ def _handle_post_configuration(
                 'error': 'Invalid JSON in request body'
             }, status=400)
         
+        # ================================================================
+        # DEBUG: Log what we received in the POST request
+        # ================================================================
+        logger.info("=" * 70)
+        logger.info("📥 RECEIVED POST DATA (Configuration Update Request)")
+        logger.info("=" * 70)
+        for key, value in body_data.items():
+            logger.info(f"  • {key}: {value} (type: {type(value).__name__})")
+        logger.info("=" * 70)
+        
+        # ================================================================
+        # Capture BEFORE values (existing config or defaults)
+        # ================================================================
+        existing_config = PaperStrategyConfiguration.objects.filter(
+            account=account,
+            is_active=True
+        ).first()
+        
+        if existing_config:
+            before_values = {
+                'name': existing_config.name,
+                'trading_mode': existing_config.trading_mode,
+                'use_fast_lane': existing_config.use_fast_lane,
+                'use_smart_lane': existing_config.use_smart_lane,
+                'max_position_size_percent': float(existing_config.max_position_size_percent),
+                'stop_loss_percent': float(existing_config.stop_loss_percent),
+                'take_profit_percent': float(existing_config.take_profit_percent),
+                'max_daily_trades': existing_config.max_daily_trades,
+                'confidence_threshold': float(existing_config.confidence_threshold),
+                'max_concurrent_positions': existing_config.max_concurrent_positions,
+            }
+        else:
+            # Default values if no existing config
+            before_values = {
+                'name': 'Default Strategy',
+                'trading_mode': TradingMode.MODERATE,
+                'use_fast_lane': True,
+                'use_smart_lane': False,
+                'max_position_size_percent': 25.0,
+                'stop_loss_percent': 5.0,
+                'take_profit_percent': 10.0,
+                'max_daily_trades': 20,
+                'confidence_threshold': 60.0,
+                'max_concurrent_positions': 10,
+            }
+        
+        # ================================================================
         # Validate trading mode
+        # ================================================================
         trading_mode = body_data.get(ConfigAPIFields.TRADING_MODE, TradingMode.MODERATE)
         if not validate_trading_mode(trading_mode):
             return JsonResponse({
@@ -194,7 +339,17 @@ def _handle_post_configuration(
         # Extract configuration parameters
         config_name = body_data.get(ConfigAPIFields.NAME, 'Custom Strategy')
         
+        # ================================================================
+        # DEBUG: Check for confidence_threshold specifically
+        # ================================================================
+        if ConfigAPIFields.CONFIDENCE_THRESHOLD in body_data:
+            logger.info(f"⚠️  CONFIDENCE_THRESHOLD in POST data: {body_data[ConfigAPIFields.CONFIDENCE_THRESHOLD]}")
+        else:
+            logger.warning(f"⚠️  CONFIDENCE_THRESHOLD NOT in POST data!")
+        
+        # ================================================================
         # Create or update configuration
+        # ================================================================
         config, created = PaperStrategyConfiguration.objects.update_or_create(
             account=account,
             is_active=True,
@@ -228,8 +383,27 @@ def _handle_post_configuration(
             }
         )
         
+        # ================================================================
+        # Capture AFTER values and log changes
+        # ================================================================
+        after_values = {
+            'name': config.name,
+            'trading_mode': config.trading_mode,
+            'use_fast_lane': config.use_fast_lane,
+            'use_smart_lane': config.use_smart_lane,
+            'max_position_size_percent': float(config.max_position_size_percent),
+            'stop_loss_percent': float(config.stop_loss_percent),
+            'take_profit_percent': float(config.take_profit_percent),
+            'max_daily_trades': config.max_daily_trades,
+            'confidence_threshold': float(config.confidence_threshold),
+            'max_concurrent_positions': config.max_concurrent_positions,
+        }
+        
+        # Log the changes
+        log_configuration_changes(before_values, after_values, config.name)
+        
         action = 'created' if created else 'updated'
-        logger.info(f"Configuration '{config_name}' {action} for account {account.account_id}")
+        logger.info(f"✅ Configuration '{config_name}' {action} for account {account.account_id}")
         
         return JsonResponse({
             'success': True,
