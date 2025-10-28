@@ -269,31 +269,74 @@ class PriceFeedService:
         
         return checksummed_tokens
 
-    def _get_coingecko_id(self, token_symbol: str) -> Optional[str]:
+    from typing import Optional, Dict
+
+    def _get_coingecko_id(self, token_symbol: str, address: str, chain_id: int) -> Optional[str]:
         """
-        Map token symbol to CoinGecko API ID.
-        
+        Resolve a CoinGecko ID for a given token on a specific chain.
+
+        Prefer explicit per-chain address mappings; if not found, use a conservative
+        symbol fallback for well-known assets. Returns None when unresolved.
+
         Args:
-            token_symbol: Token symbol (e.g., 'WETH', 'USDC')
-            
+            token_symbol: Token symbol (e.g., 'WETH', 'USDC', 'DAI', 'cbETH')
+            address: Token contract address on the given chain (checksum or lower)
+            chain_id: EVM chain id (e.g., 8453 for Base mainnet, 1 for Ethereum)
+
         Returns:
-            CoinGecko API ID or None if not found
+            CoinGecko asset id string or None if unknown.
         """
-        # Mapping of token symbols to CoinGecko IDs
-        coingecko_ids: Dict[str, str] = {
-            'WETH': 'ethereum',
-            'ETH': 'ethereum',
-            'USDC': 'usd-coin',
-            'USDT': 'tether',
-            'DAI': 'dai',
-            'WBTC': 'wrapped-bitcoin',
-            'LINK': 'chainlink',
-            'UNI': 'uniswap',
-            'AAVE': 'aave',
-            'SNX': 'havven',
-            'cbETH': 'coinbase-wrapped-staked-eth',
+        sym = (token_symbol or "").strip().upper()
+        addr = (address or "").strip().lower()
+
+        # --- Explicit per-chain address mappings ---
+        per_chain: Dict[int, Dict[str, str]] = {
+            # Base mainnet (8453)
+            8453: {
+                # WETH on Base
+                "0x4200000000000000000000000000000000000006": "weth",
+                # USDC (native) on Base
+                "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "usd-coin",
+                # DAI on Base
+                "0x50c57259e8bbb31c10c1e2a9f98c171d7290d3e1": "dai",
+                # cbETH on Base
+                "0x2ae3f1ec7f1f5012cfe0f2108faadf6f0b9adcc1": "coinbase-wrapped-staked-eth",
+            },
+            # Ethereum mainnet (1)
+            1: {
+                "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",
+                "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",
+                "0x6b175474e89094c44da98b954eedeac495271d0f": "dai",
+                "0xbe9895146f7af43049ca1c1ae358b0541ea49704": "coinbase-wrapped-staked-eth",
+            },
         }
-        return coingecko_ids.get(token_symbol.upper())
+
+        mapping = per_chain.get(chain_id, {})
+        if addr in mapping:
+            return mapping[addr]
+
+        # --- Conservative symbol fallback (only unambiguous for our set) ---
+        symbol_fallback: Dict[str, str] = {
+            "WETH": "weth",
+            "USDC": "usd-coin",
+            "DAI": "dai",
+            "CBETH": "coinbase-wrapped-staked-eth",
+        }
+        if sym in symbol_fallback:
+            return symbol_fallback[sym]
+
+        # Unknown → let caller decide (e.g., skip and log once)
+        return None
+
+
+
+
+
+
+
+
+
+
 
     async def _get_or_create_session(self) -> aiohttp.ClientSession:
         """
@@ -693,6 +736,10 @@ class PriceFeedService:
                 exc_info=True
             )
             return {symbol: None for symbol, _ in tokens}
+
+
+
+
 
     # =========================================================================
     # CACHING METHODS (ENHANCED WITH STALE-WHILE-REVALIDATE)

@@ -873,6 +873,7 @@ class RealVolatilityAnalyzer(BaseAnalyzer):
             # Determine trend direction
             trend = self._determine_trend(price_history, current_price)
 
+
             # Calculate momentum
             momentum = self._calculate_momentum(price_history)
 
@@ -977,48 +978,68 @@ class RealVolatilityAnalyzer(BaseAnalyzer):
 
     def _determine_trend(
         self,
-        price_history: List[Dict[str, Any]],
+        price_history: Union[List[Decimal], List[Dict[str, Any]]],
         current_price: Decimal
     ) -> str:
         """
         Determine price trend direction.
 
+        Accepts either:
+        - List[Decimal] (prices), or
+        - List[Dict[str, Any]] where each dict has key 'price'.
+
         Args:
-            price_history: List of historical price points
+            price_history: Historical price points
             current_price: Current price
 
         Returns:
             Trend: 'bullish', 'bearish', or 'neutral'
         """
+        # Normalize to a list of Decimal prices
+        prices: List[Decimal] = []
+
         if not price_history:
             return 'neutral'
 
-        # Get average price from history
-        avg_price = sum(Decimal(str(p['price'])) for p in price_history) / Decimal(len(price_history))
+        first_item = price_history[0]
+        if isinstance(first_item, dict):
+            dict_history = cast(List[Dict[str, Any]], price_history)
+            prices = [Decimal(str(point['price'])) for point in dict_history]
+        elif isinstance(first_item, Decimal):
+            decimal_history = cast(List[Decimal], price_history)
+            prices = list(decimal_history)
+        else:
+            prices = [Decimal(str(p)) for p in price_history]
+
+        if not prices:
+            return 'neutral'
+
+        avg_price = sum(prices) / Decimal(len(prices))
 
         if current_price == 0:
-            # Use most recent price if current not provided
-            current_price = Decimal(str(price_history[-1]['price']))
+            current_price = prices[-1]
 
-        # Compare current price to average
-        if avg_price > 0:
-            price_change_percent = ((current_price - avg_price) / avg_price) * Decimal('100')
-        else:
+        if avg_price <= 0:
             return 'neutral'
+
+        price_change_percent = ((current_price - avg_price) / avg_price) * Decimal('100')
 
         if price_change_percent > Decimal('5'):
             return 'bullish'
-        elif price_change_percent < Decimal('-5'):
+        if price_change_percent < Decimal('-5'):
             return 'bearish'
-        else:
-            return 'neutral'
+        return 'neutral'
 
-    def _calculate_momentum(self, price_history: List[Dict[str, Any]]) -> float:
+    def _calculate_momentum(
+        self,
+        price_history: Union[List[Decimal], List[Dict[str, Any]]]
+    ) -> float:
         """
         Calculate price momentum score.
 
-        Args:
-            price_history: List of historical price points
+        Accepts either:
+        - List[Decimal] (prices), or
+        - List[Dict[str, Any]] where each dict has key 'price'.
 
         Returns:
             Momentum score from -100 (strong bearish) to +100 (strong bullish)
@@ -1026,21 +1047,38 @@ class RealVolatilityAnalyzer(BaseAnalyzer):
         if len(price_history) < 2:
             return 0.0
 
-        # Get first and last prices
-        first_price = Decimal(str(price_history[0]['price']))
-        last_price = Decimal(str(price_history[-1]['price']))
+        # Normalize to a list of Decimal prices
+        prices: List[Decimal]
+        first_item = price_history[0]
+
+        if isinstance(first_item, dict):
+            dict_history = cast(List[Dict[str, Any]], price_history)
+            prices = [Decimal(str(point['price'])) for point in dict_history]
+        elif isinstance(first_item, Decimal):
+            decimal_history = cast(List[Decimal], price_history)
+            prices = list(decimal_history)
+        else:
+            prices = [Decimal(str(p)) for p in price_history]
+
+        if len(prices) < 2:
+            return 0.0
+
+        first_price = prices[0]
+        last_price = prices[-1]
 
         if first_price == 0:
             return 0.0
 
-        # Calculate percentage change
+        # Percentage change
         percent_change = ((last_price - first_price) / first_price) * Decimal('100')
 
-        # Normalize to -100 to +100 range
-        # Assume ±50% change = ±100 momentum
-        momentum = float(min(Decimal('100.0'), max(Decimal('-100.0'), percent_change * Decimal('2'))))
+        # Map ±50% change to ±100 momentum, clamp to [-100, 100]
+        momentum_dec = max(
+            Decimal('-100'),
+            min(Decimal('100'), percent_change * Decimal('2'))
+        )
+        return float(momentum_dec)
 
-        return momentum
 
     def _calculate_volatility_index(self, volatility_percent: Decimal) -> float:
         """
