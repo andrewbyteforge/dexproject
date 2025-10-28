@@ -1,13 +1,103 @@
 /**
  * Fast Lane Configuration JavaScript
  * 
- * Extracted from fast_lane_config.html template
- * Provides interactive functionality for high-speed trading configuration
+ * Provides interactive functionality for high-speed trading configuration.
+ * Handles form submission, quick trades, and real-time configuration preview.
+ * 
+ * Dependencies:
+ * - common-utils.js (must be loaded before this file)
+ *   - Uses: getCSRFToken(), showToast()
+ * - api-constants.js (must be loaded before this file)
+ *   - Uses: API_ENDPOINTS.TRADING
+ * - form-constants.js (optional, for type safety)
+ *   - Uses: ELEMENT_IDS
  * 
  * File: dashboard/static/dashboard/js/fast_lane_config.js
  */
 
 'use strict';
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const FAST_LANE_CONFIG_CONSTANTS = {
+    // Element IDs
+    ELEMENTS: {
+        CONFIG_FORM: 'fast-lane-config-form',
+        QUICK_BUY_FORM: 'quick-buy-form',
+        QUICK_SELL_FORM: 'quick-sell-form',
+
+        // Sliders
+        EXECUTION_TIMEOUT: 'execution_timeout',
+        TIMEOUT_DISPLAY: 'timeout-display',
+        MAX_SLIPPAGE: 'max_slippage',
+        SLIPPAGE_DISPLAY: 'slippage-display',
+
+        // Gauges
+        SPEED_DISPLAY: 'speed-display',
+        SPEED_GAUGE: 'speed-gauge',
+        SPEED_NEEDLE: 'speed-needle',
+        RISK_GAUGE: 'risk-gauge',
+        RISK_NEEDLE: 'risk-needle',
+
+        // Preview elements
+        PREVIEW_POSITION_SIZE: 'preview-position-size',
+        PREVIEW_SLIPPAGE: 'preview-slippage',
+        PREVIEW_GAS: 'preview-gas',
+        PREVIEW_MEV: 'preview-mev',
+
+        // Configuration fields
+        DEFAULT_POSITION_SIZE: 'default_position_size',
+        MAX_POSITION_SIZE: 'max_position_size',
+        GAS_PRICE_MULTIPLIER: 'gas_price_multiplier',
+        MAX_GAS_PRICE: 'max_gas_price',
+        PRIORITY_FEE: 'priority_fee',
+        ENABLE_MEV_PROTECTION: 'enable_mev_protection',
+        USE_PRIVATE_MEMPOOL: 'use_private_mempool',
+        ENABLE_SANDWICH_PROTECTION: 'enable_sandwich_protection',
+        STOP_LOSS_PERCENT: 'stop_loss_percent',
+        TAKE_PROFIT_PERCENT: 'take_profit_percent',
+
+        // Controls
+        TRADING_CONTROLS: 'trading-controls',
+        START_FAST_SESSION: 'start-fast-session',
+        STOP_FAST_SESSION: 'stop-fast-session'
+    },
+
+    // Selectors
+    SELECTORS: {
+        TRADING_PAIR_CARD: '.trading-pair-card',
+        TRADING_PAIR_SELECTED: '.trading-pair-card.selected',
+        SPEED_INDICATOR: '.speed-indicator',
+        CONFIG_FORM_INPUTS: '#fast-lane-config-form input, #fast-lane-config-form select',
+        TOOLTIP: '[data-bs-toggle="tooltip"]'
+    },
+
+    // Speed thresholds (in milliseconds)
+    SPEED_THRESHOLDS: {
+        ULTRA_FAST: 300,
+        FAST: 500,
+        STANDARD: 1000
+    },
+
+    // Default values
+    DEFAULTS: {
+        EXECUTION_TIMEOUT: 500,
+        MAX_SLIPPAGE: 1.0,
+        DEFAULT_POSITION_SIZE: 0.1,
+        MAX_POSITION_SIZE: 1.0,
+        GAS_PRICE_MULTIPLIER: 1.2,
+        MAX_GAS_PRICE: 100,
+        PRIORITY_FEE: 2.0
+    },
+
+    // Storage key
+    STORAGE_KEY: 'fast_lane_config',
+
+    // Auto-save delay (milliseconds)
+    AUTO_SAVE_DELAY: 2000
+};
 
 // ============================================================================
 // FAST LANE CONFIGURATION MODULE
@@ -60,9 +150,9 @@ const FastLaneConfig = {
      * Bind form event handlers
      */
     bindFormEvents: function () {
-        const configForm = document.getElementById('fast-lane-config-form');
-        const quickBuyForm = document.getElementById('quick-buy-form');
-        const quickSellForm = document.getElementById('quick-sell-form');
+        const configForm = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.CONFIG_FORM);
+        const quickBuyForm = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.QUICK_BUY_FORM);
+        const quickSellForm = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.QUICK_SELL_FORM);
 
         if (configForm) {
             configForm.addEventListener('submit', this.saveConfiguration.bind(this));
@@ -81,10 +171,10 @@ const FastLaneConfig = {
      * Bind range input event handlers
      */
     bindRangeInputs: function () {
-        const timeoutSlider = document.getElementById('execution_timeout');
-        const timeoutDisplay = document.getElementById('timeout-display');
-        const slippageSlider = document.getElementById('max_slippage');
-        const slippageDisplay = document.getElementById('slippage-display');
+        const timeoutSlider = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.EXECUTION_TIMEOUT);
+        const timeoutDisplay = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.TIMEOUT_DISPLAY);
+        const slippageSlider = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.MAX_SLIPPAGE);
+        const slippageDisplay = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.SLIPPAGE_DISPLAY);
 
         if (timeoutSlider && timeoutDisplay) {
             timeoutSlider.addEventListener('input', function () {
@@ -103,68 +193,81 @@ const FastLaneConfig = {
     },
 
     /**
-     * Bind trading pair selection handlers
+     * Bind trading pair selection events
      */
     bindTradingPairSelection: function () {
-        const pairCards = document.querySelectorAll('.trading-pair-card');
+        const pairCards = document.querySelectorAll(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.TRADING_PAIR_CARD);
 
         pairCards.forEach(card => {
             card.addEventListener('click', function () {
                 this.classList.toggle('selected');
                 FastLaneConfig.updateSelectedPairs();
+                FastLaneConfig.updateConfigurationPreview();
             });
         });
     },
 
     /**
-     * Bind configuration preview update handlers
+     * Bind configuration preview updates
      */
     bindConfigurationPreview: function () {
-        const inputs = document.querySelectorAll('#fast-lane-config-form input, #fast-lane-config-form select');
+        const inputs = document.querySelectorAll(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.CONFIG_FORM_INPUTS);
 
         inputs.forEach(input => {
-            input.addEventListener('input', this.updateConfigurationPreview.bind(this));
-            input.addEventListener('change', this.updateConfigurationPreview.bind(this));
-        });
+            input.addEventListener('input', () => {
+                this.updateConfigurationPreview();
+                this.updatePerformanceGauges();
+            });
 
-        // Initial update
-        this.updateConfigurationPreview();
+            input.addEventListener('change', () => {
+                this.updateConfigurationPreview();
+                this.updatePerformanceGauges();
+            });
+        });
     },
 
     /**
      * Initialize Bootstrap tooltips
      */
     initializeTooltips: function () {
-        const tooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-        tooltips.forEach(tooltip => {
-            try {
-                new bootstrap.Tooltip(tooltip);
-            } catch (error) {
-                console.warn('Bootstrap tooltip initialization failed:', error);
-            }
-        });
+        const tooltips = document.querySelectorAll(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.TOOLTIP);
+
+        if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) {
+            tooltips.forEach(element => {
+                new bootstrap.Tooltip(element);
+            });
+        }
     },
 
     /**
      * Setup auto-save functionality
      */
     setupAutoSave: function () {
-        let saveTimeout;
+        let autoSaveTimeout;
 
-        document.addEventListener('input', function (e) {
-            if (e.target.closest('#fast-lane-config-form')) {
-                clearTimeout(saveTimeout);
-                saveTimeout = setTimeout(() => {
-                    try {
-                        const config = FastLaneConfig.gatherConfigurationData();
-                        localStorage.setItem('fast_lane_config', JSON.stringify(config));
-                        console.log('Configuration auto-saved');
-                    } catch (error) {
-                        console.error('Auto-save failed:', error);
-                    }
-                }, 1000);
-            }
+        const inputs = document.querySelectorAll(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.CONFIG_FORM_INPUTS);
+
+        inputs.forEach(input => {
+            input.addEventListener('change', () => {
+                clearTimeout(autoSaveTimeout);
+                autoSaveTimeout = setTimeout(() => {
+                    this.autoSaveConfiguration();
+                }, FAST_LANE_CONFIG_CONSTANTS.AUTO_SAVE_DELAY);
+            });
         });
+    },
+
+    /**
+     * Auto-save configuration to localStorage
+     */
+    autoSaveConfiguration: function () {
+        try {
+            const config = this.gatherConfigurationData();
+            localStorage.setItem(FAST_LANE_CONFIG_CONSTANTS.STORAGE_KEY, JSON.stringify(config));
+            console.log('Configuration auto-saved');
+        } catch (error) {
+            console.error('Auto-save error:', error);
+        }
     }
 };
 
@@ -173,96 +276,96 @@ const FastLaneConfig = {
 // ============================================================================
 
 FastLaneConfig.updateSpeedDisplay = function (timeoutMs) {
-    const speedDisplay = document.getElementById('speed-display');
-    if (speedDisplay) {
-        speedDisplay.textContent = `${timeoutMs}ms`;
+    const speedDisplay = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.SPEED_DISPLAY);
+    if (!speedDisplay) return;
+
+    const thresholds = FAST_LANE_CONFIG_CONSTANTS.SPEED_THRESHOLDS;
+    let speedText, speedClass;
+
+    const speedIndicator = document.querySelector(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.SPEED_INDICATOR);
+
+    if (timeoutMs <= thresholds.ULTRA_FAST) {
+        speedText = 'Ultra Fast';
+        speedClass = 'speed-ultra-fast';
+    } else if (timeoutMs <= thresholds.FAST) {
+        speedText = 'Fast';
+        speedClass = 'speed-fast';
+    } else {
+        speedText = 'Standard';
+        speedClass = 'speed-standard';
     }
 
-    // Update speed indicator color based on performance
-    const speedIndicator = document.querySelector('.speed-indicator');
+    speedDisplay.textContent = speedText;
     if (speedIndicator) {
-        if (timeoutMs <= 300) {
-            speedIndicator.style.background = 'linear-gradient(135deg, #00ff88, #00d4aa)';
-        } else if (timeoutMs <= 600) {
-            speedIndicator.style.background = 'linear-gradient(135deg, #00d4aa, #00b894)';
-        } else {
-            speedIndicator.style.background = 'linear-gradient(135deg, #00b894, #ffc107)';
-        }
+        speedIndicator.className = `speed-indicator ${speedClass}`;
     }
 };
 
 FastLaneConfig.updatePerformanceGauges = function () {
-    const timeoutElement = document.getElementById('execution_timeout');
-    const slippageElement = document.getElementById('max_slippage');
+    const timeoutElement = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.EXECUTION_TIMEOUT);
+    const slippageElement = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.MAX_SLIPPAGE);
 
     if (!timeoutElement || !slippageElement) return;
 
     const timeout = parseInt(timeoutElement.value);
     const slippage = parseFloat(slippageElement.value);
 
-    // Calculate speed index (inverse of timeout)
-    const speedIndex = Math.max(0, 100 - (timeout / 20));
-    const speedGauge = document.getElementById('speed-gauge');
-    const speedNeedle = document.getElementById('speed-needle');
+    // Update speed gauge (lower timeout = higher speed)
+    const speedGauge = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.SPEED_GAUGE);
+    const speedNeedle = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.SPEED_NEEDLE);
 
-    if (speedGauge) {
-        speedGauge.style.height = `${speedIndex}%`;
+    if (speedGauge && speedNeedle) {
+        const speedPercentage = Math.max(0, Math.min(100, (2000 - timeout) / 20));
+        speedNeedle.style.transform = `rotate(${speedPercentage * 1.8}deg)`;
     }
 
-    if (speedNeedle) {
-        speedNeedle.style.transform = `rotate(${(speedIndex * 1.8) - 90}deg)`;
-    }
+    // Update risk gauge (higher slippage = higher risk)
+    const riskGauge = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.RISK_GAUGE);
+    const riskNeedle = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.RISK_NEEDLE);
 
-    // Calculate risk level based on slippage and other factors
-    const riskLevel = Math.min(100, slippage * 20);
-    const riskGauge = document.getElementById('risk-gauge');
-    const riskNeedle = document.getElementById('risk-needle');
-
-    if (riskGauge) {
-        riskGauge.style.height = `${riskLevel}%`;
-    }
-
-    if (riskNeedle) {
-        riskNeedle.style.transform = `rotate(${(riskLevel * 1.8) - 90}deg)`;
+    if (riskGauge && riskNeedle) {
+        const riskPercentage = Math.min(100, slippage * 20);
+        riskNeedle.style.transform = `rotate(${riskPercentage * 1.8}deg)`;
     }
 };
 
 FastLaneConfig.updateConfigurationPreview = function () {
-    const elements = {
-        positionSize: document.getElementById('default_position_size'),
-        slippage: document.getElementById('max_slippage'),
-        gasMultiplier: document.getElementById('gas_price_multiplier'),
-        mevProtection: document.getElementById('enable_mev_protection')
+    const fields = {
+        positionSize: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.DEFAULT_POSITION_SIZE),
+        slippage: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.MAX_SLIPPAGE),
+        gasMultiplier: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.GAS_PRICE_MULTIPLIER),
+        mevProtection: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.ENABLE_MEV_PROTECTION)
     };
 
     const previews = {
-        positionSize: document.getElementById('preview-position-size'),
-        slippage: document.getElementById('preview-slippage'),
-        gas: document.getElementById('preview-gas'),
-        mev: document.getElementById('preview-mev')
+        positionSize: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.PREVIEW_POSITION_SIZE),
+        slippage: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.PREVIEW_SLIPPAGE),
+        gas: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.PREVIEW_GAS),
+        mev: document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.PREVIEW_MEV)
     };
 
-    if (elements.positionSize && previews.positionSize) {
-        previews.positionSize.textContent = `${elements.positionSize.value} ETH`;
+    if (fields.positionSize && previews.positionSize) {
+        previews.positionSize.textContent = `${fields.positionSize.value} ETH`;
     }
 
-    if (elements.slippage && previews.slippage) {
-        previews.slippage.textContent = `${elements.slippage.value}%`;
+    if (fields.slippage && previews.slippage) {
+        previews.slippage.textContent = `${fields.slippage.value}%`;
+        previews.slippage.className = `fw-bold ${parseFloat(fields.slippage.value) > 2 ? 'text-warning' : 'text-success'}`;
     }
 
-    if (elements.gasMultiplier && previews.gas) {
-        previews.gas.textContent = `${elements.gasMultiplier.value}x`;
+    if (fields.gasMultiplier && previews.gas) {
+        previews.gas.textContent = `${fields.gasMultiplier.value}x`;
     }
 
-    if (elements.mevProtection && previews.mev) {
-        const enabled = elements.mevProtection.checked;
+    if (fields.mevProtection && previews.mev) {
+        const enabled = fields.mevProtection.checked;
         previews.mev.textContent = enabled ? 'Enabled' : 'Disabled';
         previews.mev.className = `fw-bold ${enabled ? 'text-success' : 'text-warning'}`;
     }
 };
 
 FastLaneConfig.updateSelectedPairs = function () {
-    const selectedPairs = document.querySelectorAll('.trading-pair-card.selected');
+    const selectedPairs = document.querySelectorAll(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.TRADING_PAIR_SELECTED);
     console.log(`Selected ${selectedPairs.length} trading pairs`);
 
     // Could show selected pairs count in UI if needed
@@ -274,7 +377,7 @@ FastLaneConfig.updateSelectedPairs = function () {
 // ============================================================================
 
 FastLaneConfig.gatherConfigurationData = function () {
-    const selectedPairs = Array.from(document.querySelectorAll('.trading-pair-card.selected'))
+    const selectedPairs = Array.from(document.querySelectorAll(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.TRADING_PAIR_SELECTED))
         .map(card => card.dataset.pair)
         .filter(pair => pair); // Filter out undefined values
 
@@ -288,26 +391,28 @@ FastLaneConfig.gatherConfigurationData = function () {
         return element ? element.checked : defaultValue;
     };
 
+    const elements = FAST_LANE_CONFIG_CONSTANTS.ELEMENTS;
+
     return {
-        execution_timeout_ms: parseInt(getElementValue('execution_timeout', '500')),
-        max_slippage_percent: parseFloat(getElementValue('max_slippage', '1.0')),
-        default_position_size_eth: parseFloat(getElementValue('default_position_size', '0.1')),
-        max_position_size_eth: parseFloat(getElementValue('max_position_size', '1.0')),
-        gas_price_multiplier: parseFloat(getElementValue('gas_price_multiplier', '1.2')),
-        max_gas_price_gwei: parseInt(getElementValue('max_gas_price', '100')),
-        priority_fee_gwei: parseFloat(getElementValue('priority_fee', '2.0')),
-        mev_protection_enabled: getCheckboxValue('enable_mev_protection', true),
-        private_mempool_enabled: getCheckboxValue('use_private_mempool', true),
-        sandwich_protection_enabled: getCheckboxValue('enable_sandwich_protection', true),
+        execution_timeout_ms: parseInt(getElementValue(elements.EXECUTION_TIMEOUT, FAST_LANE_CONFIG_CONSTANTS.DEFAULTS.EXECUTION_TIMEOUT)),
+        max_slippage_percent: parseFloat(getElementValue(elements.MAX_SLIPPAGE, FAST_LANE_CONFIG_CONSTANTS.DEFAULTS.MAX_SLIPPAGE)),
+        default_position_size_eth: parseFloat(getElementValue(elements.DEFAULT_POSITION_SIZE, FAST_LANE_CONFIG_CONSTANTS.DEFAULTS.DEFAULT_POSITION_SIZE)),
+        max_position_size_eth: parseFloat(getElementValue(elements.MAX_POSITION_SIZE, FAST_LANE_CONFIG_CONSTANTS.DEFAULTS.MAX_POSITION_SIZE)),
+        gas_price_multiplier: parseFloat(getElementValue(elements.GAS_PRICE_MULTIPLIER, FAST_LANE_CONFIG_CONSTANTS.DEFAULTS.GAS_PRICE_MULTIPLIER)),
+        max_gas_price_gwei: parseInt(getElementValue(elements.MAX_GAS_PRICE, FAST_LANE_CONFIG_CONSTANTS.DEFAULTS.MAX_GAS_PRICE)),
+        priority_fee_gwei: parseFloat(getElementValue(elements.PRIORITY_FEE, FAST_LANE_CONFIG_CONSTANTS.DEFAULTS.PRIORITY_FEE)),
+        mev_protection_enabled: getCheckboxValue(elements.ENABLE_MEV_PROTECTION, true),
+        private_mempool_enabled: getCheckboxValue(elements.USE_PRIVATE_MEMPOOL, true),
+        sandwich_protection_enabled: getCheckboxValue(elements.ENABLE_SANDWICH_PROTECTION, true),
         target_trading_pairs: selectedPairs,
-        stop_loss_percent: parseFloat(getElementValue('stop_loss_percent')) || null,
-        take_profit_percent: parseFloat(getElementValue('take_profit_percent')) || null
+        stop_loss_percent: parseFloat(getElementValue(elements.STOP_LOSS_PERCENT)) || null,
+        take_profit_percent: parseFloat(getElementValue(elements.TAKE_PROFIT_PERCENT)) || null
     };
 };
 
 FastLaneConfig.loadSavedConfiguration = function () {
     try {
-        const saved = localStorage.getItem('fast_lane_config');
+        const saved = localStorage.getItem(FAST_LANE_CONFIG_CONSTANTS.STORAGE_KEY);
         if (saved) {
             const config = JSON.parse(saved);
             this.applyConfigurationToForm(config);
@@ -350,12 +455,15 @@ FastLaneConfig.saveConfiguration = async function (e) {
 
     const config = this.gatherConfigurationData();
 
+    console.log('Saving Fast Lane configuration:', config);
+
     try {
-        const response = await fetch('/api/trading/session/start/', {
+        // Use API endpoint from api-constants.js
+        const response = await fetch(API_ENDPOINTS.TRADING.SESSION_START, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': this.getCsrfToken(),
+                'X-CSRFToken': getCSRFToken(), // From common-utils.js
             },
             body: JSON.stringify({
                 ...config,
@@ -367,17 +475,18 @@ FastLaneConfig.saveConfiguration = async function (e) {
         const result = await response.json();
 
         if (result.success) {
-            this.showNotification('Fast Lane configuration saved and activated!', 'success');
+            // Use global showToast from common-utils.js
+            showToast('Fast Lane configuration saved and activated!', 'success');
 
             // Show trading controls
-            const tradingControls = document.getElementById('trading-controls');
+            const tradingControls = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.TRADING_CONTROLS);
             if (tradingControls) {
                 tradingControls.style.display = 'block';
             }
 
             // Update session controls
-            const startBtn = document.getElementById('start-fast-session');
-            const stopBtn = document.getElementById('stop-fast-session');
+            const startBtn = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.START_FAST_SESSION);
+            const stopBtn = document.getElementById(FAST_LANE_CONFIG_CONSTANTS.ELEMENTS.STOP_FAST_SESSION);
 
             if (startBtn) startBtn.style.display = 'none';
             if (stopBtn) stopBtn.style.display = 'inline-block';
@@ -393,175 +502,165 @@ FastLaneConfig.saveConfiguration = async function (e) {
 
     } catch (error) {
         console.error('Configuration error:', error);
-        this.showNotification(`Configuration failed: ${error.message}`, 'error');
+        showToast(`Configuration failed: ${error.message}`, 'danger'); // From common-utils.js
     }
 };
 
 FastLaneConfig.executeQuickBuy = async function (e) {
     e.preventDefault();
 
+    // Gather form data
     const formData = new FormData(e.target);
-    const buyData = {
-        token_address: formData.get('token_address') || document.getElementById('buy_token_address')?.value,
-        amount_eth: formData.get('amount') || document.getElementById('buy_amount')?.value,
-        slippage_tolerance: (parseFloat(formData.get('slippage') || document.getElementById('buy_slippage')?.value || '1.0')) / 100,
-        chain_id: 8453 // Base mainnet
-    };
+    const config = Object.fromEntries(formData.entries());
 
     // Validate required fields
-    if (!buyData.token_address || !buyData.amount_eth) {
-        this.showNotification('Please fill in all required fields', 'warning');
+    if (!config.token_address || !config.amount_eth) {
+        showToast('Please fill in all required fields', 'warning'); // From common-utils.js
         return;
     }
 
+    console.log('Executing quick buy:', config);
+
     try {
-        // Use trading manager if available
-        if (window.tradingManager) {
-            const mockFormData = new FormData();
-            Object.entries(buyData).forEach(([key, value]) => {
-                mockFormData.append(key, value);
-            });
+        const response = await fetch(API_ENDPOINTS.TRADING.BUY_V2, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken(), // From common-utils.js
+            },
+            body: JSON.stringify(config)
+        });
 
-            await window.tradingManager.executeBuyOrder(mockFormData);
+        const result = await response.json();
 
-            // Clear form on success
+        if (result.success) {
+            showToast('Quick buy executed successfully!', 'success'); // From common-utils.js
             e.target.reset();
-
         } else {
-            throw new Error('Trading manager not available');
+            throw new Error(result.error || 'Quick buy failed');
         }
 
     } catch (error) {
         console.error('Quick buy error:', error);
-        this.showNotification(`Quick buy failed: ${error.message}`, 'error');
+        showToast(`Quick buy failed: ${error.message}`, 'danger'); // From common-utils.js
     }
 };
 
 FastLaneConfig.executeQuickSell = async function (e) {
     e.preventDefault();
 
+    // Gather form data
     const formData = new FormData(e.target);
-    const sellData = {
-        token_address: formData.get('token_address') || document.getElementById('sell_token_address')?.value,
-        token_amount: formData.get('amount') || document.getElementById('sell_amount')?.value,
-        slippage_tolerance: (parseFloat(formData.get('slippage') || document.getElementById('sell_slippage')?.value || '1.0')) / 100,
-        chain_id: 8453
-    };
+    const config = Object.fromEntries(formData.entries());
 
     // Validate required fields
-    if (!sellData.token_address || !sellData.token_amount) {
-        this.showNotification('Please fill in all required fields', 'warning');
+    if (!config.token_address || !config.amount_tokens) {
+        showToast('Please fill in all required fields', 'warning'); // From common-utils.js
         return;
     }
 
+    console.log('Executing quick sell:', config);
+
     try {
-        // Use trading manager if available
-        if (window.tradingManager) {
-            const mockFormData = new FormData();
-            Object.entries(sellData).forEach(([key, value]) => {
-                mockFormData.append(key, value);
-            });
+        const response = await fetch(API_ENDPOINTS.TRADING.BUY_V2, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCSRFToken(), // From common-utils.js
+            },
+            body: JSON.stringify({
+                ...config,
+                trade_type: 'SELL'
+            })
+        });
 
-            await window.tradingManager.executeSellOrder(mockFormData);
+        const result = await response.json();
 
-            // Clear form on success
+        if (result.success) {
+            showToast('Quick sell executed successfully!', 'success'); // From common-utils.js
             e.target.reset();
-
         } else {
-            throw new Error('Trading manager not available');
+            throw new Error(result.error || 'Quick sell failed');
         }
 
     } catch (error) {
         console.error('Quick sell error:', error);
-        this.showNotification(`Quick sell failed: ${error.message}`, 'error');
+        showToast(`Quick sell failed: ${error.message}`, 'danger'); // From common-utils.js
     }
 };
 
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
-
-FastLaneConfig.testConfiguration = function () {
+FastLaneConfig.testConfiguration = async function () {
     const config = this.gatherConfigurationData();
 
-    this.showNotification('Testing Fast Lane configuration...', 'info');
+    console.log('Testing Fast Lane configuration:', config);
+    showToast('Testing Fast Lane configuration...', 'info'); // From common-utils.js
 
-    // Simulate test with timeout
-    setTimeout(() => {
-        const testResults = {
-            estimated_speed: `${config.execution_timeout_ms}ms`,
-            gas_efficiency: config.gas_price_multiplier < 1.5 ? 'Good' : 'High',
-            mev_protection: config.mev_protection_enabled ? 'Active' : 'Disabled',
-            risk_level: config.max_slippage_percent > 2 ? 'High' : 'Medium'
-        };
+    try {
+        // Simulate test - replace with actual API call when available
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-        this.showNotification(
-            `Test complete: ${testResults.estimated_speed} execution, ${testResults.gas_efficiency} gas efficiency`,
-            'success'
-        );
+        // Show test results
+        const testPassed = config.execution_timeout_ms <= 1000 && config.max_slippage_percent <= 5;
 
-    }, 2000);
+        if (testPassed) {
+            showToast(
+                `Configuration test passed! Estimated execution time: ${config.execution_timeout_ms}ms`,
+                'success'
+            );
+        } else {
+            showToast('Configuration test completed with warnings. Review your settings.', 'warning');
+        }
+
+    } catch (error) {
+        console.error('Configuration test error:', error);
+        showToast(`Test failed: ${error.message}`, 'danger'); // From common-utils.js
+    }
 };
 
 FastLaneConfig.resetConfiguration = function () {
-    // Reset form to defaults
-    const form = document.getElementById('fast-lane-config-form');
-    if (form) {
-        form.reset();
+    if (!confirm('Reset all settings to default values?')) {
+        return;
     }
 
-    // Reset specific elements to default values
-    const defaults = {
-        'execution_timeout': 500,
-        'max_slippage': 1.0,
-        'timeout-display': '500ms',
-        'slippage-display': '1.0%'
-    };
+    const defaults = FAST_LANE_CONFIG_CONSTANTS.DEFAULTS;
+    const elements = FAST_LANE_CONFIG_CONSTANTS.ELEMENTS;
 
-    Object.entries(defaults).forEach(([id, value]) => {
+    // Reset form fields to defaults
+    const setFieldValue = (id, value) => {
         const element = document.getElementById(id);
         if (element) {
-            if (element.tagName === 'INPUT') {
-                element.value = value;
+            if (element.type === 'checkbox') {
+                element.checked = value;
             } else {
-                element.textContent = value;
+                element.value = value;
             }
         }
-    });
+    };
 
-    // Reset trading pairs to default selection
-    document.querySelectorAll('.trading-pair-card').forEach(card => {
-        card.classList.remove('selected');
-    });
+    setFieldValue(elements.EXECUTION_TIMEOUT, defaults.EXECUTION_TIMEOUT);
+    setFieldValue(elements.MAX_SLIPPAGE, defaults.MAX_SLIPPAGE);
+    setFieldValue(elements.DEFAULT_POSITION_SIZE, defaults.DEFAULT_POSITION_SIZE);
+    setFieldValue(elements.MAX_POSITION_SIZE, defaults.MAX_POSITION_SIZE);
+    setFieldValue(elements.GAS_PRICE_MULTIPLIER, defaults.GAS_PRICE_MULTIPLIER);
+    setFieldValue(elements.MAX_GAS_PRICE, defaults.MAX_GAS_PRICE);
+    setFieldValue(elements.PRIORITY_FEE, defaults.PRIORITY_FEE);
+    setFieldValue(elements.ENABLE_MEV_PROTECTION, true);
+    setFieldValue(elements.USE_PRIVATE_MEMPOOL, true);
+    setFieldValue(elements.ENABLE_SANDWICH_PROTECTION, true);
 
-    const defaultPair = document.querySelector('[data-pair="WETH/USDC"]');
-    if (defaultPair) {
-        defaultPair.classList.add('selected');
-    }
+    // Clear localStorage
+    localStorage.removeItem(FAST_LANE_CONFIG_CONSTANTS.STORAGE_KEY);
+
+    // Deselect all trading pairs
+    const selectedPairs = document.querySelectorAll(FAST_LANE_CONFIG_CONSTANTS.SELECTORS.TRADING_PAIR_SELECTED);
+    selectedPairs.forEach(card => card.classList.remove('selected'));
 
     // Update all displays
     this.updateConfigurationPreview();
     this.updatePerformanceGauges();
-    this.updateSpeedDisplay(500);
+    this.updateSpeedDisplay(defaults.EXECUTION_TIMEOUT);
 
-    this.showNotification('Configuration reset to defaults', 'info');
-};
-
-FastLaneConfig.getCsrfToken = function () {
-    const token = document.querySelector('meta[name="csrf-token"]');
-    return token ? token.getAttribute('content') : '';
-};
-
-FastLaneConfig.showNotification = function (message, type = 'info') {
-    if (window.tradingManager && typeof window.tradingManager.showNotification === 'function') {
-        window.tradingManager.showNotification(message, type);
-    } else {
-        console.log(`[${type.toUpperCase()}] ${message}`);
-        // Fallback to alert for critical messages
-        if (type === 'error') {
-            alert(message);
-        }
-    }
+    showToast('Configuration reset to defaults', 'info'); // From common-utils.js
 };
 
 // ============================================================================

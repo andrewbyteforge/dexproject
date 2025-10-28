@@ -105,7 +105,7 @@ const SmartLaneAnalysis = {
         const amount = button.dataset.amount;
 
         if (!tokenAddress) {
-            this.showNotification('Token address not available', 'warning');
+            showToast('Token address not available', 'warning');
             return;
         }
 
@@ -154,11 +154,11 @@ SmartLaneAnalysis.startAnalysis = async function () {
         this.showLoadingState();
 
         // FIXED: Use correct API endpoint
-        const response = await fetch('/dashboard/api/smart-lane/analyze/', {
+        const response = await fetch(API_ENDPOINTS.DASHBOARD.SMART_LANE_ANALYZE, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': this.getCsrfToken(),
+                'X-CSRFToken': getCsrfToken(),
             },
             body: JSON.stringify(analysisData)
         });
@@ -201,7 +201,7 @@ SmartLaneAnalysis.startAnalysis = async function () {
     } catch (error) {
         console.error('Analysis error:', error);
         this.hideLoadingState();
-        this.showNotification(`Analysis failed: ${error.message}`, 'error');
+        showToast(`Analysis failed: ${error.message}`, 'danger');
     }
 };
 
@@ -282,7 +282,7 @@ SmartLaneAnalysis.fetchThoughtLog = async function (analysisId) {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': this.getCsrfToken()
+                'X-CSRFToken': getCsrfToken()
             }
         });
 
@@ -891,7 +891,7 @@ SmartLaneAnalysis.updateDetailedAnalysis = function (detailedData) {
  */
 SmartLaneAnalysis.executeTradeFromAnalysis = async function (action, tokenAddress, amount) {
     if (!window.tradingManager) {
-        this.showNotification('Trading manager not available', 'error');
+        showToast('Trading manager not available', 'danger');
         return;
     }
 
@@ -909,11 +909,11 @@ SmartLaneAnalysis.executeTradeFromAnalysis = async function (action, tokenAddres
             await window.tradingManager.executeSellOrder(tradeData);
         }
 
-        this.showNotification(`${action.toUpperCase()} order executed successfully`, 'success');
+        showToast(`${action.toUpperCase()} order executed successfully`, 'success');
 
     } catch (error) {
         console.error('Trade execution error:', error);
-        this.showNotification(`Failed to execute ${action}: ${error.message}`, 'error');
+        showToast(`Failed to execute ${action}: ${error.message}`, 'danger');
     }
 };
 
@@ -924,7 +924,7 @@ SmartLaneAnalysis.showManualTradeModal = function () {
     const tokenAddress = document.getElementById('token_address')?.value;
 
     if (!tokenAddress) {
-        this.showNotification('Please enter a token address first', 'warning');
+        showToast('Please enter a token address first', 'warning');
         return;
     }
 
@@ -949,7 +949,7 @@ SmartLaneAnalysis.showManualTradeModal = function () {
             }
         }, 100);
     } else {
-        this.showNotification('Quick trade modal not available', 'warning');
+        showToast('Quick trade modal not available', 'warning');
     }
 };
 
@@ -1006,7 +1006,7 @@ SmartLaneAnalysis.monitorAnalysisProgress = function (analysisId) {
                 }
             } else if (result.status === 'FAILED') {
                 this.hideLoadingState();
-                this.showNotification('Analysis failed: ' + (result.error || 'Unknown error'), 'error');
+                showToast('Analysis failed: ' + (result.error || 'Unknown error'), 'danger');
             } else {
                 // Continue monitoring
                 setTimeout(checkProgress, 2000);
@@ -1014,53 +1014,13 @@ SmartLaneAnalysis.monitorAnalysisProgress = function (analysisId) {
         } catch (error) {
             console.error('Error checking analysis progress:', error);
             this.hideLoadingState();
-            this.showNotification('Error monitoring analysis progress', 'error');
+            showToast('Error monitoring analysis progress', 'danger');
         }
     };
 
     setTimeout(checkProgress, 2000);
 };
 
-/**
- * Get CSRF token from meta tag or cookies
- * ENHANCED: Better CSRF token retrieval
- */
-SmartLaneAnalysis.getCsrfToken = function () {
-    // First try meta tag
-    const token = document.querySelector('meta[name="csrf-token"]');
-    if (token) {
-        return token.getAttribute('content');
-    }
-
-    // Then try cookie
-    const name = 'csrftoken';
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
-        }
-    }
-    return cookieValue || '';
-};
-
-/**
- * Show notification to user
- */
-SmartLaneAnalysis.showNotification = function (message, type = 'info') {
-    if (window.tradingManager && typeof window.tradingManager.showNotification === 'function') {
-        window.tradingManager.showNotification(message, type);
-    } else {
-        console.log(`[${type.toUpperCase()}] ${message}`);
-        if (type === 'error' || type === 'warning') {
-            alert(message);
-        }
-    }
-};
 
 // ============================================================================
 // GLOBAL FUNCTION EXPORTS (for template compatibility)

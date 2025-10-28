@@ -1,13 +1,57 @@
 /**
  * Mode Selection JavaScript
  * 
- * Extracted from mode_selection.html template
- * Provides interactive functionality for trading mode selection
+ * Provides interactive functionality for trading mode selection.
+ * Handles mode card interactions, animations, and API calls for mode selection.
+ * 
+ * Dependencies:
+ * - common-utils.js (must be loaded before this file)
+ *   - Uses: getCSRFToken(), showToast()
+ * - api-constants.js (must be loaded before this file)
+ *   - Uses: API_ENDPOINTS, API_UTILS
  * 
  * File: dashboard/static/dashboard/js/mode_selection.js
  */
 
 'use strict';
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const MODE_SELECTION_CONFIG = {
+    MODES: {
+        FAST_LANE: 'FAST_LANE',
+        SMART_LANE: 'SMART_LANE'
+    },
+
+    SELECTORS: {
+        MODE_CARD: '.mode-card',
+        FAST_LANE_CARD: '.fast-lane-card',
+        SMART_LANE_CARD: '.smart-lane-card',
+        DISABLED_OVERLAY: '.disabled-overlay',
+        METRIC_VALUE: '.metric-value',
+        MODE_CARD_BUTTON: '.mode-card button'
+    },
+
+    MODAL_IDS: {
+        HYBRID: 'hybridModal'
+    },
+
+    BUTTON_TEXT: {
+        LOADING: '<i class="bi bi-hourglass-split me-2"></i>Setting up...',
+        FAST_LANE: '<i class="bi bi-lightning-charge me-2"></i>Choose Fast Lane',
+        SMART_LANE: '<i class="bi bi-cpu me-2"></i>Choose Smart Lane'
+    },
+
+    ANIMATION_TIMING: {
+        INITIAL_DELAY: 200,
+        METRIC_DELAY_BASE: 100,
+        METRIC_DELAY_RANDOM: 300,
+        CARD_DELAY: 200,
+        CARD_START_DELAY: 100
+    }
+};
 
 // ============================================================================
 // MODE SELECTION MODULE
@@ -46,10 +90,10 @@ const ModeSelection = {
      * Setup mode card click interactions
      */
     setupModeCardClicks: function () {
-        const modeCards = document.querySelectorAll('.mode-card');
+        const modeCards = document.querySelectorAll(MODE_SELECTION_CONFIG.SELECTORS.MODE_CARD);
 
         modeCards.forEach(card => {
-            const disabledOverlay = card.querySelector('.disabled-overlay');
+            const disabledOverlay = card.querySelector(MODE_SELECTION_CONFIG.SELECTORS.DISABLED_OVERLAY);
             if (disabledOverlay) return; // Skip disabled cards
 
             card.addEventListener('click', function (e) {
@@ -57,9 +101,9 @@ const ModeSelection = {
                 if (e.target.tagName === 'BUTTON') return;
 
                 if (this.classList.contains('fast-lane-card')) {
-                    ModeSelection.selectMode('FAST_LANE');
+                    ModeSelection.selectMode(MODE_SELECTION_CONFIG.MODES.FAST_LANE);
                 } else if (this.classList.contains('smart-lane-card')) {
-                    ModeSelection.selectMode('SMART_LANE');
+                    ModeSelection.selectMode(MODE_SELECTION_CONFIG.MODES.SMART_LANE);
                 }
             });
         });
@@ -70,16 +114,16 @@ const ModeSelection = {
      */
     setupButtonHandlers: function () {
         // Mode selection buttons in cards
-        const modeButtons = document.querySelectorAll('.mode-card button');
+        const modeButtons = document.querySelectorAll(MODE_SELECTION_CONFIG.SELECTORS.MODE_CARD_BUTTON);
         modeButtons.forEach(button => {
             button.addEventListener('click', function (e) {
                 e.stopPropagation(); // Prevent card click
 
-                const card = this.closest('.mode-card');
+                const card = this.closest(MODE_SELECTION_CONFIG.SELECTORS.MODE_CARD);
                 if (card.classList.contains('fast-lane-card')) {
-                    ModeSelection.selectMode('FAST_LANE');
+                    ModeSelection.selectMode(MODE_SELECTION_CONFIG.MODES.FAST_LANE);
                 } else if (card.classList.contains('smart-lane-card')) {
-                    ModeSelection.selectMode('SMART_LANE');
+                    ModeSelection.selectMode(MODE_SELECTION_CONFIG.MODES.SMART_LANE);
                 }
             });
         });
@@ -102,22 +146,30 @@ const ModeSelection = {
      * Setup modal event handlers
      */
     setupModalHandlers: function () {
+        const modalId = MODE_SELECTION_CONFIG.MODAL_IDS.HYBRID;
+
         // Modal buttons for mode selection
-        const modalFastButton = document.querySelector('#hybridModal [onclick*="FAST_LANE"]');
+        const modalFastButton = document.querySelector(`#${modalId} [onclick*="FAST_LANE"]`);
         if (modalFastButton) {
             modalFastButton.removeAttribute('onclick');
             modalFastButton.addEventListener('click', () => {
-                ModeSelection.selectMode('FAST_LANE');
-                bootstrap.Modal.getInstance(document.getElementById('hybridModal'))?.hide();
+                ModeSelection.selectMode(MODE_SELECTION_CONFIG.MODES.FAST_LANE);
+                const modalElement = document.getElementById(modalId);
+                if (modalElement && bootstrap.Modal) {
+                    bootstrap.Modal.getInstance(modalElement)?.hide();
+                }
             });
         }
 
-        const modalSmartButton = document.querySelector('#hybridModal [onclick*="SMART_LANE"]');
+        const modalSmartButton = document.querySelector(`#${modalId} [onclick*="SMART_LANE"]`);
         if (modalSmartButton) {
             modalSmartButton.removeAttribute('onclick');
             modalSmartButton.addEventListener('click', () => {
-                ModeSelection.selectMode('SMART_LANE');
-                bootstrap.Modal.getInstance(document.getElementById('hybridModal'))?.hide();
+                ModeSelection.selectMode(MODE_SELECTION_CONFIG.MODES.SMART_LANE);
+                const modalElement = document.getElementById(modalId);
+                if (modalElement && bootstrap.Modal) {
+                    bootstrap.Modal.getInstance(modalElement)?.hide();
+                }
             });
         }
     },
@@ -126,10 +178,10 @@ const ModeSelection = {
      * Setup card hover interactions
      */
     setupCardInteractions: function () {
-        const modeCards = document.querySelectorAll('.mode-card');
+        const modeCards = document.querySelectorAll(MODE_SELECTION_CONFIG.SELECTORS.MODE_CARD);
 
         modeCards.forEach(card => {
-            const disabledOverlay = card.querySelector('.disabled-overlay');
+            const disabledOverlay = card.querySelector(MODE_SELECTION_CONFIG.SELECTORS.DISABLED_OVERLAY);
             if (disabledOverlay) return; // Skip disabled cards
 
             card.addEventListener('mouseenter', function () {
@@ -157,9 +209,11 @@ const ModeSelection = {
      * Initialize entrance animations
      */
     initializeAnimations: function () {
+        const timing = MODE_SELECTION_CONFIG.ANIMATION_TIMING;
+
         // Animate metrics on page load
         setTimeout(() => {
-            const metrics = document.querySelectorAll('.metric-value');
+            const metrics = document.querySelectorAll(MODE_SELECTION_CONFIG.SELECTORS.METRIC_VALUE);
             metrics.forEach((metric, index) => {
                 metric.style.opacity = '0';
                 metric.style.transform = 'translateY(20px)';
@@ -168,12 +222,12 @@ const ModeSelection = {
                 setTimeout(() => {
                     metric.style.opacity = '1';
                     metric.style.transform = 'translateY(0)';
-                }, index * 100 + Math.random() * 300);
+                }, index * timing.METRIC_DELAY_BASE + Math.random() * timing.METRIC_DELAY_RANDOM);
             });
-        }, 200);
+        }, timing.INITIAL_DELAY);
 
         // Animate cards
-        const cards = document.querySelectorAll('.mode-card');
+        const cards = document.querySelectorAll(MODE_SELECTION_CONFIG.SELECTORS.MODE_CARD);
         cards.forEach((card, index) => {
             card.style.opacity = '0';
             card.style.transform = 'translateY(30px)';
@@ -182,7 +236,7 @@ const ModeSelection = {
             setTimeout(() => {
                 card.style.opacity = '1';
                 card.style.transform = 'translateY(0)';
-            }, index * 200 + 100);
+            }, index * timing.CARD_DELAY + timing.CARD_START_DELAY);
         });
     }
 };
@@ -205,18 +259,18 @@ ModeSelection.selectMode = function (mode) {
     this.setTradingMode(mode)
         .then(() => {
             // Redirect to appropriate configuration page
-            if (mode === 'SMART_LANE') {
-                const configUrl = this.buildConfigUrl('smart_lane');
-                window.location.href = configUrl;
-            } else {
-                const configUrl = this.buildConfigUrl('fast_lane');
-                window.location.href = configUrl;
-            }
+            const modeParam = mode === MODE_SELECTION_CONFIG.MODES.SMART_LANE ? 'smart_lane' : 'fast_lane';
+            const configUrl = this.buildConfigUrl(modeParam);
+
+            console.log(`Redirecting to configuration: ${configUrl}`);
+            window.location.href = configUrl;
         })
         .catch((error) => {
             console.error('Failed to set trading mode:', error);
             this.setLoadingState(false);
-            this.showError('Failed to set trading mode. Please try again.');
+
+            // Use global showToast from common-utils.js
+            showToast('Failed to set trading mode. Please try again.', 'danger');
         });
 };
 
@@ -226,9 +280,10 @@ ModeSelection.selectMode = function (mode) {
  */
 ModeSelection.showDemo = function (mode) {
     if (mode === 'smart_lane') {
-        // Try to get the smart lane demo URL, fallback to configuration
+        // Try to get the smart lane demo URL
         try {
-            const demoUrl = this.getUrlPattern('dashboard:smart_lane_demo');
+            const demoUrl = API_ENDPOINTS.DASHBOARD_PAGES.SMART_LANE_DEMO;
+            console.log('Navigating to Smart Lane demo:', demoUrl);
             window.location.href = demoUrl;
         } catch (error) {
             console.warn('Smart lane demo URL not available, redirecting to configuration');
@@ -242,10 +297,15 @@ ModeSelection.showDemo = function (mode) {
  * Show hybrid strategy information modal
  */
 ModeSelection.showHybridInfo = function () {
-    const modalElement = document.getElementById('hybridModal');
+    const modalElement = document.getElementById(MODE_SELECTION_CONFIG.MODAL_IDS.HYBRID);
+
     if (modalElement) {
-        const modal = new bootstrap.Modal(modalElement);
-        modal.show();
+        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+            const modal = new bootstrap.Modal(modalElement);
+            modal.show();
+        } else {
+            console.error('Bootstrap Modal not available');
+        }
     } else {
         console.error('Hybrid modal not found');
     }
@@ -261,13 +321,16 @@ ModeSelection.showHybridInfo = function () {
  * @returns {Promise} API response promise
  */
 ModeSelection.setTradingMode = function (mode) {
-    const apiUrl = this.getUrlPattern('dashboard:api_set_trading_mode');
+    // Use API endpoint from api-constants.js
+    const apiUrl = API_ENDPOINTS.DASHBOARD.SET_TRADING_MODE;
+
+    console.log(`Setting trading mode to ${mode} via ${apiUrl}`);
 
     return fetch(apiUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'X-CSRFToken': this.getCsrfToken()
+            'X-CSRFToken': getCSRFToken() // From common-utils.js
         },
         body: JSON.stringify({ mode: mode })
     })
@@ -281,70 +344,32 @@ ModeSelection.setTradingMode = function (mode) {
             if (!data.success) {
                 throw new Error(data.error || 'Unknown error occurred');
             }
+            console.log('Trading mode set successfully:', data);
             return data;
         });
 };
 
 /**
- * Get CSRF token from cookies
- * @returns {string|null} CSRF token or null if not found
- */
-ModeSelection.getCsrfToken = function () {
-    const name = 'csrftoken';
-    let cookieValue = null;
-
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
-        }
-    }
-
-    return cookieValue;
-};
-
-/**
  * Build configuration URL for specified mode
- * @param {string} mode - Mode for configuration URL
+ * @param {string} mode - Mode for configuration URL ('smart_lane' or 'fast_lane')
  * @returns {string} Configuration URL
  */
 ModeSelection.buildConfigUrl = function (mode) {
     try {
-        // Try to get the URL pattern from Django
-        return this.getUrlPattern('dashboard:configuration_panel', { mode: mode });
+        // Use URL from api-constants.js
+        if (mode === 'smart_lane') {
+            return API_ENDPOINTS.DASHBOARD_PAGES.SMART_LANE_CONFIG;
+        } else if (mode === 'fast_lane') {
+            return API_ENDPOINTS.DASHBOARD_PAGES.FAST_LANE_CONFIG;
+        } else {
+            // Generic config panel with mode parameter
+            return API_ENDPOINTS.DASHBOARD_PAGES.CONFIG_PANEL(mode);
+        }
     } catch (error) {
         // Fallback URL construction
-        console.warn('URL pattern not available, using fallback');
+        console.warn('API_ENDPOINTS not available, using fallback URL construction');
         return `/dashboard/config/${mode}/`;
     }
-};
-
-/**
- * Get URL pattern (placeholder for Django URL resolution)
- * @param {string} pattern - URL pattern name
- * @param {Object} params - URL parameters
- * @returns {string} Resolved URL
- */
-ModeSelection.getUrlPattern = function (pattern, params = {}) {
-    // This would typically be replaced with actual Django URL resolution
-    // For now, we'll use hardcoded fallbacks
-    const urlPatterns = {
-        'dashboard:api_set_trading_mode': '/dashboard/api/set-trading-mode/',
-        'dashboard:configuration_panel': `/dashboard/config/${params.mode || 'smart_lane'}/`,
-        'dashboard:smart_lane_demo': '/dashboard/smart-lane/demo/',
-        'dashboard:home': '/dashboard/'
-    };
-
-    const url = urlPatterns[pattern];
-    if (!url) {
-        throw new Error(`URL pattern '${pattern}' not found`);
-    }
-
-    return url;
 };
 
 /**
@@ -352,13 +377,13 @@ ModeSelection.getUrlPattern = function (pattern, params = {}) {
  * @param {boolean} loading - Whether to show loading state
  */
 ModeSelection.setLoadingState = function (loading) {
-    const cards = document.querySelectorAll('.mode-card');
+    const cards = document.querySelectorAll(MODE_SELECTION_CONFIG.SELECTORS.MODE_CARD);
 
     cards.forEach(card => {
         const button = card.querySelector('button');
         if (button && !button.disabled) {
             if (loading) {
-                button.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Setting up...';
+                button.innerHTML = MODE_SELECTION_CONFIG.BUTTON_TEXT.LOADING;
                 button.disabled = true;
                 button.classList.add('btn-loading');
             } else {
@@ -367,29 +392,13 @@ ModeSelection.setLoadingState = function (loading) {
                 button.disabled = false;
 
                 if (card.classList.contains('fast-lane-card')) {
-                    button.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Choose Fast Lane';
+                    button.innerHTML = MODE_SELECTION_CONFIG.BUTTON_TEXT.FAST_LANE;
                 } else if (card.classList.contains('smart-lane-card')) {
-                    button.innerHTML = '<i class="bi bi-cpu me-2"></i>Choose Smart Lane';
+                    button.innerHTML = MODE_SELECTION_CONFIG.BUTTON_TEXT.SMART_LANE;
                 }
             }
         }
     });
-};
-
-/**
- * Show error message to user
- * @param {string} message - Error message to display
- */
-ModeSelection.showError = function (message) {
-    // Try to use a toast notification if available
-    if (window.showNotification) {
-        window.showNotification(message, 'error');
-    } else if (window.tradingManager && window.tradingManager.showNotification) {
-        window.tradingManager.showNotification(message, 'error');
-    } else {
-        // Fallback to alert
-        alert(message);
-    }
 };
 
 // ============================================================================

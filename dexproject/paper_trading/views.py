@@ -235,7 +235,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
                 'token_symbol': thought.token_symbol,
                 'confidence_percent': to_decimal(thought.confidence_level, Decimal('0')),
                 'created_at': thought.created_at,
-                'thought_content': thought.reasoning[:150] if thought.reasoning else "Analyzing market conditions...",
+                'thought_content': thought.primary_reasoning[:150] if thought.primary_reasoning else "Analyzing market conditions...",
                 '_original': thought
             })
         
@@ -253,7 +253,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         # FIXED: Get winning/losing trades from closed positions, not trade status
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT 
+                SELECT
                     COUNT(*) as total_closed,
                     SUM(CASE WHEN realized_pnl_usd > 0 THEN 1 ELSE 0 END) as winning,
                     SUM(CASE WHEN realized_pnl_usd < 0 THEN 1 ELSE 0 END) as losing
