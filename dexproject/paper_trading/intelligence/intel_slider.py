@@ -3,35 +3,48 @@ Intel Slider System for Paper Trading Bot - MAIN ORCHESTRATOR
 This module provides the main IntelSliderEngine that coordinates all intelligence
 components using composition for clean separation of concerns.
 Integrates with real price feeds and market data for accurate trading decisions.
+
+FIXED: Dashboard configuration now properly overrides hardcoded intelligence level thresholds
+
 File: dexproject/paper_trading/intelligence/intel_slider.py
 """
 import logging
-import asyncio
 from decimal import Decimal
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+
+
 # Django imports for timezone-aware datetimes
 from django.utils import timezone
+
 # Import price feed service for real data
 from paper_trading.services.price_feed_service import PriceFeedService
-# Import base classes and data structures
+
+# Remove import asyncio
+# Remove from datetime import datetime
 from paper_trading.intelligence.base import (
     IntelligenceEngine,
-    IntelligenceLevel,
+    # IntelligenceLevel - removed
     MarketContext,
     TradingDecision
 )
+
 # Import configuration
 from paper_trading.intelligence.intel_config import INTEL_CONFIGS, IntelLevelConfig
+
 # Import price history
 from paper_trading.intelligence.price_history import PriceHistory
+
 # Import analyzers
 from paper_trading.intelligence.analyzers import CompositeMarketAnalyzer
 from paper_trading.intelligence.decision_maker import DecisionMaker
 from paper_trading.intelligence.ml_features import MLFeatureCollector
+
 # Import type utilities
 from paper_trading.utils.type_utils import TypeConverter, MarketDataNormalizer
+
 logger = logging.getLogger(__name__)
+
+
 class IntelSliderEngine(IntelligenceEngine):
     """
     Main intelligence engine controlled by the Intel slider (1-10).
@@ -132,48 +145,214 @@ class IntelSliderEngine(IntelligenceEngine):
         """
         Apply configuration overrides from database.
         
+        This method overrides the hardcoded intelligence level defaults with
+        user-configured values from the dashboard. It updates both the config
+        object AND the parent class's threshold attributes to ensure dashboard
+        settings are actually used.
+        
+        CRITICAL FIX: This now properly overrides parent class thresholds
+        (self.confidence_threshold, self.risk_threshold, self.opportunity_threshold)
+        which were previously hardcoded based on intel level.
+        
         Args:
-            strategy_config: Database strategy configuration
+            strategy_config: Database strategy configuration from dashboard
         """
         try:
             self.logger.info(
-                f"[CONFIG] Applying overrides: {strategy_config.name}"
+                f"[CONFIG] ═══════════════════════════════════════════════════════"
+            )
+            self.logger.info(
+                f"[CONFIG] Applying dashboard configuration: {strategy_config.name}"
+            )
+            self.logger.info(
+                f"[CONFIG] ═══════════════════════════════════════════════════════"
             )
             
-            # Override confidence threshold
-            if strategy_config.confidence_threshold:
-                self.config.min_confidence_required = Decimal(
-                    str(strategy_config.confidence_threshold)
+            # Store original hardcoded values for logging
+            original_confidence = self.confidence_threshold
+            original_risk = self.risk_threshold
+            original_opportunity = self.opportunity_threshold
+            
+            # ================================================================
+            # 1. CONFIDENCE THRESHOLD OVERRIDE (CRITICAL FIX)
+            # ================================================================
+            if strategy_config.confidence_threshold is not None:
+                new_confidence = Decimal(str(strategy_config.confidence_threshold))
+                
+                # Update BOTH the config object AND parent class attribute
+                self.config.min_confidence_required = new_confidence
+                self.confidence_threshold = new_confidence  # ← CRITICAL: Override parent class
+                
+                self.logger.info(
+                    f"[CONFIG] ✅ CONFIDENCE THRESHOLD OVERRIDE:"
                 )
                 self.logger.info(
-                    f"[CONFIG] Confidence: {self.config.min_confidence_required}%"
-                )
-            
-            # Override max position size
-            if strategy_config.max_position_size_percent:
-                self.config.max_position_percent = Decimal(
-                    str(strategy_config.max_position_size_percent)
+                    f"[CONFIG]    Hardcoded (Intel {self.intel_level}): {original_confidence}%"
                 )
                 self.logger.info(
-                    f"[CONFIG] Max position: {self.config.max_position_percent}%"
+                    f"[CONFIG]    Dashboard Setting: {new_confidence}%"
+                )
+                self.logger.info(
+                    f"[CONFIG]    → Using dashboard value: {new_confidence}%"
+                )
+            else:
+                self.logger.info(
+                    f"[CONFIG] ⚠️  No confidence threshold in config, using hardcoded: {original_confidence}%"
                 )
             
-            # Override risk tolerance based on trading mode
+            # ================================================================
+            # 2. POSITION SIZE OVERRIDE
+            # ================================================================
+            if strategy_config.max_position_size_percent is not None:
+                original_position = self.config.max_position_percent
+                new_position = Decimal(str(strategy_config.max_position_size_percent))
+                
+                self.config.max_position_percent = new_position
+                
+                self.logger.info(
+                    f"[CONFIG] ✅ MAX POSITION SIZE OVERRIDE:"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Default: {original_position}%"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Dashboard: {new_position}%"
+                )
+                self.logger.info(
+                    f"[CONFIG]    → Using: {new_position}%"
+                )
+            
+            # ================================================================
+            # 3. RISK TOLERANCE OVERRIDE (Based on Trading Mode)
+            # ================================================================
+            original_risk_tolerance = self.config.risk_tolerance
+            
             if strategy_config.trading_mode == 'CONSERVATIVE':
-                self.config.risk_tolerance = Decimal('30')
+                new_risk_tolerance = Decimal('30')
+                self.config.risk_tolerance = new_risk_tolerance
+                self.risk_threshold = new_risk_tolerance  # ← Override parent class
+                
+                self.logger.info(
+                    f"[CONFIG] ✅ RISK TOLERANCE OVERRIDE (Conservative Mode):"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Default: {original_risk_tolerance}%"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Conservative: {new_risk_tolerance}%"
+                )
+                
             elif strategy_config.trading_mode == 'AGGRESSIVE':
-                self.config.risk_tolerance = Decimal('70')
+                new_risk_tolerance = Decimal('70')
+                self.config.risk_tolerance = new_risk_tolerance
+                self.risk_threshold = new_risk_tolerance  # ← Override parent class
+                
+                self.logger.info(
+                    f"[CONFIG] ✅ RISK TOLERANCE OVERRIDE (Aggressive Mode):"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Default: {original_risk_tolerance}%"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Aggressive: {new_risk_tolerance}%"
+                )
+                
             elif strategy_config.trading_mode == 'MODERATE':
-                self.config.risk_tolerance = Decimal('50')
+                new_risk_tolerance = Decimal('50')
+                self.config.risk_tolerance = new_risk_tolerance
+                self.risk_threshold = new_risk_tolerance  # ← Override parent class
+                
+                self.logger.info(
+                    f"[CONFIG] ✅ RISK TOLERANCE OVERRIDE (Moderate Mode):"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Default: {original_risk_tolerance}%"
+                )
+                self.logger.info(
+                    f"[CONFIG]    Moderate: {new_risk_tolerance}%"
+                )
+            else:
+                self.logger.info(
+                    f"[CONFIG] ⚠️  Unknown trading mode: {strategy_config.trading_mode}, "
+                    f"keeping default risk tolerance: {original_risk_tolerance}%"
+                )
             
+            # ================================================================
+            # 4. STOP LOSS & TAKE PROFIT OVERRIDES
+            # ================================================================
+            if strategy_config.stop_loss_percent is not None:
+                self.logger.info(
+                    f"[CONFIG] ✅ Stop Loss: {strategy_config.stop_loss_percent}%"
+                )
+            
+            if strategy_config.take_profit_percent is not None:
+                self.logger.info(
+                    f"[CONFIG] ✅ Take Profit: {strategy_config.take_profit_percent}%"
+                )
+            
+            if strategy_config.max_daily_trades is not None:
+                self.logger.info(
+                    f"[CONFIG] ✅ Max Daily Trades: {strategy_config.max_daily_trades}"
+                )
+            
+            # ================================================================
+            # 5. TRADING LANES
+            # ================================================================
+            lanes = []
+            if strategy_config.use_fast_lane:
+                lanes.append("FAST")
+            if strategy_config.use_smart_lane:
+                lanes.append("SMART")
+            
+            if lanes:
+                self.logger.info(
+                    f"[CONFIG] ✅ Trading Lanes: {' + '.join(lanes)}"
+                )
+            
+            # ================================================================
+            # FINAL SUMMARY
+            # ================================================================
             self.logger.info(
-                f"[CONFIG] Risk tolerance: {self.config.risk_tolerance}%"
+                f"[CONFIG] ═══════════════════════════════════════════════════════"
+            )
+            self.logger.info(
+                f"[CONFIG] 🎯 ACTIVE THRESHOLDS (Dashboard Overrides Applied):"
+            )
+            self.logger.info(
+                f"[CONFIG] ═══════════════════════════════════════════════════════"
+            )
+            self.logger.info(
+                f"[CONFIG]   Intelligence Level: {self.intel_level}"
+            )
+            self.logger.info(
+                f"[CONFIG]   Confidence Threshold: {self.confidence_threshold}% "
+                f"(was {original_confidence}%)"
+            )
+            self.logger.info(
+                f"[CONFIG]   Risk Threshold: {self.risk_threshold}% "
+                f"(was {original_risk}%)"
+            )
+            self.logger.info(
+                f"[CONFIG]   Opportunity Threshold: {self.opportunity_threshold}% "
+                f"(was {original_opportunity}%)"
+            )
+            self.logger.info(
+                f"[CONFIG]   Max Position Size: {self.config.max_position_percent}%"
+            )
+            self.logger.info(
+                f"[CONFIG]   Risk Tolerance: {self.config.risk_tolerance}%"
+            )
+            self.logger.info(
+                f"[CONFIG] ═══════════════════════════════════════════════════════"
             )
             
         except Exception as e:
             self.logger.error(
-                f"[CONFIG] Error applying overrides: {e}",
+                f"[CONFIG] ❌ Error applying configuration overrides: {e}",
                 exc_info=True
+            )
+            self.logger.error(
+                f"[CONFIG] Bot will continue with hardcoded Intel Level {self.intel_level} defaults"
             )
     
     async def analyze_market(
@@ -366,9 +545,16 @@ class IntelSliderEngine(IntelligenceEngine):
             )
             
             # Step 4: Apply intel adjustments (if available)
+            # Step 4: Apply intel adjustments (if available)
             try:
-                adjusted_decision = self.apply_intel_adjustments(decision) if hasattr(self, 'apply_intel_adjustments') else decision
-                self.logger.debug("[MAKE_DECISION] Intel adjustments: " + ("applied" if hasattr(self, 'apply_intel_adjustments') else "skipped (not available)"))
+                if hasattr(self, 'apply_intel_adjustments'):
+                    adjusted_decision = self.apply_intel_adjustments(decision)
+                else:
+                    adjusted_decision = decision
+                self.logger.debug(
+                    "[MAKE_DECISION] Intel adjustments: " +
+                    ("applied" if hasattr(self, 'apply_intel_adjustments') else "skipped (not available)")
+                )
             except Exception as e:
                 self.logger.warning(f"[MAKE_DECISION] Intel adjustment failed: {e}")
                 adjusted_decision = decision
