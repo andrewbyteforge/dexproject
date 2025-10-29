@@ -100,20 +100,24 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             account=account
         ).order_by('-created_at')[:5]
         
+       
         # Format thoughts for template
         formatted_thoughts = []
         for thought in recent_thoughts:
-            formatted_thoughts = []
-            for thought in recent_thoughts:
-                formatted_thoughts.append({
-                    'thought_id': str(thought.thought_id),
-                    'decision_type': thought.decision_type,
-                    'token_symbol': thought.token_symbol,
-                    'confidence_percent': thought.confidence_percent,  # ✅ FIXED
-                    'created_at': thought.created_at,
-                    'thought_content': thought.primary_reasoning[:150] if thought.primary_reasoning else "Analyzing market conditions...",  # ✅ FIXED
-                    '_original': thought
-                })
+            formatted_thoughts.append({
+                'thought_id': str(thought.thought_id),
+                'decision_type': thought.decision_type,
+                'token_symbol': thought.token_symbol,
+                'confidence_percent': thought.confidence_percent,
+                'created_at': thought.created_at,
+                'thought_content': thought.primary_reasoning[:150] if thought.primary_reasoning else "Analyzing market conditions...",
+                '_original': thought
+            })
+
+        # DEBUG: Log what we're passing to template
+        logger.info(f"=== DEBUG: Passing {len(formatted_thoughts)} thoughts to template ===")
+        for i, ft in enumerate(formatted_thoughts):
+            logger.info(f"Thought {i+1}: {ft['created_at']} - {ft['decision_type']} - {ft['token_symbol']}")
         
         # Get performance metrics
         performance = None

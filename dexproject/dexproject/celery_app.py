@@ -178,27 +178,19 @@ app.conf.update(
             'time_limit': 60,  # 1 minute
             'soft_time_limit': 45,
         },
-    },
+    },    
     
     # Result backend configuration
     result_expires=3600,  # Results expire after 1 hour
     result_backend_transport_options={
         'socket_keepalive': True,
-        'socket_keepalive_options': {
-            'TCP_KEEPINTVL': 1,
-            'TCP_KEEPCNT': 3,
-            'TCP_KEEPIDLE': 1,
-        },
+        'socket_keepalive_options': {},  # Empty for Windows compatibility
     },
-    
+
     # Broker configuration
     broker_transport_options={
         'socket_keepalive': True,
-        'socket_keepalive_options': {
-            'TCP_KEEPINTVL': 1,
-            'TCP_KEEPCNT': 3,
-            'TCP_KEEPIDLE': 1,
-        },
+        'socket_keepalive_options': {},  # Empty for Windows compatibility
     },
     
     # Task serialization
@@ -235,7 +227,7 @@ app.conf.update(
 app.conf.task_create_missing_queues = True
 
 # Autodiscover tasks in Django apps
-app.autodiscover_tasks()
+app.autodiscover_tasks(['paper_trading'])
 
 
 # Custom logging setup for trading operations

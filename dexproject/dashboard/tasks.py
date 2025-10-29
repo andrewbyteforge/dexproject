@@ -29,15 +29,15 @@ from engine.wallet_manager import WalletManager, WalletType
 from engine.utils import ProviderManager
 
 # Import trading services
-from .services.dex_router_service import (
-    create_dex_router_service, SwapParams, SwapResult, SwapType, DEXVersion
-)
-from .services.portfolio_service import create_portfolio_service, PortfolioUpdate
+# from .services.dex_router_service import (
+#     create_dex_router_service, SwapParams, SwapResult, SwapType, DEXVersion
+# )
+# from .services.portfolio_service import create_portfolio_service, PortfolioUpdate
 
 # Import risk assessment integration
 from risk.tasks.tasks import assess_token_risk
 
-from .models import Trade, Position, TradingPair, Strategy
+# from .models import Trade, Position, TradingPair, Strategy
 
 logger = logging.getLogger(__name__)
 

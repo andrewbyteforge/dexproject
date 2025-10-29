@@ -7,6 +7,7 @@
  * - Reduced polling: removed 3s trades/positions polling
  * - Kept 30s metrics backup polling only
  * - WebSocket is primary update method
+ * - FIXED: Initialize thought counter on page load to count existing thoughts
  */
 
 // ========================================
@@ -1139,6 +1140,15 @@ function initializeDashboard() {
     fetchRecentTrades();
     fetchOpenPositions();
     fetchMetrics();
+
+    // Initialize thought counter from existing server-rendered thoughts
+    const thoughtContainer = document.getElementById('thought-log-container');
+    if (thoughtContainer) {
+        const existingThoughts = thoughtContainer.querySelectorAll('.thought-log-step');
+        window.paperTradingDashboard.state.thoughtCount = existingThoughts.length;
+        updateThoughtCounter(); // Update the counter display
+        console.log(`📊 Initialized with ${existingThoughts.length} existing thoughts`);
+    }
 
     // Setup 30-second backup polling for metrics
     setupPollingIntervals();
