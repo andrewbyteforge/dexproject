@@ -103,15 +103,17 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         # Format thoughts for template
         formatted_thoughts = []
         for thought in recent_thoughts:
-            formatted_thoughts.append({
-                'thought_id': str(thought.thought_id),
-                'decision_type': thought.decision_type,
-                'token_symbol': thought.token_symbol,
-                'confidence_percent': to_decimal(thought.confidence_level, Decimal('0')),
-                'created_at': thought.created_at,
-                'thought_content': thought.reasoning[:150] if thought.reasoning else "Analyzing market conditions...",
-                '_original': thought
-            })
+            formatted_thoughts = []
+            for thought in recent_thoughts:
+                formatted_thoughts.append({
+                    'thought_id': str(thought.thought_id),
+                    'decision_type': thought.decision_type,
+                    'token_symbol': thought.token_symbol,
+                    'confidence_percent': thought.confidence_percent,  # ✅ FIXED
+                    'created_at': thought.created_at,
+                    'thought_content': thought.primary_reasoning[:150] if thought.primary_reasoning else "Analyzing market conditions...",  # ✅ FIXED
+                    '_original': thought
+                })
         
         # Get performance metrics
         performance = None

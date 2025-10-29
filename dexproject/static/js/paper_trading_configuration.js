@@ -1,11 +1,16 @@
 /**
- * Paper Trading Configuration Page JavaScript
+ * Paper Trading Configuration Page JavaScript - ENHANCED WITH LOGGING
  * 
  * Handles configuration form interactions, bot controls, and risk calculations.
+ * ALL configuration changes are logged to the console for debugging and monitoring.
+ * 
+ * FIXED: Removed duplicate API_ENDPOINTS declaration - uses the one from api-constants.js
  * 
  * Dependencies:
  * - common-utils.js (must be loaded before this file)
  *   - Uses: getCSRFToken(), showToast()
+ * - api-constants.js (must be loaded before this file)
+ *   - Uses: API_ENDPOINTS (shared constant)
  * 
  * File: dexproject/static/js/paper_trading_configuration.js
  */
@@ -30,10 +35,8 @@ const CONFIG_FIELDS = {
     SAVE_AS_NEW: 'save_as_new'
 };
 
-const API_ENDPOINTS = {
-    BOT_START: '/paper-trading/api/bot/start/',
-    BOT_STOP: '/paper-trading/api/bot/stop/'
-};
+// Use API_ENDPOINTS from api-constants.js (already loaded)
+// DO NOT redeclare it here!
 
 const RISK_THRESHOLDS = {
     LOW: 30,
@@ -52,6 +55,115 @@ const DEFAULT_VALUES = {
     TAKE_PROFIT: 10
 };
 
+// Friendly field names for logging
+const FRIENDLY_FIELD_NAMES = {
+    'name': 'Configuration Name',
+    'config_name': 'Configuration Name',
+    'trading_mode': 'Trading Mode',
+    'trading_mode_visual': 'Trading Mode (Visual)',
+    'use_fast_lane': 'Fast Lane',
+    'use_smart_lane': 'Smart Lane',
+    'max_position_size_percent': 'Max Position Size',
+    'max_daily_trades': 'Max Daily Trades',
+    'confidence_threshold': 'Confidence Threshold',
+    'stop_loss_percent': 'Stop Loss',
+    'take_profit_percent': 'Take Profit'
+};
+
+// ============================================================================
+// LOGGING UTILITIES
+// ============================================================================
+
+/**
+ * Log configuration changes to console with detailed formatting
+ * @param {HTMLElement} element - The changed form element
+ * @param {boolean} isRealtime - Whether this is a real-time update (input event)
+ */
+function logConfigurationChange(element, isRealtime = false) {
+    const fieldName = element.name || element.id || 'unknown';
+    let value = element.value;
+
+    // Special handling for checkboxes
+    if (element.type === 'checkbox') {
+        value = element.checked ? '✓ ENABLED' : '✗ DISABLED';
+    }
+
+    // Special handling for radio buttons
+    if (element.type === 'radio') {
+        if (!element.checked) {
+            return; // Only log the selected radio button
+        }
+        value = `${value} (selected)`;
+    }
+
+    // Format the log message
+    const prefix = isRealtime ? '⚡' : '✏️';
+    const suffix = isRealtime ? ' [real-time]' : ' [committed]';
+    const timestamp = new Date().toLocaleTimeString();
+
+    // Get friendly field name
+    const displayName = FRIENDLY_FIELD_NAMES[fieldName] || fieldName.replace(/_/g, ' ').toUpperCase();
+
+    // Add unit suffix for numeric fields
+    let unit = '';
+    if (fieldName.includes('percent') || fieldName.includes('threshold') || fieldName.includes('size')) {
+        if (element.type === 'number' || element.type === 'range') {
+            unit = '%';
+        }
+    }
+
+    console.log(`${prefix} [${timestamp}] ${displayName}: ${value}${unit}${suffix}`);
+}
+
+/**
+ * Log complete configuration snapshot
+ * Shows all current configuration values at once
+ */
+function logConfigurationSnapshot() {
+    console.log('\n' + '═'.repeat(70));
+    console.log('📸 CONFIGURATION SNAPSHOT');
+    console.log('═'.repeat(70));
+
+    // Get all form values
+    const nameField = document.querySelector(`[name="${CONFIG_FIELDS.NAME}"]`);
+    const modeSelect = document.getElementById(CONFIG_FIELDS.TRADING_MODE_SELECT);
+    const fastLaneField = document.querySelector(`[name="${CONFIG_FIELDS.USE_FAST_LANE}"]`);
+    const smartLaneField = document.querySelector(`[name="${CONFIG_FIELDS.USE_SMART_LANE}"]`);
+    const positionSizeField = document.querySelector(`[name="${CONFIG_FIELDS.MAX_POSITION_SIZE}"]`);
+    const maxTradesField = document.querySelector(`[name="${CONFIG_FIELDS.MAX_DAILY_TRADES}"]`);
+    const confidenceField = document.querySelector(`[name="${CONFIG_FIELDS.CONFIDENCE_THRESHOLD}"]`);
+    const stopLossField = document.querySelector(`[name="${CONFIG_FIELDS.STOP_LOSS}"]`);
+    const takeProfitField = document.querySelector(`[name="${CONFIG_FIELDS.TAKE_PROFIT}"]`);
+
+    console.log(`📝 Name: ${nameField?.value || 'N/A'}`);
+    console.log(`🎯 Trading Mode: ${modeSelect?.value || 'N/A'}`);
+    console.log(`⚡ Fast Lane: ${fastLaneField?.checked ? '✓ ENABLED' : '✗ DISABLED'}`);
+    console.log(`🧠 Smart Lane: ${smartLaneField?.checked ? '✓ ENABLED' : '✗ DISABLED'}`);
+    console.log(`💰 Max Position Size: ${positionSizeField?.value || 'N/A'}%`);
+    console.log(`📊 Max Daily Trades: ${maxTradesField?.value || 'N/A'}`);
+    console.log(`🎲 Confidence Threshold: ${confidenceField?.value || 'N/A'}%`);
+    console.log(`🛡️ Stop Loss: ${stopLossField?.value || 'N/A'}%`);
+    console.log(`🎯 Take Profit: ${takeProfitField?.value || 'N/A'}%`);
+    console.log('═'.repeat(70) + '\n');
+}
+
+/**
+ * Log risk assessment details
+ * @param {number} riskScore - Calculated risk score (0-100)
+ * @param {string} riskLevel - Risk level (Low/Medium/High)
+ */
+function logRiskAssessment(riskScore, riskLevel) {
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`📈 [${timestamp}] RISK ASSESSMENT ─────────────────────────`);
+    console.log(`   Risk Score: ${riskScore.toFixed(1)}/100`);
+    console.log(`   Risk Level: ${riskLevel}`);
+
+    // Color-coded indicator
+    const indicator = riskLevel === 'Low' ? '🟢' : riskLevel === 'Medium' ? '🟡' : '🔴';
+    console.log(`   Status: ${indicator} ${riskLevel} Risk`);
+    console.log(`─────────────────────────────────────────────────────────`);
+}
+
 // ============================================================================
 // MODE SYNCHRONIZATION
 // ============================================================================
@@ -61,12 +173,15 @@ const DEFAULT_VALUES = {
  * Ensures both UI elements stay in sync when user changes trading mode
  */
 function initializeModeSync() {
+    console.log('🔄 Initializing mode synchronization...');
+
     // Sync radio buttons to dropdown
     document.querySelectorAll(`input[name="${CONFIG_FIELDS.TRADING_MODE_VISUAL}"]`).forEach(radio => {
         radio.addEventListener('change', function () {
             const selectElement = document.getElementById(CONFIG_FIELDS.TRADING_MODE_SELECT);
             if (selectElement) {
                 selectElement.value = this.value;
+                console.log(`🔄 [MODE SYNC] Radio → Dropdown: ${this.value}`);
                 updateRiskIndicator();
             }
         });
@@ -82,9 +197,12 @@ function initializeModeSync() {
                     radio.checked = true;
                 }
             });
+            console.log(`🔄 [MODE SYNC] Dropdown → Radio: ${this.value}`);
             updateRiskIndicator();
         });
     }
+
+    console.log('✅ Mode synchronization initialized');
 }
 
 // ============================================================================
@@ -101,10 +219,25 @@ function initializeModeSync() {
 function updateRangeValue(inputId, value) {
     const element = document.getElementById(inputId);
     if (element) {
+        const oldValue = element.value;
         element.value = value;
+
+        // 🔍 LOGGING: Log slider change with field name and value
+        const fieldName = element.name || inputId;
+        const displayName = FRIENDLY_FIELD_NAMES[fieldName] || fieldName.replace(/_/g, ' ').toUpperCase();
+        const timestamp = new Date().toLocaleTimeString();
+
+        // Determine unit
+        let unit = '';
+        if (fieldName.includes('percent') || fieldName.includes('threshold') || fieldName.includes('size')) {
+            unit = '%';
+        }
+
+        console.log(`🎚️ [${timestamp}] SLIDER: ${displayName} = ${value}${unit} (was ${oldValue}${unit})`);
+
         updateRiskIndicator();
     } else {
-        console.warn(`Range input element with ID '${inputId}' not found`);
+        console.warn(`⚠️ Range input element with ID '${inputId}' not found`);
     }
 }
 
@@ -125,67 +258,64 @@ function updateRiskIndicator() {
 
     // Validate elements exist
     if (!modeElement || !positionSizeElement || !stopLossElement || !confidenceElement) {
-        console.warn('Risk indicator: Required form elements not found');
+        console.warn('⚠️ Risk indicator: Some form elements not found');
         return;
     }
 
+    // Get values
     const mode = modeElement.value;
-    const positionSize = parseFloat(positionSizeElement.value);
-    const stopLoss = parseFloat(stopLossElement.value);
-    const confidence = parseFloat(confidenceElement.value);
+    const positionSize = parseFloat(positionSizeElement.value) || 0;
+    const stopLoss = parseFloat(stopLossElement.value) || 0;
+    const confidence = parseFloat(confidenceElement.value) || 0;
 
+    // Calculate risk score (0-100)
     let riskScore = 0;
 
-    // Calculate risk based on trading mode
-    if (mode === 'AGGRESSIVE') {
-        riskScore += 30;
-    } else if (mode === 'MODERATE') {
-        riskScore += 15;
-    }
-    // CONSERVATIVE adds 0
+    // Mode contribution (0-30 points)
+    if (mode === 'CONSERVATIVE') riskScore += 0;
+    else if (mode === 'MODERATE') riskScore += 15;
+    else if (mode === 'AGGRESSIVE') riskScore += 30;
 
-    // Calculate risk based on position size
-    if (positionSize > 30) {
-        riskScore += 20;
-    } else if (positionSize > 15) {
-        riskScore += 10;
-    }
+    // Position size contribution (0-30 points)
+    riskScore += Math.min(30, positionSize);
 
-    // Calculate risk based on stop loss
-    if (stopLoss > 10) {
-        riskScore += 20;
-    } else if (stopLoss > 5) {
-        riskScore += 10;
-    }
+    // Stop loss contribution (0-20 points, inverse - higher stop loss = lower risk)
+    riskScore += Math.max(0, 20 - (stopLoss * 2));
 
-    // Calculate risk based on confidence threshold (lower = riskier)
-    if (confidence < 50) {
-        riskScore += 20;
-    } else if (confidence < 70) {
-        riskScore += 10;
+    // Confidence contribution (0-20 points, inverse - higher confidence = lower risk)
+    riskScore += Math.max(0, 20 - (confidence / 5));
+
+    // Determine risk level
+    let riskLevel = '';
+    if (riskScore < RISK_THRESHOLDS.LOW) {
+        riskLevel = 'Low';
+    } else if (riskScore < RISK_THRESHOLDS.MEDIUM) {
+        riskLevel = 'Medium';
+    } else {
+        riskLevel = 'High';
     }
 
     // Update UI elements
-    const indicator = document.getElementById('risk-indicator');
-    const icon = indicator?.querySelector('.risk-icon');
-    const levelText = document.getElementById('risk-level-text');
-    const description = document.getElementById('risk-description');
+    const icon = document.querySelector('.risk-icon');
+    const levelText = document.getElementById('risk-level-text');  // Changed to getElementById
+    const description = document.getElementById('risk-description');  // Changed to getElementById
 
-    if (!indicator || !icon || !levelText || !description) {
-        console.warn('Risk indicator: UI elements not found');
+    if (!icon || !levelText || !description) {
+        console.warn('⚠️ Risk indicator UI elements not found');
         return;
     }
 
-    // Reset icon classes
-    icon.className = 'bi risk-icon';
+    // Clear existing classes
+    icon.classList.remove('bi-shield-check', 'bi-shield-exclamation', 'bi-shield-x', 'risk-low', 'risk-medium', 'risk-high');
+    levelText.classList.remove('text-success', 'text-warning', 'text-danger');
 
-    // Apply risk level styling
-    if (riskScore < RISK_THRESHOLDS.LOW) {
+    // Apply new classes based on risk level
+    if (riskLevel === 'Low') {
         icon.classList.add('bi-shield-check', 'risk-low');
         levelText.textContent = 'Low';
         levelText.className = 'text-success';
         description.textContent = 'Conservative settings with good risk management';
-    } else if (riskScore < RISK_THRESHOLDS.MEDIUM) {
+    } else if (riskLevel === 'Medium') {
         icon.classList.add('bi-shield-exclamation', 'risk-medium');
         levelText.textContent = 'Medium';
         levelText.className = 'text-warning';
@@ -197,7 +327,8 @@ function updateRiskIndicator() {
         description.textContent = 'Aggressive settings - higher potential returns and losses';
     }
 
-    console.log(`Risk assessment: Score=${riskScore}, Level=${levelText.textContent}`);
+    // 🔍 LOGGING: Log risk assessment
+    logRiskAssessment(riskScore, riskLevel);
 }
 
 // ============================================================================
@@ -211,9 +342,11 @@ function updateRiskIndicator() {
 function saveAsNew() {
     const form = document.getElementById('config-form');
     if (!form) {
-        console.error('Configuration form not found');
+        console.error('❌ Configuration form not found');
         return;
     }
+
+    console.log('💾 Saving configuration as new...');
 
     // Add hidden field to indicate saving as new
     const input = document.createElement('input');
@@ -228,7 +361,8 @@ function saveAsNew() {
         nameField.value = nameField.value + ' (Copy)';
     }
 
-    console.log('Saving configuration as new:', nameField?.value);
+    console.log(`💾 Saving configuration as: "${nameField?.value}"`);
+    logConfigurationSnapshot();
     form.submit();
 }
 
@@ -243,13 +377,18 @@ function saveAsNew() {
 async function startBot() {
     // Confirm action
     if (!confirm('Start the paper trading bot with current configuration?')) {
+        console.log('❌ Bot start cancelled by user');
         return;
     }
 
-    console.log('Starting paper trading bot...');
+    console.log('🚀 Starting paper trading bot...');
+    logConfigurationSnapshot();
 
     try {
-        const response = await fetch(API_ENDPOINTS.BOT_START, {
+        // Get API endpoint from api-constants.js
+        const botStartUrl = API_ENDPOINTS?.paperTrading?.BOT_START || '/paper-trading/api/bot/start/';
+
+        const response = await fetch(botStartUrl, {
             method: 'POST',
             headers: {
                 'X-CSRFToken': getCSRFToken(), // From common-utils.js
@@ -260,17 +399,17 @@ async function startBot() {
         const data = await response.json();
 
         if (response.ok) {
-            console.log('Bot started successfully');
+            console.log('✅ Bot started successfully');
             showToast('Bot started successfully!', 'success'); // From common-utils.js
 
             // Reload page after short delay to show updated status
             setTimeout(() => location.reload(), 1500);
         } else {
-            console.error('Failed to start bot:', data.error);
+            console.error('❌ Failed to start bot:', data.error);
             showToast(data.error || 'Failed to start bot', 'danger'); // From common-utils.js
         }
     } catch (error) {
-        console.error('Error starting bot:', error);
+        console.error('❌ Error starting bot:', error);
         showToast('Error starting bot', 'danger'); // From common-utils.js
     }
 }
@@ -282,13 +421,17 @@ async function startBot() {
 async function stopBot() {
     // Confirm action
     if (!confirm('Stop the paper trading bot?')) {
+        console.log('❌ Bot stop cancelled by user');
         return;
     }
 
-    console.log('Stopping paper trading bot...');
+    console.log('🛑 Stopping paper trading bot...');
 
     try {
-        const response = await fetch(API_ENDPOINTS.BOT_STOP, {
+        // Get API endpoint from api-constants.js
+        const botStopUrl = API_ENDPOINTS?.paperTrading?.BOT_STOP || '/paper-trading/api/bot/stop/';
+
+        const response = await fetch(botStopUrl, {
             method: 'POST',
             headers: {
                 'X-CSRFToken': getCSRFToken(), // From common-utils.js
@@ -299,17 +442,17 @@ async function stopBot() {
         const data = await response.json();
 
         if (response.ok) {
-            console.log('Bot stopped successfully');
+            console.log('✅ Bot stopped successfully');
             showToast('Bot stopped successfully', 'success'); // From common-utils.js
 
             // Reload page after short delay to show updated status
             setTimeout(() => location.reload(), 1500);
         } else {
-            console.error('Failed to stop bot:', data.error);
+            console.error('❌ Failed to stop bot:', data.error);
             showToast(data.error || 'Failed to stop bot', 'danger'); // From common-utils.js
         }
     } catch (error) {
-        console.error('Error stopping bot:', error);
+        console.error('❌ Error stopping bot:', error);
         showToast('Error stopping bot', 'danger'); // From common-utils.js
     }
 }
@@ -325,44 +468,77 @@ async function stopBot() {
 function resetForm() {
     // Confirm action
     if (!confirm('Reset all settings to default values?')) {
+        console.log('❌ Form reset cancelled by user');
         return;
     }
 
-    console.log('Resetting form to default values...');
+    console.log('🔄 Resetting form to default values...');
 
     // Reset all fields to defaults
     const nameField = document.querySelector(`[name="${CONFIG_FIELDS.NAME}"]`);
-    if (nameField) nameField.value = DEFAULT_VALUES.NAME;
+    if (nameField) {
+        nameField.value = DEFAULT_VALUES.NAME;
+        console.log(`   Reset: Configuration Name = "${DEFAULT_VALUES.NAME}"`);
+    }
 
     const modeSelect = document.getElementById(CONFIG_FIELDS.TRADING_MODE_SELECT);
-    if (modeSelect) modeSelect.value = DEFAULT_VALUES.TRADING_MODE;
+    if (modeSelect) {
+        modeSelect.value = DEFAULT_VALUES.TRADING_MODE;
+        console.log(`   Reset: Trading Mode = ${DEFAULT_VALUES.TRADING_MODE}`);
+    }
 
     const modeRadio = document.querySelector(`[name="${CONFIG_FIELDS.TRADING_MODE_VISUAL}"][value="${DEFAULT_VALUES.TRADING_MODE}"]`);
-    if (modeRadio) modeRadio.checked = true;
+    if (modeRadio) {
+        modeRadio.checked = true;
+    }
 
     const fastLaneField = document.querySelector(`[name="${CONFIG_FIELDS.USE_FAST_LANE}"]`);
-    if (fastLaneField) fastLaneField.checked = DEFAULT_VALUES.USE_FAST_LANE;
+    if (fastLaneField) {
+        fastLaneField.checked = DEFAULT_VALUES.USE_FAST_LANE;
+        console.log(`   Reset: Fast Lane = ${DEFAULT_VALUES.USE_FAST_LANE ? 'ENABLED' : 'DISABLED'}`);
+    }
 
     const smartLaneField = document.querySelector(`[name="${CONFIG_FIELDS.USE_SMART_LANE}"]`);
-    if (smartLaneField) smartLaneField.checked = DEFAULT_VALUES.USE_SMART_LANE;
+    if (smartLaneField) {
+        smartLaneField.checked = DEFAULT_VALUES.USE_SMART_LANE;
+        console.log(`   Reset: Smart Lane = ${DEFAULT_VALUES.USE_SMART_LANE ? 'ENABLED' : 'DISABLED'}`);
+    }
 
     const positionSizeField = document.querySelector(`[name="${CONFIG_FIELDS.MAX_POSITION_SIZE}"]`);
-    if (positionSizeField) positionSizeField.value = DEFAULT_VALUES.MAX_POSITION_SIZE;
+    if (positionSizeField) {
+        positionSizeField.value = DEFAULT_VALUES.MAX_POSITION_SIZE;
+        console.log(`   Reset: Max Position Size = ${DEFAULT_VALUES.MAX_POSITION_SIZE}%`);
+    }
 
     const maxTradesField = document.querySelector(`[name="${CONFIG_FIELDS.MAX_DAILY_TRADES}"]`);
-    if (maxTradesField) maxTradesField.value = DEFAULT_VALUES.MAX_DAILY_TRADES;
+    if (maxTradesField) {
+        maxTradesField.value = DEFAULT_VALUES.MAX_DAILY_TRADES;
+        console.log(`   Reset: Max Daily Trades = ${DEFAULT_VALUES.MAX_DAILY_TRADES}`);
+    }
 
     const confidenceField = document.querySelector(`[name="${CONFIG_FIELDS.CONFIDENCE_THRESHOLD}"]`);
-    if (confidenceField) confidenceField.value = DEFAULT_VALUES.CONFIDENCE_THRESHOLD;
+    if (confidenceField) {
+        confidenceField.value = DEFAULT_VALUES.CONFIDENCE_THRESHOLD;
+        console.log(`   Reset: Confidence Threshold = ${DEFAULT_VALUES.CONFIDENCE_THRESHOLD}%`);
+    }
 
     const stopLossField = document.querySelector(`[name="${CONFIG_FIELDS.STOP_LOSS}"]`);
-    if (stopLossField) stopLossField.value = DEFAULT_VALUES.STOP_LOSS;
+    if (stopLossField) {
+        stopLossField.value = DEFAULT_VALUES.STOP_LOSS;
+        console.log(`   Reset: Stop Loss = ${DEFAULT_VALUES.STOP_LOSS}%`);
+    }
 
     const takeProfitField = document.querySelector(`[name="${CONFIG_FIELDS.TAKE_PROFIT}"]`);
-    if (takeProfitField) takeProfitField.value = DEFAULT_VALUES.TAKE_PROFIT;
+    if (takeProfitField) {
+        takeProfitField.value = DEFAULT_VALUES.TAKE_PROFIT;
+        console.log(`   Reset: Take Profit = ${DEFAULT_VALUES.TAKE_PROFIT}%`);
+    }
 
     // Update risk indicator with new values
     updateRiskIndicator();
+
+    console.log('✅ Form reset completed');
+    logConfigurationSnapshot();
 
     // Show confirmation
     showToast('Form reset to default values', 'info'); // From common-utils.js
@@ -377,21 +553,49 @@ function resetForm() {
  * Sets up event listeners and performs initial risk assessment
  */
 function initializeConfigPage() {
-    console.log('Initializing paper trading configuration page...');
+    console.log('\n' + '═'.repeat(70));
+    console.log('🚀 PAPER TRADING CONFIGURATION PAGE - INITIALIZING');
+    console.log('═'.repeat(70));
+    console.log('📅 Date:', new Date().toLocaleString());
+    console.log('🔍 Logging: ENABLED (All configuration changes will be logged)');
+    console.log('═'.repeat(70) + '\n');
 
     // Initialize mode synchronization
     initializeModeSync();
 
     // Initial risk indicator calculation
+    console.log('📊 Calculating initial risk assessment...');
     updateRiskIndicator();
 
-    // Update risk indicator when any parameter changes
+    // Log initial configuration state
+    logConfigurationSnapshot();
+
+    // Add event listeners for ALL form elements with logging
+    console.log('🎯 Setting up event listeners for configuration changes...');
+
+    let listenerCount = 0;
     document.querySelectorAll('input, select').forEach(element => {
-        element.addEventListener('change', updateRiskIndicator);
-        element.addEventListener('input', updateRiskIndicator);
+        const fieldName = element.name || element.id || 'unknown';
+        const displayName = FRIENDLY_FIELD_NAMES[fieldName] || fieldName;
+
+        // Log on change (when user finishes adjusting)
+        element.addEventListener('change', function () {
+            logConfigurationChange(this, false);
+            updateRiskIndicator();
+        });
+
+        // Log on input (real-time as user types/slides)
+        element.addEventListener('input', function () {
+            logConfigurationChange(this, true);
+            // Only update risk indicator, don't log it again to avoid spam
+        });
+
+        listenerCount++;
     });
 
-    console.log('Paper trading configuration page initialized successfully');
+    console.log(`✅ Event listeners attached to ${listenerCount} form elements`);
+    console.log('✅ Paper trading configuration page initialized successfully');
+    console.log('🎯 Ready to track configuration changes!\n');
 }
 
 // Auto-initialize when DOM is ready
@@ -407,3 +611,9 @@ window.startBot = startBot;
 window.stopBot = stopBot;
 window.saveAsNew = saveAsNew;
 window.resetForm = resetForm;
+
+// Export logging functions for debugging
+window.logConfigurationSnapshot = logConfigurationSnapshot;
+
+// Log that the script has loaded
+console.log('📦 paper_trading_configuration.js loaded successfully');

@@ -9,18 +9,15 @@ File: paper_trading/api/data_api.py
 
 import logging
 from datetime import datetime, timedelta
-from decimal import Decimal
-from typing import Dict, Any, Optional, List
 import asyncio
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.http import require_http_methods
-from django.db.models import Q, Sum, Avg, Count
+from django.db.models import Sum
 from django.utils import timezone
 
 # Import models
 from ..models import (
-    PaperTradingAccount,
     PaperTrade,
     PaperPosition,
     PaperAIThoughtLog,
@@ -30,12 +27,10 @@ from ..models import (
 # Import constants for field names
 from ..constants import (
     ThoughtLogFields,
-    TradeFields,
-    SessionStatus,
 )
 
 # Import utilities
-from ..utils import get_default_user, get_single_trading_account
+from ..utils import get_single_trading_account
 from ..services.price_feed_service import PriceFeedService
 
 logger = logging.getLogger(__name__)
@@ -49,32 +44,31 @@ logger = logging.getLogger(__name__)
 def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for AI thought logs with real-time updates.
-    
+
     Returns recent AI decision-making thoughts for transparency.
-    
+
     Query Parameters:
         limit (int): Number of thoughts to return (default: 10)
         since (datetime): Return thoughts after this timestamp
-        
+
     Returns:
         JsonResponse: List of AI thought logs with reasoning
     """
     try:
-        # Get default user and account
-        user = get_default_user()
+        # Get account
         account = get_single_trading_account()
-        
+
         # Parse query parameters
         limit = int(request.GET.get('limit', 10))
         limit = min(limit, 100)  # Cap at 100 for performance
-        
+
         since_param = request.GET.get('since')
-        
+
         # Build query
         thoughts_query = PaperAIThoughtLog.objects.filter(
             account=account
         ).select_related('account')
-        
+
         # Filter by timestamp if provided
         if since_param:
             try:
@@ -84,10 +78,10 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
                 )
             except ValueError:
                 logger.warning(f"Invalid 'since' parameter: {since_param}")
-        
+
         # Get most recent thoughts
         thoughts = thoughts_query.order_by('-created_at')[:limit]
-        
+
         # Format thoughts for response
         thoughts_data = []
         for thought in thoughts:
@@ -110,14 +104,14 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
                 ThoughtLogFields.CREATED_AT: thought.created_at.isoformat(),
                 ThoughtLogFields.ANALYSIS_TIME_MS: thought.analysis_time_ms or 0,
             })
-        
+
         logger.debug(f"Fetched {len(thoughts_data)} AI thoughts")
         return JsonResponse({
             'success': True,
             'thoughts': thoughts_data,
             'count': len(thoughts_data)
         })
-        
+
     except Exception as e:
         logger.error(f"Error in AI thoughts API: {e}", exc_info=True)
         return JsonResponse({
@@ -134,43 +128,42 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
 def api_portfolio_data(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for complete portfolio state.
-    
+
     Returns current portfolio holdings, cash balance, and total value.
-    
+
     Returns:
         JsonResponse: Portfolio summary with all positions
     """
     try:
         account = get_single_trading_account()
-        
-        # Get all open positions
+
+        # Get all open positions - FIXED: Use is_open=True instead of status='OPEN'
         open_positions = PaperPosition.objects.filter(
             account=account,
-            status='OPEN'
+            is_open=True
         ).order_by('-current_value_usd')
-        
-        # Format positions
+
+        # Format positions - FIXED: Use correct field names
         positions_data = []
         for position in open_positions:
             positions_data.append({
                 'position_id': str(position.position_id),
                 'token_symbol': position.token_symbol,
                 'token_address': position.token_address,
-                'amount_token': float(position.amount_token),
-                'entry_price': float(position.entry_price),
-                'current_price': float(position.current_price),
+                'quantity': float(position.quantity),  # FIXED: Was amount_token
+                'average_entry_price_usd': float(position.average_entry_price_usd),  # FIXED: Was entry_price
+                'current_price_usd': float(position.current_price_usd),  # FIXED: Was current_price
                 'current_value_usd': float(position.current_value_usd),
-                'total_cost_usd': float(position.total_cost_usd),
+                'total_invested_usd': float(position.total_invested_usd),  # FIXED: Was total_cost_usd
                 'unrealized_pnl_usd': float(position.unrealized_pnl_usd),
-                'unrealized_pnl_percent': float(position.unrealized_pnl_percent),
                 'opened_at': position.opened_at.isoformat(),
             })
-        
+
         # Calculate totals
         total_value = sum(float(p.current_value_usd) for p in open_positions)
         cash_balance = float(account.current_balance_usd)
         portfolio_value = total_value + cash_balance
-        
+
         return JsonResponse({
             'success': True,
             'portfolio': {
@@ -181,7 +174,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
                 'positions_count': len(positions_data),
             }
         })
-        
+
     except Exception as e:
         logger.error(f"Error in portfolio data API: {e}", exc_info=True)
         return JsonResponse({
@@ -198,73 +191,70 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
 def api_trades_data(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for trade history with filtering.
-    
+
     Query Parameters:
         limit (int): Number of trades to return (default: 50)
-        decision_type (str): Filter by BUY, SELL, etc.
         status (str): Filter by trade status
         since (datetime): Trades after this timestamp
-        
+
     Returns:
         JsonResponse: List of trades with details
     """
     try:
         account = get_single_trading_account()
-        
+
         # Parse query parameters
         limit = int(request.GET.get('limit', 50))
         limit = min(limit, 500)
-        
-        decision_type = request.GET.get('decision_type')
+
         status = request.GET.get('status')
         since_param = request.GET.get('since')
-        
+
         # Build query
         trades_query = PaperTrade.objects.filter(
             account=account
-        ).select_related('account', 'session')
-        
+        ).select_related('account')
+
         # Apply filters
-        if decision_type:
-            trades_query = trades_query.filter(decision_type=decision_type)
-        
         if status:
             trades_query = trades_query.filter(status=status)
-        
+
         if since_param:
             try:
                 since_dt = datetime.fromisoformat(since_param.replace('Z', '+00:00'))
                 trades_query = trades_query.filter(executed_at__gt=since_dt)
             except ValueError:
                 logger.warning(f"Invalid 'since' parameter: {since_param}")
-        
+
         # Get trades
-        trades = trades_query.order_by('-executed_at')[:limit]
-        
-        # Format trades
+        trades = trades_query.order_by('-created_at')[:limit]
+
+        # Format trades - FIXED: Use correct field names from PaperTrade model
         trades_data = []
         for trade in trades:
             trades_data.append({
-                TradeFields.TRADE_ID: str(trade.trade_id),
-                TradeFields.DECISION_TYPE: trade.decision_type,
-                TradeFields.TOKEN_SYMBOL: trade.token_symbol,
-                TradeFields.TOKEN_ADDRESS: trade.token_address,
-                TradeFields.AMOUNT_TOKEN: float(trade.amount_token),
-                TradeFields.AMOUNT_USD: float(trade.amount_usd),
-                TradeFields.ENTRY_PRICE: float(trade.entry_price) if trade.entry_price else None,
-                TradeFields.EXIT_PRICE: float(trade.exit_price) if trade.exit_price else None,
-                TradeFields.STATUS: trade.status,
-                TradeFields.EXECUTED_AT: trade.executed_at.isoformat(),
-                TradeFields.PROFIT_LOSS_USD: float(trade.profit_loss_usd) if trade.profit_loss_usd else 0,
-                TradeFields.PROFIT_LOSS_PERCENT: float(trade.profit_loss_percent) if trade.profit_loss_percent else 0,
+                'trade_id': str(trade.trade_id),
+                'trade_type': trade.trade_type,
+                'token_in_symbol': trade.token_in_symbol,
+                'token_in_address': trade.token_in_address,
+                'token_out_symbol': trade.token_out_symbol,
+                'token_out_address': trade.token_out_address,
+                'amount_in': float(trade.amount_in),
+                'amount_in_usd': float(trade.amount_in_usd),
+                'expected_amount_out': float(trade.expected_amount_out),
+                'actual_amount_out': float(trade.actual_amount_out) if trade.actual_amount_out else None,
+                'status': trade.status,
+                'executed_at': trade.executed_at.isoformat() if trade.executed_at else None,
+                'simulated_gas_cost_usd': float(trade.simulated_gas_cost_usd),
+                'simulated_slippage_percent': float(trade.simulated_slippage_percent),
             })
-        
+
         return JsonResponse({
             'success': True,
             'trades': trades_data,
             'count': len(trades_data)
         })
-        
+
     except Exception as e:
         logger.error(f"Error in trades data API: {e}", exc_info=True)
         return JsonResponse({
@@ -281,38 +271,39 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
 def api_recent_trades(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for most recent trades (last 24 hours).
-    
+
     Returns:
         JsonResponse: Recent trades list
     """
     try:
         account = get_single_trading_account()
-        
+
         # Get trades from last 24 hours
         since_time = timezone.now() - timedelta(hours=24)
         recent_trades = PaperTrade.objects.filter(
             account=account,
-            executed_at__gte=since_time
-        ).order_by('-executed_at')[:20]
-        
-        # Format trades
+            created_at__gte=since_time
+        ).order_by('-created_at')[:20]
+
+        # Format trades - FIXED: Use correct field names
         trades_data = []
         for trade in recent_trades:
             trades_data.append({
                 'trade_id': str(trade.trade_id),
-                'decision_type': trade.decision_type,
-                'token_symbol': trade.token_symbol,
-                'amount_usd': float(trade.amount_usd),
-                'executed_at': trade.executed_at.isoformat(),
-                'profit_loss_usd': float(trade.profit_loss_usd) if trade.profit_loss_usd else 0,
+                'trade_type': trade.trade_type,
+                'token_in_symbol': trade.token_in_symbol,
+                'token_out_symbol': trade.token_out_symbol,
+                'amount_in_usd': float(trade.amount_in_usd),
+                'executed_at': trade.executed_at.isoformat() if trade.executed_at else None,
+                'status': trade.status,
             })
-        
+
         return JsonResponse({
             'success': True,
             'trades': trades_data,
             'count': len(trades_data)
         })
-        
+
     except Exception as e:
         logger.error(f"Error in recent trades API: {e}", exc_info=True)
         return JsonResponse({
@@ -329,40 +320,39 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
 def api_open_positions(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for current open positions.
-    
+
     Returns:
         JsonResponse: List of open positions with current values
     """
     try:
         account = get_single_trading_account()
-        
-        # Get all open positions
+
+        # Get all open positions - FIXED: Use is_open=True instead of status='OPEN'
         open_positions = PaperPosition.objects.filter(
             account=account,
-            status='OPEN'
+            is_open=True
         ).order_by('-current_value_usd')
-        
-        # Format positions
+
+        # Format positions - FIXED: Use correct field names
         positions_data = []
         for position in open_positions:
             positions_data.append({
                 'position_id': str(position.position_id),
                 'token_symbol': position.token_symbol,
-                'amount_token': float(position.amount_token),
-                'entry_price': float(position.entry_price),
-                'current_price': float(position.current_price),
+                'quantity': float(position.quantity),  # FIXED: Was amount_token
+                'average_entry_price_usd': float(position.average_entry_price_usd),  # FIXED: Was entry_price
+                'current_price_usd': float(position.current_price_usd),  # FIXED: Was current_price
                 'current_value_usd': float(position.current_value_usd),
                 'unrealized_pnl_usd': float(position.unrealized_pnl_usd),
-                'unrealized_pnl_percent': float(position.unrealized_pnl_percent),
                 'opened_at': position.opened_at.isoformat(),
             })
-        
+
         return JsonResponse({
             'success': True,
             'positions': positions_data,
             'count': len(positions_data)
         })
-        
+
     except Exception as e:
         logger.error(f"Error in open positions API: {e}", exc_info=True)
         return JsonResponse({
@@ -379,34 +369,35 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
 def api_metrics(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for key performance metrics.
-    
+
     Returns:
         JsonResponse: Dashboard KPIs and statistics
     """
     try:
         account = get_single_trading_account()
-        
+
         # Calculate basic metrics
         total_trades = PaperTrade.objects.filter(account=account).count()
-        winning_trades = PaperTrade.objects.filter(
-            account=account,
-            profit_loss_usd__gt=0
-        ).count()
-        
+
+        # FIXED: Can't filter by profit_loss_usd since it doesn't exist
+        # For now, we'll use account-level statistics
+        winning_trades = account.winning_trades
+        losing_trades = account.losing_trades
+
         # Calculate win rate
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
-        
-        # Get total P&L
+
+        # Get total P&L from account
         total_pnl = float(account.total_profit_loss_usd)
-        
-        # Get open positions value
+
+        # Get open positions value - FIXED: Use is_open=True
         open_positions_value = PaperPosition.objects.filter(
             account=account,
-            status='OPEN'
+            is_open=True
         ).aggregate(total=Sum('current_value_usd'))['total'] or 0
-        
+
         portfolio_value = float(account.current_balance_usd) + float(open_positions_value)
-        
+
         return JsonResponse({
             'success': True,
             'metrics': {
@@ -415,12 +406,12 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
                 'total_pnl': total_pnl,
                 'total_trades': total_trades,
                 'winning_trades': winning_trades,
-                'losing_trades': total_trades - winning_trades,
+                'losing_trades': losing_trades,
                 'win_rate': round(win_rate, 2),
-                'roi': float(account.get_roi()) if hasattr(account, 'get_roi') else 0,
+                'roi': float(account.get_roi()),
             }
         })
-        
+
     except Exception as e:
         logger.error(f"Error in metrics API: {e}", exc_info=True)
         return JsonResponse({
@@ -437,60 +428,55 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
 def api_performance_metrics(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for detailed performance metrics.
-    
+
     Returns:
         JsonResponse: Comprehensive performance statistics
     """
     try:
         account = get_single_trading_account()
-        
+
         # Get latest performance metrics
         latest_metrics = PaperPerformanceMetrics.objects.filter(
             account=account
         ).order_by('-updated_at').first()
-        
+
         if not latest_metrics:
             return JsonResponse({
                 'success': True,
                 'metrics': {},
                 'message': 'No performance metrics calculated yet'
             })
-        
+
         # Format metrics
         metrics_data = {
             'total_pnl': float(latest_metrics.total_pnl_usd),
-            'total_return_percent': float(latest_metrics.total_return_percent),
             'win_rate': float(latest_metrics.win_rate),
             'profit_factor': float(latest_metrics.profit_factor) if latest_metrics.profit_factor else 0,
             'sharpe_ratio': float(latest_metrics.sharpe_ratio) if latest_metrics.sharpe_ratio else 0,
             'max_drawdown': float(latest_metrics.max_drawdown_percent) if latest_metrics.max_drawdown_percent else 0,
-            'avg_win': float(latest_metrics.avg_win_usd) if latest_metrics.avg_win_usd else 0,
-            'avg_loss': float(latest_metrics.avg_loss_usd) if latest_metrics.avg_loss_usd else 0,
-            'largest_win': float(latest_metrics.largest_win_usd) if latest_metrics.largest_win_usd else 0,
-            'largest_loss': float(latest_metrics.largest_loss_usd) if latest_metrics.largest_loss_usd else 0,
             'total_trades': latest_metrics.total_trades,
             'winning_trades': latest_metrics.winning_trades,
             'losing_trades': latest_metrics.losing_trades,
         }
-        
+
         # Add account-level stats
         metrics_data['account_stats'] = {
             'total_pnl': float(account.total_profit_loss_usd),
-            'total_return': float(account.get_roi()) if hasattr(account, 'get_roi') else 0,
+            'total_return': float(account.get_roi()),
             'current_balance': float(account.current_balance_usd),
             'initial_balance': float(account.initial_balance_usd),
             'total_trades': account.total_trades,
             'successful_trades': account.winning_trades,
             'failed_trades': account.losing_trades,
-            'win_rate': float(account.get_win_rate()) if hasattr(account, 'get_win_rate') else 0,
+            'win_rate': float(account.get_win_rate()),
         }
-        
+
         logger.debug("Performance metrics fetched")
         return JsonResponse({
             'success': True,
             'metrics': metrics_data
         })
-        
+
     except Exception as e:
         logger.error(f"Error in performance metrics API: {e}", exc_info=True)
         return JsonResponse({
@@ -507,35 +493,62 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
 def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
     """
     API endpoint for token price lookup.
-    
+
     Args:
-        token_symbol: Token symbol to look up
-        
+        token_symbol: Token symbol to look up (e.g., 'WETH', 'USDC')
+
     Returns:
         JsonResponse: Current token price data
     """
+    # Initialize to None to avoid unbound variable warning
+    price_service = None
+
     try:
-        # Initialize price service
-        price_service = PriceFeedService()
-        
-        # Get token price
-        price_data = asyncio.run(price_service.get_token_price(token_symbol))
-        
-        if not price_data:
+        # Import DEFAULT_CHAIN_ID from Django settings
+        from django.conf import settings
+        chain_id = settings.DEFAULT_CHAIN_ID
+
+        # Initialize price service with required chain_id
+        price_service = PriceFeedService(chain_id=chain_id)
+
+        # Get token address from the service's token mapping
+        token_addresses = price_service.token_addresses
+        token_address = token_addresses.get(token_symbol.upper())
+
+        if not token_address:
             return JsonResponse({
                 'success': False,
-                'error': f'Price not found for {token_symbol}'
+                'error': f'Token {token_symbol} not found in configured tokens for chain {chain_id}'
             }, status=404)
-        
+
+        # Get token price using correct method signature
+        price = asyncio.run(price_service.get_token_price(
+            token_address=token_address,
+            token_symbol=token_symbol.upper()
+        ))
+
+        if not price:
+            return JsonResponse({
+                'success': False,
+                'error': f'Price not available for {token_symbol}'
+            }, status=404)
+
         return JsonResponse({
             'success': True,
             'token': token_symbol,
-            'price': price_data
+            'price': float(price)
         })
-        
+
     except Exception as e:
         logger.error(f"Error in token price API: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
             'error': str(e)
         }, status=500)
+    finally:
+        # Cleanup: Close the price service session if it was created
+        if price_service is not None:
+            try:
+                asyncio.run(price_service.close())
+            except Exception:
+                pass
