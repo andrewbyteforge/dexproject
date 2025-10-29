@@ -5,6 +5,7 @@ This module provides Celery tasks for running and controlling the paper trading 
 Integrates with the existing bot infrastructure to enable API-driven bot control.
 
 UPDATED: Added periodic position price update task with real-time price fetching
+FIXED: Added intel_level and config_params parameters to run_paper_trading_bot task
 
 File: dexproject/paper_trading/tasks.py
 """
@@ -14,7 +15,7 @@ import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 from decimal import Decimal
 from datetime import timedelta
-from django.conf import settings  # Add at top
+from django.conf import settings
 from celery import shared_task
 from django.utils import timezone
 from django.core.cache import cache
@@ -45,7 +46,9 @@ def run_paper_trading_bot(
     self,
     session_id: str,
     user_id: int,
-    runtime_minutes: Optional[int] = None
+    runtime_minutes: Optional[int] = None,
+    config_params: Optional[Dict[str, Any]] = None,  # ← ADD THIS
+    intel_level: int = 5  # ← ADD THIS
 ) -> Dict[str, Any]:
     """
     Run the paper trading bot for a specific session.
@@ -54,10 +57,15 @@ def run_paper_trading_bot(
     initialization, execution, and cleanup. It can run indefinitely or
     for a specified duration.
 
+    FIXED: Now accepts intel_level and config_params from api_start_bot() to properly
+    use the configuration from the dashboard instead of hardcoded values.
+
     Args:
         session_id: UUID of the trading session
         user_id: ID of the user running the bot
         runtime_minutes: Optional runtime limit in minutes (None for unlimited)
+        config_params: Optional configuration parameters from PaperStrategyConfiguration
+        intel_level: Intelligence level (1-10) from trading mode, default 5
 
     Returns:
         Dict containing execution results and statistics
@@ -67,7 +75,10 @@ def run_paper_trading_bot(
         RuntimeError: If bot initialization or execution fails
     """
     task_id = self.request.id
-    logger.info(f"Starting paper trading bot task {task_id} for session {session_id}")
+    logger.info(
+        f"Starting paper trading bot task {task_id} for session {session_id} "
+        f"with intel_level={intel_level}"
+    )
 
     try:
         # Retrieve session with error handling
@@ -115,23 +126,29 @@ def run_paper_trading_bot(
         }, timeout=3600)  # 1 hour timeout
 
         # Initialize the bot with session configuration
-        logger.info(f"Initializing bot for account {session.account.account_id}")
+        logger.info(
+            f"Initializing bot for account {session.account.account_id} "
+            f"with intel_level={intel_level}"
+        )
 
         try:
-            # Initialize bot with account_name (required parameter)
-            
+            # Initialize bot with account_name and intel_level from configuration
+            # ✅ FIXED: Use intel_level parameter instead of hardcoded 5
             bot = EnhancedPaperTradingBot(
                 account_name=session.account.name,
-                intel_level=5,
+                intel_level=intel_level,  # ← NOW USES CONFIGURATION VALUE!
                 use_real_prices=True,
-                chain_id=settings.PAPER_TRADING['DEFAULTS']['DEFAULT_CHAIN_ID']  # ← NEW
+                chain_id=settings.PAPER_TRADING['DEFAULTS']['DEFAULT_CHAIN_ID']
             )
 
             # Initialize bot systems
             if not bot.initialize():
                 raise RuntimeError("Bot initialization failed")
 
-            logger.info(f"Bot initialized successfully for session {session_id}")
+            logger.info(
+                f"Bot initialized successfully for session {session_id} "
+                f"using intel_level={intel_level}"
+            )
 
         except Exception as e:
             logger.error(f"Bot initialization failed: {e}", exc_info=True)
@@ -249,7 +266,8 @@ def run_paper_trading_bot(
 
             logger.info(
                 f"Bot session {session_id} completed: "
-                f"duration={duration:.1f}s, ticks={tick_count}, trades={trades_executed}"
+                f"duration={duration:.1f}s, ticks={tick_count}, trades={trades_executed}, "
+                f"intel_level={intel_level}"
             )
 
             return {
@@ -260,6 +278,7 @@ def run_paper_trading_bot(
                 'trades_executed': trades_executed,
                 'final_balance': float(session.account.current_balance_usd),
                 'pnl': float(session_pnl),
+                'intel_level': intel_level,
                 'errors': errors
             }
 
