@@ -23,7 +23,7 @@
                             </h1>
                             <p class="text-muted mb-0">Configure your paper trading bot settings and strategies</p>
                         </div>
-                        
+                        <div class="d-flex flex-wrap gap-2">
                         <!-- Bot Controls -->
                         <div class="bot-controls">
                             <div class="bot-status-display">
@@ -46,19 +46,48 @@
                                 {% endif %}
                             </div>
                             
-                            {% if active_session %}
-                                <button class="btn btn-danger" onclick="stopBot()">
-                                    <i class="bi bi-stop-circle me-2"></i>Stop Bot
+                            <!-- ✅ ADD THIS LINE -->
+                            <div class="d-flex flex-wrap gap-2">
+                            
+                                {% if active_session %}
+                                    <button class="btn btn-danger" onclick="stopBot()">
+                                        <i class="bi bi-stop-circle me-2"></i>Stop Bot
+                                    </button>
+                                {% else %}
+                                    <button class="btn btn-success" onclick="startBot()">
+                                        <i class="bi bi-play-circle me-2"></i>Start Bot
+                                    </button>
+                                {% endif %}
+                                
+                                <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#resetAccountModal">
+                                    <i class="bi bi-arrow-clockwise me-2"></i>
+                                    Reset & Add Funds
                                 </button>
-                            {% else %}
-                                <button class="btn btn-success" onclick="startBot()">
-                                    <i class="bi bi-play-circle me-2"></i>Start Bot
-                                </button>
-                            {% endif %}
+                                
+                                <a href="/paper-trading/" class="btn btn-outline-primary">
+                                    <i class="bi bi-speedometer2 me-2"></i>Dashboard
+                                </a>
+                                
+                                <a href="{% url 'paper_trading:sessions' %}" class="btn btn-outline-info">
+                                    <i class="bi bi-clock-history me-2"></i>Sessions
+                                </a>
+                            
+                            <!-- ✅ ADD THIS LINE -->
+                            </div>
+                            
+                        </div>
+
+                            <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#resetAccountModal">
+                                <i class="bi bi-arrow-clockwise me-2"></i>
+                                Reset & Add Funds
+                            </button>
                             
                             <a href="/paper-trading/" class="btn btn-outline-primary">
-                                <i class="bi bi-speedometer2 me-2"></i>Dashboard
+                                <i class="bi bi-speedometer2 me-2"></i>Dashboard                                
                             </a>
+
+     
+                            
                         </div>
                     </div>
                 </div>
@@ -525,5 +554,6 @@
 
 {% block extra_js %}
 <script src="{% static 'js/paper_trading_configuration.js' %}"></script>
+<script src="{% static 'js/paper_trading_reset.js' %}"></script>
 
 {% endblock %}

@@ -16,6 +16,7 @@ from django.shortcuts import render
 from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required  # ADDED: For sessions_history
 from django.db import connection
 from django.db.models import Count, Sum
 
@@ -180,6 +181,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'active_session': active_session,
             'recent_trades': recent_trades,
             'open_positions': open_positions,
+            'open_positions_count': len(open_positions),  # ADDED: For reset modal
             'performance': performance,
             'recent_thoughts': formatted_thoughts,
             'total_trades': total_trades,  # Total trade executions
@@ -203,3 +205,43 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
         logger.error(f"Error loading paper trading dashboard: {e}", exc_info=True)
         messages.error(request, f"Error loading dashboard: {str(e)}")
         return render(request, 'paper_trading/error.html', {"error": str(e)})
+
+
+# =============================================================================
+# SESSIONS HISTORY VIEW
+# =============================================================================
+
+@login_required
+def sessions_history(request: HttpRequest) -> HttpResponse:
+    """
+    Render the sessions history and comparison page.
+    
+    This page allows users to view and compare performance across different
+    trading sessions. Data is loaded dynamically via the API endpoint
+    /paper-trading/api/sessions/history/
+    
+    URL: GET /paper-trading/sessions/
+    Django Name: paper_trading:sessions
+    
+    Args:
+        request: Django HTTP request
+        
+    Returns:
+        Rendered sessions_analysis.html template with context data
+    """
+    try:
+        context = {
+            'page_title': 'Sessions History',
+            'active_page': 'sessions'
+        }
+        
+        logger.info("Rendering sessions history page")
+        return render(request, 'paper_trading/sessions_analysis.html', context)
+        
+    except Exception as e:
+        logger.error(f"Error rendering sessions page: {e}", exc_info=True)
+        context = {
+            'error': 'Failed to load sessions page',
+            'error_details': str(e)
+        }
+        return render(request, 'paper_trading/sessions_analysis.html', context, status=500)

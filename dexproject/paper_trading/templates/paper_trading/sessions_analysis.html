@@ -1,0 +1,160 @@
+{% extends 'paper_trading/base.html' %}
+{% load static %}
+
+{% block title %}Sessions History - Paper Trading{% endblock %}
+
+{% block extra_css %}
+<style>
+    .session-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 1.5rem;
+        transition: all 0.3s;
+        cursor: pointer;
+    }
+    
+    .session-card:hover {
+        border-color: var(--paper-primary);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(0, 212, 170, 0.2);
+    }
+    
+    .session-card.active {
+        border-color: var(--paper-primary);
+        background: rgba(0, 212, 170, 0.1);
+    }
+    
+    .session-checkbox {
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+    }
+    
+    .chart-container {
+        position: relative;
+        height: 400px;
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border-radius: 15px;
+        padding: 2rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .stat-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        font-size: 0.875rem;
+    }
+    
+    .profit-positive { color: var(--paper-success); }
+    .profit-negative { color: var(--paper-danger); }
+    .profit-neutral { color: #94a3b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-3">
+    
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div>
+                    <h1 class="h2 mb-2">
+                        <i class="bi bi-graph-up me-2"></i>
+                        Sessions History & Comparison
+                    </h1>
+                    <p class="text-muted mb-0">Compare performance across different trading sessions</p>
+                </div>
+                <a href="{% url 'paper_trading:dashboard' %}" class="btn btn-outline-light">
+                    <i class="bi bi-arrow-left me-1"></i>
+                    Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chart Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card-glass">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="mb-0">
+                            <i class="bi bi-graph-up-arrow me-2"></i>
+                            Performance Comparison
+                        </h5>
+                        <div class="btn-group" role="group">
+                            <input type="radio" class="btn-check" name="chartType" id="chartBalance" value="balance" checked autocomplete="off">
+                            <label class="btn btn-outline-primary btn-sm" for="chartBalance">Balance</label>
+                            
+                            <input type="radio" class="btn-check" name="chartType" id="chartPnL" value="pnl" autocomplete="off">
+                            <label class="btn btn-outline-primary btn-sm" for="chartPnL">P&L</label>
+                            
+                            <input type="radio" class="btn-check" name="chartType" id="chartWinRate" value="winrate" autocomplete="off">
+                            <label class="btn btn-outline-primary btn-sm" for="chartWinRate">Win Rate</label>
+                        </div>
+                    </div>
+                    
+                    <div class="chart-container">
+                        <canvas id="sessionsChart"></canvas>
+                    </div>
+                    
+                    <div class="text-center mt-3">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Select sessions below to add/remove from comparison
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sessions List -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card-glass">
+                <div class="card-body">
+                    <h5 class="mb-4">
+                        <i class="bi bi-clock-history me-2"></i>
+                        All Sessions
+                        <span class="badge bg-secondary ms-2" id="totalSessions">0</span>
+                    </h5>
+                    
+                    <!-- Loading State -->
+                    <div id="loadingState" class="text-center py-5">
+                        <div class="spinner-border text-primary mb-3" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="text-muted">Loading sessions...</p>
+                    </div>
+                    
+                    <!-- Empty State -->
+                    <div id="emptyState" class="text-center py-5" style="display: none;">
+                        <i class="bi bi-inbox fs-1 text-muted mb-3"></i>
+                        <p class="text-muted">No completed sessions yet.</p>
+                        <p class="text-muted small">Start trading and complete a session to see it here!</p>
+                    </div>
+                    
+                    <!-- Sessions Grid -->
+                    <div id="sessionsGrid" class="row g-3" style="display: none;">
+                        <!-- Sessions will be dynamically inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/paper_trading_sessions.js' %}"></script>
+{% endblock %}
