@@ -38,6 +38,8 @@ from .views_analytics import (
 
 logger = logging.getLogger(__name__)
 
+from .views_sessions import sessions_history_view
+
 # =============================================================================
 # PUBLIC API - All functions are re-exported for backward compatibility
 # =============================================================================

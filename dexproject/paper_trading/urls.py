@@ -59,6 +59,10 @@ urlpatterns = [
     # GET: /paper-trading/analytics/
     path('analytics/', views.analytics_view, name='analytics'),
 
+    # Sessions history page - compare performance across sessions
+    # GET: /paper-trading/sessions/
+    path('sessions/', views.sessions_history_view, name='sessions'),
+
     # ==========================================================================
     # DATA API ENDPOINTS (from api/data_api.py)
     # RESTful APIs for real-time data access
