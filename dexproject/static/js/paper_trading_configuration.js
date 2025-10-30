@@ -32,6 +32,7 @@ const CONFIG_FIELDS = {
     CONFIDENCE_THRESHOLD: 'confidence_threshold',
     STOP_LOSS: 'stop_loss_percent',
     TAKE_PROFIT: 'take_profit_percent',
+    MAX_HOLD_HOURS: 'max_hold_hours',
     SAVE_AS_NEW: 'save_as_new'
 };
 
@@ -52,7 +53,8 @@ const DEFAULT_VALUES = {
     MAX_DAILY_TRADES: 20,
     CONFIDENCE_THRESHOLD: 60,
     STOP_LOSS: 5,
-    TAKE_PROFIT: 10
+    TAKE_PROFIT: 10,
+    MAX_HOLD_HOURS: 72
 };
 
 // Friendly field names for logging
@@ -533,6 +535,9 @@ function resetForm() {
         takeProfitField.value = DEFAULT_VALUES.TAKE_PROFIT;
         console.log(`   Reset: Take Profit = ${DEFAULT_VALUES.TAKE_PROFIT}%`);
     }
+
+    const maxHoldHoursField = document.querySelector(`[name="${CONFIG_FIELDS.MAX_HOLD_HOURS}"]`);
+    if (maxHoldHoursField) maxHoldHoursField.value = DEFAULT_VALUES.MAX_HOLD_HOURS;
 
     // Update risk indicator with new values
     updateRiskIndicator();

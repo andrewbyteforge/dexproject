@@ -481,13 +481,19 @@ class DecisionMaker:
             elif ratio > Decimal('1.2'):  # Moderate opportunity
                 position_size = base_size * Decimal('0.6')
             else:  # Minimal opportunity
-                position_size = base_size * Decimal('0.4')
-            
+                position_size = base_size * Decimal('0.4')            
+           
             # Adjust for volatility (higher volatility = smaller position)
-            volatility = self.converter.to_decimal(
-                context.volatility_index,
-                Decimal('50')
-            )
+            # Handle both MarketContext object and raw Decimal values
+            if hasattr(context, 'volatility_index'):
+                volatility = self.converter.to_decimal(
+                    context.volatility_index,
+                    Decimal('50')
+                )
+            else:
+                # If context is not a MarketContext, use default volatility
+                volatility = Decimal('50')
+                
             if volatility > 70:
                 position_size *= Decimal('0.7')
             elif volatility > 50:

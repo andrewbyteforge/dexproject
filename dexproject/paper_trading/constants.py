@@ -242,6 +242,7 @@ class StrategyConfigFields:
     CUSTOM_PARAMETERS: Final[str] = 'custom_parameters'
     CREATED_AT: Final[str] = 'created_at'
     UPDATED_AT: Final[str] = 'updated_at'
+    MAX_HOLD_HOURS: Final[str] = 'max_hold_hours'
 
 
 # =============================================================================
@@ -260,6 +261,7 @@ class ConfigAPIFields:
     MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
+    MAX_HOLD_HOURS: Final[str] = 'max_hold_hours'
     MAX_DAILY_TRADES: Final[str] = 'max_daily_trades'
     MAX_CONCURRENT_POSITIONS: Final[str] = 'max_concurrent_positions'
     CONFIDENCE_THRESHOLD: Final[str] = 'confidence_threshold'
@@ -315,6 +317,7 @@ class SessionMetadataFields:
     MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
+    MAX_HOLD_HOURS: Final[str] = 'max_hold_hours'
     MAX_DAILY_TRADES: Final[str] = 'max_daily_trades'
     CONFIDENCE_THRESHOLD: Final[str] = 'confidence_threshold'
 

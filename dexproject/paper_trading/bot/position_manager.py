@@ -268,9 +268,16 @@ class PositionManager:
                     )
 
                 # Check maximum hold time (24 hours default)
+                # Check maximum hold time (configurable via strategy config)
                 if position.opened_at:
                     hold_duration = timezone.now() - position.opened_at
-                    max_hold_hours = 24  # Default 24 hours
+                    
+                    # Get max hold hours from strategy config, default to 72 hours
+                    max_hold_hours = 72  # Default 72 hours (3 days)
+                    if self.strategy_config:
+                        max_hold_hours = int(
+                            getattr(self.strategy_config, 'max_hold_hours', 72)
+                        )
 
                     if hold_duration.total_seconds() > (max_hold_hours * 3600):
                         logger.info(
@@ -495,14 +502,14 @@ class PositionManager:
             )
 
             # Update account's total P&L
-            self.account.total_pnl_usd = total_unrealized_pnl + total_realized_pnl  # type: ignore[attr-defined]
-            self.account.save(update_fields=['total_pnl_usd'])
+            self.account.total_profit_loss_usd = total_unrealized_pnl + total_realized_pnl
+            self.account.save(update_fields=['total_profit_loss_usd'])
 
             logger.debug(
                 f"[ACCOUNT P&L] Updated: "
                 f"Unrealized=${total_unrealized_pnl:.2f}, "
                 f"Realized=${total_realized_pnl:.2f}, "
-                f"Total=${self.account.total_pnl_usd:.2f}"  # type: ignore[attr-defined]
+                f"Total=${self.account.total_profit_loss_usd:.2f}"
             )
 
         except Exception as e:

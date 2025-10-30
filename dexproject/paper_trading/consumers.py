@@ -446,33 +446,27 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
         """
         Get the single paper trading account for the system.
         
-        Since we're using a single-account setup, this always returns
-        the one account we have (Intel_Slider_Balanced).
+        Uses centralized utilities to ensure consistency across
+        the entire application (bot, API, dashboard, WebSocket).
+        
+        Returns:
+            PaperTradingAccount or None if creation failed
         """
         try:
-            # Get the single account (we only have one now)
-            account = PaperTradingAccount.objects.get(
-                account_id='f2ea4290-15b7-456c-bb28-43e96fc5c992'
-            )
+            # ✅ USE CENTRALIZED UTILITY - prevents hardcoded IDs
+            from paper_trading.utils import get_default_user, get_single_trading_account
+            
+            # Get the demo_user (same user the bot/dashboard uses)
+            user = get_default_user()
+            
+            # Get the single trading account
+            account = get_single_trading_account()
             
             logger.info(f"WebSocket using account: {account.name} ({account.account_id})")
             return account
             
-        except PaperTradingAccount.DoesNotExist:
-            # This shouldn't happen since we just verified the account exists
-            logger.error("Account f2ea4290-15b7-456c-bb28-43e96fc5c992 not found!")
-            
-            # Fallback: try to get any account
-            account = PaperTradingAccount.objects.first()
-            if account:
-                logger.warning(f"Using fallback account: {account.name} ({account.account_id})")
-                return account
-            else:
-                logger.error("No paper trading accounts found in database!")
-                return None
-                
         except Exception as e:
-            logger.error(f"Error getting account: {e}", exc_info=True)
+            logger.error(f"Error getting paper trading account: {e}", exc_info=True)
             return None
 
     @database_sync_to_async

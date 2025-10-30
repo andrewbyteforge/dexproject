@@ -405,6 +405,15 @@ class PaperStrategyConfiguration(models.Model):
         ],
         help_text="Default take profit percentage"
     )
+
+    max_hold_hours = models.IntegerField(
+        default=72,
+        validators=[
+            MinValueValidator(1),
+            MaxValueValidator(720)  # 30 days max
+        ],
+        help_text='Maximum hours to hold a position before auto-close (1-720 hours)'
+    )
     
     max_daily_trades = models.IntegerField(
         default=20,

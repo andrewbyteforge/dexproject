@@ -56,94 +56,38 @@ def get_default_user() -> User:
     return user
 
 
-def get_single_trading_account(user: Optional[User] = None) -> "PaperTradingAccount":
+def get_single_trading_account() -> "PaperTradingAccount":
     """
-    Get or create the single paper trading account for the application.
+    Get or create THE SINGLE paper trading account for demo_user.
     
-    This ensures only one account exists and is consistently used across
-    the entire application (bot, API, dashboard, WebSocket). Automatically
-    cleans up any duplicate accounts if they exist.
+    This ensures only ONE account exists and is used across the entire system.
+    Multiple accounts caused confusion with data showing in different places.
     
-    Args:
-        user: The user to get account for. If None, uses demo_user.
-        
     Returns:
-        PaperTradingAccount: The single account for this user
+        PaperTradingAccount: The single account instance
         
     Raises:
-        ImportError: If PaperTradingAccount model cannot be imported
-        
-    Note:
-        - Uses consistent account name 'My_Trading_Account'
-        - Default balance: $10,000 USD
-        - Automatically removes duplicate accounts if found
-        - Ensures account is always active
-        - Lazy imports model to avoid circular dependencies
-        
-    Example:
-        >>> account = get_single_trading_account()
-        >>> print(account.name)
-        'My_Trading_Account'
-        >>> print(account.current_balance_usd)
-        Decimal('10000.00')
+        RuntimeError: If multiple accounts exist (shouldn't happen)
     """
-    # Lazy import to avoid circular dependency issues
     from paper_trading.models import PaperTradingAccount
+    from django.contrib.auth.models import User
     
-    if user is None:
-        user = get_default_user()
+    # Get or create demo_user
+    user, _ = User.objects.get_or_create(
+        username='demo_user',
+        defaults={
+            'email': 'demo@papertrading.ai',
+            'first_name': 'Demo',
+            'last_name': 'User'
+        }
+    )
     
-    # Get all accounts for this user, ordered by creation date
-    accounts = PaperTradingAccount.objects.filter(user=user).order_by('created_at')
+    # Get all accounts for demo_user
+    accounts = PaperTradingAccount.objects.filter(user=user, is_active=True)
     
-    if accounts.exists():
-        # Use the first (oldest) account
-        # Safe to cast because exists() guarantees at least one result
-        account: "PaperTradingAccount" = cast("PaperTradingAccount", accounts.first())
-        
-        # Clean up any duplicates
-        if accounts.count() > 1:
-            logger.warning(
-                f"Found {accounts.count()} accounts for user {user.username}, "
-                f"cleaning up duplicates"
-            )
-            # Keep the first account, delete others
-            duplicate_count = 0
-            for duplicate in accounts[1:]:
-                logger.info(
-                    f"Removing duplicate account: {duplicate.name} "
-                    f"({duplicate.account_id})"
-                )
-                duplicate.delete()
-                duplicate_count += 1
-            
-            logger.info(f"Removed {duplicate_count} duplicate account(s)")
-        
-        # Ensure the account is active and has the consistent name
-        needs_update = False
-        if not account.is_active:
-            account.is_active = True
-            needs_update = True
-            logger.info(f"Reactivated account {account.account_id}")
-        
-        if account.name != 'My_Trading_Account':
-            old_name = account.name
-            account.name = 'My_Trading_Account'
-            needs_update = True
-            logger.info(
-                f"Updated account name from '{old_name}' to 'My_Trading_Account'"
-            )
-        
-        if needs_update:
-            account.save()
-        
-        logger.debug(
-            f"Using existing account: {account.name} ({account.account_id})"
-        )
-        
-    else:
-        # No account exists, create the single account
-        account: "PaperTradingAccount" = PaperTradingAccount.objects.create(
+    if accounts.count() == 0:
+        # No accounts exist - create the single account
+        account = PaperTradingAccount.objects.create(
             user=user,
             name='My_Trading_Account',
             initial_balance_usd=Decimal('10000.00'),
@@ -151,11 +95,34 @@ def get_single_trading_account(user: Optional[User] = None) -> "PaperTradingAcco
             is_active=True
         )
         logger.info(
-            f"Created new paper trading account: {account.name} "
-            f"({account.account_id}) for user {user.username}"
+            f"Created single paper trading account: {account.name} "
+            f"({account.account_id})"
         )
+        return account
     
-    return account
+    elif accounts.count() == 1:
+        # Perfect - exactly one account
+        account = accounts.first()
+        
+        # Standardize name if needed
+        if account.name != 'My_Trading_Account':
+            old_name = account.name
+            account.name = 'My_Trading_Account'
+            account.save()
+            logger.info(f"Renamed account from '{old_name}' to 'My_Trading_Account'")
+        
+        return account
+    
+    else:
+        # Multiple accounts exist - this shouldn't happen!
+        # Return the first one but log a warning
+        account = accounts.first()
+        logger.warning(
+            f"Found {accounts.count()} active accounts for demo_user! "
+            f"Using first: {account.name} ({account.account_id}). "
+            f"Run 'python manage.py cleanup_accounts' to fix."
+        )
+        return account
 
 
 def get_account_by_id(account_id: str) -> "PaperTradingAccount":

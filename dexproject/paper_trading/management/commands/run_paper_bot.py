@@ -381,6 +381,8 @@ class Command(BaseCommand):
         """
         Get existing account or create a new one.
         
+        FIXED: Always uses a single account for demo_user to prevent multiple accounts.
+        
         Args:
             options: Command options dictionary
             
@@ -396,7 +398,7 @@ class Command(BaseCommand):
                 account = PaperTradingAccount.objects.get(pk=options['account_id'])
                 action = 'Using existing'
             else:
-                # Create or get default account
+                # Get or create demo_user
                 user, _ = User.objects.get_or_create(
                     username='demo_user',
                     defaults={
@@ -406,45 +408,44 @@ class Command(BaseCommand):
                     }
                 )
                 
-                # Account name based on Intel level
-                intel_names = {
-                    range(1, 4): 'Cautious',
-                    range(4, 7): 'Balanced',
-                    range(7, 10): 'Aggressive',
-                    range(10, 11): 'Autonomous'
-                }
-                
-                account_suffix = 'Bot'
-                for range_obj, name in intel_names.items():
-                    if options['intel'] in range_obj:
-                        account_suffix = name
-                        break
-                
-                account_name = f"Intel_Slider_{account_suffix}"
-                
                 if options['create_account']:
-                    # Always create new account
+                    # Force create new account (only if user explicitly requested)
                     account = PaperTradingAccount.objects.create(
                         user=user,
-                        name=account_name,
+                        name='My_Trading_Account',  # Fixed name
                         initial_balance_usd=Decimal(str(options['initial_balance'])),
                         current_balance_usd=Decimal(str(options['initial_balance']))
                     )
                     action = 'Created'
-                else:
-                    # Get or create account
-                    account, created = PaperTradingAccount.objects.get_or_create(
-                        user=user,
-                        name=account_name,
-                        defaults={
-                            'initial_balance_usd': Decimal(str(options['initial_balance'])),
-                            'current_balance_usd': Decimal(str(options['initial_balance']))
-                        }
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f'✅ Created new account: {account.name}'
+                        )
                     )
-                    action = 'Created' if created else 'Using existing'
+                else:
+                    # FIXED: Use utility function to get single account
+                    from paper_trading.utils import get_single_trading_account
+                    
+                    try:
+                        account = get_single_trading_account()
+                        action = 'Using existing'
+                        self.stdout.write(
+                            self.style.SUCCESS(
+                                f'✅ Using single account: {account.name} '
+                                f'(ID: {account.account_id})'
+                            )
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to get single trading account: {e}")
+                        self.stdout.write(
+                            self.style.ERROR(
+                                f'❌ Failed to get account: {e}'
+                            )
+                        )
+                        return None
             
             # ================================================================
-            # HANDLE RESET
+            # HANDLE RESET (NOTE: This is at the same level as the if/else above!)
             # ================================================================
             if options['reset'] and account:
                 account.current_balance_usd = account.initial_balance_usd
@@ -472,7 +473,7 @@ class Command(BaseCommand):
             logger.exception("Error getting/creating account")
             self.stdout.write(self.style.ERROR(f'❌ Account error: {e}'))
             return None
-    
+
     def _display_configuration(self, account: PaperTradingAccount, options: dict):
         """
         Display the bot configuration.

@@ -350,6 +350,30 @@
                                 <div class="input-unit">%</div>
                             </div>
                         </div>
+                        
+                        <!-- Max Hold Time -->
+                        <div class="form-group-enhanced">
+                            <label class="form-label-enhanced">
+                                <span class="label-text">
+                                    <i class="bi bi-clock-history text-warning"></i>
+                                    Max Hold Time
+                                    <i class="bi bi-question-circle label-help" 
+                                       title="Maximum hours to hold a position before automatic exit"></i>
+                                </span>
+                            </label>
+                            <div class="input-with-unit">
+                                <input type="number" 
+                                       name="max_hold_hours" 
+                                       class="form-control" 
+                                       value="{{ strategy_config.max_hold_hours|default:72 }}"
+                                       min="1" 
+                                       max="720" 
+                                       step="1"
+                                       required>
+                                <div class="input-unit">hours</div>
+                            </div>
+                            <small class="text-muted">Auto-close positions after this many hours (1-720 hours = 30 days)</small>
+                        </div>
                     </div>
                     
                     <!-- Risk Indicator -->

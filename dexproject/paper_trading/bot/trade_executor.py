@@ -960,7 +960,7 @@ class TradeExecutor:
                 'account_id': str(self.account.account_id),
                 'current_balance': self.account.current_balance_usd,
                 'starting_balance': Decimal(str(starting_balance)),
-                'total_value': position_manager.get_total_portfolio_value(),
+                'total_value': position_manager.get_total_value(),
                 'position_count': position_manager.get_position_count(),
                 'open_positions': position_manager.positions,
             }

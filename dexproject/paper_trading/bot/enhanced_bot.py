@@ -397,44 +397,46 @@ class EnhancedPaperTradingBot:
     # COMPONENT INITIALIZATION METHODS
     # =========================================================================
 
+    # Current code creates accounts with 'paper_trader' username
+    # We need to use the centralized account utility instead
+
     def _load_account(self) -> None:
         """
         Load the single paper trading account for this user.
-
-        This ensures we always use the same account regardless of
-        account_name parameter, maintaining continuity across sessions.
+        
+        Uses centralized account utilities to ensure consistency across
+        the entire application (bot, API, dashboard, WebSocket).
 
         Raises:
             Exception: If account cannot be loaded or created
         """
         try:
-            user, _ = User.objects.get_or_create(
-                username='paper_trader',
-                defaults={'email': 'paper@trading.bot'}
-            )
-
-            # Get or create the account
-            account, created = PaperTradingAccount.objects.get_or_create(
-                user=user,
-                name=self.account_name,
-                defaults={
-                    'initial_balance_usd': Decimal('10000'),
-                    'current_balance_usd': Decimal('10000')
-                }
-            )
-
-            self.account = account
-
-            if created:
-                logger.info(f"[ACCOUNT] Created new account: {self.account_name}")
-            else:
-                logger.info(f"[ACCOUNT] Loaded existing account: {self.account_name}")
-
+            # ✅ USE CENTRALIZED UTILITY - prevents duplicates
+            from paper_trading.utils import get_default_user, get_single_trading_account
+            
+            # Get the demo_user (same user the dashboard uses)
+            user = get_default_user()
+            
+            # Get the single trading account for this user
+            # This will always return the same account, regardless of intel level
+            self.account = get_single_trading_account()
+            
+            logger.info(f"[ACCOUNT] Loaded account: {self.account.name}")
+            logger.info(f"[ACCOUNT] Account ID: {self.account.account_id}")
             logger.info(f"[ACCOUNT] Balance: ${self.account.current_balance_usd:,.2f}")
 
         except Exception as e:
-            logger.error(f"[ACCOUNT] Failed to load/create account: {e}", exc_info=True)
+            logger.error(f"[ACCOUNT] Failed to load account: {e}", exc_info=True)
             raise
+
+
+
+
+
+
+
+
+
 
     def _cleanup_duplicate_accounts(self) -> None:
         """

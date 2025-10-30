@@ -73,6 +73,7 @@ def log_new_configuration_values(config_data: Dict[str, Any]) -> None:
     logger.info(f"  💰 Max Position Size: {config_data.get('max_position_size_percent', 'N/A')}%")
     logger.info(f"  🛡️ Stop Loss: {config_data.get('stop_loss_percent', 'N/A')}%")
     logger.info(f"  🎯 Take Profit: {config_data.get('take_profit_percent', 'N/A')}%")
+    logger.info(f"  ⏰ Max Hold Hours: {config_data.get('max_hold_hours', 'N/A')} hours")
     logger.info(f"  📊 Max Daily Trades: {config_data.get('max_daily_trades', 'N/A')}")
     logger.info(f"  📈 Max Concurrent Positions: {config_data.get('max_concurrent_positions', 'N/A')}")
     logger.info(f"  💧 Min Liquidity: ${config_data.get('min_liquidity_usd', 'N/A')}")
@@ -130,6 +131,11 @@ def log_configuration_differences(old_config: PaperStrategyConfiguration, new_da
     # Take Profit
     if old_config.take_profit_percent != new_data.get('take_profit_percent'):
         logger.info(f"  🎯 Take Profit: {old_config.take_profit_percent}% → {new_data.get('take_profit_percent')}%")
+        changes_detected = True
+    
+    # Max Hold Hours
+    if old_config.max_hold_hours != new_data.get('max_hold_hours'):
+        logger.info(f"  ⏰ Max Hold Hours: {old_config.max_hold_hours} hours → {new_data.get('max_hold_hours')} hours")
         changes_detected = True
 
     # Max Daily Trades
@@ -251,7 +257,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
 
                 # Prepare configuration data from POST
                 config_data = {
-                    'name': request.POST.get('config_name', 'Default Configuration'),
+                    'name': request.POST.get('name', 'Default Configuration'),
                     'trading_mode': request.POST.get('trading_mode', 'MODERATE'),
                     'use_fast_lane': request.POST.get('use_fast_lane') == 'on',
                     'use_smart_lane': request.POST.get('use_smart_lane') == 'on',
@@ -259,6 +265,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'max_position_size_percent': Decimal(request.POST.get('max_position_size_percent', '10')),
                     'stop_loss_percent': Decimal(request.POST.get('stop_loss_percent', '5')),
                     'take_profit_percent': Decimal(request.POST.get('take_profit_percent', '15')),
+                    'max_hold_hours': int(request.POST.get('max_hold_hours', '72')),
                     'max_daily_trades': int(request.POST.get('max_daily_trades', '50')),
                     'max_concurrent_positions': int(request.POST.get('max_concurrent_positions', '10')),
                     'min_liquidity_usd': Decimal(request.POST.get('min_liquidity_usd', '1000')),
@@ -283,6 +290,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                             'max_position_size_percent': config_data['max_position_size_percent'],
                             'stop_loss_percent': config_data['stop_loss_percent'],
                             'take_profit_percent': config_data['take_profit_percent'],
+                            'max_hold_hours': config_data['max_hold_hours'],
                             'max_daily_trades': config_data['max_daily_trades'],
                             'max_concurrent_positions': config_data['max_concurrent_positions'],
                             'min_liquidity_usd': config_data['min_liquidity_usd'],
@@ -345,6 +353,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'max_position_size_percent': Decimal('10'),
                     'stop_loss_percent': Decimal('5'),
                     'take_profit_percent': Decimal('15'),
+                    'max_hold_hours': 72,
                     'max_daily_trades': 50,
                     'max_concurrent_positions': 10,
                     'min_liquidity_usd': Decimal('1000'),

@@ -266,9 +266,25 @@ class MarketAnalyzer:
             trade_executor: TradeExecutor instance
         """
         try:
-            token_symbol = token_data['symbol']
-            token_address = token_data['address']
-            current_price = token_data['price']
+            # Handle both dict and direct values
+            if isinstance(token_data, dict):
+                token_symbol = token_data.get('symbol')
+                token_address = token_data.get('address')
+                current_price = token_data.get('price')
+            else:
+                # If token_data is not a dict, skip this token
+                logger.warning(
+                    f"[ANALYZE] token_data is not a dict: {type(token_data)}. Skipping."
+                )
+                return
+
+            # Validate we have the required data
+            if not all([token_symbol, token_address, current_price]):
+                logger.warning(
+                    f"[ANALYZE] Missing required token data. "
+                    f"Symbol={token_symbol}, Address={token_address}, Price={current_price}"
+                )
+                return
 
             logger.info(
                 f"[ANALYZE] Analyzing {token_symbol} at ${current_price:.2f} "
@@ -541,9 +557,17 @@ class MarketAnalyzer:
                 # Get current price
                 token_data = price_manager.get_token_price(token_symbol)
                 if not token_data:
-                    continue
+                    continue       
+                    
+                # Handle both dict and Decimal return types
+                if isinstance(token_data, dict):
+                    current_price = token_data.get('price')
+                else:
+                    # token_data is already a Decimal
+                    current_price = token_data
 
-                current_price = token_data['price']
+                if not current_price:
+                    continue
 
                 # Calculate P&L percentage
                 avg_entry = position.average_entry_price
@@ -588,6 +612,8 @@ class MarketAnalyzer:
                 f"[MARKET ANALYZER] Failed to check auto-close positions: {e}",
                 exc_info=True
             )
+
+
 
     def _execute_auto_close(
         self,

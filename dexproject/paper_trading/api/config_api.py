@@ -68,6 +68,7 @@ def log_configuration_changes(
         'confidence_threshold': ('Confidence Threshold', '%'),
         'stop_loss_percent': ('Stop Loss', '%'),
         'take_profit_percent': ('Take Profit', '%'),
+        'max_hold_hours': ('Max Hold Time', ' hours'),
         'max_concurrent_positions': ('Max Concurrent Positions', ''),
         'min_liquidity_usd': ('Min Liquidity', ' USD'),
         'max_slippage_percent': ('Max Slippage', '%'),
@@ -321,6 +322,7 @@ def _handle_post_configuration(
                 'max_position_size_percent': 25.0,
                 'stop_loss_percent': 5.0,
                 'take_profit_percent': 10.0,
+                'max_hold_hours': 72,
                 'max_daily_trades': 20,
                 'confidence_threshold': 60.0,
                 'max_concurrent_positions': 10,
@@ -365,6 +367,9 @@ def _handle_post_configuration(
                 StrategyConfigFields.TAKE_PROFIT_PERCENT: Decimal(
                     str(body_data.get(ConfigAPIFields.TAKE_PROFIT_PERCENT, 10.0))
                 ),
+                StrategyConfigFields.MAX_HOLD_HOURS: int(
+                    body_data.get(ConfigAPIFields.MAX_HOLD_HOURS, 72)
+                ),
                 StrategyConfigFields.MAX_DAILY_TRADES: int(
                     body_data.get(ConfigAPIFields.MAX_DAILY_TRADES, 20)
                 ),
@@ -394,6 +399,7 @@ def _handle_post_configuration(
             'max_position_size_percent': float(config.max_position_size_percent),
             'stop_loss_percent': float(config.stop_loss_percent),
             'take_profit_percent': float(config.take_profit_percent),
+            'max_hold_hours': int(config.max_hold_hours),
             'max_daily_trades': config.max_daily_trades,
             'confidence_threshold': float(config.confidence_threshold),
             'max_concurrent_positions': config.max_concurrent_positions,
