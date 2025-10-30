@@ -35,9 +35,16 @@ from .bot_control_api import (
 )
 
 from .account_management_api import (
-    api_reset_and_add_funds,
+    api_reset_account,
+)
+
+from .account_management_api import (
+    api_reset_account,
     api_sessions_history,
 )
+
+from .session_delete_api import api_delete_session
+from .session_export_api import api_export_session_csv
 
 __all__ = [
     # Data API endpoints
@@ -59,6 +66,8 @@ __all__ = [
     'api_bot_status',
 
     # Account Management API
-    'api_reset_and_add_funds',
     'api_sessions_history',
+    'api_delete_session',
+    'api_export_session_csv',
+    'api_reset_account',
 ]

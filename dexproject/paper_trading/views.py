@@ -33,12 +33,11 @@ from .views_configuration import configuration_view
 from .views_analytics import (
     analytics_view,
     api_analytics_data,
-    api_analytics_export
+    api_analytics_export    
 )
+from .views_sessions import sessions_history_view
 
 logger = logging.getLogger(__name__)
-
-from .views_sessions import sessions_history_view
 
 # =============================================================================
 # PUBLIC API - All functions are re-exported for backward compatibility
@@ -56,6 +55,7 @@ __all__ = [
     'portfolio_view',
     'configuration_view',
     'analytics_view',
+    'sessions_history_view',
     
     # API functions
     'api_analytics_data',

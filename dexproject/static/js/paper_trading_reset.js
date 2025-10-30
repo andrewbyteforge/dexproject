@@ -16,8 +16,7 @@
     let resetModal;
     let resetAmountInput;
     let confirmCheckbox;
-    let confirmResetBtn;
-    let resetLoadingOverlay;
+    let executeResetBtn;
 
     // ==========================================================================
     // Initialization
@@ -26,63 +25,40 @@
     document.addEventListener('DOMContentLoaded', function () {
         initializeElements();
         attachEventListeners();
-        initializeTooltips();
     });
 
     function initializeElements() {
         resetModal = document.getElementById('resetAccountModal');
         resetAmountInput = document.getElementById('resetAmount');
         confirmCheckbox = document.getElementById('confirmReset');
-        confirmResetBtn = document.getElementById('confirmResetBtn');
-        resetLoadingOverlay = document.getElementById('resetLoadingOverlay');
+        executeResetBtn = document.getElementById('executeResetBtn');
     }
 
     function attachEventListeners() {
-        // Quick amount buttons
-        document.querySelectorAll('.quick-amount').forEach(btn => {
-            btn.addEventListener('click', function () {
-                const amount = this.dataset.amount;
-                resetAmountInput.value = amount;
-
-                // Visual feedback
-                document.querySelectorAll('.quick-amount').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-            });
-        });
-
         // Confirm checkbox - enable/disable reset button
         if (confirmCheckbox) {
             confirmCheckbox.addEventListener('change', function () {
-                confirmResetBtn.disabled = !this.checked;
+                if (executeResetBtn) {
+                    executeResetBtn.disabled = !this.checked;
+                }
             });
-        }
-
-        // Reset button click
-        if (confirmResetBtn) {
-            confirmResetBtn.addEventListener('click', handleReset);
         }
 
         // Reset modal hidden - clear form
         if (resetModal) {
             resetModal.addEventListener('hidden.bs.modal', function () {
-                resetAmountInput.value = '10000';
-                confirmCheckbox.checked = false;
-                confirmResetBtn.disabled = true;
-                document.querySelectorAll('.quick-amount').forEach(b => b.classList.remove('active'));
+                if (resetAmountInput) resetAmountInput.value = '10000';
+                if (confirmCheckbox) confirmCheckbox.checked = false;
+                if (executeResetBtn) executeResetBtn.disabled = true;
             });
         }
     }
 
-    function initializeTooltips() {
-        const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-        [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
-    }
-
     // ==========================================================================
-    // Reset Account Handler
+    // Global Function - Called from modal button onclick
     // ==========================================================================
 
-    async function handleReset() {
+    window.executeReset = async function () {
         const amount = parseFloat(resetAmountInput.value);
 
         // Validation
@@ -102,14 +78,18 @@
         }
 
         try {
-            // Show loading overlay
-            showLoading(true);
+            // Disable button and show loading state
+            executeResetBtn.disabled = true;
+            executeResetBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Processing...';
 
             // Close modal
             const modalInstance = bootstrap.Modal.getInstance(resetModal);
             if (modalInstance) {
                 modalInstance.hide();
             }
+
+            // Show loading toast
+            showToast('Resetting account and closing positions...', 'info', 3000);
 
             // Call API
             const response = await fetch('/paper-trading/api/account/reset/', {
@@ -123,14 +103,10 @@
 
             const data = await response.json();
 
-            // Hide loading overlay
-            showLoading(false);
-
             if (data.success) {
                 // Show success message with details
                 const message = `
-                    Account reset successfully!
-                    <br><br>
+                    <strong>Account reset successfully!</strong><br><br>
                     <strong>Details:</strong><br>
                     • New Balance: $${data.data.new_balance.toLocaleString()}<br>
                     • Positions Closed: ${data.data.positions_closed}<br>
@@ -140,33 +116,38 @@
 
                 showToast(message, 'success', 8000);
 
-                // Reload page after short delay
+                // Reload page to refresh all values
                 setTimeout(() => {
                     window.location.reload();
                 }, 2000);
 
             } else {
+                // Re-enable button on error
+                executeResetBtn.disabled = false;
+                executeResetBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i> Reset & Add Funds';
+
                 showToast(`Error: ${data.error}`, 'danger', 8000);
             }
 
         } catch (error) {
             console.error('Reset error:', error);
-            showLoading(false);
+
+            // Re-enable button on error
+            if (executeResetBtn) {
+                executeResetBtn.disabled = false;
+                executeResetBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i> Reset & Add Funds';
+            }
+
             showToast(`Failed to reset account: ${error.message}`, 'danger', 8000);
         }
-    }
+    };
 
     // ==========================================================================
     // Utility Functions
     // ==========================================================================
 
-    function showLoading(show) {
-        if (resetLoadingOverlay) {
-            resetLoadingOverlay.style.display = show ? 'flex' : 'none';
-        }
-    }
-
     function getCSRFToken() {
+        // Try to get from form input first
         const tokenElement = document.querySelector('[name=csrfmiddlewaretoken]');
         if (tokenElement) {
             return tokenElement.value;
@@ -174,7 +155,16 @@
 
         // Fallback to meta tag
         const metaToken = document.querySelector('meta[name="csrf-token"]');
-        return metaToken ? metaToken.getAttribute('content') : '';
+        if (metaToken) {
+            return metaToken.getAttribute('content');
+        }
+
+        // Last resort - try to get from cookie
+        const cookieValue = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('csrftoken='));
+
+        return cookieValue ? cookieValue.split('=')[1] : '';
     }
 
     function formatPnL(value) {

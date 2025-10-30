@@ -49,7 +49,7 @@ def sessions_history_view(request: HttpRequest) -> HttpResponse:
             'page_title': 'Sessions History',
         }
         
-        return render(request, 'paper_trading/sessions_history.html', context)
+        return render(request, 'paper_trading/sessions_analysis.html', context)
         
     except Exception as e:
         logger.error(f"Error loading sessions history view: {e}", exc_info=True)

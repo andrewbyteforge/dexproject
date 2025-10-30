@@ -1,257 +1,195 @@
 """
-Paper Trading API - Account Management
+Paper Trading Account API
 
-API endpoints for account balance management, session resets,
-and fund allocation. Handles account lifecycle operations.
+Handles account management operations including reset and add funds.
 
-File: dexproject/paper_trading/api/account_management_api.py
+File: paper_trading/api/account_management_api.py
 """
 
+import json
 import logging
 from decimal import Decimal
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.db import transaction
 
+# Import models
 from ..models import (
     PaperPosition,
     PaperTradingSession,
-    PaperTrade,
 )
-from ..utils import get_single_trading_account, to_decimal
+
+# Import constants
+from ..constants import (
+    SessionStatus,
+)
+
+# Import utilities
+from ..utils import get_single_trading_account
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# RESET & ADD FUNDS API
+# ACCOUNT RESET API
 # =============================================================================
 
 @require_http_methods(["POST"])
-def api_reset_and_add_funds(request: HttpRequest) -> JsonResponse:
+@csrf_exempt
+def api_reset_account(request: HttpRequest) -> JsonResponse:
     """
-    Reset account and add funds - creates a new isolated trading session.
+    Reset paper trading account and add new funds.
 
-    This endpoint:
-    1. Validates bot is stopped
-    2. Force closes all open positions at current prices
-    3. Calculates and archives final session metrics
-    4. Resets account balance to specified amount
-    5. Creates new session with fresh start
+    This endpoint will:
+    1. Close all open positions and calculate realized P&L
+    2. Stop any active bot sessions
+    3. Reset account balance to the specified amount
+    4. Create a new trading session
 
-    POST Body:
+    Request Body:
         {
-            "amount": 10000.00  # Amount to add in USD
+            "amount": 10000.00  # New balance amount in USD
+        }
+
+    Response:
+        {
+            "success": true,
+            "data": {
+                "new_balance": 10000.00,
+                "positions_closed": 5,
+                "realized_pnl": -125.50,
+                "new_session_name": "Session #15"
+            }
         }
 
     Returns:
-        JsonResponse: Success status with new session info
+        JsonResponse: Reset confirmation with details
     """
     try:
         # Parse request body
-        import json
         try:
-            data = json.loads(request.body)
+            body_data = json.loads(request.body)
         except json.JSONDecodeError:
             return JsonResponse({
                 'success': False,
-                'error': 'Invalid JSON format'
+                'error': 'Invalid JSON in request body'
             }, status=400)
 
         # Validate amount
-        amount_str = data.get('amount')
-        if not amount_str:
+        amount = body_data.get('amount')
+        if amount is None:
             return JsonResponse({
                 'success': False,
-                'error': 'Amount is required'
+                'error': 'Missing required field: amount'
             }, status=400)
 
         try:
-            amount = to_decimal(amount_str)
-            if amount <= 0:
-                return JsonResponse({
-                    'success': False,
-                    'error': 'Amount must be greater than 0'
-                }, status=400)
+            amount = Decimal(str(amount))
         except (ValueError, TypeError):
             return JsonResponse({
                 'success': False,
-                'error': 'Invalid amount format'
+                'error': 'Invalid amount value'
+            }, status=400)
+
+        # Validate amount range
+        if amount < Decimal('100') or amount > Decimal('1000000'):
+            return JsonResponse({
+                'success': False,
+                'error': 'Amount must be between $100 and $1,000,000'
             }, status=400)
 
         # Get account
         account = get_single_trading_account()
 
-        # Check if bot is running
-        active_sessions = PaperTradingSession.objects.filter(
-            account=account,
-            status='RUNNING'
-        )
+        logger.info(f"Resetting account {account.account_id} with new balance: ${amount}")
 
-        if active_sessions.exists():
-            return JsonResponse({
-                'success': False,
-                'error': 'Bot is currently running. Please stop the bot before resetting.'
-            }, status=400)
-
-        # Use transaction to ensure all-or-nothing operation
+        # Use transaction to ensure atomicity
         with transaction.atomic():
-            # Step 1: Get current session
-            current_session = PaperTradingSession.objects.filter(
-                account=account
-            ).order_by('-started_at').first()
-
-            # Step 2: Force close all open positions
+            # Step 1: Close all open positions and calculate realized P&L
             open_positions = PaperPosition.objects.filter(
                 account=account,
                 is_open=True
-            )
+            ).select_for_update()
 
             positions_closed = 0
             total_realized_pnl = Decimal('0')
 
             for position in open_positions:
-                # Calculate realized P&L
-                realized_pnl = position.current_value_usd - position.total_invested_usd
+                # Calculate realized P&L for this position
+                realized_pnl = position.unrealized_pnl_usd or Decimal('0')
                 total_realized_pnl += realized_pnl
 
-                # Update position to closed
+                # Close the position
                 position.is_open = False
                 position.closed_at = timezone.now()
-                position.current_price_usd = position.current_price_usd
                 position.realized_pnl_usd = realized_pnl
                 position.save()
 
-                # Create a closing trade record
-                PaperTrade.objects.create(
-                    account=account,
-                    session=current_session,
-                    trade_type='sell',
-                    token_in_address=position.token_address,
-                    token_in_symbol=position.token_symbol,
-                    token_out_address='0x0000000000000000000000000000000000000000',
-                    token_out_symbol='USD',
-                    amount_in=position.quantity,
-                    amount_in_usd=position.current_value_usd,
-                    expected_amount_out=position.current_value_usd,
-                    simulated_gas_price_gwei=Decimal('1.0'),
-                    simulated_gas_used=21000,
-                    simulated_gas_cost_usd=Decimal('0.50'),
-                    simulated_slippage_percent=Decimal('0.50'),
-                    status='completed',
-                    metadata={
-                        'note': f'Force closed during session reset. Realized P&L: ${realized_pnl:+.2f}'
-                    }
-                )
-
                 positions_closed += 1
+                logger.debug(f"Closed position {position.position_id}: {position.token_symbol} with P&L ${realized_pnl}")
 
-                logger.info(
-                    f"[RESET] Force closed position {position.token_symbol}: "
-                    f"P&L=${realized_pnl:+.2f}"
-                )
+            # Step 2: Stop any active bot sessions
+            active_sessions = PaperTradingSession.objects.filter(
+                account=account,
+                status__in=[SessionStatus.RUNNING, SessionStatus.STARTING]
+            ).select_for_update()
 
-            # Step 3: Calculate final session metrics
-            if current_session:
-                # Update session with final data
-                current_session.status = 'COMPLETED'
-                current_session.stopped_at = timezone.now()
-                current_session.total_trades = PaperTrade.objects.filter(
-                    session=current_session
-                ).count()
+            for session in active_sessions:
+                session.status = SessionStatus.STOPPED
+                session.stopped_at = timezone.now()
+                # Note: end_reason field doesn't exist in model
+                session.save()
+                logger.debug(f"Stopped session {session.session_id}")
 
-                # Calculate wins/losses
-                completed_trades = PaperTrade.objects.filter(
-                    session=current_session,
-                    status='completed'
-                )
-
-                winning_trades = 0
-                losing_trades = 0
-
-                for trade in completed_trades:
-                    # Try to find associated position to get P&L
-                    try:
-                        position = PaperPosition.objects.filter(
-                            account=account,
-                            token_address=trade.token_in_address,
-                            opened_at__gte=trade.created_at
-                        ).first()
-
-                        if position and position.realized_pnl_usd is not None:
-                            if position.realized_pnl_usd > 0:
-                                winning_trades += 1
-                            elif position.realized_pnl_usd < 0:
-                                losing_trades += 1
-                    except Exception:
-                        pass
-
-                current_session.successful_trades = winning_trades
-                current_session.failed_trades = losing_trades
-                current_session.save()
-
-                logger.info(
-                    f"[RESET] Archived session {current_session.session_id}: "
-                    f"{current_session.total_trades} trades, "
-                    f"{winning_trades}W/{losing_trades}L"
-                )
-
-            # Step 4: Calculate old balance for logging
+            # Step 3: Reset account balance
             old_balance = account.current_balance_usd
-
-            # Add realized P&L to balance (from closed positions)
-            account.current_balance_usd = old_balance + total_realized_pnl
-
-            # Step 5: Reset account balance to new amount
             account.current_balance_usd = amount
+            account.initial_balance_usd = amount
+            account.total_profit_loss_usd = Decimal('0')
+            # reset_count field doesn't exist in model
             account.save()
 
-            logger.info(
-                f"[RESET] Reset account balance: "
-                f"${old_balance:.2f} → ${amount:.2f}"
-            )
+            logger.info(f"Reset account balance from ${old_balance} to ${amount}")
 
-            # Step 6: Create new session
-            session_name = f"Session_{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+            # Step 4: Create new session for tracking
+            session_count = PaperTradingSession.objects.filter(account=account).count()
             new_session = PaperTradingSession.objects.create(
                 account=account,
-                status='STOPPED',
+                status=SessionStatus.STOPPED,
                 started_at=timezone.now(),
                 metadata={
-                    'session_name': session_name,
-                    'starting_balance': float(amount),
-                    'previous_session_id': str(current_session.session_id) if current_session else None,
-                    'reset_timestamp': timezone.now().isoformat(),
+                    'session_type': 'reset',
+                    'previous_balance': float(old_balance),
+                    'new_balance': float(amount),
                     'positions_closed': positions_closed,
                     'realized_pnl': float(total_realized_pnl)
                 }
             )
 
-            logger.info(
-                f"[RESET] Created new session: {new_session.session_id}"
-            )
+            new_session_name = f"Session #{session_count + 1}"
+            logger.info(f"Created new session: {new_session_name} (ID: {new_session.session_id})")
 
         # Return success response
         return JsonResponse({
             'success': True,
-            'message': 'Account reset successfully',
             'data': {
                 'new_balance': float(amount),
                 'positions_closed': positions_closed,
                 'realized_pnl': float(total_realized_pnl),
-                'new_session_id': str(new_session.session_id),
-                'new_session_name': session_name,
-                'previous_session_completed': current_session is not None
+                'new_session_name': new_session_name,
+                'account_id': str(account.account_id),
+                # reset_count field doesn't exist
             }
         })
 
     except Exception as e:
-        logger.error(f"[RESET] Error in reset and add funds: {e}", exc_info=True)
+        logger.error(f"Error resetting account: {e}", exc_info=True)
         return JsonResponse({
             'success': False,
-            'error': f'Failed to reset account: {str(e)}'
+            'error': str(e)
         }, status=500)
 
 
@@ -291,7 +229,7 @@ def api_sessions_history(request: HttpRequest) -> JsonResponse:
             # Get starting balance from metadata
             starting_balance = Decimal('0')
             if session.metadata and 'starting_balance' in session.metadata:
-                starting_balance = to_decimal(session.metadata['starting_balance'])
+                starting_balance = Decimal(str(session.metadata['starting_balance']))
 
             # Get session name from metadata
             session_name = session.metadata.get('session_name', f"Session {session.session_id.hex[:8]}")

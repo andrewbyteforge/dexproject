@@ -21,6 +21,7 @@ from .api import (
     api_metrics,
     api_performance_metrics,
     api_token_price,
+    api_export_session_csv,
     
     # Configuration API
     api_configuration,
@@ -31,8 +32,10 @@ from .api import (
     api_bot_status,
     
     # Account Management API
-    api_reset_and_add_funds,
+    api_reset_account,
     api_sessions_history,
+    api_delete_session,
+    api_reset_account,
 )
 
 app_name = 'paper_trading'
@@ -157,10 +160,17 @@ urlpatterns = [
     # POST: /paper-trading/api/account/reset/
     # Body: {"amount": 10000.00}
     # Force closes positions, archives session, resets balance, creates new session
-    path('api/account/reset/', api_reset_and_add_funds, name='api_reset_and_add_funds'),
+    path('api/account/reset/', api_reset_account, name='api_reset_account'),
 
     # Get sessions history - For comparison graphs
     # GET: /paper-trading/api/sessions/history/?limit=10
     # Returns list of completed sessions with performance data
     path('api/sessions/history/', api_sessions_history, name='api_sessions_history'),
+
+    path('api/sessions/<uuid:session_id>/delete/', api_delete_session, name='api_delete_session'),
+
+    path('api/sessions/<uuid:session_id>/export/', api_export_session_csv, name='api_export_session_csv'),
+
+    path('api/account/reset/', api_reset_account, name='api_reset_account'),
+
 ]
