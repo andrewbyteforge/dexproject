@@ -7,6 +7,7 @@ Structure:
 - data_api.py: Read-only data retrieval endpoints
 - config_api.py: Configuration management endpoints
 - bot_control_api.py: Bot lifecycle control endpoints
+- account_management_api.py: Account management and session control endpoints
 
 File: paper_trading/api/__init__.py
 """
@@ -33,6 +34,11 @@ from .bot_control_api import (
     api_bot_status,
 )
 
+from .account_management_api import (
+    api_reset_and_add_funds,
+    api_sessions_history,
+)
+
 __all__ = [
     # Data API endpoints
     'api_ai_thoughts',
@@ -43,12 +49,16 @@ __all__ = [
     'api_metrics',
     'api_performance_metrics',
     'api_token_price',
-    
+
     # Configuration API
     'api_configuration',
-    
+
     # Bot Control API
     'api_start_bot',
     'api_stop_bot',
     'api_bot_status',
+
+    # Account Management API
+    'api_reset_and_add_funds',
+    'api_sessions_history',
 ]
