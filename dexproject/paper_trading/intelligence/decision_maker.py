@@ -500,13 +500,16 @@ class DecisionMaker:
                 position_size *= Decimal('0.85')
             
             # Ensure within bounds
+            # Ensure within bounds
             position_size = max(Decimal('1'), min(base_size, position_size))
-            
+
+            # Safe logging - handle both MarketContext and Decimal types
+            token_symbol = getattr(context, 'token_symbol', 'UNKNOWN')
             self.logger.debug(
-                f"[POSITION SIZE] {context.token_symbol}: {position_size:.2f}% "
+                f"[POSITION SIZE] {token_symbol}: {position_size:.2f}% "
                 f"(Ratio={ratio:.2f}, Volatility={volatility:.1f})"
             )
-            
+
             return position_size.quantize(Decimal('0.01'))
             
         except Exception as e:

@@ -170,7 +170,8 @@ class EnhancedPaperTradingBot:
         account_name: str,
         intel_level: int = 5,
         use_real_prices: bool = True,
-        chain_id: int = 84532  # Base Sepolia default
+        chain_id: int = 84532,
+        config_id: Optional[int] = None  # ← ADD THIS LINE
     ):
         """
         Initialize the enhanced paper trading bot.
@@ -196,6 +197,7 @@ class EnhancedPaperTradingBot:
         self.intel_level = intel_level
         self.use_real_prices = use_real_prices
         self.chain_id = chain_id
+        self.config_id = config_id
 
         # Core components (initialized in initialize())
         self.account: Optional[PaperTradingAccount] = None
@@ -356,13 +358,13 @@ class EnhancedPaperTradingBot:
             # Step 3: Clean up duplicates AFTER session is created
             self._cleanup_duplicate_accounts()
 
-            # Step 4: Initialize intelligence engine
-            self._initialize_intelligence()
-            assert self.intelligence_engine is not None, "Intelligence engine initialization failed"
-
-            # Step 5: Setup strategy configuration
+            # Step 4: Setup strategy configuration FIRST
             self._setup_strategy_configuration()
             assert self.strategy_config is not None, "Strategy configuration initialization failed"
+
+            # Step 5: Initialize intelligence engine WITH loaded config
+            self._initialize_intelligence()
+            assert self.intelligence_engine is not None, "Intelligence engine initialization failed"
 
             # Step 6: Initialize circuit breaker manager
             self._initialize_circuit_breaker()
@@ -428,15 +430,6 @@ class EnhancedPaperTradingBot:
         except Exception as e:
             logger.error(f"[ACCOUNT] Failed to load account: {e}", exc_info=True)
             raise
-
-
-
-
-
-
-
-
-
 
     def _cleanup_duplicate_accounts(self) -> None:
         """
@@ -518,6 +511,8 @@ class EnhancedPaperTradingBot:
             config_snapshot = {
                 "bot_version": "3.0.0",
                 "intel_level": self.intel_level,
+                "strategy_config_id": self.strategy_config.pk if self.strategy_config else None,  # ← ADD
+                "strategy_config_name": self.strategy_config.name if self.strategy_config else None,  # ← ADD
                 "account_name": self.account_name,
                 "account_id": str(self.account.account_id),
                 "session_uuid": str(uuid.uuid4()),
@@ -543,7 +538,8 @@ class EnhancedPaperTradingBot:
             safe_snapshot = json_safe(config_snapshot)
 
             session_name = (
-                f"Bot_Session_{today.strftime('%Y%m%d')}_Intel_{self.intel_level}"
+                f"Bot_Session_{today.strftime('%Y%m%d')}_"
+                f"{self.strategy_config.name if self.strategy_config else 'Default'}"  # ← CHANGE THIS LINE
             )
 
             self.session = PaperTradingSession.objects.create(
@@ -569,27 +565,30 @@ class EnhancedPaperTradingBot:
         Initialize the intelligence engine with configured Intel level.
 
         The intelligence engine handles all trading decision logic based on
-        the Intel slider setting (1-10).
+        the Intel slider setting (1-10) and the loaded strategy configuration.
+
+        NOTE: This is called AFTER _setup_strategy_configuration() so that
+        self.strategy_config is already loaded with the user's selected config.
 
         Raises:
             Exception: If intelligence engine cannot be initialized
         """
         assert self.account is not None, "Account must be initialized before intelligence engine"
+        assert self.strategy_config is not None, "Strategy config must be loaded before intelligence engine"
 
         try:
-            active_config = PaperStrategyConfiguration.objects.filter(
-                account=self.account,
-                is_active=True
-            ).first()
-
+            # ✅ FIXED: Use the already-loaded strategy config
             self.intelligence_engine = IntelSliderEngine(
                 intel_level=self.intel_level,
                 account_id=str(self.account.account_id),
-                strategy_config=active_config,
-                chain_id=self.chain_id  # Pass chain_id for real data
+                strategy_config=self.strategy_config,  # ← Use loaded config!
+                chain_id=self.chain_id
             )
+            
             logger.info(
-                f"[INTEL] Intelligence Engine initialized at Level {self.intel_level}"
+                f"[INTEL] Intelligence Engine initialized at Level {self.intel_level} "
+                f"with config: {self.strategy_config.name} "
+                f"(Confidence: {self.strategy_config.confidence_threshold}%)"
             )
 
         except Exception as e:
@@ -598,17 +597,74 @@ class EnhancedPaperTradingBot:
 
     def _setup_strategy_configuration(self) -> None:
         """
-        Set up or load strategy configuration for this account.
-
-        Creates a PaperStrategyConfiguration with settings appropriate for
-        the current Intel level. If configuration already exists, it's loaded.
-
+        Load the strategy configuration for this session.
+        
+        Priority:
+        1. If config_id specified → Load that specific config
+        2. Otherwise → Load most recently updated config
+        3. If no configs exist → Create default config
+        
         Raises:
-            Exception: If strategy configuration cannot be created
+            Exception: If strategy configuration cannot be loaded
         """
         assert self.account is not None, "Account must be initialized before strategy config"
-        assert self.intelligence_engine is not None, "Intelligence engine must be initialized before strategy config"
 
+        try:
+            # Priority 1: Load specific config if ID provided
+            if self.config_id:
+                try:
+                    self.strategy_config = PaperStrategyConfiguration.objects.get(
+                        pk=self.config_id,
+                        account=self.account
+                    )
+                    logger.info(
+                        f"[STRATEGY] Loaded specified config: {self.strategy_config.name} "
+                        f"(Confidence: {self.strategy_config.confidence_threshold}%)"
+                    )
+                    return
+                except PaperStrategyConfiguration.DoesNotExist:
+                    logger.warning(
+                        f"[STRATEGY] Config ID {self.config_id} not found, "
+                        "falling back to most recent"
+                    )
+            
+            # Priority 2: Load most recently updated config
+            self.strategy_config = PaperStrategyConfiguration.objects.filter(
+                account=self.account
+            ).order_by('-updated_at').first()
+            
+            if self.strategy_config:
+                logger.info(
+                    f"[STRATEGY] Loaded most recent config: {self.strategy_config.name} "
+                    f"(Confidence: {self.strategy_config.confidence_threshold}%)"
+                )
+                return
+            
+            # Priority 3: Create default config if none exists
+            logger.warning("[STRATEGY] No configs found, creating default...")
+            self.strategy_config = self._create_default_strategy_config()
+            logger.info(
+                f"[STRATEGY] Created default config: {self.strategy_config.name}"
+            )
+
+        except Exception as e:
+            logger.error(f"[STRATEGY] Failed to setup strategy config: {e}", exc_info=True)
+            raise
+
+    def _create_default_strategy_config(self) -> PaperStrategyConfiguration:
+        """
+        Create a default strategy configuration.
+        
+        This is only called if no configurations exist in the database.
+        
+        Returns:
+            Newly created PaperStrategyConfiguration
+        """
+        assert self.account is not None
+        assert self.intelligence_engine is not None
+        
+        config = self.intelligence_engine.config
+        
         def json_safe(value: Any) -> Any:
             """Convert Decimals and other non-JSON types to serializable types."""
             if isinstance(value, Decimal):
@@ -618,87 +674,51 @@ class EnhancedPaperTradingBot:
             if isinstance(value, list):
                 return [json_safe(v) for v in value]
             return value
-
-        try:
-            config = self.intelligence_engine.config
-
-            # Extract configuration parameters with fallbacks
-            max_pos_size = getattr(
-                config,
-                "max_position_percent",
-                getattr(config, "max_position_size_percent", 10)
-            )
-            confidence_threshold = getattr(config, "confidence_threshold", 60)
-            risk_tolerance = getattr(config, "risk_tolerance", 50)
-            trade_freq = getattr(
-                getattr(config, "trade_frequency", None),
-                "value",
-                "Moderate"
-            )
-
-            custom_parameters = {
-                "intel_level": self.intel_level,
-                "use_tx_manager": self.use_tx_manager,
-                "circuit_breaker_enabled": self.circuit_breaker_enabled,
-                "use_real_prices": self.use_real_prices,
-                "chain_id": self.chain_id,
-                "engine_config_status": "initialized" if (ENGINE_CONFIG_AVAILABLE and engine_config_module is not None and hasattr(
-                    engine_config_module, 'config') and engine_config_module.config is not None) else "unavailable",
-                "intel_config_summary": {
-                    "risk_tolerance": risk_tolerance,
-                    "trade_frequency": trade_freq,
-                    "max_position_size": float(max_pos_size),
-                    "confidence_threshold": float(confidence_threshold),
-                },
-            }
-
-            custom_parameters = json_safe(custom_parameters)
-
-            # Token list for allowed tokens
-            token_addresses = [
-                '0x4200000000000000000000000000000000000006',  # WETH on Base
-                '0x036CbD53842c5426634e7929541eC2318f3dCF7e',  # USDC
-                '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',  # DAI
-            ]
-
-            strategy_config, created = PaperStrategyConfiguration.objects.get_or_create(
-                account=self.account,
-                name=f"Intel_Level_{self.intel_level}_Strategy",
-                defaults={
-                    "trading_mode": "MODERATE",
-                    "use_fast_lane": True,
-                    "use_smart_lane": False,
-                    "fast_lane_threshold_usd": Decimal("100"),
-                    "max_position_size_percent": Decimal(str(max_pos_size)),
-                    "stop_loss_percent": Decimal("5.0"),
-                    "take_profit_percent": Decimal("10.0"),
-                    "max_daily_trades": 50,
-                    "confidence_threshold": Decimal(str(confidence_threshold)),
-                    "allowed_tokens": token_addresses,
-                    "custom_parameters": custom_parameters,
-                    "is_active": True
-                }
-            )
-
-            if not created and not strategy_config.is_active:
-                strategy_config.is_active = True
-                strategy_config.save()
-
-            # Deactivate other configs
-            PaperStrategyConfiguration.objects.filter(
-                account=self.account
-            ).exclude(
-                pk=strategy_config.pk
-            ).update(is_active=False)
-
-            self.strategy_config = strategy_config
-
-            action = "Created" if created else "Loaded"
-            logger.info(f"[STRATEGY] {action} strategy config: {strategy_config.name}")
-
-        except Exception as e:
-            logger.error(f"[STRATEGY] Failed to setup strategy config: {e}", exc_info=True)
-            raise
+        
+        # Extract configuration parameters with fallbacks
+        max_pos_size = getattr(
+            config,
+            "max_position_percent",
+            getattr(config, "max_position_size_percent", 10)
+        )
+        confidence_threshold = getattr(config, "confidence_threshold", 60)
+        risk_tolerance = getattr(config, "risk_tolerance", 50)
+        
+        custom_parameters = {
+            "intel_level": self.intel_level,
+            "use_tx_manager": self.use_tx_manager,
+            "circuit_breaker_enabled": self.circuit_breaker_enabled,
+            "auto_created": True,
+            "note": "Auto-generated default configuration"
+        }
+        
+        custom_parameters = json_safe(custom_parameters)
+        
+        # Token list for allowed tokens
+        token_addresses = [
+            '0x4200000000000000000000000000000000000006',  # WETH on Base
+            '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  # USDC
+            '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',  # DAI
+        ]
+        
+        strategy_config = PaperStrategyConfiguration.objects.create(
+            account=self.account,
+            name=f"Default_Intel_{self.intel_level}",
+            trading_mode="MODERATE",
+            use_fast_lane=True,
+            use_smart_lane=False,
+            fast_lane_threshold_usd=Decimal("100"),
+            max_position_size_percent=Decimal(str(max_pos_size)),
+            stop_loss_percent=Decimal("5.0"),
+            take_profit_percent=Decimal("10.0"),
+            max_daily_trades=50,
+            confidence_threshold=Decimal(str(confidence_threshold)),
+            allowed_tokens=token_addresses,
+            custom_parameters=custom_parameters,
+            is_active=False  # Don't mark as active by default
+        )
+        
+        return strategy_config
 
     def _initialize_circuit_breaker(self) -> None:
         """

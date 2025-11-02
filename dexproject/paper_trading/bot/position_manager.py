@@ -330,10 +330,27 @@ class PositionManager:
             # Calculate quantity to buy
             quantity = position_size_usd / current_price
 
+            # Check if position exists in memory
             if token_symbol in self.positions:
-                # Add to existing position
                 position = self.positions[token_symbol]
+            else:
+                # Check if position exists in database but not loaded
+                try:
+                    position = PaperPosition.objects.get(
+                        account=self.account,
+                        token_address=token_address,
+                        is_open=True
+                    )
+                    # Load it into memory
+                    self.positions[token_symbol] = position
+                    logger.info(
+                        f"[POSITION] Loaded existing {token_symbol} position from database"
+                    )
+                except PaperPosition.DoesNotExist:
+                    position = None
 
+            if position:
+                # Add to existing position
                 position.quantity += quantity
                 position.total_invested_usd += position_size_usd
                 position.average_entry_price_usd = (
@@ -388,6 +405,10 @@ class PositionManager:
                 exc_info=True
             )
             return None
+
+
+
+
 
     def close_or_reduce_position(
         self,
