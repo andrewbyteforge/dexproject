@@ -284,17 +284,20 @@ class PaperTrade(models.Model):
     amount_in = models.DecimalField(
         max_digits=36,
         decimal_places=18,
+        default=Decimal('0'),
         help_text="Amount in (wei)"
     )
     
     amount_in_usd = models.DecimalField(
         max_digits=20,
-        decimal_places=2,
+        decimal_places=2,         # ← decimal_places before default
+        default=Decimal('0'),
         help_text="Amount in USD"
     )
     
     expected_amount_out = models.DecimalField(
         max_digits=36,
+        default=Decimal('0'),
         decimal_places=18,
         help_text="Expected output amount"
     )
@@ -304,12 +307,14 @@ class PaperTrade(models.Model):
         decimal_places=18,
         null=True,
         blank=True,
+        default=None,
         help_text="Actual output amount"
     )
     
     # Execution details
     simulated_gas_price_gwei = models.DecimalField(
         max_digits=10,
+        default=Decimal('1.0'),
         decimal_places=2,
         help_text="Simulated gas price"
     )
@@ -320,12 +325,14 @@ class PaperTrade(models.Model):
     
     simulated_gas_cost_usd = models.DecimalField(
         max_digits=10,
+        default=Decimal('0'),
         decimal_places=2,
         help_text="Simulated gas cost in USD"
     )
     
     simulated_slippage_percent = models.DecimalField(
         max_digits=5,
+        default=Decimal('0.5'),
         decimal_places=2,
         help_text="Simulated slippage percentage"
     )
@@ -389,7 +396,23 @@ class PaperTrade(models.Model):
     )
 
     def save(self, *args, **kwargs):
-        """Validate decimals before saving."""
+        """Validate and clean decimal fields before saving."""
+        from paper_trading.config.validation import validate_decimal_field
+        
+        # Convert None to Decimal(0) for required fields
+        if self.amount_in is None:
+            self.amount_in = Decimal('0')
+        if self.amount_in_usd is None:
+            self.amount_in_usd = Decimal('0')
+        if self.expected_amount_out is None:
+            self.expected_amount_out = Decimal('0')
+        if self.simulated_gas_price_gwei is None:
+            self.simulated_gas_price_gwei = Decimal('1.0')
+        if self.simulated_gas_cost_usd is None:
+            self.simulated_gas_cost_usd = Decimal('0')
+        if self.simulated_slippage_percent is None:
+            self.simulated_slippage_percent = Decimal('0.5')
+        
         # Validate USD amounts ($0.01 to $100,000)
         self.amount_in_usd = validate_decimal_field(
             self.amount_in_usd, 'amount_in_usd',

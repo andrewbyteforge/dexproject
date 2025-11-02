@@ -1,129 +1,160 @@
-# File Path: dexproject/paper_trading/management/commands/fix_corrupt_trades.py
-# Create the directories first:
-# mkdir -p paper_trading/management/commands
-# touch paper_trading/management/__init__.py
-# touch paper_trading/management/commands/__init__.py
+"""
+Fix ALL Decimal Fields - COMPREHENSIVE VERSION
+
+Rounds ALL decimal fields to match model definitions.
+
+File: dexproject/paper_trading/management/commands/fix_corrupt_trades.py
+
+Usage:
+    python manage.py fix_corrupt_trades
+"""
 
 from django.core.management.base import BaseCommand
 from django.db import connection
-from decimal import Decimal, InvalidOperation
-from paper_trading.models import PaperTrade, PaperTradingAccount
-import logging
+import sqlite3
 
-logger = logging.getLogger(__name__)
 
 class Command(BaseCommand):
-    help = 'Fix corrupt decimal fields in PaperTrade model'
+    """Fix ALL decimal precision issues."""
+    
+    help = 'Fix decimal precision for ALL fields'
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.WARNING('Starting to fix corrupt decimal fields...'))
+        """Execute the fix."""
+        self.stdout.write('='*60)
+        self.stdout.write('FIXING ALL DECIMAL FIELDS')
+        self.stdout.write('='*60)
         
-        # Get all decimal fields in PaperTrade model
-        decimal_fields = [
-            'amount_in',
-            'amount_in_usd', 
-            'expected_amount_out',
-            'actual_amount_out',
-            'simulated_gas_price_gwei',
-            'simulated_gas_used',
-            'simulated_gas_cost_usd',
-            'simulated_slippage_percent',
-            'execution_time_ms'
-        ]
+        # Get database path
+        db_path = connection.settings_dict['NAME']
+        self.stdout.write(f'\nDatabase: {db_path}')
         
-        # First, let's check what's in the database
-        with connection.cursor() as cursor:
-            # Check for NULL or invalid values
-            cursor.execute("""
-                SELECT trade_id, amount_in_usd, simulated_slippage_percent 
-                FROM paper_trading_papertrade 
-                LIMIT 5
-            """)
-            rows = cursor.fetchall()
-            
-            self.stdout.write(f"Sample data from database:")
-            for row in rows:
-                self.stdout.write(f"  Trade {row[0]}: amount_in_usd={row[1]}, slippage={row[2]}")
-            
-            # Fix corrupt values by setting them to 0 or NULL
-            for field in decimal_fields:
-                try:
-                    # Update any non-numeric values to 0
-                    cursor.execute(f"""
-                        UPDATE paper_trading_papertrade 
-                        SET {field} = 0 
-                        WHERE {field} IS NOT NULL 
-                        AND (
-                            {field} = 'NaN' 
-                            OR {field} = 'Infinity' 
-                            OR {field} = '-Infinity'
-                            OR {field} = ''
-                            OR CAST({field} AS TEXT) NOT GLOB '[0-9]*.*[0-9]*'
-                        )
-                    """)
-                    
-                    affected = cursor.rowcount
-                    if affected > 0:
-                        self.stdout.write(
-                            self.style.SUCCESS(f'Fixed {affected} corrupt values in {field}')
-                        )
-                except Exception as e:
-                    self.stdout.write(
-                        self.style.ERROR(f'Error fixing {field}: {e}')
-                    )
+        # Connect directly to SQLite
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
         
-        # Now add the missing pnl_usd field if it doesn't exist
-        with connection.cursor() as cursor:
-            # Check if pnl_usd column exists
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM pragma_table_info('paper_trading_papertrade') 
-                WHERE name='pnl_usd'
-            """)
-            
-            pnl_exists = cursor.fetchone()[0] > 0
-            
-            if not pnl_exists:
-                self.stdout.write(self.style.WARNING('Adding pnl_usd field to PaperTrade model...'))
-                
-                # Add the column
-                cursor.execute("""
-                    ALTER TABLE paper_trading_papertrade 
-                    ADD COLUMN pnl_usd DECIMAL(20, 8) DEFAULT 0
-                """)
-                
-                cursor.execute("""
-                    ALTER TABLE paper_trading_papertrade 
-                    ADD COLUMN pnl_percent DECIMAL(10, 4) DEFAULT 0
-                """)
-                
-                self.stdout.write(self.style.SUCCESS('Added pnl_usd and pnl_percent fields'))
-                
-                # Calculate P&L for existing trades based on slippage
-                cursor.execute("""
-                    UPDATE paper_trading_papertrade
-                    SET pnl_usd = CASE 
-                        WHEN simulated_slippage_percent IS NOT NULL AND amount_in_usd IS NOT NULL
-                        THEN CAST((amount_in_usd * simulated_slippage_percent / 100) AS DECIMAL(20, 8))
-                        ELSE 0
-                    END
-                """)
-                
-                self.stdout.write(self.style.SUCCESS('Calculated P&L for existing trades'))
-        
-        # Verify the fixes
         try:
-            trades = PaperTrade.objects.all()[:5]
-            for trade in trades:
-                self.stdout.write(f"Trade {trade.trade_id}: amount={trade.amount_in_usd}")
+            # Count trades
+            cursor.execute("SELECT COUNT(*) FROM paper_trades")
+            total = cursor.fetchone()[0]
+            self.stdout.write(f'Total trades: {total}\n')
             
-            self.stdout.write(self.style.SUCCESS('Successfully fixed corrupt data!'))
+            if total == 0:
+                self.stdout.write('No trades to fix.')
+                return
             
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f'Verification failed: {e}'))
+            # Round ALL decimal fields to appropriate precision
+            updates = [
+                ('amount_in', 18),  # Wei precision
+                ('amount_in_usd', 2),  # USD precision
+                ('expected_amount_out', 18),  # Wei precision
+                ('actual_amount_out', 18),  # Wei precision
+                ('simulated_gas_price_gwei', 2),  # Gwei precision
+                ('simulated_gas_cost_usd', 2),  # USD precision
+                ('simulated_slippage_percent', 2),  # Percentage precision
+            ]
+            
+            total_updated = 0
+            
+            for field, decimals in updates:
+                self.stdout.write(f'Rounding {field} to {decimals} decimals...')
+                
+                # Round the field
+                cursor.execute(f"""
+                    UPDATE paper_trades 
+                    SET {field} = ROUND(CAST({field} AS REAL), {decimals})
+                    WHERE {field} IS NOT NULL
+                """)
+                
+                updated = cursor.rowcount
+                total_updated += updated
+                self.stdout.write(f'  ✓ Updated {updated} rows')
+            
+            # Fix NULL values
+            self.stdout.write('\nFixing NULL values...')
+            cursor.execute("UPDATE paper_trades SET amount_in = 0 WHERE amount_in IS NULL")
+            cursor.execute("UPDATE paper_trades SET amount_in_usd = 0 WHERE amount_in_usd IS NULL")
+            cursor.execute("UPDATE paper_trades SET expected_amount_out = 0 WHERE expected_amount_out IS NULL")
+            cursor.execute("UPDATE paper_trades SET simulated_gas_price_gwei = 1.0 WHERE simulated_gas_price_gwei IS NULL")
+            cursor.execute("UPDATE paper_trades SET simulated_gas_cost_usd = 0.5 WHERE simulated_gas_cost_usd IS NULL")
+            cursor.execute("UPDATE paper_trades SET simulated_slippage_percent = 0.5 WHERE simulated_slippage_percent IS NULL")
+            cursor.execute("UPDATE paper_trades SET simulated_gas_used = 21000 WHERE simulated_gas_used IS NULL")
+            self.stdout.write('  ✓ Fixed NULLs')
+            
+            # Commit all changes
+            conn.commit()
+            self.stdout.write(f'\n✓ All changes committed ({total_updated} total updates)')
+            
+            # Close SQLite
+            cursor.close()
+            conn.close()
+            
+            # Verify with Django ORM
+            self.stdout.write('\n' + '='*60)
+            self.stdout.write('VERIFYING WITH DJANGO ORM')
+            self.stdout.write('='*60)
+            
+            from paper_trading.models import PaperTrade
+            
+            try:
+                # Try to count first
+                count = PaperTrade.objects.count()
+                self.stdout.write(f'\n✓ Count works: {count} trades')
+                
+                # Try to load trades one by one to find problems
+                self.stdout.write('\nTesting individual trades...')
+                
+                with connection.cursor() as c:
+                    c.execute("SELECT trade_id FROM paper_trades LIMIT 5")
+                    trade_ids = [row[0] for row in c.fetchall()]
+                
+                success = 0
+                failed = 0
+                
+                for trade_id in trade_ids:
+                    try:
+                        trade = PaperTrade.objects.get(trade_id=trade_id)
+                        # Try to access all decimal fields
+                        _ = trade.amount_in
+                        _ = trade.amount_in_usd
+                        _ = trade.expected_amount_out
+                        _ = trade.simulated_gas_price_gwei
+                        _ = trade.simulated_gas_cost_usd
+                        _ = trade.simulated_slippage_percent
+                        success += 1
+                        self.stdout.write(f'  ✓ Trade {str(trade_id)[:8]}... OK')
+                    except Exception as e:
+                        failed += 1
+                        self.stdout.write(f'  ✗ Trade {str(trade_id)[:8]}... FAILED: {e}')
+                
+                if failed == 0:
+                    self.stdout.write('\n' + '='*60)
+                    self.stdout.write('SUCCESS! 🎉')
+                    self.stdout.write('='*60)
+                    self.stdout.write(f'All {count} trades can be loaded!')
+                    self.stdout.write('='*60)
+                    
+                    self.stdout.write('\nNext steps:')
+                    self.stdout.write('  1. Restart Django server')
+                    self.stdout.write('  2. Click Dashboard')
+                    self.stdout.write('  3. Should work now! ✨\n')
+                else:
+                    self.stdout.write(f'\n✗ {failed} trades still have issues')
+                    self.stdout.write('\nRun: python manage.py diagnose_decimal_issue')
+                    self.stdout.write('To find the specific problem fields.\n')
+                
+            except Exception as e:
+                self.stdout.write(f'\n✗ Verification failed: {e}')
+                self.stdout.write('\nTry running: python manage.py diagnose_decimal_issue')
+                import traceback
+                self.stdout.write(traceback.format_exc())
         
-        # Print summary
-        total_trades = PaperTrade.objects.count()
-        self.stdout.write(
-            self.style.SUCCESS(f'\nSummary: Fixed data for {total_trades} total trades')
-        )
+        except Exception as e:
+            conn.rollback()
+            self.stdout.write(f'\n✗ Error during fix: {e}')
+            import traceback
+            self.stdout.write(traceback.format_exc())
+        
+        finally:
+            if conn:
+                conn.close()

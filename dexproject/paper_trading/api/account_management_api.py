@@ -108,6 +108,17 @@ def api_reset_account(request: HttpRequest) -> JsonResponse:
 
         # Use transaction to ensure atomicity
         with transaction.atomic():
+            # ===================================================================
+            # Step 0: DELETE all old closed positions to avoid UNIQUE constraint
+            # ===================================================================
+            old_closed_positions = PaperPosition.objects.filter(
+                account=account,
+                is_open=False
+            )
+            old_closed_count = old_closed_positions.count()
+            old_closed_positions.delete()
+            
+            logger.info(f"Deleted {old_closed_count} old closed positions")
             # Step 1: Close all open positions and calculate realized P&L
             open_positions = PaperPosition.objects.filter(
                 account=account,
