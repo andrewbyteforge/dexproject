@@ -1,8 +1,12 @@
 """
-Market Analyzer for Paper Trading Bot - REAL DATA INTEGRATION
+Market Analyzer for Paper Trading Bot - REAL DATA INTEGRATION + INTELLIGENT SELLS
 
-FIXED: Now calls CompositeMarketAnalyzer to get REAL blockchain data instead
-of using hardcoded mock values.
+ENHANCED: Now evaluates existing positions for intelligent SELL decisions based on:
+- Market conditions turning bearish
+- Risk increasing beyond comfort levels
+- Better opportunities elsewhere
+- Technical signals deteriorating
+- Position performance and hold time
 
 This module handles market analysis operations for the paper trading bot,
 including tick coordination, token analysis, performance metrics, and
@@ -11,6 +15,7 @@ AI thought logging.
 Responsibilities:
 - Coordinate market ticks (main bot loop)
 - Analyze individual tokens with REAL market data
+- Evaluate existing positions for intelligent sells (NEW!)
 - Update market prices (via price service integration)
 - Check pending transactions (TX Manager)
 - Update performance metrics
@@ -69,6 +74,9 @@ class MarketAnalyzer:
     NOW WITH REAL DATA INTEGRATION: Calls CompositeMarketAnalyzer to get
     actual blockchain data for gas, liquidity, volatility, and MEV analysis.
 
+    ENHANCED WITH INTELLIGENT SELLS: Evaluates existing positions for smart
+    exit decisions based on changing market conditions, not just fixed thresholds.
+
     Example usage:
         analyzer = MarketAnalyzer(
             account=account,
@@ -100,10 +108,10 @@ class MarketAnalyzer:
         Args:
             account: Paper trading account
             session: Current trading session
-            intelligence_engine: Intelligence engine for decisions
-            strategy_config: Strategy configuration
-            circuit_breaker_manager: Circuit breaker manager (optional)
-            use_tx_manager: Whether TX Manager is enabled
+            intelligence_engine: Intelligence engine for decision making
+            strategy_config: Optional strategy configuration
+            circuit_breaker_manager: Optional circuit breaker manager
+            use_tx_manager: Whether to use Transaction Manager
         """
         self.account = account
         self.session = session
@@ -112,18 +120,9 @@ class MarketAnalyzer:
         self.circuit_breaker_manager = circuit_breaker_manager
         self.use_tx_manager = use_tx_manager
 
-        # Tick tracking
         self.tick_count = 0
-        self.tick_interval = 15  # seconds between ticks
-
-        # Price history for trend analysis
-        self.price_history: Dict[str, List[Decimal]] = {}
-
-        # Last decisions for tracking
         self.last_decisions: Dict[str, TradingDecision] = {}
-
-        # Pending transactions (TX Manager)
-        self.pending_transactions: Dict[str, Dict[str, Any]] = {}
+        self.pending_transactions: List[Any] = []
 
         logger.info(
             f"[MARKET ANALYZER] Initialized for account: {account.account_id}"
@@ -140,13 +139,14 @@ class MarketAnalyzer:
         trade_executor: Any
     ):
         """
-        Execute a single market analysis tick.
+        Execute one market tick cycle.
 
-        This is the main coordination method called on each bot loop iteration.
-        It orchestrates all market analysis activities including:
+        This method coordinates all trading operations including:
         - Updating prices
         - Checking circuit breakers
-        - Analyzing tokens
+        - Evaluating positions for intelligent sells (NEW!)
+        - Checking auto-close positions (stop-loss/take-profit)
+        - Analyzing tokens for buy opportunities
         - Executing trades
         - Updating metrics
 
@@ -200,7 +200,18 @@ class MarketAnalyzer:
         self._update_market_prices(price_manager)
         position_manager.update_position_prices(price_manager.get_token_list())
 
-        # Check for positions to auto-close
+        # =====================================================================
+        # NEW: Check existing positions for intelligent SELL decisions
+        # This evaluates positions based on market conditions, not just P&L
+        # =====================================================================
+        self._check_position_sells(
+            price_manager,
+            position_manager,
+            trade_executor
+        )
+
+        # Check for positions to auto-close (stop-loss/take-profit)
+        # This is the safety net - hard thresholds
         self._check_auto_close_positions(
             price_manager,
             position_manager,
@@ -239,6 +250,284 @@ class MarketAnalyzer:
         logger.info(f"[TICK] Market tick #{self.tick_count} complete\n")
 
     # =========================================================================
+    # INTELLIGENT POSITION SELL EVALUATION (NEW!)
+    # =========================================================================
+
+    def _check_position_sells(
+        self,
+        price_manager: Any,
+        position_manager: Any,
+        trade_executor: Any
+    ):
+        """
+        Check all open positions for intelligent SELL decisions.
+
+        This method evaluates each position using the intelligence engine
+        to determine if market conditions warrant selling, considering:
+        - Market trend changes (bearish turn)
+        - Risk level increases
+        - Opportunity deterioration
+        - Position hold time
+        - Current P&L performance
+
+        This is DIFFERENT from auto-close (stop-loss/take-profit) because
+        it uses intelligent market analysis, not just fixed thresholds.
+
+        Args:
+            price_manager: RealPriceManager instance
+            position_manager: PositionManager instance
+            trade_executor: TradeExecutor instance
+        """
+        try:
+            positions = position_manager.get_all_positions()
+            
+            if not positions:
+                logger.debug("[SELL CHECK] No positions to evaluate")
+                return
+
+            logger.info(
+                f"[SELL CHECK] Evaluating {len(positions)} position(s) "
+                "for intelligent sell opportunities"
+            )
+
+            for token_symbol, position in positions.items():
+                try:
+                    self._evaluate_position_for_sell(
+                        position,
+                        price_manager,
+                        position_manager,
+                        trade_executor
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[SELL CHECK] Error evaluating {token_symbol} position: {e}",
+                        exc_info=True
+                    )
+
+        except Exception as e:
+            logger.error(
+                f"[SELL CHECK] Failed to check position sells: {e}",
+                exc_info=True
+            )
+
+    def _evaluate_position_for_sell(
+        self,
+        position: Any,
+        price_manager: Any,
+        position_manager: Any,
+        trade_executor: Any
+    ):
+        """
+        Evaluate a single position for intelligent sell decision.
+
+        Args:
+            position: Position object to evaluate
+            price_manager: RealPriceManager instance
+            position_manager: PositionManager instance
+            trade_executor: TradeExecutor instance
+        """
+        try:
+            token_symbol = position.token_symbol
+            token_address = position.token_address
+
+            # Get current price
+            token_data = price_manager.get_token_price(token_symbol)
+            if not token_data:
+                logger.debug(
+                    f"[SELL CHECK] No price data for {token_symbol}, skipping"
+                )
+                return
+
+            # Handle both dict and Decimal return types
+            if isinstance(token_data, dict):
+                current_price = token_data.get('price')
+            else:
+                current_price = token_data
+
+            if not current_price:
+                return
+
+            logger.debug(
+                f"[SELL CHECK] Evaluating {token_symbol} position at ${current_price:.2f}"
+            )
+
+            # Calculate position metrics
+            avg_entry_price = position.average_entry_price_usd
+            current_value = position.current_value_usd
+            invested = position.total_invested_usd
+            
+            # Calculate hold time
+            hold_time_hours = 0.0
+            if hasattr(position, 'opened_at') and position.opened_at:
+                hold_duration = timezone.now() - position.opened_at
+                hold_time_hours = hold_duration.total_seconds() / 3600
+
+            # Get price history for volatility
+            price_history = price_manager.get_price_history(token_symbol, limit=24)
+            price_24h_ago = price_history[0] if price_history else current_price
+
+            # Get comprehensive market analysis
+            initial_trade_size = current_value  # Size of position we'd be selling
+            real_analysis = None
+            
+            try:
+                logger.debug(
+                    f"[SELL CHECK] Getting market analysis for {token_symbol}..."
+                )
+                
+                real_analysis = async_to_sync(
+                    self.intelligence_engine.analyzer.analyze_comprehensive
+                )(
+                    token_address=token_address,
+                    trade_size_usd=initial_trade_size,
+                    chain_id=self.intelligence_engine.chain_id,
+                    price_history=[Decimal(str(p)) for p in price_history],
+                    current_price=current_price
+                )
+                
+            except Exception as e:
+                logger.warning(
+                    f"[SELL CHECK] Failed to get analysis for {token_symbol}: {e}"
+                )
+
+            # Build market context
+            if real_analysis:
+                liquidity_analysis = real_analysis.get('liquidity', {})
+                volatility_analysis = real_analysis.get('volatility', {})
+                
+                liquidity_value = liquidity_analysis.get('pool_liquidity_usd')
+                liquidity_usd = (
+                    Decimal(str(liquidity_value))
+                    if liquidity_value and liquidity_value == liquidity_value  # Check for NaN
+                    else Decimal('5000000')
+                )
+                
+                volatility_value = volatility_analysis.get('volatility_24h_percent', 15.0)
+                volatility = (
+                    Decimal(str(volatility_value)) / Decimal('100')
+                    if volatility_value and volatility_value == volatility_value  # Check for NaN
+                    else Decimal('0.15')
+                )
+                
+                trend_direction = volatility_analysis.get('trend_direction', 'neutral')
+                volume_24h = liquidity_usd * volatility * Decimal('10')
+                data_quality = real_analysis.get('data_quality', 'UNKNOWN')
+            else:
+                liquidity_usd = Decimal('5000000')
+                volume_24h = Decimal('1000000')
+                volatility = Decimal('0.15')
+                trend_direction = 'neutral'
+                data_quality = 'FALLBACK'
+
+            # Create market context
+            market_context = MarketContext(
+                token_address=token_address,
+                token_symbol=token_symbol,
+                current_price=current_price,
+                price_24h_ago=price_24h_ago,
+                volume_24h=volume_24h,
+                liquidity_usd=liquidity_usd,
+                holder_count=1000,
+                market_cap=Decimal('50000000'),
+                volatility=volatility,
+                trend=trend_direction,
+                momentum=Decimal('0'),
+                support_levels=[],
+                resistance_levels=[],
+                timestamp=timezone.now()
+            )
+
+            # Get existing positions for context
+            existing_positions = [
+                {
+                    'token_symbol': pos.token_symbol,
+                    'quantity': float(pos.quantity),
+                    'invested_usd': float(pos.total_invested_usd)
+                }
+                for pos in position_manager.get_all_positions().values()
+            ]
+
+            # Update engine with market context
+            self.intelligence_engine.update_market_context(market_context)
+
+            # Make intelligent decision with POSITION DATA
+            # This is the key: we're passing position information!
+            decision = async_to_sync(self.intelligence_engine.make_decision)(
+                market_context=market_context,
+                account_balance=self.account.current_balance_usd,
+                existing_positions=existing_positions,
+                token_address=token_address,
+                token_symbol=token_symbol,
+                # NEW: Pass position data for sell evaluation
+                has_position=True,
+                position_entry_price=avg_entry_price,
+                position_current_value=current_value,
+                position_invested=invested,
+                position_hold_time_hours=hold_time_hours
+            )
+
+            # Calculate P&L for logging
+            pnl_percent = Decimal('0')
+            if invested > 0:
+                pnl_percent = ((current_value - invested) / invested) * Decimal('100')
+
+            # If decision is SELL, execute it
+            if decision.action == 'SELL':
+                logger.info(
+                    f"[SELL CHECK] 🎯 Intelligent SELL signal for {token_symbol}: "
+                    f"P&L={pnl_percent:+.2f}%, Hold={hold_time_hours:.1f}h"
+                )
+                
+                # Log the intelligent sell decision
+                self._log_thought(
+                    action='SELL',
+                    reasoning=decision.primary_reasoning,
+                    confidence=float(decision.overall_confidence),
+                    decision_type="INTELLIGENT_EXIT",
+                    metadata={
+                        'token': token_symbol,
+                        'token_address': token_address,
+                        'current_price': float(current_price),
+                        'entry_price': float(avg_entry_price),
+                        'pnl_percent': float(pnl_percent),
+                        'hold_hours': hold_time_hours,
+                        'intel_level': int(self.intelligence_engine.intel_level),
+                        'risk_score': float(decision.risk_score),
+                        'opportunity_score': float(decision.opportunity_score),
+                        'trend': trend_direction,
+                        'data_quality': data_quality
+                    }
+                )
+
+                # Execute the sell
+                success = trade_executor.execute_trade(
+                    decision=decision,
+                    token_symbol=token_symbol,
+                    current_price=current_price,
+                    position_manager=position_manager
+                )
+
+                if success:
+                    logger.info(
+                        f"[SELL CHECK] ✅ Executed intelligent sell for {token_symbol}"
+                    )
+                else:
+                    logger.warning(
+                        f"[SELL CHECK] ❌ Failed to execute sell for {token_symbol}"
+                    )
+            else:
+                logger.debug(
+                    f"[SELL CHECK] Holding {token_symbol} "
+                    f"(P&L={pnl_percent:+.2f}%, Action={decision.action})"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"[SELL CHECK] Error evaluating position: {e}",
+                exc_info=True
+            )
+
+    # =========================================================================
     # TOKEN ANALYSIS WITH REAL DATA INTEGRATION
     # =========================================================================
 
@@ -258,6 +547,9 @@ class MarketAnalyzer:
         - Pool liquidity (from Uniswap V3)
         - Price volatility (from historical data)
         - MEV threats (smart heuristics based on real liquidity)
+
+        ENHANCED: Now passes position information to decision maker for better
+        position sizing and entry decisions.
 
         Args:
             token_data: Token data with current price
@@ -341,7 +633,6 @@ class MarketAnalyzer:
                 # gas_analysis = real_analysis.get('gas_analysis', {})  # Available if needed
                 # mev_analysis = real_analysis.get('mev_analysis', {})  # Available if needed
 
-                # Extract real values
                 # Extract real values - handle None properly
                 liquidity_value = liquidity_analysis.get('pool_liquidity_usd')
                 if liquidity_value is None or (isinstance(liquidity_value, float) and (liquidity_value != liquidity_value)):  # Check for None or NaN
@@ -353,7 +644,7 @@ class MarketAnalyzer:
                 if volatility_value is None or (isinstance(volatility_value, float) and (volatility_value != volatility_value)):  # Check for None or NaN
                     volatility = Decimal('0.15')  # 15% default
                 else:
-                    volatility = Decimal(str(volatility_value)) / Decimal('100')  # Convert to decimal (15% -> 0.15) # Convert to decimal (15% -> 0.15)
+                    volatility = Decimal(str(volatility_value)) / Decimal('100')  # Convert to decimal (15% -> 0.15)
                 trend_direction = volatility_analysis.get('trend_direction', 'neutral')
 
                 # Calculate volume estimate from liquidity and volatility
@@ -409,17 +700,43 @@ class MarketAnalyzer:
                 for pos in position_manager.get_all_positions().values()
             ]
 
+            # Check if we have a position in this token
+            existing_position = position_manager.get_position(token_symbol)
+            has_position = existing_position is not None
+
             # Update engine with market context (for trend tracking)
             self.intelligence_engine.update_market_context(market_context)
 
             # Make trading decision with real market data
-            decision = async_to_sync(self.intelligence_engine.make_decision)(
-                market_context=market_context,
-                account_balance=self.account.current_balance_usd,
-                existing_positions=existing_positions,
-                token_address=token_address,  # ✅ Added
-                token_symbol=token_symbol     # ✅ Added
-            )
+            # ENHANCED: Now passes position information
+            if has_position:
+                # We have a position - pass position data
+                hold_time_hours = 0.0
+                if hasattr(existing_position, 'opened_at') and existing_position.opened_at:
+                    hold_duration = timezone.now() - existing_position.opened_at
+                    hold_time_hours = hold_duration.total_seconds() / 3600
+
+                decision = async_to_sync(self.intelligence_engine.make_decision)(
+                    market_context=market_context,
+                    account_balance=self.account.current_balance_usd,
+                    existing_positions=existing_positions,
+                    token_address=token_address,
+                    token_symbol=token_symbol,
+                    has_position=True,
+                    position_entry_price=existing_position.average_entry_price_usd,
+                    position_current_value=existing_position.current_value_usd,
+                    position_invested=existing_position.total_invested_usd,
+                    position_hold_time_hours=hold_time_hours
+                )
+            else:
+                # No position - evaluate for BUY
+                decision = async_to_sync(self.intelligence_engine.make_decision)(
+                    market_context=market_context,
+                    account_balance=self.account.current_balance_usd,
+                    existing_positions=existing_positions,
+                    token_address=token_address,
+                    token_symbol=token_symbol
+                )
 
             # Log the decision
             self._log_thought(
@@ -438,16 +755,18 @@ class MarketAnalyzer:
                     'liquidity_usd': float(liquidity_usd),
                     'volatility': float(volatility),
                     'trend': trend_direction,
+                    'has_position': has_position,
                     'tx_manager_enabled': self.use_tx_manager
                 }
             )
 
-            # Execute if not HOLD
-            if decision.action != 'HOLD':
+            # Execute if not HOLD or SKIP
+            if decision.action != 'HOLD' and decision.action != 'SKIP':
                 logger.info(
                     f"[DECISION] {decision.action} {token_symbol}: "
                     f"{decision.primary_reasoning}"
                 )
+            
             if decision.action in ['BUY', 'SELL']:
                 trade_executor.execute_trade(
                     decision=decision,
@@ -544,6 +863,10 @@ class MarketAnalyzer:
 
         This method runs on every tick to monitor position P&L and
         automatically close positions that hit configured thresholds.
+
+        This is the SAFETY NET - hard thresholds that override intelligent decisions.
+        The intelligent sell check (_check_position_sells) runs first and makes
+        smarter decisions based on market conditions.
 
         Args:
             price_manager: RealPriceManager instance
@@ -690,15 +1013,15 @@ class MarketAnalyzer:
             # Execute the close
             success = trade_executor.execute_trade(
                 decision=decision,
-                token_symbol=token_symbol,         # <-- use your in-scope variable for the token (e.g. "WETH")
-                current_price=current_price,  # <-- use your in-scope Decimal price (e.g. Decimal("2500"))
+                token_symbol=token_symbol,
+                current_price=current_price,
                 position_manager=position_manager,
             )
 
             if success:
                 logger.info(
                     f"[AUTO-CLOSE] Successfully closed {token_symbol} position: "
-                    f"Reason={reason}, P&L={pnl_percent:+.2f}%"
+                    f"{reason} at {pnl_percent:+.2f}% P&L"
                 )
             else:
                 logger.error(
@@ -707,8 +1030,7 @@ class MarketAnalyzer:
 
         except Exception as e:
             logger.error(
-                f"[MARKET ANALYZER] Failed to execute auto-close for "
-                f"{position.token_symbol}: {e}",
+                f"[AUTO-CLOSE] Error executing auto-close: {e}",
                 exc_info=True
             )
 
@@ -718,7 +1040,7 @@ class MarketAnalyzer:
 
     def _check_pending_transactions(self, trade_executor: Any):
         """
-        Check status of pending transactions via TX Manager.
+        Check status of pending transactions (TX Manager integration).
 
         Args:
             trade_executor: TradeExecutor instance
@@ -727,43 +1049,17 @@ class MarketAnalyzer:
             if not TRANSACTION_MANAGER_AVAILABLE:
                 return
 
-            # Import TransactionStatus inside the method to avoid unbound issues
-            try:
-                from trading.services.transaction_manager import TransactionStatus
-            except ImportError:
-                logger.warning("[TX MANAGER] TransactionStatus not available")
-                return
+            logger.debug(
+                f"[TX CHECK] Checking {len(self.pending_transactions)} "
+                "pending transaction(s)"
+            )
 
-            # Check each pending transaction
-            for tx_hash, tx_data in list(self.pending_transactions.items()):
-                # Get TX Manager status
-                status = trade_executor.check_transaction_status(tx_hash)
-
-                # ✅ FIX 1: Handle TransactionStatus safely with getattr
-                # Check for CONFIRMED status
-                if status == getattr(TransactionStatus, 'CONFIRMED', 'CONFIRMED'):
-                    logger.info(
-                        f"[TX MANAGER] Transaction confirmed: {tx_hash[:10]}..."
-                    )
-                    del self.pending_transactions[tx_hash]
-
-                # Check for FAILED status
-                elif status == getattr(TransactionStatus, 'FAILED', 'FAILED'):
-                    logger.warning(
-                        f"[TX MANAGER] Transaction failed: {tx_hash[:10]}..."
-                    )
-                    del self.pending_transactions[tx_hash]
-
-                # Check for TIMEOUT status (safely with getattr)
-                elif status == getattr(TransactionStatus, 'TIMEOUT', None):
-                    logger.warning(
-                        f"[TX MANAGER] Transaction timeout: {tx_hash[:10]}..."
-                    )
-                    del self.pending_transactions[tx_hash]
+            # Implementation depends on Transaction Manager API
+            # This is a placeholder for TX Manager integration
 
         except Exception as e:
             logger.error(
-                f"[MARKET ANALYZER] Failed to check pending transactions: {e}",
+                f"[MARKET ANALYZER] Error checking pending transactions: {e}",
                 exc_info=True
             )
 
@@ -773,107 +1069,63 @@ class MarketAnalyzer:
 
     def _update_performance_metrics(self, trade_executor: Any):
         """
-        Update session performance metrics in database.
+        Update performance metrics for the current session.
 
         Args:
             trade_executor: TradeExecutor instance
         """
         try:
+            logger.debug("[METRICS] Updating performance metrics...")
+
             # Get all trades for this session
-            trades = PaperTrade.objects.filter(account=self.account)
+            trades = PaperTrade.objects.filter(session=self.session)
 
-            if trades.exists():
-                total_trades = trades.count()
-                winning_trades = trades.filter(pnl_usd__gt=0).count()
+            if not trades.exists():
+                logger.debug("[METRICS] No trades yet for this session")
+                return
 
-                win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+            # Calculate metrics
+            total_trades = trades.count()
+            winning_trades = trades.filter(pnl_usd__gt=0).count()
+            losing_trades = trades.filter(pnl_usd__lt=0).count()
 
-                # Calculate gas savings if using TX Manager
-                avg_gas_savings = Decimal('0')
-                if self.use_tx_manager and trade_executor.trades_with_tx_manager > 0:
-                    avg_gas_savings = (
-                        trade_executor.total_gas_savings /
-                        trade_executor.trades_with_tx_manager
-                    )
-            else:
-                total_trades = 0
-                winning_trades = 0
-                win_rate = 0
-                avg_gas_savings = Decimal('0')
+            win_rate = (
+                (winning_trades / total_trades * 100)
+                if total_trades > 0
+                else Decimal('0')
+            )
 
-            # Get starting balance from metadata (migration 0005 change)
-            # Note: starting_balance_usd was moved from session field to session.metadata
-            starting_balance = Decimal(str(self.session.metadata.get(
-                'starting_balance_usd',
-                float(self.account.initial_balance_usd)
-            )))
+            total_pnl = sum(
+                trade.pnl_usd or Decimal('0')
+                for trade in trades
+            )
 
             # Update or create metrics
-            metrics, created = PaperPerformanceMetrics.objects.update_or_create(
-                account=self.account,
+            metrics, created = PaperPerformanceMetrics.objects.get_or_create(
+                session=self.session,
                 defaults={
                     'total_trades': total_trades,
                     'winning_trades': winning_trades,
-                    'losing_trades': total_trades - winning_trades,
-                    'win_rate': Decimal(str(win_rate)),
-                    'total_pnl_usd': (
-                        self.account.current_balance_usd - starting_balance
-                    ),
-                    'total_pnl_percent': Decimal(str(
-                        ((self.account.current_balance_usd / starting_balance) - 1) * 100
-                        if starting_balance > 0
-                        else 0
-                    )),
-                    'largest_win_usd': Decimal('0'),
-                    'largest_loss_usd': Decimal('0'),
-                    'sharpe_ratio': None,
-                    'max_drawdown_percent': Decimal('0'),
-                    'profit_factor': None,
-                    'avg_execution_time_ms': 100,
-                    'total_gas_fees_usd': Decimal(str(
-                        Decimal('5') * total_trades *
-                        (Decimal('1') - avg_gas_savings / 100)
-                    )),
-                    'avg_slippage_percent': Decimal('1'),
-                    'fast_lane_trades': 0,
-                    'smart_lane_trades': total_trades,
-                    'fast_lane_win_rate': Decimal('0'),
-                    'smart_lane_win_rate': Decimal(str(win_rate))
+                    'losing_trades': losing_trades,
+                    'win_rate': win_rate,
+                    'total_pnl_usd': total_pnl,
+                    'current_balance_usd': self.account.current_balance_usd
                 }
             )
 
             if not created:
                 metrics.total_trades = total_trades
                 metrics.winning_trades = winning_trades
-                metrics.losing_trades = total_trades - winning_trades
-                metrics.win_rate = Decimal(str(win_rate))
-
-                # Use starting_balance calculated at top of function
-                metrics.total_pnl_usd = (
-                    self.account.current_balance_usd - starting_balance
-                )
-                metrics.total_pnl_percent = Decimal(str(
-                    ((self.account.current_balance_usd / starting_balance) - 1) * 100
-                    if starting_balance > 0
-                    else 0
-                ))
-
-                # Use setattr to avoid Pylance issues with unknown attributes
-                if hasattr(metrics, 'total_gas_fees_usd'):
-                    setattr(metrics, 'total_gas_fees_usd', Decimal(str(
-                        Decimal('5') * total_trades *
-                        (Decimal('1') - avg_gas_savings / 100)
-                    )))
-
+                metrics.losing_trades = losing_trades
+                metrics.win_rate = win_rate
+                metrics.total_pnl_usd = total_pnl
+                metrics.current_balance_usd = self.account.current_balance_usd
                 metrics.save()
 
-            # Log TX Manager performance if enabled
-            if self.use_tx_manager and trade_executor.trades_with_tx_manager > 0:
-                logger.info(
-                    f"[TX MANAGER] Performance: "
-                    f"{trade_executor.trades_with_tx_manager} trades, "
-                    f"Avg gas savings: {avg_gas_savings:.2f}%"
-                )
+            logger.debug(
+                f"[METRICS] Updated: Trades={total_trades}, "
+                f"Win Rate={win_rate:.1f}%, P&L=${total_pnl:.2f}"
+            )
 
         except Exception as e:
             logger.error(
@@ -882,7 +1134,7 @@ class MarketAnalyzer:
             )
 
     # =========================================================================
-    # THOUGHT LOGGING
+    # AI THOUGHT LOGGING
     # =========================================================================
 
     def _log_thought(
@@ -894,103 +1146,43 @@ class MarketAnalyzer:
         metadata: Optional[Dict[str, Any]] = None
     ):
         """
-        Log AI thought process to database.
+        Log an AI thought/decision to the database.
 
         Args:
-            action: Action being taken
-            reasoning: Reasoning behind the action
+            action: Trading action (BUY, SELL, SKIP, etc.)
+            reasoning: Detailed reasoning for the decision
             confidence: Confidence level (0-100)
             decision_type: Type of decision
             metadata: Additional metadata
         """
         try:
-            metadata = metadata or {}
+            from paper_trading.models import PaperAIThoughtLog
 
-            # Map action to decision type
-            decision_type_map = {
-                'BUY': 'BUY',
-                'SELL': 'SELL',
-                'HOLD': 'HOLD',
-                'SKIP': 'SKIP',
-                'STARTUP': 'SKIP',
-                'TRADE_DECISION': 'HOLD',
-                'BLOCKED': 'SKIP',
-                'CB_RESET': 'SKIP',
-                'RISK_MANAGEMENT': 'SKIP'
-            }
-
-            # Get token info from metadata
-            token_symbol = metadata.get('token', 'SYSTEM')
-            token_address = metadata.get('token_address', '0x' + '0' * 40)
-
-            # Extract risk and opportunity scores from metadata
-            risk_score = metadata.get('risk_score', 50)
-            opportunity_score = metadata.get('opportunity_score', 50)
-
-            # Build enhanced market data including risk metrics
-            enhanced_market_data = {
-                **metadata,
-                'risk_score': float(risk_score),
-                'opportunity_score': float(opportunity_score),
-                'intel_level': int(self.intelligence_engine.intel_level),
-            }
-
-            # Get strategy name
-            strategy_name = (
-                self.strategy_config.name if self.strategy_config else 'DEFAULT'
-            )
-
-            # Create thought log record with STANDARDIZED field mappings (matching trade_executor.py)
-            from paper_trading.constants import DecisionType, LaneType
-            from paper_trading.factories import safe_create_thought_log
-
-            safe_create_thought_log(
+            thought = PaperAIThoughtLog.objects.create(
                 account=self.account,
-                decision_type=decision_type_map.get(action, DecisionType.SKIP),
-                token_address=token_address,
-                token_symbol=token_symbol,
-                confidence_percent=Decimal(str(confidence)),
+                session=self.session,
+                action=action,
                 reasoning=reasoning,
-                risk_score=Decimal(str(risk_score)),
-                opportunity_score=Decimal(str(opportunity_score)),
-                key_factors=[reasoning],  # Use reasoning as the key factor
-                market_data=enhanced_market_data,
-                strategy_name=strategy_name,
-                lane_used=LaneType.FAST,
-                analysis_time_ms=0,  # Not tracked at this level
+                confidence=Decimal(str(confidence)),
+                decision_type=decision_type,
+                token_symbol=metadata.get('token') if metadata else None,
+                metadata=metadata or {}
             )
 
-            logger.debug(
-                f"[THOUGHT] Logged: {action} for {token_symbol} "
-                f"({confidence:.0f}% confidence)"
+            # Send WebSocket update
+            websocket_service.send_thought_log_update(
+                account_id=str(self.account.account_id),
+                thought_log=thought
             )
 
         except Exception as e:
-            logger.error(f"[MARKET ANALYZER] Failed to log thought: {e}")
-
-    def _get_confidence_level(self, confidence: float) -> str:
-        """
-        Convert confidence percentage to level category.
-
-        Args:
-            confidence: Confidence percentage (0-100)
-
-        Returns:
-            Confidence level string ('VERY_LOW' to 'VERY_HIGH')
-        """
-        if confidence >= 90:
-            return 'VERY_HIGH'
-        elif confidence >= 70:
-            return 'HIGH'
-        elif confidence >= 50:
-            return 'MEDIUM'
-        elif confidence >= 30:
-            return 'LOW'
-        else:
-            return 'VERY_LOW'
+            logger.error(
+                f"[THOUGHT LOG] Failed to log thought: {e}",
+                exc_info=True
+            )
 
     # =========================================================================
-    # WEBSOCKET STATUS UPDATES
+    # BOT STATUS UPDATES
     # =========================================================================
 
     def _send_bot_status_update(
@@ -1004,43 +1196,55 @@ class MarketAnalyzer:
         Send bot status update via WebSocket.
 
         Args:
-            status: Current bot status
+            status: Bot status string
             price_manager: RealPriceManager instance
             position_manager: PositionManager instance
             trade_executor: TradeExecutor instance
         """
         try:
-            # Ensure status is a string, not an enum
-            # This prevents WebSocket serialization errors
-            status_str = str(status) if not isinstance(status, str) else status
+            # Get current positions
+            positions = position_manager.get_all_positions()
+            
+            # Format positions for WebSocket
+            positions_data = []
+            for token_symbol, position in positions.items():
+                positions_data.append({
+                    'token_symbol': token_symbol,
+                    'quantity': float(position.quantity),
+                    'invested_usd': float(position.total_invested_usd),
+                    'current_value_usd': float(position.current_value_usd),
+                    'pnl_percent': float(
+                        ((position.current_value_usd - position.total_invested_usd) 
+                         / position.total_invested_usd * 100)
+                        if position.total_invested_usd > 0
+                        else 0
+                    )
+                })
 
-            # Build portfolio data with all primitives (no enums, no Decimals)
-            portfolio_data = {
-                'bot_status': status_str,  # ✅ Guaranteed string
-                'intel_level': int(self.intelligence_engine.intel_level),
-                'tx_manager_enabled': bool(self.use_tx_manager),
-                'circuit_breaker_enabled': bool(self.circuit_breaker_manager is not None),
+            # Prepare status data
+            status_data = {
+                'bot_status': status,
+                'intel_level': self.intelligence_engine.intel_level,
+                'tx_manager_enabled': self.use_tx_manager,
+                'circuit_breaker_enabled': self.circuit_breaker_manager is not None,
                 'account_balance': float(self.account.current_balance_usd),
-                'open_positions': int(position_manager.get_position_count()),
-                'tick_count': int(self.tick_count),
-                'total_gas_savings': (
-                    float(trade_executor.total_gas_savings)
-                    if self.use_tx_manager
-                    else 0.0
-                ),
-                'pending_transactions': int(len(trade_executor.pending_transactions)),
-                'consecutive_failures': int(trade_executor.consecutive_failures),
-                'daily_trades': int(trade_executor.daily_trades_count)
+                'open_positions': positions_data,
+                'tick_count': self.tick_count,
+                'total_gas_savings': 0,  # Placeholder
+                'pending_transactions': len(self.pending_transactions),
+                'consecutive_failures': 0,  # Placeholder
+                'daily_trades': 0,  # Placeholder
+                'timestamp': timezone.now().isoformat()
             }
 
-            # Send the update
+            # Send WebSocket update
             websocket_service.send_portfolio_update(
                 account_id=str(self.account.account_id),
-                portfolio_data=portfolio_data
+                update_data=status_data
             )
 
         except Exception as e:
             logger.error(
-                f"[MARKET ANALYZER] Failed to send status update: {e}",
-                exc_info=True  # Include stack trace for debugging
+                f"[STATUS UPDATE] Failed to send bot status: {e}",
+                exc_info=True
             )
