@@ -252,26 +252,47 @@ def _extract_config_parameters(config: PaperStrategyConfiguration) -> Dict[str, 
     that can be passed to the bot and stored in session metadata.
     
     Args:
-        config: Strategy configuration object
+        config: Strategy configuration model instance
         
     Returns:
-        Dictionary of configuration parameters
+        Dictionary with all configuration parameters
     """
     return {
-        SessionMetadataFields.TRADING_MODE: config.trading_mode,
-        SessionMetadataFields.MAX_POSITION_SIZE_PERCENT: float(config.max_position_size_percent),
-        SessionMetadataFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),
-        SessionMetadataFields.TAKE_PROFIT_PERCENT: float(config.take_profit_percent),
-        SessionMetadataFields.MAX_DAILY_TRADES: config.max_daily_trades,
-        SessionMetadataFields.CONFIDENCE_THRESHOLD: float(config.confidence_threshold),
-        'max_concurrent_positions': config.max_concurrent_positions,
-        'min_liquidity_usd': float(config.min_liquidity_usd),
-        'max_slippage_percent': float(config.max_slippage_percent),
-        'use_fast_lane': config.use_fast_lane,
-        'use_smart_lane': config.use_smart_lane,
-        'fast_lane_threshold_usd': float(config.fast_lane_threshold_usd),
+        # Basic settings
+        StrategyConfigFields.NAME: config.name,
+        StrategyConfigFields.TRADING_MODE: config.trading_mode,
+        StrategyConfigFields.IS_ACTIVE: config.is_active,
+        
+        # Lane configuration
+        StrategyConfigFields.USE_FAST_LANE: config.use_fast_lane,
+        StrategyConfigFields.USE_SMART_LANE: config.use_smart_lane,
+        StrategyConfigFields.FAST_LANE_THRESHOLD_USD: float(config.fast_lane_threshold_usd),
+        
+        # Position sizing
+        StrategyConfigFields.MAX_POSITION_SIZE_PERCENT: float(config.max_position_size_percent),
+        StrategyConfigFields.MAX_DAILY_TRADES: config.max_daily_trades,
+        StrategyConfigFields.MAX_CONCURRENT_POSITIONS: config.max_concurrent_positions,
+        
+        # Risk management
+        StrategyConfigFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),
+        StrategyConfigFields.TAKE_PROFIT_PERCENT: float(config.take_profit_percent),
+        StrategyConfigFields.MIN_LIQUIDITY_USD: float(config.min_liquidity_usd),
+        StrategyConfigFields.MAX_SLIPPAGE_PERCENT: float(config.max_slippage_percent),
+        
+        # ⭐ CRITICAL: Confidence threshold - THIS IS WHAT WAS MISSING!
+        StrategyConfigFields.CONFIDENCE_THRESHOLD: float(config.confidence_threshold),
+        
+        # Token filters
+        StrategyConfigFields.ALLOWED_TOKENS: config.allowed_tokens or [],
+        StrategyConfigFields.BLOCKED_TOKENS: config.blocked_tokens or [],
+        
+        # Custom parameters
+        StrategyConfigFields.CUSTOM_PARAMETERS: config.custom_parameters or {},
+        
+        # Timestamps
+        StrategyConfigFields.CREATED_AT: config.created_at.isoformat(),
+        StrategyConfigFields.UPDATED_AT: config.updated_at.isoformat(),
     }
-
 
 # =============================================================================
 # BOT STOP API

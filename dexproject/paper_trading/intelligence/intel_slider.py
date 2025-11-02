@@ -355,6 +355,10 @@ class IntelSliderEngine(IntelligenceEngine):
                 f"[CONFIG] Bot will continue with hardcoded Intel Level {self.intel_level} defaults"
             )
     
+
+
+
+    
     async def analyze_market(
         self,
         market_context: MarketContext

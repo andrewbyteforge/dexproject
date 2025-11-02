@@ -486,9 +486,20 @@ class ExecutionEngine:
     and manages portfolio with paper trading simulation.
     """
     
-    def __init__(self, chain_config: ChainConfig):
-        """Initialize execution engine."""
+    def __init__(
+        self, 
+        chain_config: ChainConfig,
+        min_confidence_threshold: Decimal = Decimal('70.0')  # ← NEW: Accept confidence threshold
+    ):
+        """
+        Initialize execution engine.
+        
+        Args:
+            chain_config: Chain configuration
+            min_confidence_threshold: Minimum confidence required to execute trades (0-100)
+        """
         self.chain_config = chain_config
+        self.min_confidence_threshold = min_confidence_threshold  # ← NEW: Store it
         self.paper_simulator = PaperTradingSimulator(chain_config)
         self.portfolio_manager = PortfolioManager(chain_config)
         self.status = EngineStatus.STOPPED
@@ -498,6 +509,11 @@ class ExecutionEngine:
         self.total_decisions = 0
         self.total_trades = 0
         self.successful_trades = 0
+        
+        # ← NEW: Log the confidence threshold being used
+        self.logger.info(
+            f"ExecutionEngine initialized with min_confidence_threshold={self.min_confidence_threshold}%"
+        )
     
     async def process_risk_assessment(self, assessment: RiskAssessmentResult) -> None:
         """Process a risk assessment and make trading decision."""
@@ -548,7 +564,11 @@ class ExecutionEngine:
         confidence_score = self._calculate_confidence_score(assessment)
         
         # Skip if confidence too low
-        if confidence_score < 70:  # Require 70% confidence minimum
+        if confidence_score < self.min_confidence_threshold:
+            self.logger.info(
+                f"Skipping trade: confidence {confidence_score:.1f}% "
+                f"below threshold {self.min_confidence_threshold:.1f}%"
+            )
             return TradeDecision(
                 pair_address=pair_event.pair_address,
                 chain_id=pair_event.chain_id,

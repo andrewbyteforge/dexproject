@@ -27,14 +27,14 @@ class TypeConverter:
     
     @staticmethod
     def to_decimal(value: NumericType,
-                   default: Optional[Decimal] = None,
-                   precision: Optional[int] = None) -> Decimal:
+                default: Optional[Decimal] = None,
+                precision: Optional[int] = None) -> Decimal:
         """
         Convert any numeric type to Decimal safely.
         
         This method never raises exceptions - it always returns a valid Decimal.
         Perfect for production trading systems where stability is critical.
-    
+
         Args:
             value: Value to convert (int, float, Decimal, or string)
             default: Default value if conversion fails (defaults to Decimal('0'))
@@ -63,8 +63,12 @@ class TypeConverter:
             if value is None:
                 return default
             
-            # Already a Decimal
+            # Already a Decimal - but validate it!
             if isinstance(value, Decimal):
+                # Check for NaN, Infinity, and other invalid values
+                if value.is_nan() or value.is_infinite():
+                    logger.warning(f"Invalid Decimal value detected: {value}, using default")
+                    return default
                 result = value
             # String representation (most accurate for floats)
             elif isinstance(value, (int, float)):
@@ -83,6 +87,11 @@ class TypeConverter:
                 except Exception:
                     logger.warning(f"Cannot convert {type(value)} to Decimal, using default")
                     return default
+            
+            # Validate the result isn't NaN or Infinity
+            if result.is_nan() or result.is_infinite():
+                logger.warning(f"Conversion resulted in invalid Decimal: {result}, using default")
+                return default
             
             # Apply precision if specified
             if precision is not None:

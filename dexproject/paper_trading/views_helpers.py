@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional
 from django.db import connection
 
 from .models import PaperTradingAccount, PaperPosition
-from .utils import to_decimal
+from .utils.type_utils import to_decimal
 
 logger = logging.getLogger(__name__)
 

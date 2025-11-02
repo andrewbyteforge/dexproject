@@ -21,7 +21,7 @@ from django.db import transaction
 from django.conf import settings
 from django.contrib.auth.models import User
 from datetime import datetime
-
+from decimal import Decimal
 # Import our enhanced Web3 infrastructure
 from engine.config import config, ChainConfig
 from engine.web3_client import Web3Client
@@ -114,13 +114,18 @@ def run_async_task(coro):
     return loop.run_until_complete(coro)
 
 
-def _validate_risk_assessment(risk_result: Dict[str, Any], token_address: str) -> Tuple[bool, str]:
+def _validate_risk_assessment(
+    risk_result: Dict[str, Any], 
+    token_address: str,
+    min_confidence_threshold: Decimal = Decimal('70.0')  # ← NEW: Add parameter
+) -> Tuple[bool, str]:
     """
     Validate risk assessment result and determine if trade should proceed.
     
     Args:
         risk_result: Result from risk assessment task
         token_address: Token being assessed
+        min_confidence_threshold: Minimum confidence required (from strategy config)
         
     Returns:
         Tuple of (should_proceed, reason)
@@ -139,9 +144,9 @@ def _validate_risk_assessment(risk_result: Dict[str, Any], token_address: str) -
         if trading_decision == 'BLOCK':
             return False, f"Trade blocked by risk assessment (Risk: {overall_risk_score:.1f}/100)"
         
-        # Require minimum confidence for trades
-        if confidence_score < 70:
-            return False, f"Insufficient confidence in risk assessment ({confidence_score:.1f}% < 70%)"
+        # Require minimum confidence for trades (use configured threshold)
+        if confidence_score < float(min_confidence_threshold):
+            return False, f"Insufficient confidence in risk assessment ({confidence_score:.1f}% < {min_confidence_threshold:.1f}%)"
         
         # Warning for SKIP decisions
         if trading_decision == 'SKIP':
@@ -162,6 +167,11 @@ def _validate_risk_assessment(risk_result: Dict[str, Any], token_address: str) -
     except Exception as e:
         logger.error(f"Error validating risk assessment: {e}")
         return False, f"Risk validation error: {str(e)}"
+
+
+
+
+
 
 
 @shared_task(
@@ -248,7 +258,13 @@ def execute_buy_order_with_risk(
                 }
             
             # Validate risk assessment result
-            can_proceed, risk_reason = _validate_risk_assessment(risk_assessment_result, token_address)
+            # Validate risk assessment result (with confidence threshold from config)
+            # TODO: Get min_confidence from strategy config if available
+            can_proceed, risk_reason = _validate_risk_assessment(
+                risk_assessment_result,
+                token_address,
+                min_confidence_threshold=Decimal('70.0')  # Default for now
+            )
             
             if not can_proceed:
                 logger.warning(f"❌ Trade blocked by risk assessment: {risk_reason}")

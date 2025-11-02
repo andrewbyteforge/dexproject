@@ -418,6 +418,120 @@
         </div>
     </form>
     
+    <!-- Active Sessions Section -->
+    {% if active_sessions and active_sessions.count > 0 %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-activity me-2"></i>Active Trading Sessions
+                        <span class="badge bg-success ms-2">{{ active_sessions.count }}</span>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-dark">
+                            <thead>
+                                <tr>
+                                    <th>Session ID</th>
+                                    <th>Strategy</th>
+                                    <th>Status</th>
+                                    <th>Started</th>
+                                    <th>Duration</th>
+                                    <th>Trades</th>
+                                    <th>P&L</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for session in active_sessions %}
+                                <tr>
+                                    <td>
+                                        <code class="text-primary">{{ session.session_id|slice:":8" }}...</code>
+                                    </td>
+                                    <td>
+                                        {% if session.strategy_config %}
+                                            <strong>{{ session.strategy_config.name }}</strong>
+                                            <br>
+                                            <small class="text-muted">{{ session.strategy_config.trading_mode }}</small>
+                                        {% else %}
+                                            <span class="text-muted">No strategy</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if session.status == 'RUNNING' %}
+                                            <span class="badge bg-success">
+                                                <i class="bi bi-play-fill"></i> Running
+                                            </span>
+                                        {% elif session.status == 'STARTING' %}
+                                            <span class="badge bg-warning">
+                                                <i class="bi bi-hourglass-split"></i> Starting
+                                            </span>
+                                        {% elif session.status == 'PAUSED' %}
+                                            <span class="badge bg-info">
+                                                <i class="bi bi-pause-fill"></i> Paused
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {{ session.started_at|date:"M d, H:i" }}
+                                    </td>
+                                    <td>
+                                        <span id="duration-{{ session.session_id }}">
+                                            {{ session.duration_display|default:"Calculating..." }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-primary">{{ session.total_trades|default:0 }}</span>
+                                        {% if session.successful_trades %}
+                                            <small class="text-success">
+                                                ({{ session.successful_trades }} ✓)
+                                            </small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if session.session_pnl_usd %}
+                                            {% if session.session_pnl_usd > 0 %}
+                                                <span class="text-success fw-bold">
+                                                    +${{ session.session_pnl_usd|floatformat:2 }}
+                                                </span>
+                                            {% elif session.session_pnl_usd < 0 %}
+                                                <span class="text-danger fw-bold">
+                                                    -${{ session.session_pnl_usd|floatformat:2|cut:"-" }}
+                                                </span>
+                                            {% else %}
+                                                <span class="text-muted">$0.00</span>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="text-muted">--</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <button onclick="stopSession('{{ session.session_id }}', '{{ session.strategy_config.name|default:"Session" }}')"
+                                                    class="btn btn-sm btn-warning"
+                                                    title="Stop this session">
+                                                <i class="bi bi-stop-circle"></i> Stop
+                                            </button>
+                                            <button onclick="deleteSession('{{ session.session_id }}', '{{ session.strategy_config.name|default:"Session" }}')"
+                                                    class="btn btn-sm btn-danger"
+                                                    title="Delete this session">
+                                                <i class="bi bi-trash"></i> Delete
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
     <!-- Saved Configurations Section with Pagination -->
     {% if all_configs %}
     <div class="row mb-4">
@@ -435,50 +549,90 @@
                     {% endif %}
                 </div>
                 <div class="card-body">
-                    <!-- Configuration items -->
-                    {% for cfg in all_configs %}
-                    <div class="config-item">
-                        <div class="config-item-info">
-                            <div class="config-item-name">
-                                {{ cfg.name }}
-                                {% if cfg.is_active %}
-                                    <span class="badge bg-success ms-2">ACTIVE</span>
-                                {% endif %}
-                            </div>
-                            <div class="config-item-meta">
-                                Mode: {{ cfg.trading_mode }} • 
-                                Created: {{ cfg.created_at|date:"M d, Y H:i" }} •
-                                Updated: {{ cfg.updated_at|date:"M d, Y H:i" }} •
-                                {% if cfg.use_fast_lane %}Fast Lane{% endif %}
-                                {% if cfg.use_fast_lane and cfg.use_smart_lane %} + {% endif %}
-                                {% if cfg.use_smart_lane %}Smart Lane{% endif %}
-                            </div>
-                        </div>
-                        <div class="config-item-actions">
-                            {% if not cfg.is_active %}
-                            <a href="?load_config={{ cfg.config_id }}" 
-                               class="btn btn-outline-primary btn-icon" 
-                               title="Load & Activate Configuration">
-                                <i class="bi bi-play-circle"></i>
-                            </a>
-                            {% endif %}
-                            
-                            {% if not cfg.is_active and total_configs > 1 %}
-                            <form method="post" style="display: inline;" 
-                                  onsubmit="return confirm('Delete configuration &quot;{{ cfg.name }}&quot;? This cannot be undone.');">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="config_id" value="{{ cfg.config_id }}">
-                                <button type="submit" 
-                                        class="btn btn-outline-danger btn-icon" 
-                                        title="Delete Configuration">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </form>
-                            {% endif %}
-                        </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-dark">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Trading Mode</th>
+                                    <th>Lanes</th>
+                                    <th>Position Size</th>
+                                    <th>Stop/Profit</th>
+                                    <th>Created</th>
+                                    <th>Updated</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for cfg in all_configs %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ cfg.name }}</strong>
+                                        {% if cfg.is_active %}
+                                            <span class="badge bg-info ms-2">SELECTED</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if cfg.trading_mode == 'CONSERVATIVE' %}
+                                            <span class="badge bg-secondary">🛡️ Conservative</span>
+                                        {% elif cfg.trading_mode == 'MODERATE' %}
+                                            <span class="badge bg-primary">⚖️ Moderate</span>
+                                        {% elif cfg.trading_mode == 'AGGRESSIVE' %}
+                                            <span class="badge bg-danger">🚀 Aggressive</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if cfg.use_fast_lane %}
+                                            <span class="badge bg-success">⚡ Fast</span>
+                                        {% endif %}
+                                        {% if cfg.use_smart_lane %}
+                                            <span class="badge bg-info">🧠 Smart</span>
+                                        {% endif %}
+                                        {% if not cfg.use_fast_lane and not cfg.use_smart_lane %}
+                                            <span class="text-muted">None</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ cfg.max_position_size_percent }}%</td>
+                                    <td>
+                                        <small class="text-danger">-{{ cfg.stop_loss_percent }}%</small>
+                                        <span class="text-muted">/</span>
+                                        <small class="text-success">+{{ cfg.take_profit_percent }}%</small>
+                                    </td>
+                                    <td>{{ cfg.created_at|date:"M d, Y" }}</td>
+                                    <td>{{ cfg.updated_at|date:"M d, Y" }}</td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            {% if not cfg.is_active %}
+                                            <!-- Activate button for inactive strategy -->
+                                            <a href="?load_config={{ cfg.config_id }}" 
+                                               class="btn btn-sm btn-primary" 
+                                               title="Set as Selected Configuration">
+                                                <i class="bi bi-check-circle"></i> Select
+                                            </a>
+                                            {% endif %}
+                                            
+                                            {% if total_configs > 1 %}
+                                            <!-- Delete button for all strategies (with warning if selected) -->
+                                            <form method="post" 
+                                                  style="display: inline;" 
+                                                  onsubmit="return confirmDelete('{{ cfg.name }}', {{ cfg.is_active|lower }});">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="action" value="delete">
+                                                <input type="hidden" name="config_id" value="{{ cfg.config_id }}">
+                                                <button type="submit" 
+                                                        class="btn btn-sm btn-outline-danger" 
+                                                        title="Delete Configuration">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </form>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
-                    {% endfor %}
                     
                     <!-- Pagination controls -->
                     {% if all_configs.has_other_pages %}
@@ -605,5 +759,192 @@
 {% block extra_js %}
 <script src="{% static 'js/paper_trading_configuration.js' %}"></script>
 <script src="{% static 'js/paper_trading_reset.js' %}"></script>
+
+<script>
+/**
+ * Stop a specific trading session
+ * @param {string} sessionId - Session ID (UUID)
+ * @param {string} sessionName - Session/strategy name for confirmation
+ */
+function stopSession(sessionId, sessionName) {
+    // Confirm with user
+    if (!confirm(`Stop session "${sessionName}"?\n\nThis will terminate the bot session.`)) {
+        return;
+    }
+    
+    // Show loading state
+    const button = event.target.closest('button');
+    const originalHTML = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+    
+    // Call the stop bot API
+    fetch('/paper-trading/api/bot/stop/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            session_id: sessionId,
+            reason: `User stopped session via configuration page`
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show success message
+            showMessage('success', `Session "${sessionName}" stopped successfully`);
+            
+            // Reload page after short delay
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } else {
+            // Show error message
+            showMessage('error', data.error || 'Failed to stop session');
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+        }
+    })
+    .catch(error => {
+        console.error('Error stopping session:', error);
+        showMessage('error', 'Network error: Could not stop session');
+        button.disabled = false;
+        button.innerHTML = originalHTML;
+    });
+}
+
+/**
+ * Delete a specific trading session
+ * @param {string} sessionId - Session ID (UUID)
+ * @param {string} sessionName - Session/strategy name for confirmation
+ */
+function deleteSession(sessionId, sessionName) {
+    // Confirm with user
+    if (!confirm(`Delete session "${sessionName}"?\n\nThis will permanently delete the session and all its data. This cannot be undone.`)) {
+        return;
+    }
+    
+    // Show loading state
+    const button = event.target.closest('button');
+    const originalHTML = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+    
+    // Call the delete session API
+    fetch('/paper-trading/api/sessions/delete/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            session_id: sessionId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Show success message
+            showMessage('success', `Session "${sessionName}" deleted successfully`);
+            
+            // Reload page after short delay
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } else {
+            // Show error message
+            showMessage('error', data.error || 'Failed to delete session');
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+        }
+    })
+    .catch(error => {
+        console.error('Error deleting session:', error);
+        showMessage('error', 'Network error: Could not delete session');
+        button.disabled = false;
+        button.innerHTML = originalHTML;
+    });
+}
+
+/**
+ * Confirm deletion of a configuration
+ * @param {string} configName - Configuration name
+ * @param {boolean} isActive - Whether this configuration is currently selected
+ * @returns {boolean} - True if user confirms, false otherwise
+ */
+function confirmDelete(configName, isActive) {
+    // Extra warning if trying to delete the selected configuration
+    let confirmMessage = `Delete configuration "${configName}"?\n\nThis cannot be undone.`;
+    
+    if (isActive) {
+        confirmMessage = `Delete SELECTED configuration "${configName}"?\n\n⚠️ WARNING: This is your currently selected configuration!\n\nYou should select a different configuration first.\n\nAre you sure you want to delete it?`;
+    }
+    
+    // Return true to submit form, false to cancel
+    return confirm(confirmMessage);
+}
+
+/**
+ * Update session durations in real-time
+ */
+function updateSessionDurations() {
+    const durationElements = document.querySelectorAll('[id^="duration-"]');
+    durationElements.forEach(el => {
+        const sessionId = el.id.replace('duration-', '');
+        // Extract start time from hidden data attribute or calculate from elapsed time
+        // For now, we'll let the server handle duration calculation on page load
+        // This can be enhanced with WebSocket updates
+    });
+}
+
+// Update durations every minute
+setInterval(updateSessionDurations, 60000);
+
+/**
+ * Get CSRF token from cookies
+ */
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+/**
+ * Show a message to the user
+ */
+function showMessage(type, message) {
+    // Create alert element
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+    alertDiv.style.position = 'fixed';
+    alertDiv.style.top = '20px';
+    alertDiv.style.right = '20px';
+    alertDiv.style.zIndex = '9999';
+    alertDiv.style.minWidth = '300px';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    // Add to page
+    document.body.appendChild(alertDiv);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 5000);
+}
+</script>
 
 {% endblock %}

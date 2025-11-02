@@ -794,6 +794,537 @@ function updateAllCharts(data) {
 }
 
 // ============================================================================
+// MISSING FUNCTIONS - IMPLEMENTED
+// ============================================================================
+
+/**
+ * Update liquidity chart with new data
+ */
+function updateLiquidityChart(liquidityData) {
+    if (!liquidityChart) return;
+
+    if (liquidityData.buy_orders && liquidityData.sell_orders) {
+        liquidityChart.data.labels = liquidityData.price_levels || [];
+        liquidityChart.data.datasets[0].data = liquidityData.buy_orders;
+        liquidityChart.data.datasets[1].data = liquidityData.sell_orders;
+        liquidityChart.update();
+    }
+}
+
+/**
+ * Show toast notification
+ */
+function showToast(message, type = 'info', duration = 3000) {
+    // Create toast container if it doesn't exist
+    let toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        `;
+        document.body.appendChild(toastContainer);
+    }
+
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.className = `alert alert-${type === 'error' ? 'danger' : type} alert-dismissible fade show`;
+    toast.style.cssText = `
+        min-width: 250px;
+        margin-bottom: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    `;
+    toast.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    toastContainer.appendChild(toast);
+
+    // Auto-remove after duration
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 150);
+    }, duration);
+}
+
+/**
+ * Update data source display indicator
+ */
+function updateDataSourceDisplay(status, type = 'info') {
+    const indicator = document.getElementById('data-source-indicator');
+    if (!indicator) return;
+
+    const colors = {
+        success: '#10b981',
+        error: '#ef4444',
+        warning: '#f59e0b',
+        info: '#3b82f6'
+    };
+
+    indicator.textContent = status;
+    indicator.style.color = colors[type] || colors.info;
+
+    // Add pulse animation for live data
+    if (type === 'success') {
+        indicator.classList.add('pulse-animation');
+        setTimeout(() => indicator.classList.remove('pulse-animation'), 1000);
+    }
+}
+
+/**
+ * Update wallet dashboard state
+ */
+function updateWalletDashboardState(state) {
+    const walletStatus = document.getElementById('wallet-status');
+    const walletAddress = document.getElementById('wallet-address');
+    const walletBalance = document.getElementById('wallet-balance');
+
+    if (state === 'wallet-connected' && window.walletManager) {
+        if (walletStatus) {
+            walletStatus.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Connected';
+        }
+        if (walletAddress && window.walletManager.address) {
+            const shortAddress = window.walletManager.address.slice(0, 6) + '...' + window.walletManager.address.slice(-4);
+            walletAddress.textContent = shortAddress;
+        }
+        if (walletBalance && window.walletManager.balance) {
+            walletBalance.textContent = `${parseFloat(window.walletManager.balance).toFixed(4)} ETH`;
+        }
+    } else {
+        if (walletStatus) {
+            walletStatus.innerHTML = '<i class="bi bi-x-circle-fill text-danger"></i> Not Connected';
+        }
+        if (walletAddress) walletAddress.textContent = 'N/A';
+        if (walletBalance) walletBalance.textContent = 'N/A';
+    }
+}
+
+/**
+ * Update metrics display on dashboard
+ */
+function updateMetricsDisplay(metrics) {
+    // Update fast lane metrics
+    if (metrics.fast_lane) {
+        updateElement('fast-lane-speed', `${metrics.fast_lane.execution_time_ms.toFixed(2)}ms`);
+        updateElement('fast-lane-success', `${metrics.fast_lane.success_rate.toFixed(1)}%`);
+        updateElement('fast-lane-trades', metrics.fast_lane.total_trades);
+    }
+
+    // Update smart lane metrics
+    if (metrics.smart_lane) {
+        updateElement('smart-lane-speed', `${metrics.smart_lane.analysis_time_ms.toFixed(2)}ms`);
+        updateElement('smart-lane-accuracy', `${metrics.smart_lane.accuracy_rate.toFixed(1)}%`);
+        updateElement('smart-lane-analysis', metrics.smart_lane.total_analyses);
+    }
+
+    // Update overall metrics
+    if (metrics.overall) {
+        updateElement('total-profit', `$${metrics.overall.total_profit.toFixed(2)}`);
+        updateElement('win-rate', `${metrics.overall.win_rate.toFixed(1)}%`);
+        updateElement('active-trades', metrics.overall.active_trades);
+    }
+}
+
+/**
+ * Update status indicators
+ */
+function updateStatusIndicators(status) {
+    // Update fast lane status
+    const fastLaneIndicator = document.getElementById('fast-lane-status');
+    if (fastLaneIndicator) {
+        const isActive = status.fast_lane?.active;
+        fastLaneIndicator.innerHTML = isActive
+            ? '<span class="badge bg-success">Active</span>'
+            : '<span class="badge bg-secondary">Inactive</span>';
+    }
+
+    // Update smart lane status
+    const smartLaneIndicator = document.getElementById('smart-lane-status');
+    if (smartLaneIndicator) {
+        const isActive = status.smart_lane?.active;
+        smartLaneIndicator.innerHTML = isActive
+            ? '<span class="badge bg-success">Active</span>'
+            : '<span class="badge bg-secondary">Inactive</span>';
+    }
+
+    // Update system status
+    const systemStatus = document.getElementById('system-status');
+    if (systemStatus) {
+        const statusClass = status.system === 'healthy' ? 'success' : 'warning';
+        systemStatus.innerHTML = `<span class="badge bg-${statusClass}">${status.system || 'Unknown'}</span>`;
+    }
+}
+
+/**
+ * Update health indicators
+ */
+function updateHealthIndicators(health) {
+    // Update RPC health
+    updateHealthBadge('rpc-health', health.rpc_status, health.rpc_latency);
+
+    // Update database health
+    updateHealthBadge('db-health', health.db_status, health.db_latency);
+
+    // Update Redis health
+    updateHealthBadge('redis-health', health.redis_status, health.redis_latency);
+
+    // Update overall system health
+    const overallHealth = document.getElementById('overall-health');
+    if (overallHealth) {
+        const allHealthy = health.rpc_status === 'healthy' &&
+            health.db_status === 'healthy' &&
+            health.redis_status === 'healthy';
+
+        overallHealth.innerHTML = allHealthy
+            ? '<i class="bi bi-heart-fill text-success"></i> System Healthy'
+            : '<i class="bi bi-exclamation-triangle-fill text-warning"></i> Degraded';
+    }
+}
+
+/**
+ * Helper to update health badge
+ */
+function updateHealthBadge(elementId, status, latency) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+
+    const isHealthy = status === 'healthy';
+    const badgeClass = isHealthy ? 'success' : 'danger';
+    const icon = isHealthy ? 'check-circle-fill' : 'x-circle-fill';
+
+    element.innerHTML = `
+        <i class="bi bi-${icon} text-${badgeClass}"></i>
+        ${status} ${latency ? `(${latency}ms)` : ''}
+    `;
+}
+
+/**
+ * Add thought log entry to dashboard
+ */
+function addThoughtLogEntry(thought) {
+    const thoughtLogContainer = document.getElementById('thought-log-container');
+    if (!thoughtLogContainer) return;
+
+    // Add to data array
+    thoughtLogData.unshift(thought);
+
+    // Keep only last 20 entries
+    if (thoughtLogData.length > 20) {
+        thoughtLogData.pop();
+    }
+
+    // Create thought entry element
+    const entry = document.createElement('div');
+    entry.className = 'thought-log-entry mb-2 p-2 border-start border-3';
+    entry.style.borderColor = getConfidenceColor(thought.confidence);
+
+    entry.innerHTML = `
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="flex-grow-1">
+                <span class="badge ${getConfidenceBadgeClass(thought.confidence)} me-2">
+                    ${thought.confidence}% confidence
+                </span>
+                <span class="badge bg-secondary">${thought.token_symbol}</span>
+                <span class="text-muted small ms-2">${new Date(thought.timestamp).toLocaleTimeString()}</span>
+            </div>
+            <span class="badge ${getActionBadgeClass(thought.action)}">${thought.action}</span>
+        </div>
+        <p class="mb-0 mt-2 small">${thought.reasoning}</p>
+    `;
+
+    // Add to container (prepend)
+    thoughtLogContainer.insertBefore(entry, thoughtLogContainer.firstChild);
+
+    // Remove oldest if more than 10 visible
+    while (thoughtLogContainer.children.length > 10) {
+        thoughtLogContainer.removeChild(thoughtLogContainer.lastChild);
+    }
+}
+
+/**
+ * Get confidence badge class
+ */
+function getConfidenceBadgeClass(confidence) {
+    if (confidence >= 80) return 'bg-success';
+    if (confidence >= 60) return 'bg-info';
+    if (confidence >= 40) return 'bg-warning';
+    return 'bg-danger';
+}
+
+/**
+ * Get confidence color
+ */
+function getConfidenceColor(confidence) {
+    if (confidence >= 80) return '#10b981';
+    if (confidence >= 60) return '#3b82f6';
+    if (confidence >= 40) return '#f59e0b';
+    return '#ef4444';
+}
+
+/**
+ * Get action badge class
+ */
+function getActionBadgeClass(action) {
+    switch (action?.toUpperCase()) {
+        case 'BUY': return 'bg-success';
+        case 'SELL': return 'bg-danger';
+        case 'HOLD': return 'bg-info';
+        case 'SKIP': return 'bg-secondary';
+        default: return 'bg-secondary';
+    }
+}
+
+/**
+ * Toggle Fast Lane
+ */
+async function toggleFastLane() {
+    const button = document.getElementById('fast-lane-toggle-btn');
+    if (!button) return;
+
+    const currentState = button.textContent.includes('Enable');
+    const newState = currentState ? 'enable' : 'disable';
+
+    try {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+
+        const response = await fetch('/dashboard/api/fast-lane/toggle/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ action: newState }),
+            credentials: 'same-origin'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            button.innerHTML = data.active ? 'Disable Fast Lane' : 'Enable Fast Lane';
+            button.className = data.active ? 'btn btn-danger' : 'btn btn-success';
+            showToast(`Fast Lane ${data.active ? 'enabled' : 'disabled'}`, 'success');
+        } else {
+            throw new Error('Failed to toggle Fast Lane');
+        }
+    } catch (error) {
+        console.error('Error toggling Fast Lane:', error);
+        showToast('Failed to toggle Fast Lane', 'error');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+/**
+ * Toggle Smart Lane
+ */
+async function toggleSmartLane() {
+    const button = document.getElementById('smart-lane-toggle-btn');
+    if (!button) return;
+
+    const currentState = button.textContent.includes('Enable');
+    const newState = currentState ? 'enable' : 'disable';
+
+    try {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+
+        const response = await fetch('/dashboard/api/smart-lane/toggle/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ action: newState }),
+            credentials: 'same-origin'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            button.innerHTML = data.active ? 'Disable Smart Lane' : 'Enable Smart Lane';
+            button.className = data.active ? 'btn btn-danger' : 'btn btn-success';
+            showToast(`Smart Lane ${data.active ? 'enabled' : 'disabled'}`, 'success');
+        } else {
+            throw new Error('Failed to toggle Smart Lane');
+        }
+    } catch (error) {
+        console.error('Error toggling Smart Lane:', error);
+        showToast('Failed to toggle Smart Lane', 'error');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+/**
+ * Run quick analysis
+ */
+async function runQuickAnalysis() {
+    showToast('Running quick market analysis...', 'info');
+
+    try {
+        const response = await fetch('/dashboard/api/quick-analysis/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            credentials: 'same-origin'
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            showAnalysisResults(data);
+        } else {
+            throw new Error('Analysis failed');
+        }
+    } catch (error) {
+        console.error('Error running quick analysis:', error);
+        showToast('Failed to run analysis', 'error');
+    }
+}
+
+/**
+ * Show analysis results in modal
+ */
+function showAnalysisResults(data) {
+    const resultsHtml = `
+        <div class="analysis-results">
+            <h5>Market Analysis Results</h5>
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Best Opportunity:</strong> ${data.best_token || 'None'}</p>
+                    <p><strong>Confidence:</strong> ${data.confidence || 0}%</p>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Market Sentiment:</strong> ${data.sentiment || 'Neutral'}</p>
+                    <p><strong>Risk Level:</strong> ${data.risk_level || 'Unknown'}</p>
+                </div>
+            </div>
+        </div>
+    `;
+
+    showToast('Analysis complete!', 'success');
+    console.log('Analysis results:', data);
+}
+
+/**
+ * Enable hybrid mode
+ */
+async function enableHybridMode() {
+    showToast('Enabling hybrid mode...', 'info');
+
+    try {
+        const response = await fetch('/dashboard/api/hybrid-mode/enable/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            credentials: 'same-origin'
+        });
+
+        if (response.ok) {
+            showToast('Hybrid mode enabled', 'success');
+        } else {
+            throw new Error('Failed to enable hybrid mode');
+        }
+    } catch (error) {
+        console.error('Error enabling hybrid mode:', error);
+        showToast('Failed to enable hybrid mode', 'error');
+    }
+}
+
+/**
+ * View analytics
+ */
+function viewAnalytics() {
+    window.location.href = '/dashboard/analytics/';
+}
+
+/**
+ * Export thought log
+ */
+function exportThoughtLog() {
+    if (thoughtLogData.length === 0) {
+        showToast('No thought log data to export', 'warning');
+        return;
+    }
+
+    const dataStr = JSON.stringify(thoughtLogData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `thought-log-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('Thought log exported successfully', 'success');
+}
+
+/**
+ * Start polling for updates (fallback)
+ */
+function startPollingUpdates() {
+    console.log('📊 Starting polling for dashboard updates');
+
+    setInterval(async () => {
+        try {
+            const response = await fetch('/dashboard/api/status/', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'same-origin'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.metrics) updateMetricsDisplay(data.metrics);
+                if (data.status) updateStatusIndicators(data.status);
+                if (data.health) updateHealthIndicators(data.health);
+            }
+        } catch (error) {
+            console.error('Polling error:', error);
+        }
+    }, 10000); // Poll every 10 seconds
+}
+
+/**
+ * Helper to update element text content
+ */
+function updateElement(id, value) {
+    const element = document.getElementById(id);
+    if (element) {
+        element.textContent = value;
+    }
+}
+
+/**
+ * Get CSRF token from cookie
+ */
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// ============================================================================
 // ENHANCED SSE CONNECTION
 // ============================================================================
 
@@ -883,16 +1414,6 @@ function formatLargeNumber(num) {
     if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
     return num.toFixed(2);
 }
-
-// ============================================================================
-// MAINTAIN EXISTING FUNCTIONS
-// ============================================================================
-
-// [All existing functions from the original file remain here unchanged]
-// Including: updateStatusIndicators, updateMetricsDisplay, updateHealthIndicators,
-// addThoughtLogEntry, getConfidenceBadgeClass, exportThoughtLog, etc.
-
-// ... [rest of the original functions continue here] ...
 
 // ============================================================================
 // INITIALIZATION

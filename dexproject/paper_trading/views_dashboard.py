@@ -28,7 +28,8 @@ from .models import (
     PaperTradingSession,
     PaperPerformanceMetrics
 )
-from .utils import get_single_trading_account, to_decimal
+from .utils import get_single_trading_account
+from .utils.type_utils import to_decimal
 from .views_helpers import format_trade_for_template, format_position_for_template
 
 logger = logging.getLogger(__name__)

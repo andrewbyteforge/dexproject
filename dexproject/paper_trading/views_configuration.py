@@ -13,7 +13,7 @@ File: dexproject/paper_trading/views_configuration.py
 import logging
 from decimal import Decimal
 from typing import Dict, Any, Optional
-
+import requests
 from django.shortcuts import render, redirect
 from django.http import HttpRequest, HttpResponse
 from django.contrib import messages
@@ -194,6 +194,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         logger.debug(f"Loading configuration view for account {account.account_id}")
 
         # Handle delete action if requested
+        # Handle delete action if requested
         if request.method == 'POST' and request.POST.get('action') == 'delete':
             config_id = request.POST.get('config_id')
             if config_id:
@@ -202,25 +203,55 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                         config_id=config_id,
                         account=account
                     )
-                    # Don't delete if it's the only configuration or if it's active
+                    
+                    # Only prevent deletion of the last configuration
                     total_configs = PaperStrategyConfiguration.objects.filter(account=account).count()
-
+                    
                     if total_configs <= 1:
                         messages.warning(request, "Cannot delete the last configuration")
-                    elif config_to_delete.is_active:
-                        messages.warning(request, "Cannot delete active configuration. Please activate another configuration first.")
                     else:
+                        # ✅ REMOVED THE is_active CHECK - Allow deleting selected configs!
                         config_name = config_to_delete.name
+                        was_active = config_to_delete.is_active
+                        
+                        # Delete the configuration
                         config_to_delete.delete()
-                        messages.success(request, f'Configuration "{config_name}" deleted successfully')
-                        logger.info(f"🗑️  Deleted configuration {config_id} ({config_name}) for account {account.account_id}")
+                        
+                        # If we deleted the active config, activate another one
+                        if was_active:
+                            # Get any remaining config and make it active
+                            replacement_config = PaperStrategyConfiguration.objects.filter(
+                                account=account
+                            ).first()
+                            
+                            if replacement_config:
+                                replacement_config.is_active = True
+                                replacement_config.save()
+                                messages.success(
+                                    request, 
+                                    f'Configuration "{config_name}" deleted. '
+                                    f'"{replacement_config.name}" is now selected.'
+                                )
+                                logger.info(
+                                    f"🗑️  Deleted SELECTED configuration {config_id} ({config_name}). "
+                                    f"Auto-selected {replacement_config.name} as replacement."
+                                )
+                            else:
+                                messages.success(request, f'Configuration "{config_name}" deleted successfully')
+                                logger.info(f"🗑️  Deleted configuration {config_id} ({config_name})")
+                        else:
+                            messages.success(request, f'Configuration "{config_name}" deleted successfully')
+                            logger.info(f"🗑️  Deleted configuration {config_id} ({config_name})")
+                            
                 except PaperStrategyConfiguration.DoesNotExist:
                     messages.error(request, "Configuration not found")
+                    return redirect('paper_trading:configuration')  # ✅ ADD THIS
                 except Exception as e:
-                    messages.error(request, f"Error deleting configuration: {str(e)}")
-                    logger.error(f"Error deleting configuration: {e}", exc_info=True)
+                    messages.error(request, f"Error loading configuration: {str(e)}")
+                    logger.error(f"Error loading configuration: {e}", exc_info=True)
+                    return redirect('paper_trading:configuration')  # ✅ ADD THIS
 
-                return redirect('paper_trading:configuration')
+                    
 
         # Handle load/activate configuration
         if request.method == 'GET' and request.GET.get('load_config'):
@@ -374,10 +405,17 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         page_obj = paginator.get_page(page_number)
 
         # Get bot status (check if any session is running)
-        active_session = PaperTradingSession.objects.filter(
+        # Get ALL active sessions
+        active_sessions = PaperTradingSession.objects.filter(
             account=account,
-            status='RUNNING'
-        ).first()
+            status__in=["RUNNING", "STARTING", "PAUSED"]
+        ).select_related('strategy_config')
+
+        active_session = active_sessions.first() if active_sessions else None
+
+        # Calculate duration and P&L for each session
+        for session in active_sessions:
+            pass
 
         bot_running = active_session is not None
 
@@ -387,7 +425,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
             'total_configs': all_configs.count(),
             'account': account,
             'bot_running': bot_running,
-            'active_session': active_session,
+            'active_sessions': active_sessions,
             'page_obj': page_obj,
         }
 

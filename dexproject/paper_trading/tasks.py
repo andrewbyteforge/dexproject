@@ -47,8 +47,8 @@ def run_paper_trading_bot(
     session_id: str,
     user_id: int,
     runtime_minutes: Optional[int] = None,
-    config_params: Optional[Dict[str, Any]] = None,  # ← ADD THIS
-    intel_level: int = 5  # ← ADD THIS
+    config_params: Optional[Dict[str, Any]] = None,  
+    intel_level: int = 5 
 ) -> Dict[str, Any]:
     """
     Run the paper trading bot for a specific session.
@@ -75,10 +75,17 @@ def run_paper_trading_bot(
         RuntimeError: If bot initialization or execution fails
     """
     task_id = self.request.id
-    logger.info(
-        f"Starting paper trading bot task {task_id} for session {session_id} "
-        f"with intel_level={intel_level}"
-    )
+    
+    # Log the configuration being used
+    logger.info("=" * 70)
+    logger.info(f"🚀 Starting paper trading bot task {task_id}")
+    logger.info(f"   Session: {session_id}")
+    logger.info(f"   Intel Level: {intel_level}")
+    if config_params:
+        logger.info(f"   Confidence Threshold: {config_params.get('confidence_threshold', 'NOT SET')}%")
+        logger.info(f"   Trading Mode: {config_params.get('trading_mode', 'NOT SET')}")
+        logger.info(f"   Max Position Size: {config_params.get('max_position_size_percent', 'NOT SET')}%")
+    logger.info("=" * 70)
 
     try:
         # Retrieve session with error handling
@@ -115,6 +122,11 @@ def run_paper_trading_bot(
             session.metadata = session.metadata or {}
             session.metadata['celery_task_id'] = task_id
             session.metadata['started_at'] = timezone.now().isoformat()
+            
+            # ✅ Store config_params in metadata for reference
+            if config_params:
+                session.metadata['config_params'] = config_params
+            
             session.save()
 
         # Cache bot status for monitoring
@@ -123,32 +135,80 @@ def run_paper_trading_bot(
             'status': 'RUNNING',
             'task_id': task_id,
             'started': timezone.now().isoformat()
-        }, timeout=3600)  # 1 hour timeout
+        }, timeout=3600)
 
-        # Initialize the bot with session configuration
+        # ═════════════════════════════════════════════════════════════════
+        # BOT INITIALIZATION WITH CONFIGURATION
+        # ═════════════════════════════════════════════════════════════════
+        
         logger.info(
             f"Initializing bot for account {session.account.account_id} "
             f"with intel_level={intel_level}"
         )
 
         try:
-            # Initialize bot with account_name and intel_level from configuration
-            # ✅ FIXED: Use intel_level parameter instead of hardcoded 5
+            # ✅ Initialize bot with intel_level from configuration
             bot = EnhancedPaperTradingBot(
                 account_name=session.account.name,
-                intel_level=intel_level,  # ← NOW USES CONFIGURATION VALUE!
+                intel_level=intel_level,  # ← Uses configuration value
                 use_real_prices=True,
                 chain_id=settings.PAPER_TRADING['DEFAULTS']['DEFAULT_CHAIN_ID']
             )
 
-            # Initialize bot systems
+            # ✅ Initialize bot systems (loads account, creates intelligence engine, etc.)
             if not bot.initialize():
                 raise RuntimeError("Bot initialization failed")
 
             logger.info(
-                f"Bot initialized successfully for session {session_id} "
-                f"using intel_level={intel_level}"
+                f"✅ Bot initialized successfully for session {session_id}"
             )
+            
+            # ═════════════════════════════════════════════════════════════════
+            # ⭐ CRITICAL: APPLY CONFIGURATION OVERRIDES
+            # ═════════════════════════════════════════════════════════════════
+            # This is where your 80% confidence threshold gets applied!
+            
+            if config_params and session.strategy_config:
+                logger.info("=" * 70)
+                logger.info("📋 Applying dashboard configuration to bot...")
+                logger.info("=" * 70)
+                
+                try:
+                    # Apply the strategy configuration to the intelligence engine
+                    # This calls the _apply_strategy_config method which overrides
+                    # hardcoded thresholds with dashboard values
+                    bot.intelligence_engine._apply_strategy_config(session.strategy_config)
+                    
+                    logger.info(
+                        f"✅ Configuration applied successfully!"
+                    )
+                    logger.info(
+                        f"   Active Confidence Threshold: "
+                        f"{bot.intelligence_engine.confidence_threshold}%"
+                    )
+                    logger.info(
+                        f"   Active Risk Threshold: "
+                        f"{bot.intelligence_engine.risk_threshold}%"
+                    )
+                    logger.info(
+                        f"   Active Max Position Size: "
+                        f"{bot.intelligence_engine.config.max_position_percent}%"
+                    )
+                    logger.info("=" * 70)
+                    
+                except Exception as e:
+                    logger.error(
+                        f"⚠️  Failed to apply configuration overrides: {e}",
+                        exc_info=True
+                    )
+                    logger.warning(
+                        "Bot will continue with default Intel Level thresholds"
+                    )
+            else:
+                if not config_params:
+                    logger.warning("⚠️  No config_params provided, using defaults")
+                if not session.strategy_config:
+                    logger.warning("⚠️  No strategy_config on session, using defaults")
 
         except Exception as e:
             logger.error(f"Bot initialization failed: {e}", exc_info=True)
@@ -167,21 +227,23 @@ def run_paper_trading_bot(
 
         # Main execution loop
         tick_count = 0
-        initial_trades = session.total_trades or 0  # Store initial count before loop
+        initial_trades = session.total_trades or 0
         trades_executed = 0
         errors = []
 
         try:
+            logger.info("🔄 Starting bot execution loop...")
+            
             while True:
                 # Check if we should stop
                 if end_time and timezone.now() >= end_time:
-                    logger.info("Runtime limit reached, stopping bot")
+                    logger.info("⏰ Runtime limit reached, stopping bot")
                     break
 
                 # Check for stop signal in cache
                 stop_signal = cache.get(f"paper_bot:{session_id}:stop")
                 if stop_signal:
-                    logger.info("Stop signal received, stopping bot")
+                    logger.info("🛑 Stop signal received, stopping bot")
                     break
 
                 # Check session status (might be updated externally)
@@ -216,7 +278,10 @@ def run_paper_trading_bot(
 
                     # Log progress every 10 ticks
                     if tick_count % 10 == 0:
-                        logger.debug(f"Bot tick {tick_count} completed, {trades_executed} trades executed")
+                        logger.info(
+                            f"📊 Tick {tick_count}: {trades_executed} trades executed "
+                            f"(Confidence threshold: {bot.intelligence_engine.confidence_threshold}%)"
+                        )
 
                 except Exception as e:
                     error_msg = f"Error in bot tick {tick_count}: {e}"
@@ -232,9 +297,9 @@ def run_paper_trading_bot(
                 time.sleep(bot.tick_interval)
 
         except KeyboardInterrupt:
-            logger.info("Bot interrupted by keyboard")
+            logger.info("⌨️  Bot interrupted by keyboard")
         except Exception as e:
-            logger.error(f"Bot execution error: {e}", exc_info=True)
+            logger.error(f"❌ Bot execution error: {e}", exc_info=True)
             raise
 
         finally:
@@ -264,11 +329,15 @@ def run_paper_trading_bot(
             # Get session P&L from metadata
             session_pnl = Decimal(str(session.metadata.get('session_pnl_usd', 0)))
 
-            logger.info(
-                f"Bot session {session_id} completed: "
-                f"duration={duration:.1f}s, ticks={tick_count}, trades={trades_executed}, "
-                f"intel_level={intel_level}"
-            )
+            logger.info("=" * 70)
+            logger.info(f"✅ Bot session {session_id} completed")
+            logger.info(f"   Duration: {duration:.1f}s")
+            logger.info(f"   Ticks: {tick_count}")
+            logger.info(f"   Trades: {trades_executed}")
+            logger.info(f"   Intel Level: {intel_level}")
+            logger.info(f"   Final Balance: ${session.account.current_balance_usd}")
+            logger.info(f"   P&L: ${session_pnl}")
+            logger.info("=" * 70)
 
             return {
                 'success': True,
@@ -283,7 +352,7 @@ def run_paper_trading_bot(
             }
 
     except Exception as e:
-        logger.error(f"Fatal error in bot task: {e}", exc_info=True)
+        logger.error(f"💥 Fatal error in bot task: {e}", exc_info=True)
 
         # Update session status on error
         try:
@@ -297,7 +366,7 @@ def run_paper_trading_bot(
         # Retry if appropriate
         if self.request.retries < self.max_retries:
             retry_delay = 60 * (2 ** self.request.retries)  # Exponential backoff
-            logger.info(f"Retrying task in {retry_delay} seconds...")
+            logger.info(f"🔄 Retrying task in {retry_delay} seconds...")
             raise self.retry(countdown=retry_delay, exc=e)
 
         return {
@@ -305,6 +374,11 @@ def run_paper_trading_bot(
             'error': str(e),
             'session_id': str(session_id) if 'session_id' in locals() else None
         }
+
+
+
+
+
 
 
 @shared_task(queue='paper_trading')
