@@ -276,3 +276,243 @@ def get_performance_defaults() -> dict:
 def get_session_defaults() -> dict:
     """Get only session-specific defaults."""
     return get_default_config()['session']
+
+
+
+
+
+# =============================================================================
+# PHASE 2: MULTI-DEX PRICE COMPARISON DEFAULTS
+# =============================================================================
+# Add these to paper_trading/defaults.py
+
+from decimal import Decimal
+from typing import Final, Dict, List
+
+
+class DEXComparisonDefaults:
+    """Default configuration for multi-DEX price comparison."""
+    
+    # =========================================================================
+    # DEX SELECTION
+    # =========================================================================
+    
+    # Enable/disable specific DEXs
+    ENABLE_UNISWAP_V3: Final[bool] = True
+    ENABLE_UNISWAP_V2: Final[bool] = False  # Disabled initially
+    ENABLE_SUSHISWAP: Final[bool] = True
+    ENABLE_CURVE: Final[bool] = True
+    
+    # DEX priority order (higher priority = queried first)
+    DEX_PRIORITY: Final[Dict[str, int]] = {
+        'uniswap_v3': 1,     # Highest liquidity, query first
+        'sushiswap': 2,      # Good alternative
+        'curve': 3,          # For stablecoins
+        'uniswap_v2': 4      # Fallback
+    }
+    
+    # =========================================================================
+    # PRICE QUERY CONFIGURATION
+    # =========================================================================
+    
+    # Timeouts
+    SINGLE_DEX_TIMEOUT_SECONDS: Final[int] = 3
+    TOTAL_COMPARISON_TIMEOUT_SECONDS: Final[int] = 10
+    
+    # Retry configuration
+    MAX_RETRIES_PER_DEX: Final[int] = 2
+    RETRY_DELAY_SECONDS: Final[float] = 0.5
+    
+    # Cache settings
+    PRICE_CACHE_TTL_SECONDS: Final[int] = 30
+    COMPARISON_CACHE_TTL_SECONDS: Final[int] = 15
+    
+    # Minimum required successful DEX queries
+    MIN_SUCCESSFUL_DEX_QUOTES: Final[int] = 2
+    
+    # =========================================================================
+    # ARBITRAGE DETECTION
+    # =========================================================================
+    
+    # Minimum price spread to consider arbitrage (percentage)
+    MIN_ARBITRAGE_SPREAD_PERCENT: Final[Decimal] = Decimal('1.0')  # 1%
+    
+    # Minimum net profit threshold (USD)
+    MIN_ARBITRAGE_PROFIT_USD: Final[Decimal] = Decimal('5.00')
+    
+    # Maximum gas price for arbitrage execution (gwei)
+    MAX_ARBITRAGE_GAS_PRICE_GWEI: Final[Decimal] = Decimal('50.0')
+    
+    # Slippage tolerance for arbitrage
+    ARBITRAGE_SLIPPAGE_TOLERANCE_PERCENT: Final[Decimal] = Decimal('0.5')  # 0.5%
+    
+    # Time sensitivity (max age of price quotes for arbitrage)
+    MAX_QUOTE_AGE_FOR_ARBITRAGE_SECONDS: Final[int] = 10
+    
+    # =========================================================================
+    # RISK MANAGEMENT
+    # =========================================================================
+    
+    # Maximum price deviation between DEXs to trust data
+    MAX_PRICE_DEVIATION_PERCENT: Final[Decimal] = Decimal('20.0')  # 20%
+    
+    # Minimum liquidity per DEX
+    MIN_DEX_LIQUIDITY_USD: Final[Decimal] = Decimal('10000.00')  # $10K
+    
+    # Maximum concurrent DEX queries
+    MAX_CONCURRENT_DEX_QUERIES: Final[int] = 5
+    
+    # Circuit breaker: consecutive failures before disabling DEX
+    MAX_CONSECUTIVE_DEX_FAILURES: Final[int] = 5
+    
+    # Circuit breaker: cooldown period (seconds)
+    DEX_FAILURE_COOLDOWN_SECONDS: Final[int] = 300  # 5 minutes
+    
+    # =========================================================================
+    # PERFORMANCE OPTIMIZATION
+    # =========================================================================
+    
+    # Parallel query execution
+    USE_PARALLEL_QUERIES: Final[bool] = True
+    
+    # Skip slow DEXs after threshold
+    SKIP_SLOW_DEX_THRESHOLD_MS: Final[int] = 5000  # 5 seconds
+    
+    # Rate limiting (queries per minute per DEX)
+    MAX_QUERIES_PER_MINUTE_PER_DEX: Final[int] = 60
+    
+    # =========================================================================
+    # LOGGING AND MONITORING
+    # =========================================================================
+    
+    # Log all price comparisons
+    LOG_ALL_COMPARISONS: Final[bool] = True
+    
+    # Log arbitrage opportunities (even if not executed)
+    LOG_ARBITRAGE_OPPORTUNITIES: Final[bool] = True
+    
+    # Performance metrics tracking
+    TRACK_DEX_PERFORMANCE: Final[bool] = True
+    
+    # =========================================================================
+    # DEX-SPECIFIC SETTINGS
+    # =========================================================================
+    
+    # Uniswap V3 fee tiers to check (in order)
+    UNISWAP_V3_FEE_TIERS: Final[List[int]] = [3000, 500, 10000]  # 0.3%, 0.05%, 1%
+    
+    # SushiSwap router version
+    SUSHISWAP_ROUTER_VERSION: Final[str] = 'v2'
+    
+    # Curve: Prefer stable pools for stablecoins
+    CURVE_PREFER_STABLE_POOLS: Final[bool] = True
+
+
+class ArbitrageDefaults:
+    """Default configuration specific to arbitrage execution."""
+    
+    # =========================================================================
+    # EXECUTION PARAMETERS
+    # =========================================================================
+    
+    # Auto-execute arbitrage opportunities
+    AUTO_EXECUTE_ARBITRAGE: Final[bool] = False  # Manual approval initially
+    
+    # Require manual approval above this amount
+    MANUAL_APPROVAL_THRESHOLD_USD: Final[Decimal] = Decimal('50.00')
+    
+    # Maximum position size for arbitrage trades
+    MAX_ARBITRAGE_POSITION_PERCENT: Final[Decimal] = Decimal('5.0')  # 5% of portfolio
+    
+    # Maximum daily arbitrage trades
+    MAX_DAILY_ARBITRAGE_TRADES: Final[int] = 10
+    
+    # Cooldown between arbitrage trades (seconds)
+    ARBITRAGE_TRADE_COOLDOWN_SECONDS: Final[int] = 60  # 1 minute
+    
+    # =========================================================================
+    # GAS OPTIMIZATION
+    # =========================================================================
+    
+    # Use MEV protection for arbitrage
+    USE_MEV_PROTECTION: Final[bool] = True
+    
+    # Gas strategy for arbitrage trades
+    DEFAULT_GAS_STRATEGY: Final[str] = 'fast'  # fast, standard, slow
+    
+    # Maximum gas cost as percentage of profit
+    MAX_GAS_COST_PERCENT_OF_PROFIT: Final[Decimal] = Decimal('30.0')  # 30%
+    
+    # =========================================================================
+    # PROFIT TAKING
+    # =========================================================================
+    
+    # Take profit threshold (execute immediately)
+    INSTANT_EXECUTE_PROFIT_THRESHOLD_USD: Final[Decimal] = Decimal('20.00')
+    
+    # Profit margin targets
+    TARGET_PROFIT_MARGIN_PERCENT: Final[Decimal] = Decimal('2.0')  # 2%
+    MINIMUM_PROFIT_MARGIN_PERCENT: Final[Decimal] = Decimal('0.5')  # 0.5%
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def get_dex_comparison_config() -> dict:
+    """
+    Get complete DEX comparison configuration as dictionary.
+    
+    Returns:
+        Dictionary with all DEX comparison settings
+    """
+    return {
+        'enabled_dexs': {
+            'uniswap_v3': DEXComparisonDefaults.ENABLE_UNISWAP_V3,
+            'uniswap_v2': DEXComparisonDefaults.ENABLE_UNISWAP_V2,
+            'sushiswap': DEXComparisonDefaults.ENABLE_SUSHISWAP,
+            'curve': DEXComparisonDefaults.ENABLE_CURVE,
+        },
+        'timeouts': {
+            'single_dex': DEXComparisonDefaults.SINGLE_DEX_TIMEOUT_SECONDS,
+            'total': DEXComparisonDefaults.TOTAL_COMPARISON_TIMEOUT_SECONDS,
+        },
+        'arbitrage': {
+            'min_spread': DEXComparisonDefaults.MIN_ARBITRAGE_SPREAD_PERCENT,
+            'min_profit': DEXComparisonDefaults.MIN_ARBITRAGE_PROFIT_USD,
+            'max_gas_price': DEXComparisonDefaults.MAX_ARBITRAGE_GAS_PRICE_GWEI,
+            'auto_execute': ArbitrageDefaults.AUTO_EXECUTE_ARBITRAGE,
+        },
+        'risk_management': {
+            'max_deviation': DEXComparisonDefaults.MAX_PRICE_DEVIATION_PERCENT,
+            'min_liquidity': DEXComparisonDefaults.MIN_DEX_LIQUIDITY_USD,
+            'max_failures': DEXComparisonDefaults.MAX_CONSECUTIVE_DEX_FAILURES,
+        }
+    }
+
+
+def get_arbitrage_config() -> dict:
+    """
+    Get complete arbitrage configuration as dictionary.
+    
+    Returns:
+        Dictionary with all arbitrage settings
+    """
+    return {
+        'execution': {
+            'auto_execute': ArbitrageDefaults.AUTO_EXECUTE_ARBITRAGE,
+            'manual_threshold': ArbitrageDefaults.MANUAL_APPROVAL_THRESHOLD_USD,
+            'max_position': ArbitrageDefaults.MAX_ARBITRAGE_POSITION_PERCENT,
+            'cooldown': ArbitrageDefaults.ARBITRAGE_TRADE_COOLDOWN_SECONDS,
+        },
+        'gas': {
+            'use_mev_protection': ArbitrageDefaults.USE_MEV_PROTECTION,
+            'strategy': ArbitrageDefaults.DEFAULT_GAS_STRATEGY,
+            'max_cost_percent': ArbitrageDefaults.MAX_GAS_COST_PERCENT_OF_PROFIT,
+        },
+        'profit': {
+            'instant_execute': ArbitrageDefaults.INSTANT_EXECUTE_PROFIT_THRESHOLD_USD,
+            'target_margin': ArbitrageDefaults.TARGET_PROFIT_MARGIN_PERCENT,
+            'minimum_margin': ArbitrageDefaults.MINIMUM_PROFIT_MARGIN_PERCENT,
+        }
+    }

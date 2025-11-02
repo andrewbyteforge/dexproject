@@ -427,3 +427,172 @@ def get_intel_level_from_trading_mode(trading_mode: str) -> int:
         TradingMode.CUSTOM: 5,        # Default to moderate for custom
     }
     return mode_to_intel.get(trading_mode, 5)  # Default to 5 if unknown
+
+
+
+
+
+
+
+
+# =============================================================================
+# PHASE 2: MULTI-DEX PRICE COMPARISON CONSTANTS
+# =============================================================================
+# Add these to the end of paper_trading/constants.py
+
+from typing import Final
+
+
+class DEXNames:
+    """Supported DEX names for multi-DEX price comparison."""
+    UNISWAP_V3: Final[str] = 'uniswap_v3'
+    UNISWAP_V2: Final[str] = 'uniswap_v2'
+    SUSHISWAP: Final[str] = 'sushiswap'
+    CURVE: Final[str] = 'curve'
+    
+    ALL: Final[tuple] = (UNISWAP_V3, UNISWAP_V2, SUSHISWAP, CURVE)
+    
+    # Primary DEXs for Phase 2 launch
+    PRIMARY: Final[tuple] = (UNISWAP_V3, SUSHISWAP, CURVE)
+
+
+class ArbitrageFields:
+    """Field names for arbitrage detection and execution."""
+    # Opportunity identification
+    BUY_DEX: Final[str] = 'buy_dex'
+    SELL_DEX: Final[str] = 'sell_dex'
+    BUY_PRICE: Final[str] = 'buy_price'
+    SELL_PRICE: Final[str] = 'sell_price'
+    PRICE_SPREAD_PERCENT: Final[str] = 'price_spread_percent'
+    
+    # Profitability calculation
+    GROSS_PROFIT_USD: Final[str] = 'gross_profit_usd'
+    GAS_COST_USD: Final[str] = 'gas_cost_usd'
+    NET_PROFIT_USD: Final[str] = 'net_profit_usd'
+    PROFIT_MARGIN_PERCENT: Final[str] = 'profit_margin_percent'
+    
+    # Execution parameters
+    IS_PROFITABLE: Final[str] = 'is_profitable'
+    EXECUTION_TIME_MS: Final[str] = 'execution_time_ms'
+    MIN_PROFIT_THRESHOLD: Final[str] = 'min_profit_threshold'
+    
+    # Risk assessment
+    SLIPPAGE_RISK: Final[str] = 'slippage_risk'
+    LIQUIDITY_RISK: Final[str] = 'liquidity_risk'
+    TIMING_RISK: Final[str] = 'timing_risk'
+
+
+class DEXPriceFields:
+    """Field names for DEX price comparison results."""
+    DEX_NAME: Final[str] = 'dex_name'
+    TOKEN_PRICE: Final[str] = 'token_price'
+    LIQUIDITY_USD: Final[str] = 'liquidity_usd'
+    QUOTE_TIMESTAMP: Final[str] = 'quote_timestamp'
+    QUERY_SUCCESS: Final[str] = 'query_success'
+    ERROR_MESSAGE: Final[str] = 'error_message'
+    RESPONSE_TIME_MS: Final[str] = 'response_time_ms'
+    
+    # Best price selection
+    BEST_PRICE: Final[str] = 'best_price'
+    BEST_DEX: Final[str] = 'best_dex'
+    PRICE_ADVANTAGE_PERCENT: Final[str] = 'price_advantage_percent'
+
+
+class DEXIntegrationStatus:
+    """Status indicators for DEX integration health."""
+    OPERATIONAL: Final[str] = 'operational'
+    DEGRADED: Final[str] = 'degraded'
+    UNAVAILABLE: Final[str] = 'unavailable'
+    TIMEOUT: Final[str] = 'timeout'
+    ERROR: Final[str] = 'error'
+    
+    ALL: Final[tuple] = (OPERATIONAL, DEGRADED, UNAVAILABLE, TIMEOUT, ERROR)
+
+
+# =============================================================================
+# DEX-SPECIFIC CONSTANTS
+# =============================================================================
+
+class UniswapV3Constants:
+    """Uniswap V3 specific constants."""
+    FEE_TIER_LOW: Final[int] = 500      # 0.05%
+    FEE_TIER_MEDIUM: Final[int] = 3000   # 0.30%
+    FEE_TIER_HIGH: Final[int] = 10000    # 1.00%
+    
+    DEFAULT_FEE_TIER: Final[int] = FEE_TIER_MEDIUM
+    ALL_FEE_TIERS: Final[tuple] = (FEE_TIER_LOW, FEE_TIER_MEDIUM, FEE_TIER_HIGH)
+
+
+class SushiSwapConstants:
+    """SushiSwap specific constants."""
+    DEFAULT_FEE: Final[int] = 3000  # 0.30%
+    ROUTER_VERSION: Final[str] = 'v2'
+
+
+class CurveConstants:
+    """Curve Finance specific constants."""
+    STABLE_SWAP_TYPE: Final[str] = 'stable'
+    CRYPTO_SWAP_TYPE: Final[str] = 'crypto'
+    MIN_LIQUIDITY_USD: Final[int] = 50000  # $50K minimum pool size
+
+
+# =============================================================================
+# VALIDATION FUNCTIONS FOR DEX OPERATIONS
+# =============================================================================
+
+def validate_dex_name(dex_name: str) -> bool:
+    """
+    Validate if DEX name is supported.
+    
+    Args:
+        dex_name: DEX name to validate
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    return dex_name in DEXNames.ALL
+
+
+def validate_arbitrage_opportunity(arb_data: dict) -> bool:
+    """
+    Validate arbitrage opportunity data structure.
+    
+    Args:
+        arb_data: Arbitrage data dictionary
+        
+    Returns:
+        True if valid structure, False otherwise
+    """
+    required_fields = [
+        ArbitrageFields.BUY_DEX,
+        ArbitrageFields.SELL_DEX,
+        ArbitrageFields.BUY_PRICE,
+        ArbitrageFields.SELL_PRICE,
+        ArbitrageFields.NET_PROFIT_USD
+    ]
+    
+    return all(field in arb_data for field in required_fields)
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def get_dex_display_name(dex_name: str) -> str:
+    """
+    Get human-readable display name for DEX.
+    
+    Args:
+        dex_name: Internal DEX name
+        
+    Returns:
+        Display name for UI
+    """
+    display_names = {
+        DEXNames.UNISWAP_V3: 'Uniswap V3',
+        DEXNames.UNISWAP_V2: 'Uniswap V2',
+        DEXNames.SUSHISWAP: 'SushiSwap',
+        DEXNames.CURVE: 'Curve Finance'
+    }
+    
+    return display_names.get(dex_name, dex_name.upper())
