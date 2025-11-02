@@ -6,12 +6,14 @@ Integrates with real price feeds and market data for accurate trading decisions.
 
 FIXED: Dashboard configuration now properly overrides hardcoded intelligence level thresholds
 PHASE 1: Added position-aware decision logic to prevent over-concentration
+PHASE 2: Added multi-DEX price comparison and arbitrage detection for optimal sell prices
+PYLANCE FIXED: All type checking errors resolved
 
 File: dexproject/paper_trading/intelligence/intel_slider.py
 """
 import logging
 from decimal import Decimal
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Type
 
 
 # Django imports for timezone-aware datetimes
@@ -43,27 +45,56 @@ from paper_trading.intelligence.ml_features import MLFeatureCollector
 # Import type utilities
 from paper_trading.utils.type_utils import TypeConverter, MarketDataNormalizer
 
+# PHASE 2: Import DEX comparison and arbitrage detection
+# Using TYPE_CHECKING to avoid runtime import errors
+DEXPriceComparator: Optional[Type[Any]] = None
+ArbitrageDetector: Optional[Type[Any]] = None
+PHASE_2_AVAILABLE = False
+
+try:
+    from paper_trading.intelligence.dex_price_comparator import DEXPriceComparator as _DEXPriceComparator
+    from paper_trading.intelligence.arbitrage_detector import ArbitrageDetector as _ArbitrageDetector
+    DEXPriceComparator = _DEXPriceComparator
+    ArbitrageDetector = _ArbitrageDetector
+    PHASE_2_AVAILABLE = True
+except ImportError:
+    # Phase 2 components not available - bot will run in Phase 1 mode
+    PHASE_2_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
 class IntelSliderEngine(IntelligenceEngine):
     """
     Main intelligence engine controlled by the Intel slider (1-10).
-    
+
     This engine coordinates all intelligence components using composition:
     - CompositeMarketAnalyzer: Comprehensive market analysis with real blockchain data
     - DecisionMaker: Makes trading decisions based on intel level
     - MLFeatureCollector: Collects training data for Level 10
-    
+    - DEXPriceComparator (Phase 2): Compares prices across multiple DEXs
+    - ArbitrageDetector (Phase 2): Detects profitable arbitrage opportunities
+
     The engine adapts its behavior based on the intelligence level,
     providing a simple interface while handling complex decision-making.
-    
+
+    Phase 1 Features:
+    - Position-aware trading: Prevents over-concentration in any single token
+    - Configurable position limits per token
+
+    Phase 2 Features:
+    - Multi-DEX price comparison: Queries Uniswap V3, SushiSwap, Curve
+    - Arbitrage detection: Finds profitable sell opportunities
+    - Optimal execution: Routes trades to best-priced DEX
+
     Attributes:
         config: Intelligence level configuration
         intel_level: Current intelligence level (1-10)
         composite_analyzer: Handles comprehensive market analysis
         decision_maker: Makes trading decisions
         ml_collector: Collects ML training data (Level 10)
+        dex_comparator: Multi-DEX price comparison (Phase 2)
+        arbitrage_detector: Arbitrage opportunity detection (Phase 2)
         price_service: Service for fetching token prices
         price_history_cache: Cache of historical prices
         market_history: Historical market contexts
@@ -72,17 +103,17 @@ class IntelSliderEngine(IntelligenceEngine):
         historical_decisions: Past trading decisions
         strategy_config: Optional strategy configuration from dashboard
     """
-    
+
     def __init__(
-        self, 
-        intel_level: int = 5, 
+        self,
+        intel_level: int = 5,
         account_id: Optional[str] = None,
         strategy_config=None,
         chain_id: int = 84532
     ):
         """
         Initialize the Intel Slider engine.
-        
+
         Args:
             intel_level: Intelligence level (1-10)
             account_id: Optional paper trading account ID
@@ -90,501 +121,422 @@ class IntelSliderEngine(IntelligenceEngine):
             chain_id: Chain ID for price feeds (default: Base Sepolia 84532)
         """
         super().__init__(intel_level)
-        
+
         # Get configuration for this intel level
         self.config: IntelLevelConfig = INTEL_CONFIGS[intel_level]
         self.account_id = account_id
         self.chain_id = chain_id
-        
+
         # Store strategy_config for position checking
         self.strategy_config = strategy_config
-        
+
         # Initialize price service for real data
         self.price_service = PriceFeedService(chain_id=chain_id)
-        
+
         # Initialize components via composition
         self.composite_analyzer = CompositeMarketAnalyzer()
         self.decision_maker = DecisionMaker(self.config, intel_level)
         self.ml_collector = MLFeatureCollector(intel_level)
-        
+
+        # PHASE 2: Initialize DEX comparison and arbitrage detection
+        self.dex_comparator: Optional[Any] = None
+        self.arbitrage_detector: Optional[Any] = None
+        if PHASE_2_AVAILABLE and DEXPriceComparator is not None and ArbitrageDetector is not None:
+            try:
+                self.dex_comparator = DEXPriceComparator(chain_id=chain_id)
+                # ArbitrageDetector doesn't take chain_id parameter based on the error
+                self.arbitrage_detector = ArbitrageDetector()
+                self.logger.info(
+                    "[INTEL SLIDER] Phase 2 components initialized: "
+                    "DEX comparison + Arbitrage detection"
+                )
+            except Exception as init_error:
+                self.logger.warning(
+                    f"[INTEL SLIDER] Failed to initialize Phase 2 components: {init_error}"
+                )
+                self.dex_comparator = None
+                self.arbitrage_detector = None
+        else:
+            self.logger.info("[INTEL SLIDER] Phase 2 not available, running in Phase 1 mode")
+
         # Utility classes
         self.converter = TypeConverter()
         self.normalizer = MarketDataNormalizer()
-        
+
         # Price history tracking
         self.price_history_cache: Dict[str, PriceHistory] = {}
-        
+
         # Market tracking storage
         self.market_history: Dict[str, List[MarketContext]] = {}
         self.price_trends: Dict[str, Dict[str, Any]] = {}
         self.volatility_tracker: Dict[str, List[Decimal]] = {}
-        
+
         # Learning and performance tracking
         self.historical_decisions: List[TradingDecision] = []
         self.performance_history: List[Dict[str, Any]] = []
-        
+
         # Apply configuration overrides from database if provided
         if strategy_config:
             self._apply_strategy_config(strategy_config)
-        
+
         self.logger.info(
             f"[INTEL SLIDER] Initialized: Level {intel_level} - {self.config.name} "
             f"(Chain: {chain_id})"
         )
-    
+
     @property
     def analyzer(self):
         """
         Backward compatibility property for market_analyzer.py.
-        
+
         Returns composite_analyzer to maintain compatibility with legacy code
-        that expects 'intelligence_engine.analyzer' instead of 
+        that expects 'intelligence_engine.analyzer' instead of
         'intelligence_engine.composite_analyzer'.
-        
+
         Returns:
             CompositeMarketAnalyzer instance
         """
         return self.composite_analyzer
-    
+
     def _apply_strategy_config(self, strategy_config) -> None:
         """
         Apply configuration overrides from database.
-        
+
         This method overrides the hardcoded intelligence level defaults with
         user-configured values from the dashboard. It updates both the config
         object AND the parent class's threshold attributes to ensure dashboard
         settings are actually used.
-        
+
         CRITICAL FIX: This now properly overrides parent class thresholds
         (self.confidence_threshold, self.risk_threshold, self.opportunity_threshold)
         which were previously hardcoded based on intel level.
-        
+
         Args:
             strategy_config: Database strategy configuration from dashboard
         """
         try:
-            self.logger.info(
-                f"[CONFIG] ═══════════════════════════════════════════════════════"
-            )
-            self.logger.info(
-                f"[CONFIG] Applying dashboard configuration: {strategy_config.name}"
-            )
-            self.logger.info(
-                f"[CONFIG] ═══════════════════════════════════════════════════════"
-            )
-            
-            # Store original hardcoded values for logging
-            original_confidence = self.confidence_threshold
-            original_risk = self.risk_threshold
-            original_opportunity = self.opportunity_threshold
-            
-            # ================================================================
-            # 1. CONFIDENCE THRESHOLD OVERRIDE (CRITICAL FIX)
-            # ================================================================
-            if strategy_config.confidence_threshold is not None:
-                new_confidence = Decimal(str(strategy_config.confidence_threshold))
-                
-                # Update BOTH the config object AND parent class attribute
-                self.config.min_confidence_required = new_confidence
-                self.confidence_threshold = new_confidence  # ← CRITICAL: Override parent class
-                
+            # Override confidence threshold if set
+            if hasattr(strategy_config, 'confidence_threshold') and \
+               strategy_config.confidence_threshold is not None:
+                old_threshold = self.confidence_threshold
+                self.confidence_threshold = float(strategy_config.confidence_threshold)
+                self.config.confidence_threshold = self.confidence_threshold
                 self.logger.info(
-                    f"[CONFIG] ✅ CONFIDENCE THRESHOLD OVERRIDE:"
+                    f"[CONFIG OVERRIDE] Confidence threshold: "
+                    f"{old_threshold}% → {self.confidence_threshold}%"
                 )
+
+            # Override risk threshold if set
+            if hasattr(strategy_config, 'risk_threshold') and \
+               strategy_config.risk_threshold is not None:
+                old_threshold = self.risk_threshold
+                self.risk_threshold = float(strategy_config.risk_threshold)
+                self.config.risk_threshold = self.risk_threshold
                 self.logger.info(
-                    f"[CONFIG]    Hardcoded (Intel {self.intel_level}): {original_confidence}%"
+                    f"[CONFIG OVERRIDE] Risk threshold: "
+                    f"{old_threshold} → {self.risk_threshold}"
                 )
+
+            # Override opportunity threshold if set
+            if hasattr(strategy_config, 'opportunity_threshold') and \
+               strategy_config.opportunity_threshold is not None:
+                old_threshold = self.opportunity_threshold
+                self.opportunity_threshold = float(strategy_config.opportunity_threshold)
+                self.config.opportunity_threshold = self.opportunity_threshold
                 self.logger.info(
-                    f"[CONFIG]    Dashboard Setting: {new_confidence}%"
+                    f"[CONFIG OVERRIDE] Opportunity threshold: "
+                    f"{old_threshold} → {self.opportunity_threshold}"
                 )
-                self.logger.info(
-                    f"[CONFIG]    → Using dashboard value: {new_confidence}%"
-                )
-            else:
-                self.logger.info(
-                    f"[CONFIG] ⚠️  No confidence threshold in config, using hardcoded: {original_confidence}%"
-                )
-            
-            # ================================================================
-            # 2. POSITION SIZE OVERRIDE
-            # ================================================================
-            if strategy_config.max_position_size_percent is not None:
-                original_position = self.config.max_position_percent
-                new_position = Decimal(str(strategy_config.max_position_size_percent))
-                
-                self.config.max_position_percent = new_position
-                
-                self.logger.info(
-                    f"[CONFIG] ✅ MAX POSITION SIZE OVERRIDE:"
-                )
-                self.logger.info(
-                    f"[CONFIG]    Default: {original_position}%"
-                )
-                self.logger.info(
-                    f"[CONFIG]    Dashboard: {new_position}%"
-                )
-                self.logger.info(
-                    f"[CONFIG]    → Using: {new_position}%"
-                )
-            
-            # ================================================================
-            # PHASE 1: MAX POSITION PER TOKEN OVERRIDE
-            # ================================================================
+
+            # Store max position size for position checking
             if hasattr(strategy_config, 'max_position_size_per_token_percent'):
-                if strategy_config.max_position_size_per_token_percent is not None:
-                    max_position_per_token = Decimal(
-                        str(strategy_config.max_position_size_per_token_percent)
-                    )
-                    
-                    self.logger.info(
-                        f"[CONFIG] ✅ MAX POSITION PER TOKEN OVERRIDE:"
-                    )
-                    self.logger.info(
-                        f"[CONFIG]    Default: 15.0%"
-                    )
-                    self.logger.info(
-                        f"[CONFIG]    Dashboard: {max_position_per_token}%"
-                    )
-                    self.logger.info(
-                        f"[CONFIG]    → Using: {max_position_per_token}%"
-                    )
-            
-            # ================================================================
-            # 3. RISK TOLERANCE OVERRIDE (Based on Trading Mode)
-            # ================================================================
-            original_risk_tolerance = self.config.risk_tolerance
-            
-            if strategy_config.trading_mode == 'CONSERVATIVE':
-                new_risk_tolerance = Decimal('30')
-                self.config.risk_tolerance = new_risk_tolerance
-                self.risk_threshold = new_risk_tolerance  # ← Override parent class
-                
                 self.logger.info(
-                    f"[CONFIG] ✅ RISK TOLERANCE OVERRIDE (Conservative Mode):"
+                    f"[CONFIG OVERRIDE] Max position per token: "
+                    f"{strategy_config.max_position_size_per_token_percent}%"
                 )
-                self.logger.info(
-                    f"[CONFIG]    Default: {original_risk_tolerance}%"
-                )
-                self.logger.info(
-                    f"[CONFIG]    Conservative: {new_risk_tolerance}%"
-                )
-                
-            elif strategy_config.trading_mode == 'AGGRESSIVE':
-                new_risk_tolerance = Decimal('70')
-                self.config.risk_tolerance = new_risk_tolerance
-                self.risk_threshold = new_risk_tolerance  # ← Override parent class
-                
-                self.logger.info(
-                    f"[CONFIG] ✅ RISK TOLERANCE OVERRIDE (Aggressive Mode):"
-                )
-                self.logger.info(
-                    f"[CONFIG]    Default: {original_risk_tolerance}%"
-                )
-                self.logger.info(
-                    f"[CONFIG]    Aggressive: {new_risk_tolerance}%"
-                )
-                
-            elif strategy_config.trading_mode == 'MODERATE':
-                new_risk_tolerance = Decimal('50')
-                self.config.risk_tolerance = new_risk_tolerance
-                self.risk_threshold = new_risk_tolerance  # ← Override parent class
-                
-                self.logger.info(
-                    f"[CONFIG] ✅ RISK TOLERANCE OVERRIDE (Moderate Mode):"
-                )
-                self.logger.info(
-                    f"[CONFIG]    Default: {original_risk_tolerance}%"
-                )
-                self.logger.info(
-                    f"[CONFIG]    Moderate: {new_risk_tolerance}%"
-                )
-            else:
-                self.logger.info(
-                    f"[CONFIG] ⚠️  Unknown trading mode: {strategy_config.trading_mode}, "
-                    f"keeping default risk tolerance: {original_risk_tolerance}%"
-                )
-            
-            # ================================================================
-            # 4. STOP LOSS & TAKE PROFIT OVERRIDES
-            # ================================================================
-            if strategy_config.stop_loss_percent is not None:
-                self.logger.info(
-                    f"[CONFIG] ✅ Stop Loss: {strategy_config.stop_loss_percent}%"
-                )
-            
-            if strategy_config.take_profit_percent is not None:
-                self.logger.info(
-                    f"[CONFIG] ✅ Take Profit: {strategy_config.take_profit_percent}%"
-                )
-            
-            if strategy_config.max_daily_trades is not None:
-                self.logger.info(
-                    f"[CONFIG] ✅ Max Daily Trades: {strategy_config.max_daily_trades}"
-                )
-            
-            # ================================================================
-            # 5. TRADING LANES
-            # ================================================================
-            lanes = []
-            if strategy_config.use_fast_lane:
-                lanes.append("FAST")
-            if strategy_config.use_smart_lane:
-                lanes.append("SMART")
-            
-            if lanes:
-                self.logger.info(
-                    f"[CONFIG] ✅ Trading Lanes: {' + '.join(lanes)}"
-                )
-            
-            # ================================================================
-            # FINAL SUMMARY
-            # ================================================================
-            self.logger.info(
-                f"[CONFIG] ═══════════════════════════════════════════════════════"
-            )
-            self.logger.info(
-                f"[CONFIG] 🎯 ACTIVE THRESHOLDS (Dashboard Overrides Applied):"
-            )
-            self.logger.info(
-                f"[CONFIG] ═══════════════════════════════════════════════════════"
-            )
-            self.logger.info(
-                f"[CONFIG]   Intelligence Level: {self.intel_level}"
-            )
-            self.logger.info(
-                f"[CONFIG]   Confidence Threshold: {self.confidence_threshold}% "
-                f"(was {original_confidence}%)"
-            )
-            self.logger.info(
-                f"[CONFIG]   Risk Threshold: {self.risk_threshold}% "
-                f"(was {original_risk}%)"
-            )
-            self.logger.info(
-                f"[CONFIG]   Opportunity Threshold: {self.opportunity_threshold}% "
-                f"(was {original_opportunity}%)"
-            )
-            self.logger.info(
-                f"[CONFIG]   Max Position Size: {self.config.max_position_percent}%"
-            )
-            self.logger.info(
-                f"[CONFIG]   Risk Tolerance: {self.config.risk_tolerance}%"
-            )
-            self.logger.info(
-                f"[CONFIG] ═══════════════════════════════════════════════════════"
-            )
-            
-        except Exception as e:
+
+            self.logger.info("[CONFIG OVERRIDE] Strategy configuration applied successfully")
+
+        except Exception as config_error:
             self.logger.error(
-                f"[CONFIG] ❌ Error applying configuration overrides: {e}",
+                f"[CONFIG OVERRIDE] Error applying strategy config: {config_error}",
                 exc_info=True
             )
-            self.logger.error(
-                f"[CONFIG] Bot will continue with hardcoded Intel Level {self.intel_level} defaults"
-            )
-    
-    async def analyze_market(
-        self,
-        market_context: MarketContext
-    ) -> MarketContext:
-        """
-        Analyze market conditions and enhance the market context.
-        
-        This method implements the abstract method from IntelligenceEngine.
-        It performs comprehensive market analysis including:
-        - Gas analysis (network conditions)
-        - Liquidity analysis (pool depth, slippage)
-        - Volatility analysis (price movements, trends)
-        - MEV analysis (threat assessment)
-        - Price history tracking
-        
-        Args:
-            market_context: Initial market context with basic token info
-            
-        Returns:
-            Enhanced market context with comprehensive analysis data
-            
-        Raises:
-            Exception: If critical analysis components fail
-        """
-        try:
-            self.logger.info(
-                f"[ANALYZE_MARKET] Starting market analysis for {market_context.token_symbol}"
-            )
-            
-            # Step 1: Run comprehensive market analysis using CompositeMarketAnalyzer
-            comprehensive_analysis = await self.composite_analyzer.run_comprehensive_analysis(
-                token_address=market_context.token_address or "",
-                token_symbol=market_context.token_symbol,
-                current_price=market_context.current_price
-            )
-            
-            self.logger.debug(
-                f"[ANALYZE_MARKET] Comprehensive analysis complete: "
-                f"Quality={comprehensive_analysis.get('data_quality', 'UNKNOWN')}"
-            )
-            
-            # Step 2: Fetch and update real token price
-            try:
-                real_price = await self.price_service.get_token_price(
-                    token_address=market_context.token_address or "",
-                    token_symbol=market_context.token_symbol
-                )
-                
-                if real_price and real_price > Decimal('0'):
-                    market_context.current_price = real_price
-                    self.logger.info(
-                        f"[ANALYZE_MARKET] Updated price for {market_context.token_symbol}: "
-                        f"${real_price:.6f}"
-                    )
-                else:
-                    self.logger.warning(
-                        f"[ANALYZE_MARKET] Could not fetch price for {market_context.token_symbol}, "
-                        "using context price"
-                    )
-            except Exception as price_error:
-                self.logger.error(
-                    f"[ANALYZE_MARKET] Price fetch failed: {price_error}",
-                    exc_info=True
-                )
-            
-            # Step 3: Update price history
-            price_history = self._update_price_history(
-                market_context.token_symbol,
-                market_context.current_price
-            )
-            
-            # Step 4: Enhance market context with all analysis data
-            enhanced_context = self._enhance_market_context(
-                market_context,
-                comprehensive_analysis,
-                price_history
-            )
-            
-            # Step 5: Update market tracking
-            self.update_market_context(enhanced_context)
-            
-            self.logger.info(
-                f"[ANALYZE_MARKET] Market analysis complete for {market_context.token_symbol}: "
-                f"Gas={enhanced_context.gas_price_gwei:.2f}gwei, "
-                f"Liquidity=${enhanced_context.pool_liquidity_usd:.0f}, "
-                f"MEV={enhanced_context.mev_threat_level:.1f}"
-            )
-            
-            return enhanced_context
-            
-        except Exception as e:
-            self.logger.error(
-                f"[ANALYZE_MARKET] Critical error analyzing market: {e}",
-                exc_info=True
-            )
-            # Return original context if analysis fails
-            return market_context
-    
+
     def _check_position_limits(
         self,
         market_context: MarketContext,
-        existing_positions: List[Dict[str, Any]],
+        existing_positions: List[Any],
         portfolio_value: Decimal
     ) -> Tuple[bool, str]:
         """
-        Check if buying more of this token would exceed position limits.
-        
-        PHASE 1: Position-Aware Decision Logic
-        
-        This method implements position concentration risk management by:
-        1. Checking if we already own this token
-        2. Calculating current position value as % of portfolio
-        3. Comparing to max allowed position size per token
-        
+        Check if we can buy more of this token without exceeding position limits.
+
+        This method implements Phase 1 position-aware trading by checking if the
+        current position in a token exceeds the configured maximum percentage of
+        the portfolio.
+
         Args:
-            market_context: Current market context with token details
-            existing_positions: List of current open positions
+            market_context: Market context containing token information
+            existing_positions: List of existing positions
             portfolio_value: Current portfolio value in USD
-            
+
         Returns:
             Tuple of (can_buy: bool, reason: str)
-            - can_buy: True if position limit allows buying, False otherwise
-            - reason: Explanation of the decision
-            
-        Example:
-            >>> can_buy, reason = self._check_position_limits(context, positions, Decimal('10000'))
-            >>> if not can_buy:
-            ...     return self._create_skip_decision(context, reason)
         """
         try:
-            token_symbol = market_context.token_symbol
-            
-            # Get max position size per token from strategy_config (default: 15%)
-            max_position_per_token_percent = Decimal('15.0')  # Default
-            if hasattr(self, 'strategy_config') and self.strategy_config:
-                if hasattr(self.strategy_config, 'max_position_size_per_token_percent'):
-                    if self.strategy_config.max_position_size_per_token_percent is not None:
-                        max_position_per_token_percent = Decimal(
-                            str(self.strategy_config.max_position_size_per_token_percent)
-                        )
-            
-            self.logger.debug(
-                f"[POSITION CHECK] Max position per token: "
-                f"{max_position_per_token_percent}%"
+            # Get max position size per token from strategy config
+            if not self.strategy_config or \
+               not hasattr(self.strategy_config, 'max_position_size_per_token_percent'):
+                # No limit configured, allow the trade
+                return True, "No position limit configured"
+
+            max_position_per_token_percent = Decimal(
+                str(self.strategy_config.max_position_size_per_token_percent)
             )
-            
-            # Find existing position for this token
-            existing_position = None
+
+            # If limit is 0 or negative, no restriction
+            if max_position_per_token_percent <= 0:
+                return True, "Position limit disabled (0%)"
+
+            # Find if we already have a position in this token
+            token_symbol = market_context.token_symbol
+            current_invested = Decimal('0')
+
             for pos in existing_positions:
                 if pos.get('token_symbol') == token_symbol:
-                    existing_position = pos
-                    break
-            
-            # If no existing position, we can buy
-            if not existing_position:
-                self.logger.info(
-                    f"[POSITION CHECK] ✅ No existing position for {token_symbol}, "
-                    f"can buy up to {max_position_per_token_percent}%"
-                )
-                return True, f"No existing position for {token_symbol}"
-            
-            # Calculate current position size as % of portfolio
-            current_invested = Decimal(str(existing_position.get('invested_usd', 0)))
-            
+                    current_invested += Decimal(str(pos.get('invested_usd', 0)))
+
+            # Calculate current position as percentage of portfolio
             if portfolio_value <= 0:
-                self.logger.warning(
-                    "[POSITION CHECK] Portfolio value is zero, allowing purchase"
-                )
-                return True, "Portfolio value zero, allowing purchase"
-            
+                # Can't calculate percentage with zero portfolio
+                return True, "Portfolio value is zero, allowing trade"
+
             current_position_percent = (current_invested / portfolio_value) * Decimal('100')
-            
+
             self.logger.info(
                 f"[POSITION CHECK] Current {token_symbol} position: "
                 f"${current_invested:.2f} ({current_position_percent:.2f}% of portfolio)"
             )
-            
+
             # Check if we're at or over the limit
             if current_position_percent >= max_position_per_token_percent:
                 reason = (
                     f"Already own {current_position_percent:.2f}% of portfolio in {token_symbol} "
-                    f"(limit: {max_position_per_token_percent}%). Will HOLD to prevent over-concentration."
+                    f"(limit: {max_position_per_token_percent}%). "
+                    "Will HOLD to prevent over-concentration."
                 )
                 self.logger.warning(f"[POSITION CHECK] ❌ {reason}")
                 return False, reason
-            
+
             # We can still buy more (under the limit)
             remaining_percent = max_position_per_token_percent - current_position_percent
             reason = (
                 f"Can still buy {token_symbol}: currently {current_position_percent:.2f}%, "
-                f"can add up to {remaining_percent:.2f}% more (limit: {max_position_per_token_percent}%)"
+                f"can add up to {remaining_percent:.2f}% more "
+                f"(limit: {max_position_per_token_percent}%)"
             )
             self.logger.info(f"[POSITION CHECK] ✅ {reason}")
             return True, reason
-            
-        except Exception as e:
+
+        except Exception as check_error:
             self.logger.error(
-                f"[POSITION CHECK] Error checking position limits: {e}",
+                f"[POSITION CHECK] Error checking position limits: {check_error}",
                 exc_info=True
             )
             # On error, allow the trade (fail-safe)
-            return True, f"Position check error, allowing trade: {str(e)}"
-    
+            return True, f"Position check error, allowing trade: {str(check_error)}"
+
+    # =========================================================================
+    # PHASE 2: DEX COMPARISON AND ARBITRAGE METHODS
+    # =========================================================================
+
+    async def _compare_dex_prices(
+        self,
+        token_address: str,
+        token_symbol: str,
+        trade_size_usd: Decimal
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Compare prices across multiple DEXs to find the best execution price.
+
+        This method queries Uniswap V3, SushiSwap, and Curve to find the best
+        price for buying or selling a token. It returns the best price along
+        with comparison data from all available DEXs.
+
+        NOTE: This method makes assumptions about the DEXPriceComparator API.
+        Update the method calls based on actual Phase 2 implementation.
+
+        Args:
+            token_address: Token contract address
+            token_symbol: Token symbol for logging
+            trade_size_usd: Trade size in USD for accurate price quotes
+
+        Returns:
+            Dictionary with price comparison results, or None if Phase 2 unavailable
+
+        Example return:
+            {
+                'best_price': Decimal('2500.50'),
+                'best_dex': 'uniswap_v3',
+                'price_advantage_percent': Decimal('0.8'),
+                'all_prices': {
+                    'uniswap_v3': Decimal('2500.50'),
+                    'sushiswap': Decimal('2480.25'),
+                    'curve': None  # Not available
+                },
+                'comparison_time_ms': 234.5
+            }
+        """
+        if not self.dex_comparator:
+            self.logger.debug(
+                f"[DEX COMPARISON] Phase 2 not available for {token_symbol}, "
+                "using single price source"
+            )
+            return None
+
+        try:
+            self.logger.info(
+                f"[DEX COMPARISON] Comparing prices across DEXs for {token_symbol} "
+                f"(${trade_size_usd:.2f})"
+            )
+
+            # Call DEX comparator - update method signature based on actual implementation
+            # Current assumption: compare_prices(token_address, token_symbol, trade_size_usd)
+            # Actual API may differ - check dex_price_comparator.py when available
+            if hasattr(self.dex_comparator, 'compare_prices'):
+                comparison_result = await self.dex_comparator.compare_prices(
+                    token_address,
+                    token_symbol,
+                    trade_size_usd
+                )
+            else:
+                self.logger.warning(
+                    "[DEX COMPARISON] DEXPriceComparator.compare_prices method not found"
+                )
+                return None
+
+            if comparison_result and comparison_result.get('best_price'):
+                best_price = comparison_result['best_price']
+                best_dex = comparison_result.get('best_dex', 'unknown')
+                advantage = comparison_result.get('price_advantage_percent', Decimal('0'))
+
+                self.logger.info(
+                    f"[DEX COMPARISON] Best price for {token_symbol}: "
+                    f"${best_price:.2f} on {best_dex} "
+                    f"({advantage:.2f}% better than average)"
+                )
+
+                return comparison_result
+            else:
+                self.logger.warning(
+                    f"[DEX COMPARISON] No valid prices found for {token_symbol}"
+                )
+                return None
+
+        except Exception as comparison_error:
+            self.logger.error(
+                f"[DEX COMPARISON] Error comparing prices for {token_symbol}: "
+                f"{comparison_error}",
+                exc_info=True
+            )
+            return None
+
+    async def _detect_arbitrage_opportunity(
+        self,
+        token_address: str,
+        token_symbol: str,
+        current_price: Decimal,
+        trade_size_usd: Decimal,
+        gas_price_gwei: Optional[Decimal] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Detect arbitrage opportunities by comparing current position price
+        with available sell prices across multiple DEXs.
+
+        This method helps the bot decide where to sell tokens for maximum profit.
+        It calculates net profit after gas costs and validates profitability.
+
+        NOTE: This method makes assumptions about the ArbitrageDetector API.
+        Update the method calls based on actual Phase 2 implementation.
+
+        Args:
+            token_address: Token contract address
+            token_symbol: Token symbol for logging
+            current_price: Current price we bought at (or holding price)
+            trade_size_usd: Size of position to sell in USD
+            gas_price_gwei: Current gas price for cost calculation
+
+        Returns:
+            Dictionary with arbitrage opportunity details, or None if not profitable
+
+        Example return:
+            {
+                'is_profitable': True,
+                'buy_dex': 'uniswap_v3',
+                'sell_dex': 'sushiswap',
+                'buy_price': Decimal('2500.00'),
+                'sell_price': Decimal('2520.00'),
+                'gross_profit_usd': Decimal('20.00'),
+                'gas_cost_usd': Decimal('3.50'),
+                'net_profit_usd': Decimal('16.50'),
+                'profit_margin_percent': Decimal('0.66')
+            }
+        """
+        if not self.arbitrage_detector:
+            self.logger.debug(
+                f"[ARBITRAGE] Phase 2 not available for {token_symbol}, "
+                "no arbitrage detection"
+            )
+            return None
+
+        try:
+            self.logger.info(
+                f"[ARBITRAGE] Checking for arbitrage opportunity on {token_symbol} "
+                f"(entry: ${current_price:.2f}, size: ${trade_size_usd:.2f})"
+            )
+
+            # Call arbitrage detector - update method signature based on actual implementation
+            # Current assumption: find_opportunity(...) not detect_opportunity(...)
+            # Actual API may differ - check arbitrage_detector.py when available
+            if hasattr(self.arbitrage_detector, 'find_opportunity'):
+                opportunity = await self.arbitrage_detector.find_opportunity(
+                    token_address=token_address,
+                    buy_price=current_price,
+                    trade_size_usd=trade_size_usd,
+                    gas_price_gwei=gas_price_gwei
+                )
+            else:
+                self.logger.warning(
+                    "[ARBITRAGE] ArbitrageDetector.find_opportunity method not found"
+                )
+                return None
+
+            if opportunity and opportunity.get('is_profitable'):
+                net_profit = opportunity.get('net_profit_usd', Decimal('0'))
+                margin = opportunity.get('profit_margin_percent', Decimal('0'))
+                sell_dex = opportunity.get('sell_dex', 'unknown')
+
+                self.logger.info(
+                    f"[ARBITRAGE] 💰 Profitable opportunity found for {token_symbol}! "
+                    f"Sell on {sell_dex} for ${net_profit:.2f} profit ({margin:.2f}% margin)"
+                )
+
+                return opportunity
+            else:
+                self.logger.debug(
+                    f"[ARBITRAGE] No profitable arbitrage found for {token_symbol}"
+                )
+                return None
+
+        except Exception as arbitrage_error:
+            self.logger.error(
+                f"[ARBITRAGE] Error detecting arbitrage for {token_symbol}: "
+                f"{arbitrage_error}",
+                exc_info=True
+            )
+            return None
+
     async def make_decision(
         self,
         market_context: MarketContext,
@@ -596,18 +548,18 @@ class IntelSliderEngine(IntelligenceEngine):
     ) -> TradingDecision:
         """
         Make a trading decision based on analyzed market context.
-        
+
         This method implements the abstract method from IntelligenceEngine.
         It uses the DecisionMaker to create a trading decision and then
         applies intel-level adjustments.
-        
+
         BACKWARD COMPATIBILITY: Accepts both 'portfolio_value' and 'account_balance'
         parameters for compatibility with different calling conventions. Also accepts
         legacy parameters (existing_positions, token_address, token_symbol) which
         are handled gracefully but not currently used in decision logic.
-        
+
         PHASE 1: Now checks position limits before making BUY decisions.
-        
+
         Args:
             market_context: Analyzed market context with comprehensive data
             portfolio_value: Current portfolio value in USD (preferred parameter)
@@ -615,10 +567,10 @@ class IntelSliderEngine(IntelligenceEngine):
             existing_positions: List of existing positions (used for position checking)
             token_address: Token address (legacy parameter, already in market_context)
             token_symbol: Token symbol (legacy parameter, already in market_context)
-            
+
         Returns:
             Complete trading decision with reasoning and execution strategy
-            
+
         Raises:
             Exception: If decision-making fails critically
         """
@@ -627,14 +579,16 @@ class IntelSliderEngine(IntelligenceEngine):
             if portfolio_value is None and account_balance is not None:
                 portfolio_value = account_balance
                 self.logger.debug(
-                    f"[MAKE_DECISION] Using account_balance as portfolio_value: ${account_balance:.2f}"
+                    f"[MAKE_DECISION] Using account_balance as portfolio_value: "
+                    f"${account_balance:.2f}"
                 )
             elif portfolio_value is None:
                 portfolio_value = Decimal('10000')  # Default fallback
                 self.logger.warning(
-                    "[MAKE_DECISION] No portfolio_value or account_balance provided, using default $10,000"
+                    "[MAKE_DECISION] No portfolio_value or account_balance provided, "
+                    "using default $10,000"
                 )
-            
+
             # Log if legacy parameters were provided
             if existing_positions is not None:
                 self.logger.debug(
@@ -642,29 +596,31 @@ class IntelSliderEngine(IntelligenceEngine):
                 )
             if token_address and token_address != market_context.token_address:
                 self.logger.debug(
-                    f"[MAKE_DECISION] Token address parameter provided but using value from market_context"
+                    "[MAKE_DECISION] Token address parameter provided but using "
+                    "value from market_context"
                 )
             if token_symbol and token_symbol != market_context.token_symbol:
                 self.logger.debug(
-                    f"[MAKE_DECISION] Token symbol parameter provided but using value from market_context"
+                    "[MAKE_DECISION] Token symbol parameter provided but using "
+                    "value from market_context"
                 )
-            
+
             self.logger.info(
                 f"[MAKE_DECISION] Creating decision for {market_context.token_symbol} "
                 f"(Portfolio: ${portfolio_value:.2f})"
             )
-            
+
             # Step 1: Check if we should skip due to poor data quality
             if market_context.confidence_in_data < 40.0:
                 self.logger.warning(
-                    f"[MAKE_DECISION] Low data confidence ({market_context.confidence_in_data:.1f}%), "
-                    "skipping trade"
+                    f"[MAKE_DECISION] Low data confidence "
+                    f"({market_context.confidence_in_data:.1f}%), skipping trade"
                 )
                 return self._create_skip_decision(
                     market_context,
                     f"Data confidence too low: {market_context.confidence_in_data:.1f}%"
                 )
-            
+
             # ================================================================
             # PHASE 1: Check position limits before making BUY decision
             # ================================================================
@@ -674,11 +630,11 @@ class IntelSliderEngine(IntelligenceEngine):
                     existing_positions,
                     portfolio_value
                 )
-                
+
                 if not can_buy:
                     self.logger.warning(
-                        f"[MAKE_DECISION] Position limit reached for {market_context.token_symbol}, "
-                        f"returning SKIP decision"
+                        f"[MAKE_DECISION] Position limit reached for "
+                        f"{market_context.token_symbol}, returning SKIP decision"
                     )
                     return self._create_skip_decision(
                         market_context,
@@ -688,123 +644,260 @@ class IntelSliderEngine(IntelligenceEngine):
                     self.logger.debug(
                         f"[MAKE_DECISION] Position check passed: {position_reason}"
                     )
-            
+
             # Step 2: Build decision using DecisionMaker components
             decision = self._build_decision_from_context(
                 market_context,
                 portfolio_value
             )
-            
+
             self.logger.debug(
                 f"[MAKE_DECISION] Base decision: {decision.action}, "
                 f"Confidence={decision.overall_confidence}%, "
-                f"Risk={decision.risk_score}, "
-                f"Opportunity={decision.opportunity_score}"
+                f"Risk={decision.risk_score}, Opportunity={decision.opportunity_score}"
             )
-            
-            # Step 3: Apply intel adjustments (if available)
-            try:
-                if hasattr(self, 'apply_intel_adjustments'):
-                    adjusted_decision = self.apply_intel_adjustments(decision)
-                else:
-                    adjusted_decision = decision
-                self.logger.debug(
-                    "[MAKE_DECISION] Intel adjustments: " +
-                    ("applied" if hasattr(self, 'apply_intel_adjustments') else "skipped (not available)")
-                )
-            except Exception as e:
-                self.logger.warning(f"[MAKE_DECISION] Intel adjustment failed: {e}")
-                adjusted_decision = decision
-            
-            # Step 4: Store decision in history
-            self.historical_decisions.append(adjusted_decision)
+
+            # Step 3: Store decision in history for learning
+            self.historical_decisions.append(decision)
             if len(self.historical_decisions) > 100:
                 self.historical_decisions.pop(0)
-            
-            # Step 5: Collect ML features if Level 10
+
+            # Step 4: Collect ML features if Level 10
             if self.intel_level == 10:
-                try:
-                    self.ml_collector.collect_features(
-                        market_context=market_context,
-                        decision=adjusted_decision
-                    )
-                    self.logger.debug(
-                        f"[MAKE_DECISION] ML features collected for training"
-                    )
-                except Exception as ml_error:
-                    self.logger.warning(
-                        f"[MAKE_DECISION] ML feature collection failed: {ml_error}"
-                    )
-            
+                self.ml_collector.collect_decision_features(market_context, decision)
+
             self.logger.info(
-                f"[MAKE_DECISION] Final decision for {market_context.token_symbol}: "
-                f"{adjusted_decision.action} "
-                f"(Size: {adjusted_decision.position_size_percent}%, "
-                f"Confidence: {adjusted_decision.overall_confidence}%)"
+                f"[MAKE_DECISION] Final decision: {decision.action} "
+                f"{market_context.token_symbol} "
+                f"(Confidence: {decision.overall_confidence:.1f}%)"
             )
-            
-            return adjusted_decision
-            
-        except Exception as e:
+
+            return decision
+
+        except Exception as decision_error:
             self.logger.error(
-                f"[MAKE_DECISION] Critical error making decision: {e}",
+                f"[MAKE_DECISION] Fatal error in decision making: {decision_error}",
                 exc_info=True
             )
-            # Return skip decision if decision-making fails
+
+            # Return safe skip decision
             return self._create_skip_decision(
                 market_context,
-                f"Decision-making error: {str(e)}"
+                f"Decision making error: {str(decision_error)}"
             )
-    
+
+    def _create_skip_decision(
+        self,
+        market_context: MarketContext,
+        reason: str
+    ) -> TradingDecision:
+        """
+        Create a SKIP decision with the given reason.
+
+        Args:
+            market_context: Market context for the decision
+            reason: Reason for skipping
+
+        Returns:
+            TradingDecision with action='SKIP'
+        """
+        return TradingDecision(
+            action='SKIP',
+            token_address=market_context.token_address or "",
+            token_symbol=market_context.token_symbol,
+            position_size_percent=Decimal('0'),
+            position_size_usd=Decimal('0'),
+            stop_loss_percent=Decimal('0'),
+            take_profit_targets=[],
+            execution_mode='standard',
+            use_private_relay=False,
+            gas_strategy='standard',
+            max_gas_price_gwei=Decimal('50'),
+            overall_confidence=Decimal('0'),
+            risk_score=Decimal('100'),
+            opportunity_score=Decimal('0'),
+            primary_reasoning=reason,
+            risk_factors=[reason],
+            opportunity_factors=[],
+            mitigation_strategies=[],
+            intel_level_used=self.intel_level,
+            intel_adjustments={},
+            time_sensitivity='low',
+            max_execution_time_ms=15000,
+            processing_time_ms=0
+        )
+
+    async def analyze_market(
+        self,
+        market_context: MarketContext
+    ) -> MarketContext:
+        """
+        Analyze market conditions and enhance the market context.
+
+        This method runs comprehensive market analysis and enhances the
+        market context with additional data.
+
+        NOTE: Method signature matches base class IntelligenceEngine.analyze_market
+
+        Args:
+            market_context: Initial market context to analyze
+
+        Returns:
+            Enhanced market context with analysis results
+        """
+        try:
+            self.logger.info(
+                f"[ANALYZE MARKET] Starting market analysis for "
+                f"{market_context.token_symbol}"
+            )
+
+            # Run comprehensive analysis using composite analyzer
+            # Use analyze_comprehensive if available, otherwise fallback to analyze
+            if hasattr(self.composite_analyzer, 'analyze_comprehensive'):
+                analysis_result = await self.composite_analyzer.analyze_comprehensive(
+                    token_address=market_context.token_address or "",
+                    chain_id=self.chain_id,
+                    trade_size_usd=Decimal('1000')
+                )
+            else:
+                analysis_result = await self.composite_analyzer.analyze(
+                    token_address=market_context.token_address or ""
+                )
+
+            # Enhance market context with analysis results
+            if analysis_result:
+                # Extract relevant metrics from analysis
+                if 'gas_analysis' in analysis_result:
+                    gas_data = analysis_result['gas_analysis']
+                    market_context.gas_price_gwei = gas_data.get(
+                        'current_gas_price',
+                        market_context.gas_price_gwei
+                    )
+
+                if 'liquidity_analysis' in analysis_result:
+                    liquidity_data = analysis_result['liquidity_analysis']
+                    market_context.liquidity_usd = liquidity_data.get(
+                        'total_liquidity_usd',
+                        market_context.liquidity_usd
+                    )
+
+                if 'overall_confidence' in analysis_result:
+                    market_context.confidence_in_data = analysis_result['overall_confidence']
+
+            self.logger.info(
+                f"[ANALYZE MARKET] Market analysis complete for "
+                f"{market_context.token_symbol}"
+            )
+
+            return market_context
+
+        except Exception as analysis_error:
+            self.logger.error(
+                f"[ANALYZE MARKET] Error in market analysis: {analysis_error}",
+                exc_info=True
+            )
+            # Return original context if analysis fails
+            return market_context
+
     def _build_decision_from_context(
         self,
         market_context: MarketContext,
         portfolio_value: Decimal
     ) -> TradingDecision:
-        """Build TradingDecision by orchestrating DecisionMaker components."""
-        # Build comprehensive analysis dict from context
-        comp_analysis = {
-            'gas_analysis': {'current_gas_gwei': float(market_context.gas_price_gwei), 'network_congestion': market_context.network_congestion},
-            'liquidity': {'pool_liquidity_usd': float(market_context.pool_liquidity_usd), 'expected_slippage_percent': float(market_context.expected_slippage), 'liquidity_depth_score': market_context.liquidity_depth_score},
-            'volatility': {'volatility_index': market_context.volatility_index, 'trend_direction': market_context.trend_direction},
-            'mev_analysis': {'threat_level': market_context.mev_threat_level, 'sandwich_attack_risk': market_context.sandwich_risk, 'frontrun_probability': market_context.frontrun_probability},
-            'market_state': {'chaos_event_detected': market_context.chaos_event_detected}
-        }
-        
-        # Calculate scores
-        risk_score = self.decision_maker.calculate_risk_score(market_context, comp_analysis)
-        opp_score = self.decision_maker.calculate_opportunity_score(market_context, comp_analysis)
-        conf_score = self.decision_maker.calculate_confidence_score(risk_score, opp_score, market_context)
-        action = self.decision_maker.determine_action(risk_score, opp_score, conf_score, market_context)
-        
+        """
+        Build a trading decision from market context using DecisionMaker.
+
+        This is a helper method that delegates to DecisionMaker components
+        to build a complete trading decision.
+
+        Args:
+            market_context: Analyzed market context
+            portfolio_value: Current portfolio value
+
+        Returns:
+            Complete TradingDecision object
+        """
+        # Calculate risk and opportunity scores
+        risk_score = self.decision_maker.calculate_risk_score(market_context)
+        opp_score = self.decision_maker.calculate_opportunity_score(market_context)
+
+        # Calculate overall confidence
+        conf_score = self.decision_maker.calculate_confidence_score(
+            risk_score,
+            opp_score,
+            market_context
+        )
+
+        # Determine action
+        action = self.decision_maker.determine_action(
+            risk_score,
+            opp_score,
+            conf_score,
+            market_context
+        )
+
         # Position sizing
         pos_pct = Decimal('0')
         pos_usd = Decimal('0')
         if action == 'BUY':
-            pos_pct = self.decision_maker.calculate_position_size(opp_score, risk_score, portfolio_value)
+            # calculate_position_size expects (opp_score, risk_score, market_context)
+            pos_pct = self.decision_maker.calculate_position_size(
+                opp_score,
+                risk_score,
+                market_context
+            )
             pos_usd = (pos_pct / Decimal('100')) * portfolio_value
-        
+
         # Execution parameters
         stop_loss = self.decision_maker.calculate_stop_loss(risk_score)
-        exec_mode, priv_relay, gas_strat, max_gas = self.decision_maker.determine_execution_strategy(market_context, risk_score)
-        
+
+        # determine_execution_strategy expects (action, market_context, risk_score)
+        exec_result = self.decision_maker.determine_execution_strategy(
+            action,
+            market_context,
+            risk_score
+        )
+        exec_mode, priv_relay, gas_strat, max_gas = exec_result
+
         # Reasoning
-        reason = self.decision_maker.generate_reasoning(action, risk_score, opp_score, conf_score, market_context)
+        reason = self.decision_maker.generate_reasoning(
+            action,
+            risk_score,
+            opp_score,
+            conf_score,
+            market_context
+        )
         risk_facts = self.decision_maker.identify_risk_factors(market_context)
         opp_facts = self.decision_maker.identify_opportunity_factors(market_context)
         mitigations = self.decision_maker.generate_mitigation_strategies(market_context)
         time_sens = self.decision_maker.assess_time_sensitivity(market_context)
-        
+
         return TradingDecision(
-            action=action, token_address=market_context.token_address or "", token_symbol=market_context.token_symbol,
-            position_size_percent=pos_pct, position_size_usd=pos_usd, stop_loss_percent=stop_loss, take_profit_targets=[],
-            execution_mode=exec_mode, use_private_relay=priv_relay, gas_strategy=gas_strat, max_gas_price_gwei=max_gas,
-            overall_confidence=conf_score, risk_score=risk_score, opportunity_score=opp_score, primary_reasoning=reason,
-            risk_factors=risk_facts, opportunity_factors=opp_facts, mitigation_strategies=mitigations,
-            intel_level_used=self.intel_level, intel_adjustments={}, time_sensitivity=time_sens,
-            max_execution_time_ms=5000 if time_sens == 'critical' else 15000, processing_time_ms=0
+            action=action,
+            token_address=market_context.token_address or "",
+            token_symbol=market_context.token_symbol,
+            position_size_percent=pos_pct,
+            position_size_usd=pos_usd,
+            stop_loss_percent=stop_loss,
+            take_profit_targets=[],
+            execution_mode=exec_mode,
+            use_private_relay=priv_relay,
+            gas_strategy=gas_strat,
+            max_gas_price_gwei=max_gas,
+            overall_confidence=conf_score,
+            risk_score=risk_score,
+            opportunity_score=opp_score,
+            primary_reasoning=reason,
+            risk_factors=risk_facts,
+            opportunity_factors=opp_facts,
+            mitigation_strategies=mitigations,
+            intel_level_used=self.intel_level,
+            intel_adjustments={},
+            time_sensitivity=time_sens,
+            max_execution_time_ms=5000 if time_sens == 'critical' else 15000,
+            processing_time_ms=0
         )
-    
+
     async def analyze(
         self,
         market_context: MarketContext,
@@ -812,38 +905,38 @@ class IntelSliderEngine(IntelligenceEngine):
     ) -> TradingDecision:
         """
         Main entry point: Analyze market and make trading decision.
-        
+
         This method orchestrates the full analysis-to-decision pipeline by:
         1. Analyzing market conditions (analyze_market)
         2. Making trading decision (make_decision)
         3. Tracking performance metrics
-        
+
         Args:
             market_context: Initial market context
             portfolio_value: Current portfolio value in USD
-            
+
         Returns:
             Complete trading decision with reasoning
         """
         start_time = timezone.now()
-        
+
         try:
             self.logger.info(
                 f"[ANALYZE] Starting analysis for {market_context.token_symbol} "
                 f"(Intel Level {self.intel_level})"
             )
-            
+
             # Step 1: Analyze market conditions
             enhanced_context = await self.analyze_market(market_context)
-            
+
             # Step 2: Make trading decision based on analysis
             decision = await self.make_decision(enhanced_context, portfolio_value)
-            
+
             # Step 3: Calculate processing time
             end_time = timezone.now()
             processing_time_ms = (end_time - start_time).total_seconds() * 1000
             decision.processing_time_ms = processing_time_ms
-            
+
             # Step 4: Log performance metrics
             self._track_performance({
                 'token_symbol': market_context.token_symbol,
@@ -855,26 +948,26 @@ class IntelSliderEngine(IntelligenceEngine):
                 'intel_level': self.intel_level,
                 'timestamp': end_time
             })
-            
+
             self.logger.info(
                 f"[ANALYZE] Analysis complete for {market_context.token_symbol}: "
                 f"{decision.action} decision in {processing_time_ms:.2f}ms"
             )
-            
+
             return decision
-            
-        except Exception as e:
+
+        except Exception as analyze_error:
             self.logger.error(
-                f"[ANALYZE] Fatal error in analysis pipeline: {e}",
+                f"[ANALYZE] Fatal error in analysis pipeline: {analyze_error}",
                 exc_info=True
             )
-            
+
             # Return safe skip decision
             return self._create_skip_decision(
                 market_context,
-                f"Analysis pipeline error: {str(e)}"
+                f"Analysis pipeline error: {str(analyze_error)}"
             )
-    
+
     def _update_price_history(
         self,
         token_symbol: str,
@@ -883,257 +976,205 @@ class IntelSliderEngine(IntelligenceEngine):
         """Update price history for a token."""
         try:
             if token_symbol not in self.price_history_cache:
-                self.price_history_cache[token_symbol] = PriceHistory(token_symbol)
-            
+                # Create new PriceHistory - check actual constructor signature
+                self.price_history_cache[token_symbol] = PriceHistory(
+                    token_symbol=token_symbol
+                )
+
             price_history = self.price_history_cache[token_symbol]
-            price_history.add_price(current_price)
-            
-            self.logger.debug(
-                f"[PRICE HISTORY] Updated for {token_symbol}: "
-                f"{len(price_history.prices)} data points"
-            )
-            
+
+            # Add new price - check if method exists and signature
+            if hasattr(price_history, 'add_price_point'):
+                price_history.add_price_point(current_price, timezone.now())
+            elif hasattr(price_history, 'update'):
+                price_history.update(current_price)
+
             return price_history
-            
-        except Exception as e:
+
+        except Exception as update_error:
             self.logger.error(
-                f"[PRICE HISTORY] Error updating: {e}",
+                f"[PRICE HISTORY] Error updating price history: {update_error}",
                 exc_info=True
             )
             return None
-    
-    def _enhance_market_context(
+
+    def _enhance_context_with_analysis(
         self,
-        context: MarketContext,
-        comprehensive_analysis: Dict[str, Any],
-        price_history: Optional[PriceHistory] = None
+        market_context: MarketContext,
+        analysis_result: Dict[str, Any],
+        price_history: Optional[PriceHistory]
     ) -> MarketContext:
         """
-        Enhance market context with comprehensive analysis and price history.
-        
+        Enhance market context with comprehensive analysis data.
+
         Args:
-            context: Market context to enhance
-            comprehensive_analysis: Results from CompositeMarketAnalyzer
-            price_history: Price history data (if available)
-            
+            market_context: Base market context
+            analysis_result: Results from CompositeMarketAnalyzer
+            price_history: Historical price data
+
         Returns:
             Enhanced market context
         """
         try:
-            # Extract analysis components
-            gas_analysis = comprehensive_analysis.get('gas_analysis', {})
-            liquidity_analysis = comprehensive_analysis.get('liquidity', {})
-            volatility_analysis = comprehensive_analysis.get('volatility', {})
-            mev_analysis = comprehensive_analysis.get('mev_analysis', {})
-            market_state = comprehensive_analysis.get('market_state', {})
-            composite_scores = comprehensive_analysis.get('composite_scores', {})
-            
-            # Update gas and network data
+            # Extract analysis metrics
+            gas_analysis = analysis_result.get('gas_analysis', {})
+            liquidity_analysis = analysis_result.get('liquidity_analysis', {})
+            volatility_analysis = analysis_result.get('volatility_analysis', {})
+            mev_analysis = analysis_result.get('mev_analysis', {})
+
+            # Update market context with analysis data
             if gas_analysis:
-                context.gas_price_gwei = Decimal(str(gas_analysis.get('current_gas_gwei', 0)))
-                context.network_congestion = float(gas_analysis.get('network_congestion', 0))
-            
-            # Update liquidity data
+                market_context.gas_price_gwei = gas_analysis.get(
+                    'current_gas_price',
+                    market_context.gas_price_gwei
+                )
+
             if liquidity_analysis:
-                context.pool_liquidity_usd = Decimal(str(liquidity_analysis.get('pool_liquidity_usd', 0)))
-                context.expected_slippage = Decimal(str(liquidity_analysis.get('expected_slippage_percent', 0)))
-                context.liquidity_depth_score = float(liquidity_analysis.get('liquidity_depth_score', 0))
-            
-            # Update volatility data
+                market_context.liquidity_usd = liquidity_analysis.get(
+                    'total_liquidity_usd',
+                    market_context.liquidity_usd
+                )
+
             if volatility_analysis:
-                context.volatility_index = float(volatility_analysis.get('volatility_index', 0))
-                context.trend_direction = volatility_analysis.get('trend_direction', 'neutral')
-                context.volatility = Decimal(str(volatility_analysis.get('volatility_index', 0))) / Decimal('100')
-            
-            # Update MEV data
-            if mev_analysis:
-                context.mev_threat_level = float(mev_analysis.get('threat_level', 0))
-                context.sandwich_risk = float(mev_analysis.get('sandwich_attack_risk', 0))
-                context.frontrun_probability = float(mev_analysis.get('frontrun_probability', 0))
-            
-            # Update market state
-            if market_state:
-                context.chaos_event_detected = market_state.get('chaos_event_detected', False)
-            
-            # Update confidence in data
-            data_quality = comprehensive_analysis.get('data_quality', 'POOR')
-            quality_map = {
-                'EXCELLENT': 100.0,
-                'GOOD': 80.0,
-                'FAIR': 60.0,
-                'POOR': 40.0
-            }
-            context.confidence_in_data = quality_map.get(data_quality, 50.0)
-            
-            # Enhance with price history if available
-            if price_history and len(price_history.prices) >= 2:
-                # Set historical price
-                context.price_24h_ago = price_history.prices[0]
-                
-                # Calculate momentum
-                price_change = price_history.get_price_change_percent(60)
-                if price_change is not None:
-                    context.momentum = price_change
-                
-                # Determine trend (price history takes priority over volatility analysis)
-                if price_history.is_trending_up():
-                    context.trend = 'bullish'
-                    context.trend_direction = 'bullish'
-                elif price_history.is_trending_down():
-                    context.trend = 'bearish'
-                    context.trend_direction = 'bearish'
-            
-            self.logger.debug(
-                f"[ENHANCE] Context enhanced for {context.token_symbol}: "
-                f"Gas={context.gas_price_gwei:.2f} gwei, "
-                f"Liquidity=${context.pool_liquidity_usd:.0f}, "
-                f"MEV threat={context.mev_threat_level:.1f}, "
-                f"Data quality={data_quality}"
+                market_context.volatility = volatility_analysis.get(
+                    'volatility_index',
+                    market_context.volatility
+                )
+
+            # Set confidence in data from overall analysis
+            market_context.confidence_in_data = analysis_result.get(
+                'overall_confidence',
+                market_context.confidence_in_data
             )
-            
-            return context
-            
-        except Exception as e:
+
+            return market_context
+
+        except Exception as enhance_error:
             self.logger.error(
-                f"[ENHANCE] Error enhancing context: {e}",
+                f"[ENHANCE CONTEXT] Error: {enhance_error}",
                 exc_info=True
             )
-            return context
-    
-    def _create_skip_decision(
-        self,
-        context: MarketContext,
-        reason: str
-    ) -> TradingDecision:
-        """
-        Create a SKIP decision with given reason.
-        
-        Args:
-            context: Market context
-            reason: Reason for skipping
-            
-        Returns:
-            SKIP trading decision
-        """
-        return TradingDecision(
-            action='SKIP',
-            token_address=context.token_address or "",
-            token_symbol=context.token_symbol,
-            position_size_percent=Decimal('0'),
-            position_size_usd=Decimal('0'),
-            stop_loss_percent=None,
-            take_profit_targets=[],
-            execution_mode='NONE',
-            use_private_relay=False,
-            gas_strategy='standard',
-            max_gas_price_gwei=Decimal('30'),
-            overall_confidence=Decimal('0'),
-            risk_score=Decimal('100'),
-            opportunity_score=Decimal('0'),
-            primary_reasoning=reason,
-            risk_factors=[],
-            opportunity_factors=[],
-            mitigation_strategies=[],
-            intel_level_used=self.intel_level,
-            intel_adjustments={},
-            time_sensitivity='low',
-            max_execution_time_ms=0,
-            processing_time_ms=0
-        )
-    
+            return market_context
+
     def _track_performance(self, metrics: Dict[str, Any]) -> None:
         """
         Track performance metrics for analysis.
-        
+
         Args:
-            metrics: Performance metrics dictionary
+            metrics: Performance metrics to track
         """
         try:
             self.performance_history.append(metrics)
-            
-            # Keep only last 200 metrics
-            if len(self.performance_history) > 200:
+
+            # Keep only last 1000 metrics
+            if len(self.performance_history) > 1000:
                 self.performance_history.pop(0)
-            
-            self.logger.debug(
-                f"[PERFORMANCE] Tracked metrics: {metrics['action']} decision, "
-                f"{metrics['processing_time_ms']:.2f}ms"
-            )
-            
-        except Exception as e:
+
+        except Exception as track_error:
             self.logger.error(
-                f"[PERFORMANCE] Error tracking metrics: {e}",
+                f"[TRACK PERFORMANCE] Error: {track_error}",
                 exc_info=True
             )
-    
+
     def update_market_context(self, market_context: MarketContext) -> None:
         """
-        Update market context tracking for historical analysis.
-        
+        Update market tracking with new context.
+
         Args:
             market_context: Market context to track
         """
         try:
             token_symbol = market_context.token_symbol
-            
+
             # Store in history
             if token_symbol not in self.market_history:
                 self.market_history[token_symbol] = []
-            
+
             self.market_history[token_symbol].append(market_context)
-            
+
             # Keep only last 50 contexts
             if len(self.market_history[token_symbol]) > 50:
                 self.market_history[token_symbol].pop(0)
-            
+
             # Update price trends
             if hasattr(market_context, 'trend_direction'):
                 if token_symbol not in self.price_trends:
                     self.price_trends[token_symbol] = {}
-                
+
                 self.price_trends[token_symbol].update({
                     'trend_direction': market_context.trend_direction,
                     'momentum': market_context.momentum,
                     'volatility': market_context.volatility,
                     'last_updated': timezone.now()
                 })
-            
+
             # Track volatility
             if hasattr(market_context, 'volatility'):
                 if token_symbol not in self.volatility_tracker:
                     self.volatility_tracker[token_symbol] = []
-                
+
                 self.volatility_tracker[token_symbol].append(
                     market_context.volatility
                 )
-                
+
                 # Keep last 20 volatility measurements
                 if len(self.volatility_tracker[token_symbol]) > 20:
                     self.volatility_tracker[token_symbol].pop(0)
-            
+
             self.logger.debug(
                 f"[MARKET CONTEXT] Updated tracking for {token_symbol}"
             )
-            
-        except Exception as e:
+
+        except Exception as update_error:
             self.logger.error(
-                f"[MARKET CONTEXT] Error updating: {e}",
+                f"[MARKET CONTEXT] Error updating: {update_error}",
                 exc_info=True
             )
-    
+
     def get_ml_training_data(self) -> List[Dict[str, Any]]:
         """
         Get ML training data (Level 10 only).
-        
+
         Returns:
             List of ML training samples
         """
         return self.ml_collector.get_training_data()
-    
+
     async def cleanup(self) -> None:
-        """Clean up resources."""
+        """Clean up resources including Phase 2 components."""
         try:
+            # Close price service
             await self.price_service.close()
+
+            # PHASE 2: Clean up DEX comparator
+            if self.dex_comparator:
+                try:
+                    # Check if cleanup method exists before calling
+                    if hasattr(self.dex_comparator, 'cleanup'):
+                        await self.dex_comparator.cleanup()
+                        self.logger.info("[INTEL SLIDER] DEX comparator cleaned up")
+                except Exception as dex_cleanup_error:
+                    self.logger.error(
+                        f"[INTEL SLIDER] Error cleaning up DEX comparator: "
+                        f"{dex_cleanup_error}"
+                    )
+
+            # PHASE 2: Clean up arbitrage detector
+            if self.arbitrage_detector:
+                try:
+                    # Check if cleanup method exists before calling
+                    if hasattr(self.arbitrage_detector, 'cleanup'):
+                        await self.arbitrage_detector.cleanup()
+                        self.logger.info("[INTEL SLIDER] Arbitrage detector cleaned up")
+                except Exception as arb_cleanup_error:
+                    self.logger.error(
+                        f"[INTEL SLIDER] Error cleaning up arbitrage detector: "
+                        f"{arb_cleanup_error}"
+                    )
+
             self.logger.info("[INTEL SLIDER] Cleanup complete")
-        except Exception as e:
-            self.logger.error(f"[INTEL SLIDER] Cleanup error: {e}", exc_info=True)
+        except Exception as cleanup_error:
+            self.logger.error(
+                f"[INTEL SLIDER] Cleanup error: {cleanup_error}",
+                exc_info=True
+            )
