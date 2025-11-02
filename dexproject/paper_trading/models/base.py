@@ -397,7 +397,7 @@ class PaperTrade(models.Model):
 
     def save(self, *args, **kwargs):
         """Validate and clean decimal fields before saving."""
-        from paper_trading.config.validation import validate_decimal_field
+        
         
         # Convert None to Decimal(0) for required fields
         if self.amount_in is None:
