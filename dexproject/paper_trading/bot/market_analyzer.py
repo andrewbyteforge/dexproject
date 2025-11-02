@@ -570,7 +570,7 @@ class MarketAnalyzer:
                     continue
 
                 # Calculate P&L percentage
-                avg_entry = position.average_entry_price
+                avg_entry = position.average_entry_price_usd
                 pnl_percent = ((current_price - avg_entry) / avg_entry) * 100
 
                 # Check stop-loss

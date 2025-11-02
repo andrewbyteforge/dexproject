@@ -157,6 +157,7 @@ class DEXPriceComparator:
             chain_id: Blockchain network ID
             enabled_dexs: List of enabled DEX names (None = all enabled)
         """
+        self.logger = logging.getLogger(f'{__name__}.Comparator')  # ✅ KEEP THIS ONE
         self.chain_id = chain_id
         
         # Determine which DEXs to use
@@ -180,13 +181,19 @@ class DEXPriceComparator:
         self.successful_comparisons = 0
         self.cache_hits = 0
         
-        self.logger = logging.getLogger(f'{__name__}.Comparator')
+        # ❌ REMOVE THIS DUPLICATE LINE:
+        # self.logger = logging.getLogger(f'{__name__}.Comparator')
         
         self.logger.info(
             f"[DEX COMPARATOR] Initialized for chain {chain_id}, "
             f"Enabled DEXs: {', '.join(self.enabled_dexs)}"
         )
-    
+
+
+
+
+
+
     def _get_default_enabled_dexs(self) -> List[str]:
         """
         Get list of enabled DEXs from defaults.

@@ -8,14 +8,15 @@ This module provides the DecisionMaker class that handles:
 - Position sizing
 - Stop loss determination
 - Execution strategy selection
+- SELL decision logic for existing positions
 
 File: dexproject/paper_trading/intelligence/decision_maker.py
 """
 
 import logging
 from decimal import Decimal
-from typing import Dict, Any, List
-from datetime import datetime
+from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta
 
 # Django imports
 from django.utils import timezone
@@ -36,10 +37,11 @@ class DecisionMaker:
     
     This class handles all decision-making operations including:
     - Risk and opportunity assessment
-    - Action determination (BUY/SKIP)
+    - Action determination (BUY/SELL/SKIP)
     - Position sizing
     - Stop loss and take profit calculation
     - Execution strategy selection
+    - Position exit evaluation
     
     Attributes:
         config: Intelligence level configuration
@@ -383,62 +385,59 @@ class DecisionMaker:
         risk_score: Decimal,
         opportunity_score: Decimal,
         confidence_score: Decimal,
-        context: MarketContext
+        context: MarketContext,
+        # Optional position data for SELL evaluation
+        has_position: bool = False,
+        position_entry_price: Optional[Decimal] = None,
+        position_current_value: Optional[Decimal] = None,
+        position_invested: Optional[Decimal] = None,
+        position_hold_time_hours: Optional[float] = None
     ) -> str:
         """
-        Determine BUY or SKIP action based on scores.
+        Determine BUY, SELL, or SKIP action based on scores and position data.
+        
+        This method evaluates both entry opportunities (BUY) and exit decisions (SELL)
+        based on market conditions and position performance.
         
         Args:
             risk_score: Risk assessment score
             opportunity_score: Opportunity assessment score
             confidence_score: Overall confidence score
             context: Market context for validation
+            has_position: Whether we have an existing position in this token
+            position_entry_price: Average entry price if position exists
+            position_current_value: Current value of position in USD
+            position_invested: Total amount invested in position
+            position_hold_time_hours: Hours the position has been held
             
         Returns:
-            Action string: 'BUY' or 'SKIP'
+            Action string: 'BUY', 'SELL', or 'SKIP'
         """
         try:
             risk_score = self.converter.to_decimal(risk_score)
             opportunity_score = self.converter.to_decimal(opportunity_score)
             confidence_score = self.converter.to_decimal(confidence_score)
             
-            # Check minimum requirements
-            if confidence_score < self.config.min_confidence_required:
-                self.logger.debug(
-                    f"[ACTION] SKIP - Low confidence "
-                    f"({confidence_score:.1f} < {self.config.min_confidence_required})"
+            # If we have a position, evaluate whether to SELL
+            if has_position and position_entry_price and position_invested:
+                return self._evaluate_sell_decision(
+                    risk_score=risk_score,
+                    opportunity_score=opportunity_score,
+                    confidence_score=confidence_score,
+                    context=context,
+                    entry_price=position_entry_price,
+                    current_value=position_current_value or Decimal('0'),
+                    invested=position_invested,
+                    hold_time_hours=position_hold_time_hours or 0
                 )
-                return 'SKIP'
             
-            if risk_score > self.config.risk_tolerance:
-                self.logger.debug(
-                    f"[ACTION] SKIP - High risk "
-                    f"({risk_score:.1f} > {self.config.risk_tolerance})"
-                )
-                return 'SKIP'
-            
-            # Price-based decision: Only buy if we have a valid price
-            if not context.current_price or context.current_price <= 0:
-                self.logger.warning(
-                    "[ACTION] SKIP - No valid price data available"
-                )
-                return 'SKIP'
-            
-            # Opportunity must exceed risk
-            if opportunity_score <= risk_score:
-                self.logger.debug(
-                    f"[ACTION] SKIP - Opportunity "
-                    f"({opportunity_score:.1f}) <= Risk ({risk_score:.1f})"
-                )
-                return 'SKIP'
-            
-            # All checks passed
-            self.logger.info(
-                f"[ACTION] BUY - {context.token_symbol}: "
-                f"Opportunity={opportunity_score:.1f}, "
-                f"Risk={risk_score:.1f}, Confidence={confidence_score:.1f}"
+            # Otherwise, evaluate whether to BUY (new position entry)
+            return self._evaluate_buy_decision(
+                risk_score=risk_score,
+                opportunity_score=opportunity_score,
+                confidence_score=confidence_score,
+                context=context
             )
-            return 'BUY'
             
         except Exception as e:
             self.logger.error(
@@ -446,6 +445,200 @@ class DecisionMaker:
                 exc_info=True
             )
             return 'SKIP'  # Safe default
+    
+    def _evaluate_buy_decision(
+        self,
+        risk_score: Decimal,
+        opportunity_score: Decimal,
+        confidence_score: Decimal,
+        context: MarketContext
+    ) -> str:
+        """
+        Evaluate whether to BUY (open new position).
+        
+        Args:
+            risk_score: Risk assessment score
+            opportunity_score: Opportunity assessment score
+            confidence_score: Confidence score
+            context: Market context
+            
+        Returns:
+            'BUY' or 'SKIP'
+        """
+        # Check minimum requirements
+        if confidence_score < self.config.min_confidence_required:
+            self.logger.debug(
+                f"[BUY EVAL] SKIP - Low confidence "
+                f"({confidence_score:.1f} < {self.config.min_confidence_required})"
+            )
+            return 'SKIP'
+        
+        if risk_score > self.config.risk_tolerance:
+            self.logger.debug(
+                f"[BUY EVAL] SKIP - High risk "
+                f"({risk_score:.1f} > {self.config.risk_tolerance})"
+            )
+            return 'SKIP'
+        
+        # Price-based decision: Only buy if we have a valid price
+        if not context.current_price or context.current_price <= 0:
+            self.logger.warning(
+                "[BUY EVAL] SKIP - No valid price data available"
+            )
+            return 'SKIP'
+        
+        # Opportunity must exceed risk
+        if opportunity_score <= risk_score:
+            self.logger.debug(
+                f"[BUY EVAL] SKIP - Opportunity "
+                f"({opportunity_score:.1f}) <= Risk ({risk_score:.1f})"
+            )
+            return 'SKIP'
+        
+        # All checks passed
+        self.logger.info(
+            f"[BUY EVAL] BUY - {context.token_symbol}: "
+            f"Opportunity={opportunity_score:.1f}, "
+            f"Risk={risk_score:.1f}, Confidence={confidence_score:.1f}"
+        )
+        return 'BUY'
+    
+    def _evaluate_sell_decision(
+        self,
+        risk_score: Decimal,
+        opportunity_score: Decimal,
+        confidence_score: Decimal,
+        context: MarketContext,
+        entry_price: Decimal,
+        current_value: Decimal,
+        invested: Decimal,
+        hold_time_hours: float
+    ) -> str:
+        """
+        Evaluate whether to SELL existing position.
+        
+        Considers multiple factors:
+        - Current P&L percentage
+        - Market trend deterioration
+        - Risk increasing beyond comfort
+        - Opportunity score dropping
+        - Position hold time
+        
+        Args:
+            risk_score: Current risk assessment
+            opportunity_score: Current opportunity score
+            confidence_score: Current confidence
+            context: Current market context
+            entry_price: Average entry price
+            current_value: Current position value in USD
+            invested: Total amount invested
+            hold_time_hours: Hours position has been held
+            
+        Returns:
+            'SELL' or 'SKIP'
+        """
+        try:
+            # Calculate current P&L percentage
+            current_price = self.converter.to_decimal(context.current_price, Decimal('0'))
+            if entry_price > 0 and current_price > 0:
+                pnl_percent = ((current_price - entry_price) / entry_price) * Decimal('100')
+            elif invested > 0 and current_value > 0:
+                pnl_percent = ((current_value - invested) / invested) * Decimal('100')
+            else:
+                pnl_percent = Decimal('0')
+            
+            self.logger.debug(
+                f"[SELL EVAL] {context.token_symbol}: P&L={pnl_percent:+.2f}%, "
+                f"Risk={risk_score:.1f}, Opp={opportunity_score:.1f}, "
+                f"Hold={hold_time_hours:.1f}h"
+            )
+            
+            # SELL Criterion 1: Market turned significantly bearish
+            if context.trend_direction == 'bearish' and opportunity_score < 30:
+                self.logger.info(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Bearish trend with low opportunity ({opportunity_score:.1f})"
+                )
+                return 'SELL'
+            
+            # SELL Criterion 2: Risk exceeded tolerance significantly
+            # More aggressive threshold for existing positions
+            sell_risk_threshold = self.config.risk_tolerance * Decimal('1.2')  # 20% above normal
+            if risk_score > sell_risk_threshold:
+                self.logger.info(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Risk too high ({risk_score:.1f} > {sell_risk_threshold:.1f})"
+                )
+                return 'SELL'
+            
+            # SELL Criterion 3: Opportunity significantly worse than risk
+            if opportunity_score < (risk_score * Decimal('0.6')):  # Opp < 60% of risk
+                self.logger.info(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Poor risk/reward (Opp={opportunity_score:.1f}, Risk={risk_score:.1f})"
+                )
+                return 'SELL'
+            
+            # SELL Criterion 4: Momentum turning negative with losses
+            momentum_score = self._calculate_momentum_score(context)
+            if momentum_score < 35 and pnl_percent < -2:
+                self.logger.info(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Negative momentum ({momentum_score:.1f}) with loss ({pnl_percent:+.2f}%)"
+                )
+                return 'SELL'
+            
+            # SELL Criterion 5: Held too long with minimal gains
+            # This prevents positions from sitting idle
+            max_hold_threshold = 48.0  # 48 hours default
+            if hasattr(self.config, 'max_hold_hours'):
+                max_hold_threshold = float(self.config.max_hold_hours) * 0.75  # 75% of max
+            
+            if hold_time_hours > max_hold_threshold and pnl_percent < 5:
+                self.logger.info(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Held too long ({hold_time_hours:.1f}h) with minimal gain ({pnl_percent:+.2f}%)"
+                )
+                return 'SELL'
+            
+            # SELL Criterion 6: Good profit with deteriorating conditions
+            # Take profits when market is weakening
+            if pnl_percent > 15 and (risk_score > 60 or opportunity_score < 40):
+                self.logger.info(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Take profit ({pnl_percent:+.2f}%) as conditions weaken"
+                )
+                return 'SELL'
+            
+            # SELL Criterion 7: Significant loss with no recovery signs
+            if pnl_percent < -10 and momentum_score < 40 and opportunity_score < 45:
+                self.logger.info(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Cut losses ({pnl_percent:+.2f}%) - no recovery signs"
+                )
+                return 'SELL'
+            
+            # SELL Criterion 8: Chaos event detected (emergency exit)
+            if context.chaos_event_detected and pnl_percent < 20:
+                self.logger.warning(
+                    f"[SELL EVAL] SELL - {context.token_symbol}: "
+                    f"Chaos event detected - emergency exit"
+                )
+                return 'SELL'
+            
+            # No sell criteria met - hold position
+            self.logger.debug(
+                f"[SELL EVAL] SKIP - {context.token_symbol}: "
+                f"No sell criteria met, holding position (P&L={pnl_percent:+.2f}%)"
+            )
+            return 'SKIP'
+            
+        except Exception as e:
+            self.logger.error(
+                f"[SELL EVAL] Error evaluating sell: {e}",
+                exc_info=True
+            )
+            return 'SKIP'  # Safe default - don't sell on error
     
     def calculate_position_size(
         self,
@@ -499,7 +692,6 @@ class DecisionMaker:
             elif volatility > 50:
                 position_size *= Decimal('0.85')
             
-            # Ensure within bounds
             # Ensure within bounds
             position_size = max(Decimal('1'), min(base_size, position_size))
 
@@ -565,7 +757,7 @@ class DecisionMaker:
         
         Args:
             context: Market context with network and MEV data
-            action: Trading action ('BUY', 'SKIP', etc.)
+            action: Trading action ('BUY', 'SELL', 'SKIP', etc.)
             
         Returns:
             Dictionary with execution strategy details
@@ -660,7 +852,8 @@ class DecisionMaker:
         risk_score: Decimal,
         opportunity_score: Decimal,
         confidence_score: Decimal,
-        context: MarketContext
+        context: MarketContext,
+        position_pnl: Optional[Decimal] = None
     ) -> str:
         """
         Generate detailed reasoning for the decision.
@@ -671,6 +864,7 @@ class DecisionMaker:
             opportunity_score: Opportunity assessment score
             confidence_score: Confidence score
             context: Market context
+            position_pnl: Current position P&L if evaluating a sell
             
         Returns:
             Detailed reasoning string
@@ -690,6 +884,10 @@ class DecisionMaker:
             if hasattr(context, 'momentum') and context.momentum:
                 reasoning += f"1H Change: {context.momentum:+.2f}%\n"
             
+            # Add P&L for SELL decisions
+            if action == 'SELL' and position_pnl is not None:
+                reasoning += f"Position P&L: {position_pnl:+.2f}%\n"
+            
             reasoning += "\n"
             
             if action == 'BUY':
@@ -704,12 +902,28 @@ class DecisionMaker:
                 )
                 if liquidity_score > 70:
                     reasoning += "Good liquidity minimizes slippage. "
+            
+            elif action == 'SELL':
+                reasoning += "Rationale: Exit signal detected. "
+                if context.trend_direction == 'bearish':
+                    reasoning += "Bearish trend suggests exit. "
+                if risk_score > self.config.risk_tolerance:
+                    reasoning += f"Risk ({risk_score:.1f}) exceeds tolerance. "
+                if opportunity_score < 40:
+                    reasoning += "Opportunity deteriorating. "
+                if position_pnl and position_pnl > 15:
+                    reasoning += "Taking profits while conditions are favorable. "
+                elif position_pnl and position_pnl < -5:
+                    reasoning += "Cutting losses to preserve capital. "
+            
             elif action == 'SKIP':
                 reasoning += "Rationale: "
                 if risk_score > self.config.risk_tolerance:
                     reasoning += f"Risk ({risk_score:.1f}) exceeds tolerance ({self.config.risk_tolerance}). "
                 if confidence_score < self.config.min_confidence_required:
                     reasoning += f"Insufficient confidence ({confidence_score:.1f} < {self.config.min_confidence_required}). "
+                if opportunity_score <= risk_score:
+                    reasoning += "Opportunity does not justify risk. "
             
             return reasoning
             
