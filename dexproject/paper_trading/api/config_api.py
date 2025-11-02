@@ -64,6 +64,8 @@ def log_configuration_changes(
         'use_fast_lane': ('Fast Lane', ''),
         'use_smart_lane': ('Smart Lane', ''),
         'max_position_size_percent': ('Max Position Size', '%'),
+        'max_position_size_per_token_percent': ('Max Position Per Token', '%'),
+        'max_daily_trades': ('Max Daily Trades', ''),
         'max_daily_trades': ('Max Daily Trades', ''),
         'confidence_threshold': ('Confidence Threshold', '%'),
         'stop_loss_percent': ('Stop Loss', '%'),
@@ -216,8 +218,10 @@ def _handle_get_configuration(account: PaperTradingAccount) -> JsonResponse:
             config_data = {
                 ConfigAPIFields.CONFIG_ID: str(config.config_id),
                 ConfigAPIFields.NAME: config.name,
-                ConfigAPIFields.TRADING_MODE: config.trading_mode,
+                ConfigAPIFields.TRADING_MODE: config.trading_mode,                
                 ConfigAPIFields.MAX_POSITION_SIZE_PERCENT: float(config.max_position_size_percent),
+                ConfigAPIFields.MAX_POSITION_SIZE_PER_TOKEN_PERCENT: float(config.max_position_size_per_token_percent),
+                ConfigAPIFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),
                 ConfigAPIFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),
                 ConfigAPIFields.TAKE_PROFIT_PERCENT: float(config.take_profit_percent),
                 ConfigAPIFields.MAX_DAILY_TRADES: config.max_daily_trades,
@@ -235,6 +239,8 @@ def _handle_get_configuration(account: PaperTradingAccount) -> JsonResponse:
                 ConfigAPIFields.NAME: 'Default Strategy',
                 ConfigAPIFields.TRADING_MODE: TradingMode.MODERATE,
                 ConfigAPIFields.MAX_POSITION_SIZE_PERCENT: 25.0,
+                ConfigAPIFields.MAX_POSITION_SIZE_PER_TOKEN_PERCENT: 15.0,
+                ConfigAPIFields.STOP_LOSS_PERCENT: 5.0,
                 ConfigAPIFields.STOP_LOSS_PERCENT: 5.0,
                 ConfigAPIFields.TAKE_PROFIT_PERCENT: 10.0,
                 ConfigAPIFields.MAX_DAILY_TRADES: 20,
@@ -361,6 +367,9 @@ def _handle_post_configuration(
                 StrategyConfigFields.MAX_POSITION_SIZE_PERCENT: Decimal(
                     str(body_data.get(ConfigAPIFields.MAX_POSITION_SIZE_PERCENT, 25.0))
                 ),
+                StrategyConfigFields.MAX_POSITION_SIZE_PER_TOKEN_PERCENT: Decimal(
+                    str(body_data.get(ConfigAPIFields.MAX_POSITION_SIZE_PER_TOKEN_PERCENT, 15.0))
+                ),
                 StrategyConfigFields.STOP_LOSS_PERCENT: Decimal(
                     str(body_data.get(ConfigAPIFields.STOP_LOSS_PERCENT, 5.0))
                 ),
@@ -397,6 +406,7 @@ def _handle_post_configuration(
             'use_fast_lane': config.use_fast_lane,
             'use_smart_lane': config.use_smart_lane,
             'max_position_size_percent': float(config.max_position_size_percent),
+            'max_position_size_per_token_percent': float(config.max_position_size_per_token_percent),
             'stop_loss_percent': float(config.stop_loss_percent),
             'take_profit_percent': float(config.take_profit_percent),
             'max_hold_hours': int(config.max_hold_hours),

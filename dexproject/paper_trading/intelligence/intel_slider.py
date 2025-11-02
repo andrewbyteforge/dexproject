@@ -5,12 +5,13 @@ components using composition for clean separation of concerns.
 Integrates with real price feeds and market data for accurate trading decisions.
 
 FIXED: Dashboard configuration now properly overrides hardcoded intelligence level thresholds
+PHASE 1: Added position-aware decision logic to prevent over-concentration
 
 File: dexproject/paper_trading/intelligence/intel_slider.py
 """
 import logging
 from decimal import Decimal
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 
 # Django imports for timezone-aware datetimes
@@ -69,6 +70,7 @@ class IntelSliderEngine(IntelligenceEngine):
         price_trends: Tracked price trends
         volatility_tracker: Volatility tracking data
         historical_decisions: Past trading decisions
+        strategy_config: Optional strategy configuration from dashboard
     """
     
     def __init__(
@@ -93,6 +95,9 @@ class IntelSliderEngine(IntelligenceEngine):
         self.config: IntelLevelConfig = INTEL_CONFIGS[intel_level]
         self.account_id = account_id
         self.chain_id = chain_id
+        
+        # Store strategy_config for position checking
+        self.strategy_config = strategy_config
         
         # Initialize price service for real data
         self.price_service = PriceFeedService(chain_id=chain_id)
@@ -221,6 +226,28 @@ class IntelSliderEngine(IntelligenceEngine):
                 self.logger.info(
                     f"[CONFIG]    → Using: {new_position}%"
                 )
+            
+            # ================================================================
+            # PHASE 1: MAX POSITION PER TOKEN OVERRIDE
+            # ================================================================
+            if hasattr(strategy_config, 'max_position_size_per_token_percent'):
+                if strategy_config.max_position_size_per_token_percent is not None:
+                    max_position_per_token = Decimal(
+                        str(strategy_config.max_position_size_per_token_percent)
+                    )
+                    
+                    self.logger.info(
+                        f"[CONFIG] ✅ MAX POSITION PER TOKEN OVERRIDE:"
+                    )
+                    self.logger.info(
+                        f"[CONFIG]    Default: 15.0%"
+                    )
+                    self.logger.info(
+                        f"[CONFIG]    Dashboard: {max_position_per_token}%"
+                    )
+                    self.logger.info(
+                        f"[CONFIG]    → Using: {max_position_per_token}%"
+                    )
             
             # ================================================================
             # 3. RISK TOLERANCE OVERRIDE (Based on Trading Mode)
@@ -355,10 +382,6 @@ class IntelSliderEngine(IntelligenceEngine):
                 f"[CONFIG] Bot will continue with hardcoded Intel Level {self.intel_level} defaults"
             )
     
-
-
-
-    
     async def analyze_market(
         self,
         market_context: MarketContext
@@ -457,6 +480,111 @@ class IntelSliderEngine(IntelligenceEngine):
             # Return original context if analysis fails
             return market_context
     
+    def _check_position_limits(
+        self,
+        market_context: MarketContext,
+        existing_positions: List[Dict[str, Any]],
+        portfolio_value: Decimal
+    ) -> Tuple[bool, str]:
+        """
+        Check if buying more of this token would exceed position limits.
+        
+        PHASE 1: Position-Aware Decision Logic
+        
+        This method implements position concentration risk management by:
+        1. Checking if we already own this token
+        2. Calculating current position value as % of portfolio
+        3. Comparing to max allowed position size per token
+        
+        Args:
+            market_context: Current market context with token details
+            existing_positions: List of current open positions
+            portfolio_value: Current portfolio value in USD
+            
+        Returns:
+            Tuple of (can_buy: bool, reason: str)
+            - can_buy: True if position limit allows buying, False otherwise
+            - reason: Explanation of the decision
+            
+        Example:
+            >>> can_buy, reason = self._check_position_limits(context, positions, Decimal('10000'))
+            >>> if not can_buy:
+            ...     return self._create_skip_decision(context, reason)
+        """
+        try:
+            token_symbol = market_context.token_symbol
+            
+            # Get max position size per token from strategy_config (default: 15%)
+            max_position_per_token_percent = Decimal('15.0')  # Default
+            if hasattr(self, 'strategy_config') and self.strategy_config:
+                if hasattr(self.strategy_config, 'max_position_size_per_token_percent'):
+                    if self.strategy_config.max_position_size_per_token_percent is not None:
+                        max_position_per_token_percent = Decimal(
+                            str(self.strategy_config.max_position_size_per_token_percent)
+                        )
+            
+            self.logger.debug(
+                f"[POSITION CHECK] Max position per token: "
+                f"{max_position_per_token_percent}%"
+            )
+            
+            # Find existing position for this token
+            existing_position = None
+            for pos in existing_positions:
+                if pos.get('token_symbol') == token_symbol:
+                    existing_position = pos
+                    break
+            
+            # If no existing position, we can buy
+            if not existing_position:
+                self.logger.info(
+                    f"[POSITION CHECK] ✅ No existing position for {token_symbol}, "
+                    f"can buy up to {max_position_per_token_percent}%"
+                )
+                return True, f"No existing position for {token_symbol}"
+            
+            # Calculate current position size as % of portfolio
+            current_invested = Decimal(str(existing_position.get('invested_usd', 0)))
+            
+            if portfolio_value <= 0:
+                self.logger.warning(
+                    "[POSITION CHECK] Portfolio value is zero, allowing purchase"
+                )
+                return True, "Portfolio value zero, allowing purchase"
+            
+            current_position_percent = (current_invested / portfolio_value) * Decimal('100')
+            
+            self.logger.info(
+                f"[POSITION CHECK] Current {token_symbol} position: "
+                f"${current_invested:.2f} ({current_position_percent:.2f}% of portfolio)"
+            )
+            
+            # Check if we're at or over the limit
+            if current_position_percent >= max_position_per_token_percent:
+                reason = (
+                    f"Already own {current_position_percent:.2f}% of portfolio in {token_symbol} "
+                    f"(limit: {max_position_per_token_percent}%). Will HOLD to prevent over-concentration."
+                )
+                self.logger.warning(f"[POSITION CHECK] ❌ {reason}")
+                return False, reason
+            
+            # We can still buy more (under the limit)
+            remaining_percent = max_position_per_token_percent - current_position_percent
+            reason = (
+                f"Can still buy {token_symbol}: currently {current_position_percent:.2f}%, "
+                f"can add up to {remaining_percent:.2f}% more (limit: {max_position_per_token_percent}%)"
+            )
+            self.logger.info(f"[POSITION CHECK] ✅ {reason}")
+            return True, reason
+            
+        except Exception as e:
+            self.logger.error(
+                f"[POSITION CHECK] Error checking position limits: {e}",
+                exc_info=True
+            )
+            # On error, allow the trade (fail-safe)
+            return True, f"Position check error, allowing trade: {str(e)}"
+    
     async def make_decision(
         self,
         market_context: MarketContext,
@@ -478,11 +606,13 @@ class IntelSliderEngine(IntelligenceEngine):
         legacy parameters (existing_positions, token_address, token_symbol) which
         are handled gracefully but not currently used in decision logic.
         
+        PHASE 1: Now checks position limits before making BUY decisions.
+        
         Args:
             market_context: Analyzed market context with comprehensive data
             portfolio_value: Current portfolio value in USD (preferred parameter)
             account_balance: Current account balance (legacy parameter, maps to portfolio_value)
-            existing_positions: List of existing positions (legacy parameter, for future use)
+            existing_positions: List of existing positions (used for position checking)
             token_address: Token address (legacy parameter, already in market_context)
             token_symbol: Token symbol (legacy parameter, already in market_context)
             
@@ -508,7 +638,7 @@ class IntelSliderEngine(IntelligenceEngine):
             # Log if legacy parameters were provided
             if existing_positions is not None:
                 self.logger.debug(
-                    f"[MAKE_DECISION] Received {len(existing_positions)} existing positions (for future use)"
+                    f"[MAKE_DECISION] Received {len(existing_positions)} existing positions"
                 )
             if token_address and token_address != market_context.token_address:
                 self.logger.debug(
@@ -535,6 +665,30 @@ class IntelSliderEngine(IntelligenceEngine):
                     f"Data confidence too low: {market_context.confidence_in_data:.1f}%"
                 )
             
+            # ================================================================
+            # PHASE 1: Check position limits before making BUY decision
+            # ================================================================
+            if existing_positions is not None and len(existing_positions) > 0:
+                can_buy, position_reason = self._check_position_limits(
+                    market_context,
+                    existing_positions,
+                    portfolio_value
+                )
+                
+                if not can_buy:
+                    self.logger.warning(
+                        f"[MAKE_DECISION] Position limit reached for {market_context.token_symbol}, "
+                        f"returning SKIP decision"
+                    )
+                    return self._create_skip_decision(
+                        market_context,
+                        f"Position limit: {position_reason}"
+                    )
+                else:
+                    self.logger.debug(
+                        f"[MAKE_DECISION] Position check passed: {position_reason}"
+                    )
+            
             # Step 2: Build decision using DecisionMaker components
             decision = self._build_decision_from_context(
                 market_context,
@@ -548,8 +702,7 @@ class IntelSliderEngine(IntelligenceEngine):
                 f"Opportunity={decision.opportunity_score}"
             )
             
-            # Step 4: Apply intel adjustments (if available)
-            # Step 4: Apply intel adjustments (if available)
+            # Step 3: Apply intel adjustments (if available)
             try:
                 if hasattr(self, 'apply_intel_adjustments'):
                     adjusted_decision = self.apply_intel_adjustments(decision)
@@ -563,12 +716,12 @@ class IntelSliderEngine(IntelligenceEngine):
                 self.logger.warning(f"[MAKE_DECISION] Intel adjustment failed: {e}")
                 adjusted_decision = decision
             
-            # Step 5: Store decision in history
+            # Step 4: Store decision in history
             self.historical_decisions.append(adjusted_decision)
             if len(self.historical_decisions) > 100:
                 self.historical_decisions.pop(0)
             
-            # Step 6: Collect ML features if Level 10
+            # Step 5: Collect ML features if Level 10
             if self.intel_level == 10:
                 try:
                     self.ml_collector.collect_features(

@@ -294,6 +294,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'use_smart_lane': request.POST.get('use_smart_lane') == 'on',
                     'fast_lane_threshold_usd': Decimal(request.POST.get('fast_lane_threshold_usd', '100')),
                     'max_position_size_percent': Decimal(request.POST.get('max_position_size_percent', '10')),
+                    'max_position_size_per_token_percent': Decimal(request.POST.get('max_position_size_per_token_percent', '15')),
                     'stop_loss_percent': Decimal(request.POST.get('stop_loss_percent', '5')),
                     'take_profit_percent': Decimal(request.POST.get('take_profit_percent', '15')),
                     'max_hold_hours': int(request.POST.get('max_hold_hours', '72')),

@@ -249,6 +249,32 @@
                                 <div class="input-unit">%</div>
                             </div>
                         </div>
+
+                        <!-- Max Position Size Per Token (NEW - Phase 1) -->
+                        <div class="form-group-enhanced">
+                            <label class="form-label-enhanced">
+                                <span class="label-text">
+                                    <i class="bi bi-bar-chart-fill"></i>
+                                    Max Position Per Token
+                                    <i class="bi bi-question-circle label-help" 
+                                       title="Maximum total position size per token across all trades. Prevents over-concentration in a single asset."></i>
+                                </span>
+                            </label>
+                            <div class="input-with-unit">
+                                <input type="number" 
+                                       name="max_position_size_per_token_percent" 
+                                       class="form-control" 
+                                       value="{{ strategy_config.max_position_size_per_token_percent|default:15 }}"
+                                       min="1" 
+                                       max="50" 
+                                       step="0.5"
+                                       required>
+                                <div class="input-unit">%</div>
+                            </div>
+                            <small class="form-text text-muted">
+                                Bot will not buy more of a token if it already owns this % of portfolio in that token
+                            </small>
+                        </div>
                         
                         <!-- Max Daily Trades -->
                         <div class="form-group-enhanced">
