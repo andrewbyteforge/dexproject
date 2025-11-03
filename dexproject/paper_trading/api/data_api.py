@@ -552,3 +552,4 @@ def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
                 asyncio.run(price_service.close())
             except Exception:
                 pass
+# End of data_api.py
