@@ -383,6 +383,16 @@ class PaperStrategyConfiguration(models.Model):
         ],
         help_text="Max position size as % of portfolio"
     )
+
+
+    max_trade_size_usd = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('1000.00'),
+        validators=[MinValueValidator(Decimal('10')), MaxValueValidator(Decimal('100000'))],
+        help_text='Maximum trade size in USD (absolute limit)'
+    )
+
     
     stop_loss_percent = models.DecimalField(
         max_digits=5,
@@ -527,6 +537,10 @@ class PaperStrategyConfiguration(models.Model):
         ],
         help_text="Maximum position size Auto Pilot can set"
     )
+
+
+
+
     
     min_confidence_threshold = models.DecimalField(
         max_digits=5,

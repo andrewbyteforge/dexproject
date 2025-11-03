@@ -294,6 +294,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'use_smart_lane': request.POST.get('use_smart_lane') == 'on',
                     'fast_lane_threshold_usd': Decimal(request.POST.get('fast_lane_threshold_usd', '100')),
                     'max_position_size_percent': Decimal(request.POST.get('max_position_size_percent', '10')),
+                    'max_trade_size_usd': Decimal(request.POST.get('max_trade_size_usd', '1000')),
                     'max_position_size_per_token_percent': Decimal(request.POST.get('max_position_size_per_token_percent', '15')),
                     'stop_loss_percent': Decimal(request.POST.get('stop_loss_percent', '5')),
                     'take_profit_percent': Decimal(request.POST.get('take_profit_percent', '15')),
@@ -320,6 +321,8 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                             'use_smart_lane': config_data['use_smart_lane'],
                             'fast_lane_threshold_usd': config_data['fast_lane_threshold_usd'],
                             'max_position_size_percent': config_data['max_position_size_percent'],
+                            'max_trade_size_usd': config_data['max_trade_size_usd'],  # ← NEW
+                            'max_position_size_per_token_percent': config_data['max_position_size_per_token_percent'],
                             'stop_loss_percent': config_data['stop_loss_percent'],
                             'take_profit_percent': config_data['take_profit_percent'],
                             'max_hold_hours': config_data['max_hold_hours'],

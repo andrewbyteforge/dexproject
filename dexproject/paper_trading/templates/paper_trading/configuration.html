@@ -275,6 +275,30 @@
                                 Bot will not buy more of a token if it already owns this % of portfolio in that token
                             </small>
                         </div>
+
+                        <!-- Max Trade Size USD (NEW FIELD) -->
+                        <div class="form-group-enhanced">
+                            <label class="form-label-enhanced">
+                                <span class="label-text">
+                                    <i class="bi bi-currency-dollar"></i>
+                                    Max Trade Size
+                                    <i class="bi bi-question-circle label-help" 
+                                    title="Maximum dollar amount per trade (absolute limit)"></i>
+                                </span>
+                            </label>
+                            <div class="input-with-unit">
+                                <span class="input-unit-prefix">$</span>
+                                <input type="number" 
+                                    name="max_trade_size_usd" 
+                                    class="form-control" 
+                                    value="{{ strategy_config.max_trade_size_usd|default:1000 }}"
+                                    min="10" 
+                                    max="100000" 
+                                    step="10"
+                                    required>
+                            </div>
+                        </div>
+
                         
                         <!-- Max Daily Trades -->
                         <div class="form-group-enhanced">

@@ -649,6 +649,9 @@ class DecisionMaker:
         """
         Calculate position size as percentage of portfolio.
         
+        Now supports BOTH percentage-based AND absolute USD limits.
+        The bot will use whichever limit is SMALLER.
+        
         Args:
             risk_score: Risk assessment score
             opportunity_score: Opportunity assessment score
@@ -661,10 +664,55 @@ class DecisionMaker:
             risk_score = self.converter.to_decimal(risk_score)
             opportunity_score = self.converter.to_decimal(opportunity_score)
             
-            # Base size from config
+            # Base size from config (percentage limit)
             base_size = self.config.max_position_percent
             
+            # ═════════════════════════════════════════════════════════════
+            # ⭐ NEW: Apply absolute USD limit if configured
+            # ═════════════════════════════════════════════════════════════
+            if hasattr(self.config, 'max_trade_size_usd') and self.config.max_trade_size_usd:
+                try:
+                    # Get current account balance
+                    if hasattr(context, 'account_balance'):
+                        # Context already has balance
+                        account_balance = self.converter.to_decimal(context.account_balance)
+                    else:
+                        # Fallback: get from account object
+                        from paper_trading.utils import get_single_trading_account
+                        account = get_single_trading_account()
+                        account_balance = self.converter.to_decimal(account.current_balance_usd)
+                    
+                    # Calculate what percentage the USD limit represents
+                    max_trade_usd = self.converter.to_decimal(self.config.max_trade_size_usd)
+                    max_size_from_usd = (max_trade_usd / account_balance) * Decimal('100')
+                    
+                    # Use the SMALLER of percentage limit or dollar limit
+                    original_size = base_size
+                    base_size = min(base_size, max_size_from_usd)
+                    
+                    # Log if USD limit was the limiting factor
+                    if base_size < original_size:
+                        self.logger.info(
+                            f"[POSITION SIZE] 💰 USD limit applied for {getattr(context, 'token_symbol', 'token')}: "
+                            f"${max_trade_usd} = {base_size:.2f}% of ${account_balance:.2f} "
+                            f"(percentage limit was {original_size:.2f}%)"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"[POSITION SIZE] Percentage limit active: {base_size:.2f}% "
+                            f"(USD limit would be {max_size_from_usd:.2f}%)"
+                        )
+                        
+                except Exception as usd_error:
+                    self.logger.warning(
+                        f"[POSITION SIZE] Could not apply USD limit: {usd_error}. "
+                        f"Continuing with percentage limit only."
+                    )
+                    # Continue with original base_size if USD limit fails
+            
+            # ═════════════════════════════════════════════════════════════
             # Adjust based on opportunity/risk ratio
+            # ═════════════════════════════════════════════════════════════
             ratio = opportunity_score / max(risk_score, Decimal('1'))
             
             if ratio > Decimal('2'):  # Great opportunity
@@ -675,9 +723,10 @@ class DecisionMaker:
                 position_size = base_size * Decimal('0.6')
             else:  # Minimal opportunity
                 position_size = base_size * Decimal('0.4')            
-           
+        
+            # ═════════════════════════════════════════════════════════════
             # Adjust for volatility (higher volatility = smaller position)
-            # Handle both MarketContext object and raw Decimal values
+            # ═════════════════════════════════════════════════════════════
             if hasattr(context, 'volatility_index'):
                 volatility = self.converter.to_decimal(
                     context.volatility_index,
@@ -692,16 +741,20 @@ class DecisionMaker:
             elif volatility > 50:
                 position_size *= Decimal('0.85')
             
+            # ═════════════════════════════════════════════════════════════
             # Ensure within bounds
+            # ═════════════════════════════════════════════════════════════
             position_size = max(Decimal('1'), min(base_size, position_size))
-
-            # Safe logging - handle both MarketContext and Decimal types
+            
+            # ═════════════════════════════════════════════════════════════
+            # Debug logging
+            # ═════════════════════════════════════════════════════════════
             token_symbol = getattr(context, 'token_symbol', 'UNKNOWN')
             self.logger.debug(
                 f"[POSITION SIZE] {token_symbol}: {position_size:.2f}% "
-                f"(Ratio={ratio:.2f}, Volatility={volatility:.1f})"
+                f"(Base={base_size:.2f}%, Ratio={ratio:.2f}, Volatility={volatility:.1f})"
             )
-
+            
             return position_size.quantize(Decimal('0.01'))
             
         except Exception as e:
@@ -710,7 +763,11 @@ class DecisionMaker:
                 exc_info=True
             )
             return Decimal('5')  # Safe default
-    
+
+
+
+
+
     def calculate_stop_loss(self, risk_score: Decimal) -> Decimal:
         """
         Calculate stop loss percentage based on risk.

@@ -259,8 +259,8 @@ class ConfigAPIFields:
     # Request fields (POST body)
     NAME: Final[str] = 'name'
     TRADING_MODE: Final[str] = 'trading_mode'
-    MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
-    MAX_POSITION_SIZE_PER_TOKEN_PERCENT: Final[str] = 'max_position_size_per_token_percent'
+    MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'    
+    MAX_TRADE_SIZE_USD: Final[str] = 'max_trade_size_usd'  # ← ADD THIS LINE
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
     MAX_HOLD_HOURS: Final[str] = 'max_hold_hours'
@@ -317,6 +317,7 @@ class SessionMetadataFields:
     INTEL_LEVEL: Final[str] = 'intel_level'
     TRADING_MODE: Final[str] = 'trading_mode'
     MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
+    MAX_TRADE_SIZE_USD: Final[str] = 'max_trade_size_usd'  # ← ADD THIS LINE
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
     MAX_HOLD_HOURS: Final[str] = 'max_hold_hours'

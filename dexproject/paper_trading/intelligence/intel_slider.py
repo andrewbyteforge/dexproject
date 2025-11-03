@@ -632,9 +632,15 @@ class IntelSliderEngine(IntelligenceEngine):
                     )
 
             # Step 2: Build decision using DecisionMaker components
+            # Step 2: Build decision using DecisionMaker components
+            # Pass position data if we have it
             decision = self._build_decision_from_context(
-                market_context,
-                portfolio_val
+                market_context=market_context,
+                portfolio_value=portfolio_val,
+                position_entry_price=position_entry_price,
+                position_current_value=position_current_value,
+                position_invested=position_invested,
+                position_hold_time_hours=position_hold_time_hours
             )
 
             self.logger.debug(
@@ -810,7 +816,12 @@ class IntelSliderEngine(IntelligenceEngine):
     def _build_decision_from_context(
         self,
         market_context: MarketContext,
-        portfolio_value: Decimal
+        portfolio_value: Decimal,
+        # NEW: Add position parameters for SELL evaluation
+        position_entry_price: Optional[Decimal] = None,
+        position_current_value: Optional[Decimal] = None,
+        position_invested: Optional[Decimal] = None,
+        position_hold_time_hours: Optional[float] = None
     ) -> TradingDecision:
         """
         Build a trading decision from market context using DecisionMaker.
@@ -866,26 +877,43 @@ class IntelSliderEngine(IntelligenceEngine):
             opp_score,
             market_context
         )
-
-        # Determine action
+        
+        # Determine action (with position data for SELL evaluation)
+        has_position = (position_entry_price is not None and position_invested is not None)
         action = self.decision_maker.determine_action(
-            risk_score,
-            opp_score,
-            conf_score,
-            market_context
+            risk_score=risk_score,
+            opportunity_score=opp_score,
+            confidence_score=conf_score,
+            context=market_context,
+            has_position=has_position,
+            position_entry_price=position_entry_price,
+            position_current_value=position_current_value,
+            position_invested=position_invested,
+            position_hold_time_hours=position_hold_time_hours
         )
 
         # Position sizing
         pos_pct = Decimal('0')
         pos_usd = Decimal('0')
         if action == 'BUY':
-            # FIXED: Correct parameter order (risk_score, opportunity_score, context)
             pos_pct = self.decision_maker.calculate_position_size(
                 risk_score,
                 opp_score,
                 market_context
             )
             pos_usd = (pos_pct / Decimal('100')) * portfolio_value
+            
+            # ✅ Apply max_trade_size_usd limit if configured
+            if self.strategy_config and hasattr(self.strategy_config, 'max_trade_size_usd'):
+                max_trade_usd = Decimal(str(self.strategy_config.max_trade_size_usd))
+                if max_trade_usd > 0 and pos_usd > max_trade_usd:
+                    self.logger.info(
+                        f"[POSITION SIZE] 💰 USD limit applied: ${max_trade_usd:.2f} "
+                        f"(was ${pos_usd:.2f} from {pos_pct:.2f}% of portfolio)"
+                    )
+                    pos_usd = max_trade_usd
+                    # Recalculate percentage based on capped USD amount
+                    pos_pct = (pos_usd / portfolio_value) * Decimal('100')
 
         # Execution parameters
         stop_loss = self.decision_maker.calculate_stop_loss(risk_score)

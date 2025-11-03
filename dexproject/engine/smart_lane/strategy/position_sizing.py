@@ -322,6 +322,9 @@ class PositionSizer:
                 analysis_confidence, overall_risk_score, str(e)
             )
     
+
+
+    
     def _validate_inputs(
         self, confidence: float, risk_score: float, 
         technical_signals: Optional[List], 

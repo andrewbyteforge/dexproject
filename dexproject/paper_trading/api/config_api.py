@@ -64,6 +64,7 @@ def log_configuration_changes(
         'use_fast_lane': ('Fast Lane', ''),
         'use_smart_lane': ('Smart Lane', ''),
         'max_position_size_percent': ('Max Position Size', '%'),
+        'max_trade_size_usd': ('Max Trade Size', ' USD'),
         'max_position_size_per_token_percent': ('Max Position Per Token', '%'),
         'max_daily_trades': ('Max Daily Trades', ''),
         'max_daily_trades': ('Max Daily Trades', ''),
@@ -218,11 +219,12 @@ def _handle_get_configuration(account: PaperTradingAccount) -> JsonResponse:
             config_data = {
                 ConfigAPIFields.CONFIG_ID: str(config.config_id),
                 ConfigAPIFields.NAME: config.name,
-                ConfigAPIFields.TRADING_MODE: config.trading_mode,                
-                ConfigAPIFields.MAX_POSITION_SIZE_PERCENT: float(config.max_position_size_percent),
+                ConfigAPIFields.TRADING_MODE: config.trading_mode,            
+                
+                ConfigAPIFields.MAX_TRADE_SIZE_USD: float(config.max_trade_size_usd),  # ← ADD THIS
+                ConfigAPIFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),
                 ConfigAPIFields.MAX_POSITION_SIZE_PER_TOKEN_PERCENT: float(config.max_position_size_per_token_percent),
-                ConfigAPIFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),
-                ConfigAPIFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),
+                ConfigAPIFields.STOP_LOSS_PERCENT: float(config.stop_loss_percent),                
                 ConfigAPIFields.TAKE_PROFIT_PERCENT: float(config.take_profit_percent),
                 ConfigAPIFields.MAX_DAILY_TRADES: config.max_daily_trades,
                 ConfigAPIFields.MAX_CONCURRENT_POSITIONS: config.max_concurrent_positions,
@@ -367,6 +369,9 @@ def _handle_post_configuration(
                 StrategyConfigFields.MAX_POSITION_SIZE_PERCENT: Decimal(
                     str(body_data.get(ConfigAPIFields.MAX_POSITION_SIZE_PERCENT, 25.0))
                 ),
+                StrategyConfigFields.MAX_TRADE_SIZE_USD: Decimal(
+                    str(body_data.get(ConfigAPIFields.MAX_TRADE_SIZE_USD, 1000.0))
+                ),  # ← ADD THIS           
                 StrategyConfigFields.MAX_POSITION_SIZE_PER_TOKEN_PERCENT: Decimal(
                     str(body_data.get(ConfigAPIFields.MAX_POSITION_SIZE_PER_TOKEN_PERCENT, 15.0))
                 ),
