@@ -493,7 +493,7 @@ function createThoughtElement(data) {
         second: '2-digit'
     });
 
-    const thoughtType = data.decision_type || data.thought_type || 'ANALYSIS';
+    const thoughtType = data.action || data.decision_type || 'ANALYSIS';
     const symbol = data.token_symbol || data.symbol || '';
     const content = data.thought_content || data.content || 'Processing...';
 

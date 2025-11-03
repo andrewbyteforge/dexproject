@@ -1,0 +1,989 @@
+# Paper Trading App - File Structure
+
+## Core Configuration Files
+
+### `__init__.py`
+Empty package marker file. Required for Python to recognize the directory as a package.
+
+### `apps.py`
+Django app configuration with production-ready initialization.
+
+**Key Features:**
+- Configures decimal precision (28 digits) for financial calculations
+- Sets banker's rounding (ROUND_HALF_EVEN) to reduce bias
+- Registers Django signals on app startup
+- Validates type conversion utilities
+
+**Entry Point:** `PaperTradingConfig.ready()` - Called when Django initializes
+
+---
+
+## Configuration System (Phase 8)
+
+### `constants.py` (NEW - Phase 8)
+Centralized string literals, field names, and validation functions.
+
+**Purpose:** Prevents typos, enables IDE autocomplete, provides single source of truth for all constants.
+
+**Key Classes:**
+- `DecisionType` - Trading decision types (BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT)
+- `ConfidenceLevel` - Confidence level categories and thresholds (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW)
+- `TradingMode` - Trading modes (BALANCED, AGGRESSIVE, CONSERVATIVE, SCALPER, SWING)
+- `LaneType` - Intelligence lane types (FAST, SMART)
+- `TradeStatus` - Trade execution status (PENDING, EXECUTED, FAILED, CANCELLED)
+- `SessionStatus` - Session status (RUNNING, PAUSED, STOPPED, COMPLETED, ERROR)
+- `ThoughtLogFields` - Field names for PaperAIThoughtLog model
+- `TradeFields` - Field names for PaperTrade model
+- `StrategyConfigFields` - Field names for PaperStrategyConfiguration model
+
+**Validation Functions:**
+- `validate_decision_type(decision_type: str) -> bool`
+- `validate_confidence_level(confidence_level: str) -> bool`
+- `validate_trading_mode(trading_mode: str) -> bool`
+- `validate_lane_type(lane_type: str) -> bool`
+
+**Helper Functions:**
+- `ConfidenceLevel.from_percentage(confidence_percent: Decimal) -> str` - Convert percentage to level
+- `get_confidence_level_from_percent(percent: float) -> str` - Convenience wrapper
+
+**Example Usage:**
+```python
+from paper_trading.constants import DecisionType, ConfidenceLevel, ThoughtLogFields
+
+# Instead of strings
+decision = DecisionType.BUY  # Not "BUY"
+field = ThoughtLogFields.CONFIDENCE_PERCENT  # Not "confidence_percent"
+
+# Convert confidence
+level = ConfidenceLevel.from_percentage(Decimal('85.0'))  # Returns "HIGH"
+```
+
+### `defaults.py` (NEW - Phase 8)
+Default configuration values that rarely change.
+
+**Purpose:** Provides sensible defaults that can be overridden by environment variables or database settings.
+
+**Key Classes:**
+- `TradingDefaults` - Trading parameters (balance, position sizing, risk management, trade limits)
+- `IntelligenceDefaults` - Intelligence parameters (levels, thresholds, market data, chain config)
+- `NetworkDefaults` - Network parameters (gas prices, slippage, timeouts, RPC config)
+- `PerformanceDefaults` - Performance parameters (cache settings, lane targets, circuit breakers)
+- `SessionDefaults` - Session parameters (duration, monitoring, dashboard updates)
+
+**Helper Functions:**
+- `get_default_config() -> dict` - Get all defaults as dictionary
+- `get_trading_defaults() -> dict` - Get trading-specific defaults
+- `get_intelligence_defaults() -> dict` - Get intelligence-specific defaults
+- `get_network_defaults() -> dict` - Get network-specific defaults
+- `get_performance_defaults() -> dict` - Get performance-specific defaults
+- `get_session_defaults() -> dict` - Get session-specific defaults
+
+**Example Usage:**
+```python
+from paper_trading.defaults import TradingDefaults, IntelligenceDefaults
+
+# Access defaults
+initial_balance = TradingDefaults.INITIAL_BALANCE_USD  # Decimal('10000.00')
+intel_level = IntelligenceDefaults.DEFAULT_INTEL_LEVEL  # 3
+max_trades = TradingDefaults.MAX_DAILY_TRADES  # 50
+```
+
+### `factories.py` (NEW - Phase 8)
+Type-safe factory functions for creating model instances.
+
+**Purpose:** Prevents field name mismatch errors, ensures consistent data validation, provides type safety.
+
+**Factory Functions:**
+- `create_thought_log()` - Create PaperAIThoughtLog with validated fields
+- `create_paper_trade()` - Create PaperTrade with validated fields
+- `create_thought_log_from_decision()` - Create thought log from TradingDecision object
+- `safe_create_thought_log()` - Create thought log with error handling (returns None on failure)
+
+**Example Usage:**
+```python
+from decimal import Decimal
+from paper_trading.constants import DecisionType, LaneType
+from paper_trading.factories import create_thought_log
+
+# Type-safe thought log creation
+thought = create_thought_log(
+    account=account,
+    decision_type=DecisionType.BUY,
+    token_address="0x1234...",
+    token_symbol="AAVE",
+    confidence_percent=Decimal('85.0'),
+    risk_score=Decimal('45.0'),
+    opportunity_score=Decimal('75.0'),
+    primary_reasoning="Strong buy signal",
+    key_factors=["High volume", "Positive trend"],
+    market_data={'price': 150.50, 'volume': 1000000},
+    strategy_name="Momentum Strategy",
+    lane_used=LaneType.FAST,
+)
+
+# Safe mode (won't crash on errors)
+from paper_trading.factories import safe_create_thought_log
+
+thought = safe_create_thought_log(
+    account=account,
+    decision_type=DecisionType.HOLD,
+    token_address="0x1234...",
+    token_symbol="LINK",
+    confidence_percent=Decimal('60.0'),
+    reasoning="Market unclear",
+)
+# Returns None if creation fails instead of raising exception
+```
+
+**Benefits:**
+- ✅ No "unexpected keyword arguments" errors
+- ✅ Field name validation using constants
+- ✅ Automatic type conversion (confidence → level string)
+- ✅ Data truncation (reasoning limited to 500 chars)
+- ✅ Clear error messages with logging
+- ✅ Optional safe mode that doesn't crash
+
+---
+
+## Environment Configuration
+
+### `.env` (Phase 8 Updates)
+Environment variables for configuration. **31 new PAPER_TRADING_* variables added.**
+
+**New Configuration Groups:**
+
+#### Trading Defaults (10 variables)
+```bash
+PAPER_TRADING_INITIAL_BALANCE=10000.00
+PAPER_TRADING_MAX_POSITION_SIZE_PERCENT=10.0
+PAPER_TRADING_MIN_POSITION_SIZE_USD=10.00
+PAPER_TRADING_DEFAULT_STOP_LOSS=2.0
+PAPER_TRADING_DEFAULT_TAKE_PROFIT=5.0
+PAPER_TRADING_MAX_DAILY_LOSS=5.0
+PAPER_TRADING_MAX_DAILY_TRADES=50
+PAPER_TRADING_MIN_TRADE_INTERVAL_MIN=5
+PAPER_TRADING_TICK_INTERVAL_SEC=60
+PAPER_TRADING_MAX_TOKENS_PER_TICK=5
+```
+
+#### Intelligence Defaults (10 variables)
+```bash
+PAPER_TRADING_DEFAULT_INTEL_LEVEL=3
+PAPER_TRADING_MIN_INTEL_LEVEL=1
+PAPER_TRADING_MAX_INTEL_LEVEL=5
+PAPER_TRADING_MIN_CONFIDENCE_TO_TRADE=70.0
+PAPER_TRADING_MIN_OPPORTUNITY_SCORE=50.0
+PAPER_TRADING_MAX_RISK_SCORE=70.0
+PAPER_TRADING_PRICE_HISTORY_SIZE=100
+PAPER_TRADING_LIQUIDITY_CHECK_DEPTH=5
+PAPER_TRADING_DEFAULT_CHAIN_ID=84532
+PAPER_TRADING_DEFAULT_LANE=FAST
+```
+
+#### Network Configuration (8 variables)
+```bash
+PAPER_TRADING_DEFAULT_GAS_PRICE_GWEI=0.1
+PAPER_TRADING_MAX_GAS_PRICE_GWEI=10.0
+PAPER_TRADING_GAS_PRICE_PERCENTILE=50
+PAPER_TRADING_DEFAULT_SLIPPAGE=0.5
+PAPER_TRADING_MAX_SLIPPAGE=5.0
+PAPER_TRADING_WEB3_TIMEOUT_SEC=30
+PAPER_TRADING_TX_CONFIRMATION_TIMEOUT_SEC=300
+PAPER_TRADING_MAX_RPC_RETRIES=3
+PAPER_TRADING_RPC_RETRY_DELAY_SEC=2
+```
+
+#### Performance Configuration (3 variables)
+```bash
+PAPER_TRADING_PRICE_CACHE_TTL=300
+PAPER_TRADING_RISK_CACHE_TTL=3600
+PAPER_TRADING_MARKET_DATA_CACHE_TTL=60
+```
+
+#### Feature Flags (5 variables)
+```bash
+PAPER_TRADING_USE_REAL_PRICES=true
+PAPER_TRADING_USE_TX_MANAGER=false
+PAPER_TRADING_CIRCUIT_BREAKERS=true
+PAPER_TRADING_ML_FEATURES=false
+PAPER_TRADING_AUTO_PILOT=false
+```
+
+**Total:** 31 new PAPER_TRADING_* variables + all existing Phase 7 variables preserved.
+
+**Usage in Code:**
+```python
+from django.conf import settings
+
+# Access paper trading configuration
+initial_balance = settings.PAPER_TRADING['DEFAULTS']['INITIAL_BALANCE_USD']
+use_real_prices = settings.PAPER_TRADING['FEATURES']['USE_REAL_PRICES']
+intel_level = settings.PAPER_TRADING['DEFAULTS']['INTEL_LEVEL']
+
+# Feature flags
+if settings.PAPER_TRADING['FEATURES']['CIRCUIT_BREAKERS']:
+    enable_circuit_breakers()
+```
+
+---
+
+## Django Settings
+
+### `settings.py` (Phase 8 Updates)
+Added `PAPER_TRADING` configuration dictionary with 3-tier hierarchy.
+
+**New Configuration Structure:**
+```python
+PAPER_TRADING = {
+    # Tier 1: Constants (never change)
+    'CONSTANTS': {
+        'DECISION_TYPES': ['BUY', 'SELL', 'HOLD', 'SKIP'],
+        'CONFIDENCE_LEVELS': ['VERY_HIGH', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'],
+    },
+    
+    # Tier 2: Defaults (can be overridden)
+    'DEFAULTS': {
+        'INITIAL_BALANCE_USD': env.float(
+            'PAPER_TRADING_INITIAL_BALANCE',
+            default=float(TradingDefaults.INITIAL_BALANCE_USD)
+        ),
+        'MAX_POSITION_SIZE_PERCENT': env.float(
+            'PAPER_TRADING_MAX_POSITION_SIZE_PERCENT',
+            default=float(TradingDefaults.MAX_POSITION_SIZE_PERCENT)
+        ),
+        'INTEL_LEVEL': env.int(
+            'PAPER_TRADING_DEFAULT_INTEL_LEVEL',
+            default=IntelligenceDefaults.DEFAULT_INTEL_LEVEL
+        ),
+        # ... (20+ more defaults)
+    },
+    
+    # Tier 3: Environment-specific (dev/staging/prod different)
+    'FEATURES': {
+        'USE_REAL_PRICES': env.bool('PAPER_TRADING_USE_REAL_PRICES', default=True),
+        'USE_TX_MANAGER': env.bool('PAPER_TRADING_USE_TX_MANAGER', default=False),
+        'CIRCUIT_BREAKERS': env.bool('PAPER_TRADING_CIRCUIT_BREAKERS', default=True),
+        'ML_FEATURES': env.bool('PAPER_TRADING_ML_FEATURES', default=False),
+        'AUTO_PILOT': env.bool('PAPER_TRADING_AUTO_PILOT', default=False),
+    }
+}
+```
+
+**Configuration Hierarchy:**
+1. **Tier 1 (Constants):** Never change (decision types, field names)
+2. **Tier 2 (Defaults):** Rarely change (initial balance, stop loss %)
+3. **Tier 3 (Features):** Change per environment (real prices on/off, features enabled/disabled)
+
+**Benefits:**
+- ✅ Environment-specific configuration (dev/staging/prod)
+- ✅ Feature flags for gradual rollout
+- ✅ Easy to toggle features without code changes
+- ✅ Single source of truth for all configuration
+- ✅ Backward compatible with existing code
+
+---
+
+## URL Routing
+
+### `urls.py`
+Complete URL configuration mapping URLs to views.
+
+**Dashboard Pages:**
+- `/` - Main dashboard
+- `/trades/` - Trade history with filters
+- `/portfolio/` - Portfolio positions view
+- `/configuration/` - Strategy configuration
+- `/analytics/` - Performance analytics dashboard
+
+**Data API Endpoints:**
+- `/api/ai-thoughts/` - Real-time AI decision stream
+- `/api/portfolio/` - Portfolio data
+- `/api/trades/` - Trade history with filters
+- `/api/trades/recent/` - Recent trades
+- `/api/positions/open/` - Current holdings
+- `/api/metrics/` - Key performance indicators
+- `/api/performance/` - Detailed statistics
+- `/api/prices/<token_symbol>/` - Token price data
+
+**Analytics APIs:**
+- `/api/analytics/data/` - Real-time analytics updates
+- `/api/analytics/export/` - Export analytics to CSV
+
+**Bot Control:**
+- `/api/bot/start/` - Start paper trading bot
+- `/api/bot/stop/` - Stop paper trading bot
+- `/api/bot/status/` - Get bot status
+
+**Configuration:**
+- `/api/configuration/` - Get/update strategy config
+- `/api/config/` - Shorter alias for configuration
+
+### `routing.py`
+WebSocket URL routing for real-time communication.
+
+**WebSocket Endpoint:**
+- `ws/paper-trading/` - Real-time dashboard updates
+
+---
+
+## View Layer
+
+### `views.py`
+Django views for rendering HTML dashboard pages.
+
+**Key Views:**
+- `paper_trading_dashboard()` - Main dashboard with portfolio summary
+- `trade_history()` - Paginated trade history with filtering
+- `portfolio_view()` - Portfolio positions and allocation
+- `configuration_view()` - Strategy configuration management
+- `analytics_view()` - Performance analytics dashboard
+
+**API Functions:**
+- `api_analytics_data()` - JSON endpoint for analytics updates
+- `api_analytics_export()` - CSV export of analytics data
+
+**Helper Functions:**
+- `format_trade_for_template()` - Safe trade data formatting
+- `format_position_for_template()` - Safe position data formatting
+- `calculate_portfolio_metrics()` - Portfolio performance calculations
+
+### `api_views.py`
+RESTful API endpoints for data access and bot control.
+
+**Data Endpoints:**
+- `api_ai_thoughts()` - AI decision logs (GET)
+- `api_portfolio_data()` - Portfolio state (GET)
+- `api_trades_data()` - Trade history with filters (GET)
+- `api_recent_trades()` - Recent trades (GET)
+- `api_open_positions()` - Current positions (GET)
+- `api_metrics()` - Dashboard KPIs (GET)
+- `api_performance_metrics()` - Detailed stats (GET)
+- `api_token_price()` - Token price lookup (GET)
+
+**Configuration Endpoints:**
+- `api_configuration()` - Get/update strategy config (GET/POST)
+
+**Bot Control Endpoints:**
+- `api_start_bot()` - Start bot with session (POST)
+- `api_stop_bot()` - Stop active sessions (POST)
+- `api_bot_status()` - Get bot status (GET)
+
+**Response Format:** All endpoints return JSON with consistent structure:
+```json
+{
+  "success": true,
+  "data": {...},
+  "timestamp": "ISO-8601"
+}
+```
+
+---
+
+## Real-Time Communication
+
+### `consumers.py`
+WebSocket consumer for real-time dashboard updates.
+
+**Features:**
+- Single-user auto-authentication
+- Real-time trade notifications
+- Position updates
+- Performance metrics streaming
+- AI thought process streaming
+- Bot status updates
+
+**Message Types (Client → Server):**
+- `ping` - Keepalive check
+- `request_portfolio_update` - Force portfolio refresh
+- `request_trade_history` - Get recent trades
+- `request_open_positions` - Get positions
+- `request_performance_metrics` - Get metrics
+
+**Message Types (Server → Client):**
+- `connection_confirmed` - Initial connection
+- `initial_snapshot` - Initial data load
+- `trade_executed` / `trade_update` - New trade notification
+- `position_updated` - Position change
+- `performance_update` - Metrics update
+- `ai_thought` - AI decision log
+- `portfolio_update` - Portfolio change
+- `session_update` - Bot session status
+
+**Key Methods:**
+- `connect()` - Handle WebSocket connection
+- `disconnect()` - Clean up on disconnect
+- `receive()` - Process client messages
+- `trade_update()` - Handle trade notifications
+- `performance_update()` - Handle performance updates
+
+---
+
+## Background Processing
+
+### `tasks.py`
+Celery tasks for background bot execution and data processing.
+
+**Main Tasks:**
+
+#### `run_paper_trading_bot(session_id, user_id, runtime_minutes)`
+Runs the paper trading bot for a session.
+
+**Parameters:**
+- `session_id` (str) - Trading session UUID
+- `user_id` (int) - User ID for authorization
+- `runtime_minutes` (int, optional) - Runtime limit or None for unlimited
+
+**Features:**
+- Bot lifecycle management
+- Real-time status caching
+- Graceful shutdown handling
+- Error recovery with retries
+
+**Example:**
+```python
+from paper_trading.tasks import run_paper_trading_bot
+
+task = run_paper_trading_bot.delay(
+    session_id="uuid-here",
+    user_id=1,
+    runtime_minutes=60
+)
+```
+
+#### `stop_paper_trading_bot(session_id, user_id, reason)`
+Stops an active bot session.
+
+#### `update_all_position_prices(chain_id)`
+Updates all open positions with current token prices (periodic task).
+
+**Scheduling:** Runs every 5 minutes via Celery Beat
+
+#### `update_single_position_price(position_id, chain_id)`
+Updates a single position with real-time price.
+
+---
+
+## Event Handling
+
+### `signals.py`
+Django signals for automated event handling and WebSocket notifications.
+
+**Signal Handlers:**
+
+**Account Signals:**
+- `paper_account_created_or_updated` - Account changes → WebSocket notification
+
+**Trade Signals:**
+- `paper_trade_created_or_updated` - Trade execution → WebSocket broadcast
+- `paper_trade_pre_save` - Trade validation before save
+
+**Position Signals:**
+- `paper_position_created_or_updated` - Position changes → WebSocket update
+- `paper_position_deleted` - Position closure → WebSocket notification
+
+**AI Thought Signals:**
+- `paper_ai_thought_created` - New AI decision → WebSocket broadcast
+
+**Performance Signals:**
+- `paper_performance_updated` - Metrics update → WebSocket notification
+
+**Features:**
+- Migration-safe (skips during makemigrations/migrate)
+- Uses `transaction.on_commit()` for reliable notifications
+- Centralized WebSocket service integration
+- Comprehensive error logging
+
+---
+
+## Views System
+
+The views are organized into specialized modules for maintainability and clear separation of concerns.
+
+### `views_dashboard.py`
+**Main dashboard and sessions history rendering.**
+
+**Key Functions:**
+- `paper_trading_dashboard(request)` - Primary dashboard view
+  - Displays portfolio summary, active positions, recent trades
+  - Shows AI thought logs with decision reasoning
+  - Calculates win rate from `PaperPosition.realized_pnl_usd` (FIXED)
+  - Auto-closes old sessions from previous days
+  - Handles missing data gracefully with error recovery
+  - Formats all data using helper functions for safe display
+  
+- `sessions_history(request)` - Sessions comparison page renderer
+  - Requires login (`@login_required`)
+  - JavaScript-driven data loading via `/api/sessions/history/`
+  - Displays interactive session comparison charts
+
+**Special Features:**
+- Automatic stale session cleanup
+- Safe decimal handling throughout
+- Real-time AI thought display with truncation
+- Dashboard performance metrics calculation
+
+### `views_helpers.py`
+**Template formatting utilities and portfolio calculations.**
+
+**Key Functions:**
+- `format_trade_for_template(trade)` - Converts trade objects to template-safe dictionaries
+  - Handles decimal precision issues
+  - Provides fallback values on errors
+  - Includes `_original` reference for advanced usage
+  
+- `format_position_for_template(position)` - Converts position objects for safe display
+  - Safe decimal handling for all numeric fields
+  - Error recovery with minimal safe data
+  - Template-ready dictionary output
+
+- `calculate_portfolio_metrics(account)` - **FIXED** Portfolio statistics calculator
+  - Uses raw SQL for performance
+  - Correctly calculates winning/losing from `realized_pnl_usd` in closed positions
+  - Returns win rate, total volume, average trade size
+  - Graceful error handling with default values
+
+**Critical Fix:**
+Previously used `PaperTrade.status='completed'` for win/loss calculation (incorrect). Now uses `PaperPosition.realized_pnl_usd > 0` for accurate win/loss tracking.
+
+### `views_portfolio.py`
+**Portfolio positions and allocation display.**
+
+**Key Functions:**
+- `portfolio_view(request)` - Comprehensive portfolio view
+  - Displays open and closed positions
+  - Calculates total portfolio value (cash + open positions)
+  - Position distribution data for pie charts
+  - Top 20 recent closed positions
+  - Error recovery with fallback to dashboard
+
+**Features:**
+- JSON-formatted position distribution for charts
+- Safe decimal handling across all calculations
+- Separate open/closed position queries
+- Portfolio value = `current_balance_usd` + sum of open position values
+
+### `views_sessions.py`
+**Sessions history and comparison interface.**
+
+**Key Functions:**
+- `sessions_history_view(request)` - Interactive session comparison page
+  - Renders `sessions_analysis.html` template
+  - Data loaded asynchronously via JavaScript
+  - Uses `/api/sessions/history/` endpoint
+  - Displays multi-session performance comparison
+
+**Architecture:**
+- Minimal server-side rendering
+- Heavy client-side interactivity
+- API-driven data loading
+- Real-time session comparison charts
+
+### `views_trades.py`
+**Trade history with advanced filtering and pagination.**
+
+**Key Functions:**
+- `trade_history(request)` - Comprehensive trade history view
+  - **Filters:** status, trade_type, token symbol, date range
+  - **Pagination:** 25 trades per page (max 500 loaded)
+  - **Summary stats:** total trades, volume, avg size, gas costs
+  - Pre-formats trades before pagination to avoid rendering errors
+
+**Features:**
+- Raw SQL for summary statistics (performance optimization)
+- Dynamic filter building with parameter validation
+- Safe date parsing with error handling
+- Graceful error rendering with empty state
+
+**Query Optimization:**
+- Limits to 500 trades to prevent memory issues
+- Formats trades before pagination
+- Uses indexed database queries
+- Connection-based SQL for aggregations
+
+### `views_configuration.py`
+**Strategy configuration management with detailed change logging.**
+
+**Key Functions:**
+- `configuration_view(request)` - Configuration CRUD interface
+  - Create, update, duplicate configurations
+  - Activate/deactivate strategy presets
+  - Pagination (10 configs per page)
+  - Bot status checking (prevents config changes while running)
+  - Auto-creates default configuration if none exists
+
+**Logging System:**
+- `log_configuration_changes()` - Detailed "from X → Y" change logging
+- `log_new_configuration_values()` - New config value logging
+- `log_configuration_differences()` - Field-by-field change tracking
+- All changes logged to Django server console with emojis for visibility
+
+**Features:**
+- **Save as New:** Duplicate existing config with modifications
+- **Update Existing:** Modify config in-place with full audit trail
+- **Default Creation:** Auto-generates sensible defaults
+- **Active Session Detection:** Warns if bot is running with current config
+- **Emoji Logging:** 📝🎯⚡🧠💰🛡️🎯⏰ for easy log scanning
+
+**Configuration Fields:**
+- Trading mode, lane selection (Fast/Smart), thresholds
+- Position sizing, stop loss, take profit
+- Max hold time, trade limits, liquidity requirements
+- Slippage tolerance, confidence thresholds
+
+### `views_analytics.py`
+**Analytics dashboard with performance metrics and CSV export.**
+
+**Key Functions:**
+- `analytics_view(request)` - Main analytics dashboard
+  - 30-day performance analysis
+  - Daily performance trends
+  - Token distribution statistics
+  - Top performing tokens (top 5)
+  - Win rate calculation from closed positions
+  - Trade volume and frequency metrics
+  
+- `api_analytics_data(request)` - Real-time analytics API endpoint
+  - JSON response for chart updates
+  - Win rate, total trades, closed positions
+  - Timestamp for cache validation
+  
+- `api_analytics_export(request)` - CSV export functionality
+  - Exports all trade data to CSV
+  - Includes date, trade ID, tokens, type, amount, status
+  - Filename: `paper_trading_analytics.csv`
+
+**Performance Features:**
+- Raw SQL for all aggregations
+- Optimized queries with date range filters
+- Connection cursor for batch operations
+- Safe decimal conversion throughout
+
+**Analytics Metrics:**
+- Win rate (from `realized_pnl_usd`)
+- Total trade executions
+- Closed positions count
+- Daily P&L trends
+- Token distribution
+- Hourly trading patterns
+- Sharpe ratio (from performance metrics)
+
+**Chart Data:**
+- Daily P&L time series (30 days)
+- Token volume distribution (top 10)
+- Hourly trade distribution
+- Top performer rankings
+
+---
+
+## API Endpoints
+
+The API is organized into specialized modules for data access, configuration, bot control, and account management.
+
+### API Files Overview
+
+#### `__init__.py` (API Package)
+Package initialization that imports and exposes all API endpoints. Organizes endpoints into logical groups:
+- Data retrieval (read-only)
+- Configuration management
+- Bot lifecycle control
+- Account management
+- Session operations (delete, export)
+
+#### `account_management_api.py`
+**Account operations and session history.**
+
+**Endpoints:**
+- `api_reset_account()` - POST endpoint for account reset
+  - Deletes old closed positions to avoid UNIQUE constraints
+  - Closes all open positions with P&L calculation
+  - Stops active bot sessions
+  - Resets account balance ($100-$1M range validation)
+  - Creates new trading session with metadata
+  - Returns: new balance, positions closed, realized P&L, session name
+
+- `api_sessions_history()` - GET endpoint for session comparison data
+  - Returns completed/stopped sessions (configurable limit, max 50)
+  - Includes: P&L, win rate, trade statistics
+  - Session metadata: name, dates, duration, status
+  - Starting/ending balance calculations
+  - Used by sessions comparison graphs
+
+#### `session_delete_api.py`
+**Session deletion operations.**
+
+**Endpoints:**
+- `api_delete_session(session_id)` - POST endpoint
+  - Permanently deletes trading session
+  - Validates session ownership
+  - Prevents deletion of active sessions (RUNNING, STARTING, PAUSED)
+  - Cascade deletes related records
+
+#### `session_export_api.py`
+**Session CSV export functionality.**
+
+**Endpoints:**
+- `api_export_session_csv(session_id)` - GET endpoint
+  - Comprehensive CSV export with 5 sections:
+    1. Session overview (name, dates, duration, status)
+    2. Performance metrics (balance, P&L, percentages)
+    3. Trade statistics (totals, win rate)
+    4. Strategy configuration settings
+    5. Individual trade details (chronological)
+  - Filename: `session_{name}_{date}.csv`
+  - Filters trades by session time range
+
+**⚠️ Note:** Duplicate `api_delete_session()` removed from this file (kept in `session_delete_api.py`)
+
+---
+
+## Admin Interface
+
+### `admin.py`
+Django admin configuration for all paper trading models.
+
+**Registered Models:**
+- `PaperTradingAccount` - Account management with performance display
+- `PaperTrade` - Trade records with execution details
+- `PaperPosition` - Position tracking with P&L display
+- `PaperTradingConfig` - Trading configuration
+- `PaperAIThoughtLog` - AI decision logs with confidence display
+- `PaperStrategyConfiguration` - Strategy presets
+- `PaperPerformanceMetrics` - Performance snapshots
+- `PaperTradingSession` - Trading sessions with controls
+- `AutoPilotLog` - Auto-pilot adjustment logs
+- `AutoPilotPerformanceSnapshot` - Auto-pilot performance tracking
+
+**Features:**
+- Color-coded win rates and P&L
+- Inline field editing
+- Advanced filtering options
+- Custom admin actions (e.g., stop sessions)
+- Readonly fields for audit trails
+
+---
+
+## Testing
+
+### `tests.py`
+Unit tests for core paper trading functionality.
+
+**Test Cases:**
+- `PaperTradingAccountTestCase` - Account creation and reset
+- Tests default balance initialization
+- Tests account reset functionality
+
+**Run Tests:**
+```bash
+python manage.py test paper_trading
+```
+
+---
+
+## Phase 8 Configuration System Integration
+
+### How the Configuration System Works
+
+**3-Tier Hierarchy:**
+
+1. **constants.py (Tier 1)** - String literals that never change
+   - Used everywhere in code for consistency
+   - Example: `DecisionType.BUY` instead of `"BUY"`
+
+2. **defaults.py (Tier 2)** - Configuration defaults that rarely change
+   - Used as fallback values
+   - Example: `TradingDefaults.INITIAL_BALANCE_USD`
+
+3. **.env → settings.py (Tier 3)** - Environment-specific settings
+   - Changes per deployment environment
+   - Example: `PAPER_TRADING_USE_REAL_PRICES=true` in prod, `false` in dev
+
+**Integration Flow:**
+```
+.env variables
+    ↓
+settings.py PAPER_TRADING dict (uses defaults.py as fallback)
+    ↓
+Code uses constants.py for string literals
+    ↓
+factories.py creates models with validated fields
+    ↓
+No field name errors!
+```
+
+**Example Usage in Bot Code:**
+```python
+# OLD WAY (error-prone)
+decision = "BUY"  # ❌ Typo-prone
+PaperAIThoughtLog.objects.create(
+    confidence_percent=90,  # ❌ Field name might be wrong
+    ...
+)
+
+# NEW WAY (type-safe)
+from paper_trading.constants import DecisionType
+from paper_trading.factories import create_thought_log
+
+decision = DecisionType.BUY  # ✅ IDE autocomplete
+create_thought_log(
+    account=account,
+    decision_type=DecisionType.BUY,  # ✅ Validated
+    confidence_percent=Decimal('90'),  # ✅ Type-safe
+    ...
+)
+```
+
+---
+
+## Key Integration Points
+
+### Single-User Mode
+All views automatically create/retrieve a default account:
+```python
+from paper_trading.utils import get_single_trading_account
+
+account = get_single_trading_account()  # Auto-creates if needed
+```
+
+### WebSocket Integration
+Real-time updates via Django Channels:
+```javascript
+const ws = new WebSocket('ws://localhost:8000/ws/paper-trading/');
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === 'trade_executed') {
+    // Handle trade notification
+  }
+};
+```
+
+### Bot Control via API
+Start/stop bot programmatically:
+```bash
+# Start bot
+curl -X POST http://localhost:8000/paper-trading/api/bot/start/ \
+  -H "Content-Type: application/json" \
+  -d '{"runtime_minutes": 60}'
+
+# Stop bot
+curl -X POST http://localhost:8000/paper-trading/api/bot/stop/ \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "User requested stop"}'
+
+# Check status
+curl http://localhost:8000/paper-trading/api/bot/status/
+```
+
+### Celery Task Monitoring
+```python
+from celery.result import AsyncResult
+
+# Check task status
+result = AsyncResult(task_id)
+print(result.state)  # PENDING, STARTED, SUCCESS, FAILURE
+```
+
+### Configuration System Usage
+```python
+# Import constants
+from paper_trading.constants import DecisionType, ConfidenceLevel, LaneType
+
+# Import defaults
+from paper_trading.defaults import TradingDefaults, IntelligenceDefaults
+
+# Import factories
+from paper_trading.factories import create_thought_log, safe_create_thought_log
+
+# Access settings
+from django.conf import settings
+config = settings.PAPER_TRADING['DEFAULTS']
+```
+
+---
+
+## File Dependencies
+
+```
+apps.py (initializes) → signals.py (registers handlers)
+                      → utils/type_utils.py (validates)
+
+urls.py → views.py (dashboard pages)
+       → api_views.py (REST endpoints)
+
+routing.py → consumers.py (WebSocket handling)
+
+signals.py → services/websocket_service.py (real-time updates)
+
+tasks.py → bot.py (trading logic)
+        → services/price_feed_service.py (price data)
+
+views.py & api_views.py → models.py (data access)
+                        → utils.py (helper functions)
+                        → factories.py (model creation - Phase 8)
+
+bot/* → constants.py (string literals - Phase 8)
+     → defaults.py (configuration - Phase 8)
+     → factories.py (model creation - Phase 8)
+
+settings.py → defaults.py (fallback values - Phase 8)
+           → .env (environment-specific - Phase 8)
+```
+
+---
+
+## Error Handling
+
+All files implement comprehensive error handling:
+- **Try-except blocks** around all database operations
+- **Logging** at appropriate levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- **Transaction safety** with `transaction.on_commit()`
+- **Graceful degradation** (fallback to default values)
+- **User-friendly error messages** via Django messages framework
+- **Type-safe factories** prevent field name mismatches (Phase 8)
+- **Validation functions** catch invalid values early (Phase 8)
+
+## Performance Considerations
+
+- **Database queries** use `select_related()` and `prefetch_related()` to reduce queries
+- **Caching** via Redis for bot status and frequently accessed data
+- **Pagination** for large datasets (trades, positions)
+- **Background tasks** for expensive operations (price updates, bot execution)
+- **Raw SQL** for complex aggregations to avoid ORM overhead
+- **Constants** reduce string allocation overhead (Phase 8)
+- **Factory pattern** reduces validation overhead (Phase 8)
+
+---
+
+## Phase 8 Summary
+
+**New Files Added:**
+- `constants.py` (~800 lines) - String literals, field names, validation
+- `defaults.py` (~400 lines) - Configuration defaults
+- `factories.py` (~650 lines) - Type-safe model creation
+
+**Configuration Updates:**
+- `.env` - Added 31 new PAPER_TRADING_* variables
+- `settings.py` - Added PAPER_TRADING configuration dictionary
+
+**Benefits:**
+- ✅ No more "unexpected keyword arguments" errors
+- ✅ No more string literal typos
+- ✅ IDE autocomplete for all constants
+- ✅ Type-safe model creation
+- ✅ Environment-specific configuration
+- ✅ Feature flags for gradual rollout
+- ✅ Single source of truth for all configuration
+- ✅ Backward compatible with existing code
+
+**Migration Path:**
+1. Deploy new files (constants.py, defaults.py, factories.py)
+2. Update .env with new PAPER_* variables
+3. Gradually update code to use factories instead of direct model creation
+4. Use constants instead of string literals
+5. Access configuration from settings.PAPER_TRADING dict
+
+**Documentation:**
+- CONFIGURATION_SYSTEM_SUMMARY.md - Complete explanation
+- QUICK_REFERENCE.md - Developer cheat sheet
+- BEFORE_AFTER_COMPARISON.md - Migration examples
+- DEPLOYMENT_CHECKLIST.md - Deployment guide

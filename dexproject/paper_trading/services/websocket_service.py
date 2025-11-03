@@ -16,9 +16,11 @@ File: dexproject/paper_trading/services/websocket_service.py
 
 import logging
 import uuid
+import re
 from typing import Dict, Any, Optional, Union, List
 from decimal import Decimal
 from datetime import datetime
+from enum import Enum
 
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -149,9 +151,6 @@ class WebSocketNotificationService:
             )
             return False
 
-
-
-
     # =========================================================================
     # SPECIFIC MESSAGE METHODS (for backward compatibility and convenience)
     # =========================================================================
@@ -222,28 +221,43 @@ class WebSocketNotificationService:
         Returns:
             Success status
         """
+        # Extract action from thought_content or primary_reasoning
+        # The actual action (SKIP, BUY, SELL, HOLD) is in the content text
+        def extract_action(content: str) -> str:
+            """Extract the action from thought content."""
+            if not content:
+                return 'ANALYSIS'
+            
+            # Look for "Action: SKIP" pattern in the content
+            match = re.search(r'Action:\s*(\w+)', content, re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+            
+            # Fallback to decision_type if no action found
+            return thought_data.get('decision_type', 'ANALYSIS')
+        
+        # Get the reasoning/content text
+        reasoning_text = thought_data.get('primary_reasoning') or thought_data.get('thought_content', '')
+        
         # Format thought data specifically for display
+        # Map model fields to frontend-expected fields
         formatted_thought = {
-            'action': thought_data.get('action', 'Unknown'),
-            'reasoning': thought_data.get('reasoning', ''),
-            'confidence': thought_data.get('confidence_score', 0),
-            'intel_level': thought_data.get('intel_level'),
-            'risk_score': thought_data.get('risk_score'),
-            'opportunity_score': thought_data.get('opportunity_score'),
+            'action': extract_action(reasoning_text),  # ✅ FIXED: Extract actual action from content
+            'reasoning': reasoning_text,
+            'confidence': float(thought_data.get('confidence_percent', 0)),
+            'intel_level': thought_data.get('strategy_name', ''),
+            'risk_score': float(thought_data.get('risk_score', 0)) if thought_data.get('risk_score') else 0,
+            'opportunity_score': float(thought_data.get('opportunity_score', 0)) if thought_data.get('opportunity_score') else 0,
             'created_at': thought_data.get('created_at', datetime.now().isoformat()),
             # Add fields that the frontend expects
             'decision_type': thought_data.get('decision_type', 'ANALYSIS'),
             'token_symbol': thought_data.get('token_symbol', ''),
-            'thought_content': thought_data.get('primary_reasoning', thought_data.get('reasoning', '')),
+            'thought_content': reasoning_text,
             'thought_id': thought_data.get('thought_id', str(uuid.uuid4()))
         }
     
         # CRITICAL: Use 'thought_log_created' to match what JavaScript expects
         return self.send_update(account_id, 'thought_log_created', formatted_thought)
-
-
-
-
 
     def send_performance_update(
         self,
@@ -360,6 +374,7 @@ class WebSocketNotificationService:
         - Decimal to float conversion
         - datetime to ISO format string
         - UUID to string
+        - Enum to value extraction
         - Nested dictionaries and lists
         
         Args:
@@ -389,6 +404,10 @@ class WebSocketNotificationService:
         if isinstance(data, uuid.UUID):
             return str(data)
         
+        # Handle Enum types - extract the value
+        if isinstance(data, Enum):
+            return data.value
+        
         # For any object with a to_dict method
         if hasattr(data, 'to_dict'):
             return self._serialize_data(data.to_dict())
@@ -398,7 +417,7 @@ class WebSocketNotificationService:
             return self._serialize_data(data.__dict__)
         
         return data
-    
+
     # =========================================================================
     # UTILITY METHODS
     # =========================================================================
@@ -464,4 +483,3 @@ def notify_alert(account_id: Union[str, uuid.UUID], message: str, severity: str 
 def is_websocket_available() -> bool:
     """Check if WebSocket service is available."""
     return websocket_service.is_available()
-

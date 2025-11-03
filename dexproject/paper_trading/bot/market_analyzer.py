@@ -847,6 +847,19 @@ class MarketAnalyzer:
             )
             # Return safe default
             return Decimal('500')
+        
+    def _calculate_confidence_level(self, confidence_percent: float) -> str:
+        """Calculate confidence level category from percentage."""
+        if confidence_percent >= 90:
+            return 'VERY_HIGH'
+        elif confidence_percent >= 70:
+            return 'HIGH'
+        elif confidence_percent >= 50:
+            return 'MEDIUM'
+        elif confidence_percent >= 30:
+            return 'LOW'
+        else:
+            return 'VERY_LOW'
 
     # =========================================================================
     # AUTO-CLOSE POSITIONS (STOP-LOSS / TAKE-PROFIT)
@@ -1160,20 +1173,26 @@ class MarketAnalyzer:
 
             thought = PaperAIThoughtLog.objects.create(
                 account=self.account,
-                session=self.session,
-                action=action,
-                reasoning=reasoning,
-                confidence=Decimal(str(confidence)),
                 decision_type=decision_type,
-                token_symbol=metadata.get('token') if metadata else None,
-                metadata=metadata or {}
+                token_address=metadata.get('token_address', '0x0000000000000000000000000000000000000000'),
+                token_symbol=metadata.get('token', 'UNKNOWN'),
+                confidence_level=self._calculate_confidence_level(confidence),  # Need to add this method
+                confidence_percent=Decimal(str(confidence)),
+                risk_score=Decimal(str(metadata.get('risk_score', 50))),
+                opportunity_score=Decimal(str(metadata.get('opportunity_score', 50))),
+                primary_reasoning=reasoning,
+                key_factors=metadata.get('key_factors', []),
+                positive_signals=metadata.get('positive_signals', []),
+                negative_signals=metadata.get('negative_signals', []),
+                market_data=metadata or {},
+                strategy_name=metadata.get('strategy', ''),
+                lane_used=metadata.get('lane', 'FAST')
             )
 
             # Send WebSocket update
-            websocket_service.send_thought_log_update(
-                account_id=str(self.account.account_id),
-                thought_log=thought
-            )
+            # WebSocket update sent automatically via Django signal
+            # No need to send manually here
+            pass
 
         except Exception as e:
             logger.error(
@@ -1223,7 +1242,7 @@ class MarketAnalyzer:
 
             # Prepare status data
             status_data = {
-                'bot_status': status,
+                'bot_status': str(status) if hasattr(status, 'value') else status,
                 'intel_level': self.intelligence_engine.intel_level,
                 'tx_manager_enabled': self.use_tx_manager,
                 'circuit_breaker_enabled': self.circuit_breaker_manager is not None,
@@ -1240,7 +1259,7 @@ class MarketAnalyzer:
             # Send WebSocket update
             websocket_service.send_portfolio_update(
                 account_id=str(self.account.account_id),
-                update_data=status_data
+                portfolio_data=status_data  # ✅ Changed parameter name
             )
 
         except Exception as e:

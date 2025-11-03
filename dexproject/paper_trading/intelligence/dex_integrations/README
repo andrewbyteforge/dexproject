@@ -1,0 +1,300 @@
+# DEX Integrations Module
+
+**Phase 2: Multi-DEX Price Comparison**
+
+This module provides integrations with multiple decentralized exchanges (DEXs) for real-time on-chain price queries and liquidity checks. It enables the paper trading system to compare prices across different DEXs and select the best available price.
+
+---
+
+## 📁 File Structure
+
+```
+dex_integrations/
+├── __init__.py          # Module initialization and public API
+├── base_dex.py          # Abstract base class for all DEX integrations
+├── uniswap_v3.py        # Uniswap V3 integration
+├── sushiswap.py         # SushiSwap (V2-style) integration
+└── curve.py             # Curve Finance integration
+```
+
+---
+
+## 📄 File Descriptions
+
+### `__init__.py`
+**Purpose:** Module initialization and public API exposure
+
+**What it does:**
+- Imports and exposes all DEX classes and data structures
+- Logs initialization status showing available DEXs and features
+- Defines the public API using `__all__`
+
+**Key exports:**
+- `BaseDEX` - Base class for DEX implementations
+- `DEXPrice` - Data structure for price quotes
+- `UniswapV3DEX` - Uniswap V3 implementation
+- `SushiSwapDEX` - SushiSwap implementation
+- `CurveDEX` - Curve Finance implementation
+
+**Features logged:**
+- Real on-chain price queries
+- Parallel execution support
+- Circuit breaker protection
+- Automatic caching
+- Performance tracking
+
+---
+
+### `base_dex.py`
+**Purpose:** Abstract base class that all DEX integrations must inherit from
+
+**What it does:**
+- Defines the common interface that all DEX implementations must follow
+- Provides shared infrastructure for Web3, caching, error handling, and performance tracking
+- Implements circuit breaker pattern to disable failing DEXs temporarily
+
+**Key Components:**
+
+#### `DEXPrice` Data Class
+Represents a price quote from a specific DEX with the following fields:
+- `dex_name` - Name of the DEX
+- `token_address` - Token contract address
+- `token_symbol` - Token symbol
+- `price_usd` - Price in USD (Optional)
+- `liquidity_usd` - Available liquidity in USD (Optional)
+- `timestamp` - When quote was obtained
+- `success` - Whether query succeeded
+- `error_message` - Error message if failed
+- `response_time_ms` - Query response time
+
+#### `BaseDEX` Abstract Class
+**Abstract methods (must be implemented by subclasses):**
+- `get_token_price()` - Fetch current token price
+- `get_liquidity()` - Query available liquidity
+- `is_available()` - Check if DEX is operational
+
+**Infrastructure provided:**
+- **Web3 Client Management:** Lazy initialization of Web3 connections
+- **Caching:** Built-in price caching with configurable TTL (default 30 seconds)
+- **Circuit Breaker:** Automatically disables DEX after 5 consecutive failures for 5 minutes
+- **Performance Tracking:** Tracks total queries, success/failure rates, response times
+- **Error Handling:** Consistent error handling and logging patterns
+
+**Key Methods:**
+- `_ensure_web3_client()` - Lazy initialization of Web3 client
+- `_get_cache_key()` - Generate cache keys
+- `_get_cached_price()` / `_cache_price()` - Cache management
+- `_record_success()` / `_record_failure()` - Circuit breaker tracking
+- `get_performance_stats()` - Return performance metrics
+- `cleanup()` - Resource cleanup
+
+---
+
+### `uniswap_v3.py`
+**Purpose:** Uniswap V3 DEX integration for real price queries
+
+**What it does:**
+- Queries real Uniswap V3 pools on-chain
+- Searches across all fee tiers (0.05%, 0.3%, 1%) to find best liquidity
+- Calculates prices from pool state (sqrt price X96)
+- Returns both price and liquidity data
+
+**Key Features:**
+- **Multi-fee-tier search:** Checks all three Uniswap V3 fee tiers
+- **Best pool selection:** Chooses pool with highest liquidity
+- **Base token pairing:** Finds pairs with WETH or USDC
+- **Accurate pricing:** Uses Uniswap V3's sqrt price formula
+
+**Configuration:**
+- Factory addresses for Base Sepolia (84532), Base Mainnet (8453), Ethereum (1)
+- Base tokens: WETH and USDC addresses per chain
+- Fee tiers from `DEXComparisonDefaults.UNISWAP_V3_FEE_TIERS`
+
+**Key Methods:**
+- `get_token_price()` - Main method to get price from Uniswap V3
+- `_find_best_pool()` - Search all fee tiers and base tokens for best pool
+- `_query_pool_data()` - Query specific pool for reserves, price, and liquidity
+- `_get_base_tokens()` - Get WETH/USDC addresses for the chain
+
+**Price Calculation:**
+- Queries pool's `slot0()` for sqrt_price_x96
+- Converts sqrt price to actual price ratio: `(sqrt_price_x96 / 2^96)^2`
+- Converts to USD using base token (USDC = $1, WETH = ~$2500)
+
+---
+
+### `sushiswap.py`
+**Purpose:** SushiSwap (V2-style) DEX integration for real price queries
+
+**What it does:**
+- Queries real SushiSwap pairs on-chain
+- Uses Uniswap V2-style pair contracts
+- Calculates prices from token reserves
+- Returns price and liquidity data
+
+**Key Features:**
+- **V2-style pools:** Uses constant product (x*y=k) formula
+- **Base token pairing:** Finds pairs with WETH or USDC
+- **Best pair selection:** Chooses pair with highest liquidity
+- **Simple pricing:** Calculates from reserve ratios
+
+**Configuration:**
+- Factory addresses for Base Sepolia (84532), Base Mainnet (8453), Ethereum (1)
+- Base tokens: WETH and USDC addresses per chain
+- Includes minimal Factory and Pair ABIs
+
+**Key Methods:**
+- `get_token_price()` - Main method to get price from SushiSwap
+- `_find_best_pair()` - Search for pairs with WETH/USDC
+- `_query_pair_data()` - Query specific pair for reserves and calculate price
+- `_get_base_tokens()` - Get WETH/USDC addresses for the chain
+
+**Price Calculation:**
+- Queries pair's `getReserves()` for token reserves
+- Identifies which reserve is the target token vs base token
+- Calculates price ratio: `base_reserve / token_reserve`
+- Converts to USD based on base token
+
+**ABIs Defined:**
+- `FACTORY_ABI` - Minimal factory ABI with `getPair()` function
+- `PAIR_ABI` - Minimal pair ABI with `getReserves()`, `token0()`, `token1()`
+
+---
+
+### `curve.py`
+**Purpose:** Curve Finance DEX integration optimized for stablecoins
+
+**What it does:**
+- Provides fast-path pricing for known stablecoins (returns $1.00 instantly)
+- Queries Curve pools for other tokens (when registry available)
+- Optimized for stablecoin and similar-asset swaps
+
+**Key Features:**
+- **Stablecoin fast path:** Instantly returns $1.00 for USDC, USDT, DAI, FRAX, LUSD
+- **No on-chain query needed:** For stablecoins, no Web3 calls required
+- **Limited testnet support:** Primarily works on Ethereum Mainnet (registry available)
+- **High assumed liquidity:** Returns $1M liquidity for stablecoins
+
+**Configuration:**
+- Curve Registry addresses (currently only Ethereum Mainnet)
+- Known stablecoins dictionary: USDC, USDT, DAI, FRAX, LUSD all = $1.00
+
+**Key Methods:**
+- `get_token_price()` - Check if stablecoin first, then query pools
+- `_is_stablecoin()` - Check if token is a known stablecoin
+- `_get_stablecoin_price()` - Return $1.00 for stablecoins
+
+**Behavior:**
+- For stablecoins: Returns immediately with $1.00 price (extremely fast)
+- For other tokens on mainnet: Would query Curve registry (not fully implemented)
+- For other tokens on testnets: Returns unavailable
+
+---
+
+## 🔑 Key Concepts
+
+### Circuit Breaker Pattern
+All DEX integrations inherit circuit breaker protection from `BaseDEX`:
+- Tracks consecutive failures
+- After 5 consecutive failures, disables DEX for 5 minutes
+- Automatically re-enables after cooldown period
+- Prevents wasting resources on repeatedly failing DEXs
+
+### Caching Strategy
+All price queries are cached with configurable TTL (default 30 seconds):
+- Cache key format: `dex:{dex_name}:{chain_id}:price:{token_address}`
+- Reduces on-chain queries and improves performance
+- Cached `DEXPrice` objects include all metadata
+
+### Performance Tracking
+Each DEX instance tracks:
+- Total queries made
+- Successful vs failed queries
+- Success rate percentage
+- Average response time
+- Consecutive failure count
+- Disabled status and cooldown expiry
+
+### Base Token Strategy
+Both Uniswap V3 and SushiSwap use base tokens to find pricing pairs:
+- First priority: USDC (direct USD pricing)
+- Second priority: WETH (needs conversion to USD)
+- Searches for pairs with both base tokens
+- Selects pair with highest liquidity
+
+---
+
+## 🎯 Usage Priority
+
+When the system queries multiple DEXs:
+
+1. **Uniswap V3** - Primary DEX (most liquidity, accurate pricing)
+2. **SushiSwap** - Alternative for tokens not on Uniswap
+3. **Curve** - Specialized for stablecoins (instant pricing)
+
+The system can query all DEXs in parallel and select the best price or aggregate results.
+
+---
+
+## 🔗 Dependencies
+
+**External:**
+- `django.utils.timezone` - Timezone-aware timestamps
+- `django.core.cache` - Django cache framework
+
+**Internal:**
+- `paper_trading.intelligence.analyzers.constants` - Chain configs, ABIs, addresses
+- `paper_trading.defaults.DEXComparisonDefaults` - Configuration defaults
+
+**Required Constants:**
+- `UNISWAP_V3_FACTORY` - Factory contract addresses per chain
+- `FACTORY_ABI` - Uniswap V3 factory ABI
+- `POOL_ABI` - Uniswap V3 pool ABI
+- `FEE_TIERS` - Uniswap V3 fee tier values
+- `ENGINE_CONFIG_MODULE_AVAILABLE` - Flag for Web3 infrastructure
+- `Web3Client` - Web3 connection manager
+
+---
+
+## ⚠️ Important Notes
+
+### Centralization Opportunities
+Several areas currently have hardcoded values that should be moved to central configuration:
+
+**Token Addresses (duplicated in both uniswap_v3.py and sushiswap.py):**
+- WETH addresses per chain
+- USDC addresses per chain
+- Should be moved to `constants.py` or `defaults.py`
+
+**SushiSwap Factory Addresses:**
+- Currently hardcoded in `sushiswap.py`
+- Should be moved to `constants.py` similar to Uniswap V3
+
+**Curve Registry Addresses:**
+- Currently hardcoded in `curve.py`
+- Should be moved to `constants.py`
+
+**Known Stablecoins:**
+- Defined in `curve.py`
+- Should be moved to `defaults.py` or `constants.py`
+
+### Web3 Infrastructure
+All DEXs depend on:
+- `Web3Client` class being available
+- Engine config module initialized
+- Chain configurations present
+- Without these, DEXs gracefully fail and return error responses
+
+### Error Handling
+All methods include comprehensive error handling:
+- Try-catch blocks around Web3 calls
+- Detailed logging at appropriate levels
+- Returns `DEXPrice` with `success=False` on errors
+- Never throws unhandled exceptions
+
+### Async/Await
+All main methods are async:
+- `get_token_price()`
+- `get_liquidity()`
+- `is_available()`
+- Supports parallel execution across multiple DEXs

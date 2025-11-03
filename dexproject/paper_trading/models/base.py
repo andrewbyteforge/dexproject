@@ -285,20 +285,23 @@ class PaperTrade(models.Model):
         max_digits=36,
         decimal_places=18,
         default=Decimal('0'),
+        null=False,  # ← ADD THIS
         help_text="Amount in (wei)"
     )
     
     amount_in_usd = models.DecimalField(
         max_digits=20,
-        decimal_places=2,         # ← decimal_places before default
+        decimal_places=2,
         default=Decimal('0'),
+        null=False,  # ← ADD THIS
         help_text="Amount in USD"
     )
     
     expected_amount_out = models.DecimalField(
         max_digits=36,
+        decimal_places=18,  # ← MOVE THIS BEFORE default
         default=Decimal('0'),
-        decimal_places=18,
+        null=False,  # ← ADD THIS
         help_text="Expected output amount"
     )
     
@@ -314,8 +317,9 @@ class PaperTrade(models.Model):
     # Execution details
     simulated_gas_price_gwei = models.DecimalField(
         max_digits=10,
+        decimal_places=2,  # ← MOVE THIS BEFORE default
         default=Decimal('1.0'),
-        decimal_places=2,
+        null=False,  # ← ADD THIS
         help_text="Simulated gas price"
     )
     
@@ -325,15 +329,17 @@ class PaperTrade(models.Model):
     
     simulated_gas_cost_usd = models.DecimalField(
         max_digits=10,
+        decimal_places=2,  # ← MOVE THIS BEFORE default
         default=Decimal('0'),
-        decimal_places=2,
+        null=False,  # ← ADD THIS
         help_text="Simulated gas cost in USD"
     )
     
     simulated_slippage_percent = models.DecimalField(
         max_digits=5,
+        decimal_places=2,  # ← MOVE THIS BEFORE default
         default=Decimal('0.5'),
-        decimal_places=2,
+        null=False,  # ← ADD THIS
         help_text="Simulated slippage percentage"
     )
     
