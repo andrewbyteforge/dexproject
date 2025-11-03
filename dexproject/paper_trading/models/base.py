@@ -100,6 +100,7 @@ class PaperTradingAccount(models.Model):
     current_balance_usd = models.DecimalField(
         max_digits=20,
         decimal_places=2,
+        default=Decimal('10000.00'),
         help_text="Current virtual balance in USD"
     )
     
