@@ -458,8 +458,7 @@ class MarketAnalyzer:
                 existing_positions=existing_positions,
                 token_address=token_address,
                 token_symbol=token_symbol,
-                # NEW: Pass position data for sell evaluation
-                has_position=True,
+                # NEW: Pass position data for sell evaluation                
                 position_entry_price=avg_entry_price,
                 position_current_value=current_value,
                 position_invested=invested,

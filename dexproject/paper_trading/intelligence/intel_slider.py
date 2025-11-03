@@ -523,7 +523,12 @@ class IntelSliderEngine(IntelligenceEngine):
         existing_positions: List[Any],
         portfolio_value: Optional[Decimal] = None,
         token_address: Optional[str] = None,
-        token_symbol: Optional[str] = None
+        token_symbol: Optional[str] = None,
+        # ADD THESE FOUR NEW OPTIONAL PARAMETERS:
+        position_entry_price: Optional[Decimal] = None,
+        position_current_value: Optional[Decimal] = None,
+        position_invested: Optional[Decimal] = None,
+        position_hold_time_hours: Optional[float] = None
     ) -> TradingDecision:
         """
         Make a trading decision based on analyzed market context.
