@@ -286,23 +286,20 @@ class PaperTrade(models.Model):
         max_digits=36,
         decimal_places=18,
         default=Decimal('0'),
-        null=False,  # ← ADD THIS
         help_text="Amount in (wei)"
     )
     
     amount_in_usd = models.DecimalField(
         max_digits=20,
         decimal_places=2,
-        default=Decimal('0'),
-        null=False,  # ← ADD THIS
+        default=Decimal('10.00'),
         help_text="Amount in USD"
     )
     
     expected_amount_out = models.DecimalField(
         max_digits=36,
-        decimal_places=18,  # ← MOVE THIS BEFORE default
+        decimal_places=18,
         default=Decimal('0'),
-        null=False,  # ← ADD THIS
         help_text="Expected output amount"
     )
     
@@ -318,29 +315,27 @@ class PaperTrade(models.Model):
     # Execution details
     simulated_gas_price_gwei = models.DecimalField(
         max_digits=10,
-        decimal_places=2,  # ← MOVE THIS BEFORE default
+        decimal_places=2,
         default=Decimal('1.0'),
-        null=False,  # ← ADD THIS
         help_text="Simulated gas price"
     )
     
     simulated_gas_used = models.IntegerField(
+        default=21000,
         help_text="Simulated gas units used"
     )
     
     simulated_gas_cost_usd = models.DecimalField(
         max_digits=10,
-        decimal_places=2,  # ← MOVE THIS BEFORE default
-        default=Decimal('0'),
-        null=False,  # ← ADD THIS
+        decimal_places=2,
+        default=Decimal('0.50'),
         help_text="Simulated gas cost in USD"
     )
     
     simulated_slippage_percent = models.DecimalField(
         max_digits=5,
-        decimal_places=2,  # ← MOVE THIS BEFORE default
-        default=Decimal('0.5'),
-        null=False,  # ← ADD THIS
+        decimal_places=2,
+        default=Decimal('0.50'),
         help_text="Simulated slippage percentage"
     )
     
@@ -406,19 +401,19 @@ class PaperTrade(models.Model):
         """Validate and clean decimal fields before saving."""
         
         
-        # Convert None to Decimal(0) for required fields
+        # Convert None to Decimal for required fields with proper defaults
         if self.amount_in is None:
             self.amount_in = Decimal('0')
         if self.amount_in_usd is None:
-            self.amount_in_usd = Decimal('0')
+            self.amount_in_usd = Decimal('10.00')
         if self.expected_amount_out is None:
             self.expected_amount_out = Decimal('0')
         if self.simulated_gas_price_gwei is None:
             self.simulated_gas_price_gwei = Decimal('1.0')
         if self.simulated_gas_cost_usd is None:
-            self.simulated_gas_cost_usd = Decimal('0')
+            self.simulated_gas_cost_usd = Decimal('0.50')
         if self.simulated_slippage_percent is None:
-            self.simulated_slippage_percent = Decimal('0.5')
+            self.simulated_slippage_percent = Decimal('0.50')
         
         # Validate USD amounts ($0.01 to $100,000)
         self.amount_in_usd = validate_decimal_field(
