@@ -418,8 +418,16 @@ class DecisionMaker:
             opportunity_score = self.converter.to_decimal(opportunity_score)
             confidence_score = self.converter.to_decimal(confidence_score)
             
+            # DEBUG: Log what we received
+            self.logger.info(
+                f"[DETERMINE ACTION] has_position={has_position}, "
+                f"entry_price={position_entry_price}, "
+                f"invested={position_invested}"
+            )
+            
             # If we have a position, evaluate whether to SELL
-            if has_position and position_entry_price and position_invested:
+            if has_position and position_entry_price is not None and position_invested is not None:
+                self.logger.info("[DETERMINE ACTION] ✅ Calling _evaluate_sell_decision()")
                 return self._evaluate_sell_decision(
                     risk_score=risk_score,
                     opportunity_score=opportunity_score,
@@ -430,6 +438,7 @@ class DecisionMaker:
                     invested=position_invested,
                     hold_time_hours=position_hold_time_hours or 0
                 )
+
             
             # Otherwise, evaluate whether to BUY (new position entry)
             return self._evaluate_buy_decision(
@@ -547,7 +556,7 @@ class DecisionMaker:
             else:
                 pnl_percent = Decimal('0')
             
-            self.logger.debug(
+            self.logger.info(
                 f"[SELL EVAL] {context.token_symbol}: P&L={pnl_percent:+.2f}%, "
                 f"Risk={risk_score:.1f}, Opp={opportunity_score:.1f}, "
                 f"Hold={hold_time_hours:.1f}h"
@@ -627,7 +636,7 @@ class DecisionMaker:
                 return 'SELL'
             
             # No sell criteria met - hold position
-            self.logger.debug(
+            self.logger.info(
                 f"[SELL EVAL] SKIP - {context.token_symbol}: "
                 f"No sell criteria met, holding position (P&L={pnl_percent:+.2f}%)"
             )

@@ -879,7 +879,18 @@ class IntelSliderEngine(IntelligenceEngine):
         )
         
         # Determine action (with position data for SELL evaluation)
+        # Determine if there is an existing position
         has_position = (position_entry_price is not None and position_invested is not None)
+
+        # DEBUG: Log position data
+        self.logger.info(
+            f"[BUILD DECISION] has_position={has_position}, "
+            f"entry_price={position_entry_price}, "
+            f"invested={position_invested}, "
+            f"hold_time={position_hold_time_hours}"
+        )
+
+        # Determine action (with position data for SELL evaluation)
         action = self.decision_maker.determine_action(
             risk_score=risk_score,
             opportunity_score=opp_score,
@@ -891,6 +902,7 @@ class IntelSliderEngine(IntelligenceEngine):
             position_invested=position_invested,
             position_hold_time_hours=position_hold_time_hours
         )
+
 
         # Position sizing
         pos_pct = Decimal('0')

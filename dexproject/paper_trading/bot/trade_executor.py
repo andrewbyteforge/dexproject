@@ -576,8 +576,16 @@ class TradeExecutor:
             # Log the arbitrage trade as a separate trade record
             try:
                 # Calculate amounts in wei
-                amount_in_wei = int(opportunity.trade_amount_usd * Decimal('1e18') / opportunity.sell_price)
-                amount_out_wei = int((opportunity.trade_amount_usd + opportunity.net_profit_usd) * Decimal('1e18'))
+                token_decimals = Decimal('1000000000000000000')  # 1e18
+                usdc_decimals = Decimal('1000000')  # 1e6
+
+                # Convert to string FIRST to avoid scientific notation
+                amount_in_wei_str = str(int(
+                    (opportunity.trade_amount_usd / opportunity.sell_price) * token_decimals
+                ))
+                amount_out_wei_str = str(int(
+                    (opportunity.trade_amount_usd + opportunity.net_profit_usd) * usdc_decimals
+                ))
                 
                 # Simulate gas costs for arbitrage
                 simulated_gas_used = random.randint(300000, 400000)  # Higher for arb
@@ -590,10 +598,10 @@ class TradeExecutor:
                     token_in_address=opportunity.token_address,
                     token_out_symbol='USDC',
                     token_out_address=get_token_address('USDC', self.chain_id),
-                    amount_in=Decimal(amount_in_wei),
+                    amount_in=Decimal(amount_in_wei_str),
                     amount_in_usd=opportunity.trade_amount_usd,
-                    expected_amount_out=Decimal(amount_out_wei),
-                    actual_amount_out=Decimal(amount_out_wei),
+                    expected_amount_out=Decimal(amount_out_wei_str),
+                    actual_amount_out=Decimal(amount_out_wei_str),
                     simulated_gas_used=simulated_gas_used,
                     simulated_gas_price_gwei=simulated_gas_price_gwei,
                     simulated_gas_cost_usd=Decimal('0.10'),  # Minimal gas on Base
@@ -681,9 +689,20 @@ class TradeExecutor:
             simulated_gas_cost_usd = gas_cost_eth * eth_price
 
             # Calculate amounts in wei (for model fields)
-            # Simplified: assume 18 decimals for most tokens
-            amount_in_wei = int(amount_in_usd * Decimal('1e18') / current_price)
-            expected_amount_out_wei = amount_in_wei  # Simplified 1:1 for paper trading
+            # CRITICAL FIX: Use proper decimals per token to avoid scientific notation
+            # USDC uses 6 decimals, most other tokens use 18 decimals
+            usdc_decimals = Decimal('1000000')  # 1e6 for USDC
+            token_decimals = Decimal('1000000000000000000')  # 1e18 for most tokens
+            
+            if trade_type == 'buy':
+                # Buying: spending USDC (6 decimals), receiving token (18 decimals)
+                # Convert to string FIRST to avoid scientific notation, then to Decimal
+                amount_in_wei_str = str(int(amount_in_usd * usdc_decimals))
+                expected_amount_out_wei_str = str(int((amount_in_usd / current_price) * token_decimals))
+            else:  # sell
+                # Selling: spending token (18 decimals), receiving USDC (6 decimals)
+                amount_in_wei_str = str(int((amount_in_usd / current_price) * token_decimals))
+                expected_amount_out_wei_str = str(int(amount_in_usd * usdc_decimals))
 
             # Create trade record with CORRECT field names
             trade = PaperTrade.objects.create(
@@ -693,10 +712,10 @@ class TradeExecutor:
                 token_in_address=token_in_address,
                 token_out_symbol=token_out_symbol,
                 token_out_address=token_out_address,
-                amount_in=Decimal(amount_in_wei),
+                amount_in=Decimal(amount_in_wei_str),
                 amount_in_usd=amount_in_usd,
-                expected_amount_out=Decimal(expected_amount_out_wei),
-                actual_amount_out=Decimal(expected_amount_out_wei),
+                expected_amount_out=Decimal(expected_amount_out_wei_str),
+                actual_amount_out=Decimal(expected_amount_out_wei_str),
                 simulated_gas_used=simulated_gas_used,
                 simulated_gas_price_gwei=simulated_gas_price_gwei,
                 simulated_gas_cost_usd=simulated_gas_cost_usd,
@@ -717,12 +736,12 @@ class TradeExecutor:
                 f"[PAPER TRADE] Created: {trade_type.upper()} {token_out_symbol}, "
                 f"Amount=${amount_in_usd:.2f}, Price=${current_price:.4f}"
             )
-
+           
             # Update account balance
             if trade_type == 'buy':
                 self.account.current_balance_usd -= amount_in_usd
             elif trade_type == 'sell':
-                self.account.current_balance_usd += amount_out_usd
+                self.account.current_balance_usd += amount_in_usd  # ← FIXED! Use amount_in_usd
 
             # Update account statistics
             self.account.total_trades += 1
