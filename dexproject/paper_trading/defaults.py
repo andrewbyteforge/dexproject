@@ -70,7 +70,7 @@ class IntelligenceDefaults:
     LIQUIDITY_CHECK_DEPTH: Final[int] = 5
 
     # Chain configuration
-    DEFAULT_CHAIN_ID: Final[int] = 84532  # Base Sepolia
+    DEFAULT_CHAIN_ID: Final[int] = 8453  # Base mainnet
 
     # Lane configuration
     DEFAULT_LANE: Final[str] = 'FAST'
@@ -357,7 +357,11 @@ class DEXComparisonDefaults:
     MAX_PRICE_DEVIATION_PERCENT: Final[Decimal] = Decimal('20.0')  # 20%
     
     # Minimum liquidity per DEX
-    MIN_DEX_LIQUIDITY_USD: Final[Decimal] = Decimal('10000.00')  # $10K
+    # Minimum liquidity per DEX (mainnet thresholds)
+    MIN_LIQUIDITY_USD_UNISWAP_V3: Final[Decimal] = Decimal('50000.00')  # $50k minimum
+    MIN_LIQUIDITY_USD_SUSHISWAP: Final[Decimal] = Decimal('25000.00')   # $25k minimum  
+    MIN_LIQUIDITY_USD_CURVE: Final[Decimal] = Decimal('100000.00')      # $100k minimum (stablecoins)
+    MIN_DEX_LIQUIDITY_USD: Final[Decimal] = Decimal('50000.00')  # Generic fallback
     
     # Maximum concurrent DEX queries
     MAX_CONCURRENT_DEX_QUERIES: Final[int] = 5

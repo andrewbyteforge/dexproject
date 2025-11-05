@@ -12,8 +12,8 @@ This module provides integrations with multiple decentralized exchanges (DEXs) f
 dex_integrations/
 ├── __init__.py          # Module initialization and public API
 ├── base_dex.py          # Abstract base class for all DEX integrations
-├── uniswap_v3.py        # Uniswap V3 integration
-├── sushiswap.py         # SushiSwap (V2-style) integration
+├── uniswap_v3.py        # Uniswap V3 integration (FIXED: uses balanceOf)
+├── sushiswap.py         # SushiSwap (V2-style) integration (FIXED: normalizes decimals)
 └── curve.py             # Curve Finance integration
 ```
 
@@ -96,14 +96,15 @@ Represents a price quote from a specific DEX with the following fields:
 **What it does:**
 - Queries real Uniswap V3 pools on-chain
 - Searches across all fee tiers (0.05%, 0.3%, 1%) to find best liquidity
-- Calculates prices from pool state (sqrt price X96)
+- Calculates prices from actual pool token balances (using `balanceOf`)
 - Returns both price and liquidity data
 
 **Key Features:**
 - **Multi-fee-tier search:** Checks all three Uniswap V3 fee tiers
 - **Best pool selection:** Chooses pool with highest liquidity
 - **Base token pairing:** Finds pairs with WETH or USDC
-- **Accurate pricing:** Uses Uniswap V3's sqrt price formula
+- **Accurate pricing:** Uses actual token balances, not sqrt price formulas
+- **Includes ERC20 ABI:** Minimal ABI for `balanceOf` and `decimals` queries
 
 **Configuration:**
 - Factory addresses for Base Sepolia (84532), Base Mainnet (8453), Ethereum (1)
@@ -116,10 +117,20 @@ Represents a price quote from a specific DEX with the following fields:
 - `_query_pool_data()` - Query specific pool for reserves, price, and liquidity
 - `_get_base_tokens()` - Get WETH/USDC addresses for the chain
 
-**Price Calculation:**
-- Queries pool's `slot0()` for sqrt_price_x96
-- Converts sqrt price to actual price ratio: `(sqrt_price_x96 / 2^96)^2`
-- Converts to USD using base token (USDC = $1, WETH = ~$2500)
+**Price Calculation (FIXED):**
+1. Queries pool's `token0()` and `token1()` to identify which tokens are in the pool
+2. Creates ERC20 contracts for both tokens
+3. Uses `balanceOf(pool_address)` to get actual token amounts held by the pool
+4. Gets `decimals()` for both tokens to properly normalize raw balances
+5. Normalizes raw balances: `amount = raw_balance / (10 ** decimals)`
+6. Calculates price ratio from actual amounts: `price = base_amount / token_amount`
+7. Converts to USD using base token (USDC = $1, WETH = ~$2500)
+8. Calculates liquidity: `liquidity_usd = base_amount * base_price * 2`
+
+**Why This Fix Matters:**
+- ❌ OLD METHOD: Used `slot0()` sqrt_price_x96 which required complex math and was error-prone
+- ✅ NEW METHOD: Uses actual token balances which is straightforward and accurate
+- Prevents returning $0 or billions for prices
 
 ---
 
@@ -129,14 +140,15 @@ Represents a price quote from a specific DEX with the following fields:
 **What it does:**
 - Queries real SushiSwap pairs on-chain
 - Uses Uniswap V2-style pair contracts
-- Calculates prices from token reserves
+- Calculates prices from token reserves (properly normalized for decimals)
 - Returns price and liquidity data
 
 **Key Features:**
 - **V2-style pools:** Uses constant product (x*y=k) formula
 - **Base token pairing:** Finds pairs with WETH or USDC
 - **Best pair selection:** Chooses pair with highest liquidity
-- **Simple pricing:** Calculates from reserve ratios
+- **Decimal-aware pricing:** Normalizes reserves before calculating price
+- **Includes ERC20 ABI:** Minimal ABI for `decimals` queries
 
 **Configuration:**
 - Factory addresses for Base Sepolia (84532), Base Mainnet (8453), Ethereum (1)
@@ -149,15 +161,29 @@ Represents a price quote from a specific DEX with the following fields:
 - `_query_pair_data()` - Query specific pair for reserves and calculate price
 - `_get_base_tokens()` - Get WETH/USDC addresses for the chain
 
-**Price Calculation:**
-- Queries pair's `getReserves()` for token reserves
-- Identifies which reserve is the target token vs base token
-- Calculates price ratio: `base_reserve / token_reserve`
-- Converts to USD based on base token
+**Price Calculation (FIXED):**
+1. Queries pair's `getReserves()` for raw token reserves (in wei/smallest units)
+2. Queries `token0()` and `token1()` to identify which reserve is which
+3. Determines which reserve corresponds to our token vs base token
+4. **CRITICAL:** Gets `decimals()` for BOTH tokens before any calculations
+5. **Normalizes reserves to actual amounts FIRST:**
+   - `token_amount = raw_reserve / (10 ** token_decimals)`
+   - `base_amount = raw_reserve / (10 ** base_decimals)`
+6. **Only then calculates price:** `price_ratio = base_amount / token_amount`
+7. Converts to USD based on base token (USDC = $1, WETH = ~$2500)
+8. Calculates liquidity: `liquidity_usd = base_amount * base_price * 2`
+
+**Why This Fix Matters:**
+- ❌ OLD METHOD: Calculated price from raw reserves, then divided by decimals (WRONG ORDER)
+- ✅ NEW METHOD: Normalizes reserves FIRST, then calculates price (CORRECT ORDER)
+- Example: If USDC (6 decimals) and TOKEN (18 decimals) both have reserve of 1,000,000:
+  - OLD: `price = 1000000 / 1000000 = 1`, then adjust = totally wrong
+  - NEW: `usdc = 1000000/(10^6) = 1`, `token = 1000000/(10^18) = 0.000001`, `price = 1/0.000001 = 1,000,000` ✅
 
 **ABIs Defined:**
 - `FACTORY_ABI` - Minimal factory ABI with `getPair()` function
 - `PAIR_ABI` - Minimal pair ABI with `getReserves()`, `token0()`, `token1()`
+- `ERC20_ABI` - Minimal ERC20 ABI with `decimals()` function
 
 ---
 
@@ -278,6 +304,10 @@ Several areas currently have hardcoded values that should be moved to central co
 - Defined in `curve.py`
 - Should be moved to `defaults.py` or `constants.py`
 
+**ERC20 ABI:**
+- Currently duplicated in both `uniswap_v3.py` and `sushiswap.py`
+- Should be defined once in `constants.py` and imported
+
 ### Web3 Infrastructure
 All DEXs depend on:
 - `Web3Client` class being available
@@ -298,3 +328,17 @@ All main methods are async:
 - `get_liquidity()`
 - `is_available()`
 - Supports parallel execution across multiple DEXs
+
+---
+
+## 🛠️ Recent Fixes Applied
+
+### Uniswap V3 Fix
+**Problem:** Used broken `sqrt_price_x96` calculation that returned $0 or billions
+**Solution:** Now uses `balanceOf()` to get actual token reserves and calculates price from real token amounts
+
+### SushiSwap Fix  
+**Problem:** Calculated price from raw reserves without normalizing for decimals first
+**Solution:** Now gets decimals for both tokens and normalizes reserves BEFORE calculating price ratio
+
+Both fixes ensure accurate price calculations by working with actual token amounts rather than raw blockchain values.

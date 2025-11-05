@@ -147,7 +147,7 @@ class DEXPriceComparator:
     
     def __init__(
         self,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         enabled_dexs: Optional[List[str]] = None
     ):
         """
@@ -293,6 +293,38 @@ class DEXPriceComparator:
                 token_address,
                 token_symbol
             )
+
+            # ===================================================================
+            # LIQUIDITY FILTERING - Filter out low-liquidity pools
+            # ===================================================================
+            filtered_prices = []
+            for price in prices:
+                if not price.success or not price.liquidity_usd:
+                    # Keep failed prices for debugging
+                    filtered_prices.append(price)
+                    continue
+                
+                # Get minimum liquidity threshold for this DEX
+                min_liquidity = self._get_min_liquidity_for_dex(price.dex_name)
+                
+                if price.liquidity_usd >= min_liquidity:
+                    filtered_prices.append(price)
+                    self.logger.debug(
+                        f"[{price.dex_name.upper()}] ✅ Liquidity OK: "
+                        f"${price.liquidity_usd:,.0f} >= ${min_liquidity:,.0f}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"[{price.dex_name.upper()}] ❌ REJECTED - Low liquidity: "
+                        f"${price.liquidity_usd:,.0f} < ${min_liquidity:,.0f}"
+                    )
+                    # Mark as failed and keep for debugging
+                    price.success = False
+                    price.error_message = f"Insufficient liquidity: ${price.liquidity_usd:,.0f}"
+                    filtered_prices.append(price)
+
+            prices = filtered_prices
+            # ===================================================================
             
             # Calculate comparison time
             comparison_time_ms = (time_module.time() - start_time) * 1000
@@ -480,6 +512,23 @@ class DEXPriceComparator:
     # =========================================================================
     # PERFORMANCE METRICS
     # =========================================================================
+
+    def _get_min_liquidity_for_dex(self, dex_name: str) -> Decimal:
+        """
+        Get minimum liquidity threshold for specific DEX.
+        
+        Args:
+            dex_name: Name of the DEX
+            
+        Returns:
+            Minimum liquidity threshold in USD
+        """
+        thresholds = {
+            DEXNames.UNISWAP_V3: DEXComparisonDefaults.MIN_LIQUIDITY_USD_UNISWAP_V3,
+            DEXNames.SUSHISWAP: DEXComparisonDefaults.MIN_LIQUIDITY_USD_SUSHISWAP,
+            DEXNames.CURVE: DEXComparisonDefaults.MIN_LIQUIDITY_USD_CURVE,
+        }
+        return thresholds.get(dex_name, DEXComparisonDefaults.MIN_DEX_LIQUIDITY_USD)
     
     def get_performance_stats(self) -> Dict[str, Any]:
         """

@@ -111,7 +111,7 @@ class BaseDEX(ABC):
     def __init__(
         self,
         dex_name: str,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         cache_ttl_seconds: int = 60
     ):
         """
@@ -266,7 +266,7 @@ class UniswapV3DEX(BaseDEX):
     - Automatic best pool selection
     
     Usage:
-        dex = UniswapV3DEX(chain_id=84532)
+        dex = UniswapV3DEX(chain_id=8453)
         price = await dex.get_token_price(
             token_address='0x...',
             token_symbol='WETH'
@@ -275,7 +275,7 @@ class UniswapV3DEX(BaseDEX):
     
     def __init__(
         self,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         cache_ttl_seconds: int = 60
     ):
         """
@@ -555,7 +555,7 @@ class SushiSwapDEX(BaseDEX):
     
     def __init__(
         self,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         cache_ttl_seconds: int = 60
     ):
         super().__init__(
@@ -599,7 +599,7 @@ class CurveDEX(BaseDEX):
     
     def __init__(
         self,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         cache_ttl_seconds: int = 60
     ):
         super().__init__(

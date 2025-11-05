@@ -58,6 +58,7 @@ FACTORY_ABI: List[Dict[str, Any]] = [
 ]
 
 # Uniswap V3 Pool ABI (minimal - just what we need for liquidity and price data)
+# UPDATED: Added token0() and token1() functions for proper TVL calculation
 POOL_ABI: List[Dict[str, Any]] = [
     {
         "inputs": [],
@@ -78,6 +79,20 @@ POOL_ABI: List[Dict[str, Any]] = [
             {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"},
             {"internalType": "bool", "name": "unlocked", "type": "bool"}
         ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "token0",
+        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "token1",
+        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
         "stateMutability": "view",
         "type": "function"
     }

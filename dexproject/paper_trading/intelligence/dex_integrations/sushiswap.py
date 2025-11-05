@@ -6,6 +6,8 @@ price comparison. It queries real SushiSwap pools on-chain for price data.
 
 Phase 2: Multi-DEX Price Comparison
 File: paper_trading/intelligence/dex_integrations/sushiswap.py
+
+FIXED: Proper price calculation - normalizes reserves for decimals BEFORE calculating price
 """
 
 import logging
@@ -78,6 +80,17 @@ PAIR_ABI = [
     }
 ]
 
+# ERC20 ABI for getting token decimals
+ERC20_ABI = [
+    {
+        "constant": True,
+        "inputs": [],
+        "name": "decimals",
+        "outputs": [{"name": "", "type": "uint8"}],
+        "type": "function"
+    }
+]
+
 
 # =============================================================================
 # SUSHISWAP DEX INTEGRATION
@@ -90,8 +103,11 @@ class SushiSwapDEX(BaseDEX):
     Features:
     - Queries real SushiSwap pairs on-chain
     - Uses Uniswap V2-style pair contracts
-    - Calculates prices from reserves
+    - Calculates prices from reserves (FIXED: now normalizes for decimals)
     - Returns liquidity data for risk assessment
+    
+    FIXED: Now properly normalizes token reserves for decimals BEFORE
+    calculating price ratio, preventing $0 or billion dollar prices.
     """
     
     def __init__(
@@ -184,8 +200,10 @@ class SushiSwapDEX(BaseDEX):
         1. Checks cache first
         2. Finds pair with WETH or USDC
         3. Queries pair for reserves
-        4. Calculates price from reserves
-        5. Caches result
+        4. Gets token decimals for both tokens
+        5. Normalizes reserves to actual amounts
+        6. Calculates price from actual amounts (FIXED)
+        7. Caches result
         
         Args:
             token_address: Token contract address
@@ -370,7 +388,7 @@ class SushiSwapDEX(BaseDEX):
                     if pair_address == '0x0000000000000000000000000000000000000000':
                         continue
                     
-                    # Query pair for reserves and price
+                    # Query pair for reserves and price (FIXED METHOD)
                     pair_data = await self._query_pair_data(
                         web3_client,
                         pair_address,
@@ -413,6 +431,9 @@ class SushiSwapDEX(BaseDEX):
         """
         Query SushiSwap pair for price and liquidity data.
         
+        FIXED: Now properly gets decimals for both tokens and normalizes
+        reserves BEFORE calculating price ratio.
+        
         Args:
             web3_client: Connected Web3 client
             pair_address: Pair contract address
@@ -443,36 +464,76 @@ class SushiSwapDEX(BaseDEX):
             
             if token0_lower == token_address_lower:
                 # Token is token0
-                token_reserve = reserve0
-                base_reserve = reserve1
+                token_reserve_raw = reserve0
+                base_reserve_raw = reserve1
+                our_token_address = token0
+                their_token_address = token1
             else:
                 # Token is token1
-                token_reserve = reserve1
-                base_reserve = reserve0
+                token_reserve_raw = reserve1
+                base_reserve_raw = reserve0
+                our_token_address = token1
+                their_token_address = token0
             
-            # Calculate price (base per token)
-            if token_reserve > 0:
-                price_ratio = base_reserve / token_reserve
-            else:
+            # FIXED: Get decimals for both tokens
+            our_token_contract = web3_client.web3.eth.contract(
+                address=web3_client.web3.to_checksum_address(our_token_address),
+                abi=ERC20_ABI
+            )
+            their_token_contract = web3_client.web3.eth.contract(
+                address=web3_client.web3.to_checksum_address(their_token_address),
+                abi=ERC20_ABI
+            )
+            
+            our_token_decimals = our_token_contract.functions.decimals().call()
+            their_token_decimals = their_token_contract.functions.decimals().call()
+            
+            # FIXED: Normalize reserves to actual token amounts FIRST
+            token_amount = token_reserve_raw / Decimal(10 ** our_token_decimals)
+            base_amount = base_reserve_raw / Decimal(10 ** their_token_decimals)
+            
+            # Safety check: ensure we have liquidity
+            if token_amount <= 0 or base_amount <= 0:
+                self.logger.debug(
+                    f"[SUSHISWAP] Pair {pair_address[:10]}... has zero liquidity"
+                )
                 return None
             
-            # Convert to USD price
-            if base_token['symbol'] == 'USDC':
-                price_usd = price_ratio / Decimal(1e6)  # USDC has 6 decimals
-            else:
-                # Approximate WETH price
-                price_usd = (price_ratio / Decimal(1e18)) * Decimal('2500')
+            # FIXED: Calculate price from actual amounts (not raw reserves)
+            price_ratio = base_amount / token_amount
             
-            # Estimate total liquidity in USD
-            liquidity_usd = (base_reserve / Decimal(1e6 if base_token['symbol'] == 'USDC' else 1e18)) * Decimal('2')
+            # Convert to USD price based on base token
+            if base_token['symbol'] == 'USDC':
+                # USDC is approximately $1
+                price_usd = price_ratio
+            else:
+                # WETH - approximate at $2500 (simplified)
+                price_usd = price_ratio * Decimal('2500')
+            
+            # Calculate total liquidity in USD
+            # Total pool value = (base_amount * base_token_usd_price) * 2
+            if base_token['symbol'] == 'USDC':
+                base_token_usd_price = Decimal('1')
+            else:
+                base_token_usd_price = Decimal('2500')  # WETH approximate
+            
+            liquidity_usd = base_amount * base_token_usd_price * Decimal('2')
+            
+            self.logger.debug(
+                f"[SUSHISWAP] Pair {pair_address[:10]}... | "
+                f"Token amount: {token_amount:.4f}, "
+                f"Base amount: {base_amount:.4f}, "
+                f"Price: ${price_usd:.4f}, "
+                f"Liquidity: ${liquidity_usd:,.0f}"
+            )
             
             return {
                 'pair_address': pair_address,
                 'base_token': base_token['symbol'],
                 'price_usd': price_usd,
                 'liquidity_usd': liquidity_usd,
-                'token_reserve': token_reserve,
-                'base_reserve': base_reserve
+                'token_amount': token_amount,
+                'base_amount': base_amount
             }
         
         except Exception as e:
