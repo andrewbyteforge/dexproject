@@ -12,6 +12,7 @@ import logging
 from celery import Celery
 from celery.signals import setup_logging
 from django.conf import settings
+import sys
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'dexproject.settings')
@@ -25,6 +26,8 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Enhanced Celery configuration for the trading bot with risk integration
 app.conf.update(
+    worker_pool='gevent' if sys.platform == 'win32' else 'prefork',
+    worker_pool_restarts=True,
     # Task routing configuration
     task_routes={
         # =============================================================================

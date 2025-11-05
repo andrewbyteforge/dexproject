@@ -28,6 +28,7 @@ File: dexproject/paper_trading/bot/market_analyzer.py
 import logging
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
+from datetime import timedelta
 
 from django.utils import timezone
 from asgiref.sync import async_to_sync
@@ -46,6 +47,15 @@ from paper_trading.intelligence.base import (
     TradingDecision
 )
 from paper_trading.intelligence.intel_slider import IntelSliderEngine
+
+# Import arbitrage detection components
+try:
+    from paper_trading.intelligence.dex_price_comparator import DEXPriceComparator
+    from paper_trading.intelligence.arbitrage_detector import ArbitrageDetector
+    ARBITRAGE_AVAILABLE = True
+except ImportError as e:
+    ARBITRAGE_AVAILABLE = False
+    # Will log warning after logger is initialized
 
 # Import WebSocket service
 from paper_trading.services.websocket_service import websocket_service
@@ -123,6 +133,55 @@ class MarketAnalyzer:
         self.tick_count = 0
         self.last_decisions: Dict[str, TradingDecision] = {}
         self.pending_transactions: List[Any] = []
+
+        # Trade cooldowns - prevent overtrading same token
+        self.trade_cooldowns: Dict[str, Any] = {}  # token_symbol -> last_trade_time
+        self.cooldown_minutes = 15  # Wait 15 minutes between trades on same token
+
+        # Arbitrage detection components
+        self.arbitrage_detector = None
+        self.dex_comparator = None
+        self.check_arbitrage = False
+        self.arbitrage_opportunities_found = 0
+        self.arbitrage_trades_executed = 0
+
+        # Initialize arbitrage detection if available and enabled
+        if ARBITRAGE_AVAILABLE:
+            enable_arb = getattr(strategy_config, 'enable_arbitrage_detection', True) if strategy_config else True
+            
+            if enable_arb:
+                try:
+                    # Get chain_id from intelligence engine
+                    chain_id = getattr(intelligence_engine, 'chain_id', 84532)
+                    
+                    # Initialize DEX price comparator
+                    self.dex_comparator = DEXPriceComparator(
+                        chain_id=chain_id
+                    )
+                    
+                    # Initialize arbitrage detector with sensible defaults
+                    self.arbitrage_detector = ArbitrageDetector(
+                        gas_price_gwei=Decimal('1.0'),  # Will update dynamically
+                        min_spread_percent=Decimal('0.5'),  # 0.5% minimum spread
+                        min_profit_usd=Decimal('10')  # $10 minimum profit
+                    )
+                    
+                    self.check_arbitrage = True
+                    
+                    logger.info(
+                        "[MARKET ANALYZER] ✅ Arbitrage detection ENABLED "
+                        f"(chain: {chain_id})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[MARKET ANALYZER] Failed to initialize arbitrage: {e}",
+                        exc_info=True
+                    )
+                    self.check_arbitrage = False
+            else:
+                logger.info("[MARKET ANALYZER] Arbitrage detection disabled by config")
+        else:
+            logger.warning("[MARKET ANALYZER] Arbitrage detection not available")
 
         logger.info(
             f"[MARKET ANALYZER] Initialized for account: {account.account_id}"
@@ -238,6 +297,15 @@ class MarketAnalyzer:
         # Update performance metrics periodically
         if self.tick_count % 20 == 0:
             self._update_performance_metrics(trade_executor)
+            
+            # Log arbitrage stats periodically
+            if self.check_arbitrage:
+                arb_stats = self.get_arbitrage_stats()
+                logger.info(
+                    f"[ARBITRAGE STATS] Opportunities: {arb_stats['opportunities_found']}, "
+                    f"Executed: {arb_stats['trades_executed']}, "
+                    f"Success Rate: {arb_stats['success_rate']:.1f}%"
+                )
 
         # Send bot status update
         self._send_bot_status_update(
@@ -450,6 +518,68 @@ class MarketAnalyzer:
             # Update engine with market context
             self.intelligence_engine.update_market_context(market_context)
 
+            # =====================================================================
+            # ARBITRAGE DETECTION: Check if we can sell at better price on another DEX
+            # =====================================================================
+            arbitrage_opportunity = None
+            if self.check_arbitrage and self.dex_comparator and self.arbitrage_detector:
+                try:
+                    logger.debug(
+                        f"[ARBITRAGE] Checking for better sell prices for {token_symbol}..."
+                    )
+                    
+                    # Compare prices across DEXs
+                    price_comparison = async_to_sync(self.dex_comparator.compare_prices)(
+                        token_address=token_address,
+                        token_symbol=token_symbol,
+                        use_cache=True
+                    )
+                    
+                    # Detect arbitrage opportunity
+                    if price_comparison.successful_queries >= 2:
+                        arbitrage_opportunity = self.arbitrage_detector.detect_arbitrage(
+                            price_comparison=price_comparison,
+                            trade_amount_usd=current_value
+                        )
+                        
+                        if arbitrage_opportunity and arbitrage_opportunity.is_profitable:
+                            self.arbitrage_opportunities_found += 1
+                            
+                            logger.info(
+                                f"[ARBITRAGE] 💰 Profitable opportunity for {token_symbol}!"
+                            )
+                            logger.info(
+                                f"[ARBITRAGE]    Current price: ${current_price:.4f}"
+                            )
+                            logger.info(
+                                f"[ARBITRAGE]    Best sell price: ${arbitrage_opportunity.sell_price:.4f} "
+                                f"on {arbitrage_opportunity.sell_dex}"
+                            )
+                            logger.info(
+                                f"[ARBITRAGE]    Spread: {arbitrage_opportunity.price_spread_percent:.2f}%"
+                            )
+                            logger.info(
+                                f"[ARBITRAGE]    Net profit: ${arbitrage_opportunity.net_profit_usd:.2f}"
+                            )
+                            
+                            # Force SELL decision if arbitrage is profitable
+                            # This overrides market sentiment - profit is profit!
+                        else:
+                            logger.debug(
+                                f"[ARBITRAGE] No profitable opportunity for {token_symbol} "
+                                f"(spread: {price_comparison.price_spread_percent:.2f}%)"
+                            )
+                    else:
+                        logger.debug(
+                            f"[ARBITRAGE] Insufficient DEX quotes for {token_symbol} "
+                            f"({price_comparison.successful_queries} quotes)"
+                        )
+                        
+                except Exception as e:
+                    logger.warning(
+                        f"[ARBITRAGE] Error checking arbitrage for {token_symbol}: {e}"
+                    )
+
             # Make intelligent decision with POSITION DATA
             # This is the key: we're passing position information!
             decision = async_to_sync(self.intelligence_engine.make_decision)(
@@ -470,19 +600,51 @@ class MarketAnalyzer:
             if invested > 0:
                 pnl_percent = ((current_value - invested) / invested) * Decimal('100')
 
-            # If decision is SELL, execute it
-            if decision.action == 'SELL':
+            # =====================================================================
+            # DECISION OVERRIDE: Arbitrage takes precedence over market sentiment
+            # =====================================================================
+            should_sell = decision.action == 'SELL'
+            sell_reason = decision.primary_reasoning
+            decision_type = "INTELLIGENT_EXIT"
+            
+            # Override decision if profitable arbitrage exists
+            if arbitrage_opportunity and arbitrage_opportunity.is_profitable:
+                should_sell = True
+                sell_reason = (
+                    f"Arbitrage opportunity: {arbitrage_opportunity.price_spread_percent:.2f}% "
+                    f"spread detected. Can sell on {arbitrage_opportunity.sell_dex} at "
+                    f"${arbitrage_opportunity.sell_price:.4f} for "
+                    f"${arbitrage_opportunity.net_profit_usd:.2f} profit after gas."
+                )
+                decision_type = "ARBITRAGE_EXIT"
                 logger.info(
-                    f"[SELL CHECK] 🎯 Intelligent SELL signal for {token_symbol}: "
-                    f"P&L={pnl_percent:+.2f}%, Hold={hold_time_hours:.1f}h"
+                    f"[ARBITRAGE] 🚀 Overriding decision to SELL {token_symbol} "
+                    f"for arbitrage profit!"
+                )
+
+            # Check if we should execute the sell
+            if should_sell:
+                # Check trade cooldown
+                if self._is_on_cooldown(token_symbol):
+                    cooldown_remaining = self._get_cooldown_remaining(token_symbol)
+                    logger.info(
+                        f"[COOLDOWN] Skipping {token_symbol} sell - "
+                        f"cooldown active ({cooldown_remaining:.1f} min remaining)"
+                    )
+                    return
+                
+                logger.info(
+                    f"[SELL CHECK] 🎯 SELL signal for {token_symbol}: "
+                    f"P&L={pnl_percent:+.2f}%, Hold={hold_time_hours:.1f}h, "
+                    f"Type={decision_type}"
                 )
                 
-                # Log the intelligent sell decision
+                # Log the sell decision
                 self._log_thought(
                     action='SELL',
-                    reasoning=decision.primary_reasoning,
+                    reasoning=sell_reason,
                     confidence=float(decision.overall_confidence),
-                    decision_type="INTELLIGENT_EXIT",
+                    decision_type=decision_type,
                     metadata={
                         'token': token_symbol,
                         'token_address': token_address,
@@ -494,7 +656,8 @@ class MarketAnalyzer:
                         'risk_score': float(decision.risk_score),
                         'opportunity_score': float(decision.opportunity_score),
                         'trend': trend_direction,
-                        'data_quality': data_quality
+                        'data_quality': data_quality,
+                        'arbitrage_opportunity': arbitrage_opportunity.to_dict() if arbitrage_opportunity else None
                     }
                 )
 
@@ -507,8 +670,15 @@ class MarketAnalyzer:
                 )
 
                 if success:
+                    # Set cooldown for this token
+                    self._set_trade_cooldown(token_symbol)
+                    
+                    # Track arbitrage trade if applicable
+                    if decision_type == "ARBITRAGE_EXIT":
+                        self.arbitrage_trades_executed += 1
+                    
                     logger.info(
-                        f"[SELL CHECK] ✅ Executed intelligent sell for {token_symbol}"
+                        f"[SELL CHECK] ✅ Executed sell for {token_symbol}"
                     )
                 else:
                     logger.warning(
@@ -766,12 +936,25 @@ class MarketAnalyzer:
                 )
             
             if decision.action in ['BUY', 'SELL']:
-                trade_executor.execute_trade(
-                    decision=decision,
-                    token_symbol=token_symbol,
-                    current_price=current_price,
-                    position_manager=position_manager
-                )
+                # Check trade cooldown before executing
+                if self._is_on_cooldown(token_symbol):
+                    cooldown_remaining = self._get_cooldown_remaining(token_symbol)
+                    logger.info(
+                        f"[COOLDOWN] Skipping {decision.action} on {token_symbol} - "
+                        f"cooldown active ({cooldown_remaining:.1f} min remaining)"
+                    )
+                else:
+                    # Execute trade
+                    success = trade_executor.execute_trade(
+                        decision=decision,
+                        token_symbol=token_symbol,
+                        current_price=current_price,
+                        position_manager=position_manager
+                    )
+                    
+                    # Set cooldown if trade was successful
+                    if success:
+                        self._set_trade_cooldown(token_symbol)
 
             # Track the decision
             self.last_decisions[token_symbol] = decision
@@ -791,7 +974,8 @@ class MarketAnalyzer:
         Update market prices for all tokens.
 
         This method refreshes price data from the price service to ensure
-        we have the latest market information.
+        we have the latest market information. Also updates gas prices for
+        arbitrage calculations.
 
         Args:
             price_manager: RealPriceManager instance
@@ -800,6 +984,22 @@ class MarketAnalyzer:
             logger.debug("[PRICES] Updating market prices...")
             price_manager.update_prices()
             logger.debug("[PRICES] Market prices updated successfully")
+            
+            # Update gas price for arbitrage calculations
+            if self.arbitrage_detector:
+                try:
+                    # Try to get gas price from price manager
+                    if hasattr(price_manager, 'get_gas_price'):
+                        gas_price_gwei = price_manager.get_gas_price()
+                        if gas_price_gwei:
+                            self.update_gas_price(Decimal(str(gas_price_gwei)))
+                    else:
+                        # Use conservative default if not available
+                        # On Base, gas is typically very low (< 1 gwei)
+                        self.update_gas_price(Decimal('0.5'))
+                except Exception as gas_error:
+                    logger.debug(f"[PRICES] Could not update gas price: {gas_error}")
+                    
         except Exception as e:
             logger.error(
                 f"[MARKET ANALYZER] Failed to update market prices: {e}",
@@ -1251,7 +1451,11 @@ class MarketAnalyzer:
                 'pending_transactions': len(self.pending_transactions),
                 'consecutive_failures': 0,  # Placeholder
                 'daily_trades': 0,  # Placeholder
-                'timestamp': timezone.now().isoformat()
+                'timestamp': timezone.now().isoformat(),
+                # Arbitrage stats (new)
+                'arbitrage_enabled': self.check_arbitrage,
+                'arbitrage_opportunities_found': self.arbitrage_opportunities_found,
+                'arbitrage_trades_executed': self.arbitrage_trades_executed
             }
 
             # Send WebSocket update
@@ -1263,5 +1467,139 @@ class MarketAnalyzer:
         except Exception as e:
             logger.error(
                 f"[STATUS UPDATE] Failed to send bot status: {e}",
+                exc_info=True
+            )
+
+    # =========================================================================
+    # TRADE COOLDOWN MANAGEMENT
+    # =========================================================================
+
+    def _is_on_cooldown(self, token_symbol: str) -> bool:
+        """
+        Check if token is on trade cooldown.
+        
+        Args:
+            token_symbol: Token symbol to check
+            
+        Returns:
+            True if on cooldown, False otherwise
+        """
+        if token_symbol not in self.trade_cooldowns:
+            return False
+        
+        last_trade_time = self.trade_cooldowns[token_symbol]
+        cooldown_until = last_trade_time + timedelta(minutes=self.cooldown_minutes)
+        
+        return timezone.now() < cooldown_until
+
+    def _get_cooldown_remaining(self, token_symbol: str) -> float:
+        """
+        Get remaining cooldown time in minutes.
+        
+        Args:
+            token_symbol: Token symbol
+            
+        Returns:
+            Remaining cooldown time in minutes
+        """
+        if token_symbol not in self.trade_cooldowns:
+            return 0.0
+        
+        last_trade_time = self.trade_cooldowns[token_symbol]
+        cooldown_until = last_trade_time + timedelta(minutes=self.cooldown_minutes)
+        remaining = cooldown_until - timezone.now()
+        
+        return max(0.0, remaining.total_seconds() / 60)
+
+    def _set_trade_cooldown(self, token_symbol: str) -> None:
+        """
+        Set trade cooldown for token.
+        
+        Args:
+            token_symbol: Token symbol
+        """
+        self.trade_cooldowns[token_symbol] = timezone.now()
+        logger.debug(
+            f"[COOLDOWN] Set {self.cooldown_minutes}min cooldown for {token_symbol}"
+        )
+
+    # =========================================================================
+    # ARBITRAGE MANAGEMENT
+    # =========================================================================
+
+    def update_gas_price(self, gas_price_gwei: Decimal) -> None:
+        """
+        Update gas price for arbitrage calculations.
+        
+        This should be called periodically to keep arbitrage profit
+        calculations accurate with current network conditions.
+        
+        Args:
+            gas_price_gwei: Current gas price in gwei
+        """
+        if self.arbitrage_detector:
+            self.arbitrage_detector.update_gas_price(gas_price_gwei)
+            logger.debug(f"[ARBITRAGE] Updated gas price to {gas_price_gwei} gwei")
+
+    def get_arbitrage_stats(self) -> Dict[str, Any]:
+        """
+        Get arbitrage detection statistics.
+        
+        Returns:
+            Dictionary with arbitrage performance metrics
+        """
+        stats = {
+            'enabled': self.check_arbitrage,
+            'opportunities_found': self.arbitrage_opportunities_found,
+            'trades_executed': self.arbitrage_trades_executed,
+            'success_rate': 0.0
+        }
+        
+        if self.arbitrage_opportunities_found > 0:
+            stats['success_rate'] = (
+                (self.arbitrage_trades_executed / self.arbitrage_opportunities_found) * 100
+            )
+        
+        if self.arbitrage_detector:
+            stats['detector_stats'] = self.arbitrage_detector.get_performance_stats()
+        
+        if self.dex_comparator:
+            stats['comparator_stats'] = self.dex_comparator.get_performance_stats()
+        
+        return stats
+
+    # =========================================================================
+    # CLEANUP
+    # =========================================================================
+
+    async def cleanup(self) -> None:
+        """
+        Clean up resources (DEX connections, etc.).
+        
+        Call this when shutting down the bot to properly close
+        all DEX connections and clean up resources.
+        """
+        try:
+            logger.info("[MARKET ANALYZER] Starting cleanup...")
+            
+            # Clean up DEX comparator
+            if self.dex_comparator:
+                await self.dex_comparator.cleanup()
+                logger.info("[MARKET ANALYZER] DEX comparator cleaned up")
+            
+            # Log final arbitrage stats
+            if self.check_arbitrage:
+                arb_stats = self.get_arbitrage_stats()
+                logger.info(
+                    f"[ARBITRAGE] Final stats: "
+                    f"{arb_stats['opportunities_found']} opportunities found, "
+                    f"{arb_stats['trades_executed']} trades executed"
+                )
+            
+            logger.info("[MARKET ANALYZER] Cleanup complete")
+            
+        except Exception as e:
+            logger.error(
+                f"[MARKET ANALYZER] Cleanup error: {e}",
                 exc_info=True
             )
