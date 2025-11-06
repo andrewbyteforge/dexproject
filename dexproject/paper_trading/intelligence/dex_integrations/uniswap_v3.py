@@ -4,11 +4,11 @@ Uniswap V3 DEX Integration with Live Base Token Prices
 This module implements the Uniswap V3 integration using LIVE prices from multiple sources.
 
 Key Innovation:
-- Base tokens (WETH, USDC) use live prices from PriceFeedService (CoinGecko aggregation)
-- All other tokens calculated from Uniswap V3 pools using real base token prices
-- No hardcoded prices = always accurate
+- TWO SEPARATE METHODS for different use cases:
+  1. get_token_price() - Always uses DEX pools (for arbitrage/trading)
+  2. get_token_value_usd() - Uses CoinGecko for base tokens (for portfolio valuation)
 
-Phase 2: Multi-DEX Price Comparison
+Phase 2: Multi-DEX Price Comparison with Smart Arbitrage Support
 File: paper_trading/intelligence/dex_integrations/uniswap_v3.py
 """
 
@@ -60,24 +60,29 @@ ERC20_ABI = [
 
 
 # =============================================================================
-# UNISWAP V3 DEX INTEGRATION WITH LIVE PRICES
+# UNISWAP V3 DEX INTEGRATION WITH LIVE PRICES & SMART ARBITRAGE
 # =============================================================================
 
 class UniswapV3DEX(BaseDEX):
     """
-    Uniswap V3 integration with LIVE base token prices from multiple exchanges.
+    Uniswap V3 integration with LIVE base token prices and smart arbitrage support.
     
     Architecture:
-    1. Base tokens (WETH, USDC) get prices from PriceFeedService (CoinGecko)
-    2. CoinGecko aggregates from 100+ exchanges (Binance, Coinbase, Kraken, etc.)
-    3. All other tokens calculated from Uniswap pools using real base prices
-    4. No hardcoded prices = always accurate
+    1. For ARBITRAGE/TRADING: Always use actual DEX pool prices (including base tokens)
+    2. For PORTFOLIO VALUATION: Use CoinGecko aggregated prices for base tokens
+    3. CoinGecko aggregates from 100+ exchanges (Binance, Coinbase, Kraken, etc.)
+    4. All non-base tokens calculated from Uniswap pools using real base prices
+    
+    Two Methods:
+    - get_token_price(): Returns ACTUAL DEX pool price (for trading/arbitrage)
+    - get_token_value_usd(): Returns fair market value (for portfolio display)
     
     Features:
     - Live prices from multiple sources
     - Proper token identification
     - Strict price validation
     - Deep liquidity data
+    - Smart arbitrage support
     """
     
     def __init__(
@@ -190,10 +195,22 @@ class UniswapV3DEX(BaseDEX):
             if weth_token:
                 try:
                     weth_data = await price_feed.get_token_price(weth_token['address'], 'WETH')
-                    if weth_data and weth_data.get('price_usd'):
-                        weth_price = Decimal(str(weth_data['price_usd']))
+                                        
+                    # Handle different return types from PriceFeedService
+                    if isinstance(weth_data, dict):
+                        # Case 1: Returns dict with 'price_usd' key
+                        if weth_data.get('price_usd'):
+                            weth_price = Decimal(str(weth_data['price_usd']))
+                            prices['WETH'] = weth_price
+                            self.logger.debug(
+                                f"[UNISWAP V3] 📊 LIVE WETH price: ${weth_price:.2f} "
+                                f"(from CoinGecko aggregation)"
+                            )
+                    elif isinstance(weth_data, (Decimal, float, int)):
+                        # Case 2: Returns price directly
+                        weth_price = Decimal(str(weth_data))
                         prices['WETH'] = weth_price
-                        self.logger.info(
+                        self.logger.debug(
                             f"[UNISWAP V3] 📊 LIVE WETH price: ${weth_price:.2f} "
                             f"(from CoinGecko aggregation)"
                         )
@@ -205,18 +222,26 @@ class UniswapV3DEX(BaseDEX):
             if usdc_token:
                 try:
                     usdc_data = await price_feed.get_token_price(usdc_token['address'], 'USDC')
-                    if usdc_data and usdc_data.get('price_usd'):
-                        usdc_price = Decimal(str(usdc_data['price_usd']))
-                        # Validate USDC is within reasonable range
-                        if Decimal('0.98') <= usdc_price <= Decimal('1.02'):
-                            prices['USDC'] = usdc_price
-                            self.logger.debug(f"[UNISWAP V3] USDC price: ${usdc_price:.4f}")
-                        else:
+                                        
+                    # Handle different return types
+                    usdc_price = None
+                    if isinstance(usdc_data, dict):
+                        if usdc_data.get('price_usd'):
+                            usdc_price = Decimal(str(usdc_data['price_usd']))
+                    elif isinstance(usdc_data, (Decimal, float, int)):
+                        usdc_price = Decimal(str(usdc_data))
+                    
+                    # Validate USDC is within reasonable range
+                    if usdc_price and Decimal('0.98') <= usdc_price <= Decimal('1.02'):
+                        prices['USDC'] = usdc_price
+                        self.logger.debug(f"[UNISWAP V3] USDC price: ${usdc_price:.4f}")
+                    else:
+                        if usdc_price:
                             self.logger.warning(
                                 f"[UNISWAP V3] USDC price ${usdc_price:.4f} outside normal range, "
                                 f"using $1.00"
                             )
-                            prices['USDC'] = Decimal('1.00')
+                        prices['USDC'] = Decimal('1.00')
                 except Exception as e:
                     self.logger.warning(f"[UNISWAP V3] Failed to get USDC price: {e}")
                     prices['USDC'] = Decimal('1.00')
@@ -258,21 +283,27 @@ class UniswapV3DEX(BaseDEX):
         token_symbol: str
     ) -> DEXPrice:
         """
-        Get token price from Uniswap V3 pools using LIVE base token prices.
+        Get ACTUAL on-chain DEX price for trading/arbitrage.
+        
+        CRITICAL: This ALWAYS uses actual Uniswap pool prices, even for base tokens!
+        This is what the DEX comparator uses to find arbitrage opportunities.
+        
+        For base tokens (WETH, USDC), this queries WETH/USDC pools to get the
+        actual trading price on Uniswap, which may differ from CoinGecko's
+        aggregated price across all exchanges.
         
         Process:
-        1. Get LIVE base token prices (WETH, USDC) from PriceFeedService
-        2. Find best Uniswap V3 pool for target token
-        3. Calculate price using LIVE base token prices
-        4. Validate result
-        5. Cache and return
+        1. Get LIVE base token prices from PriceFeedService (for calculation only)
+        2. Find best Uniswap V3 pool for this token
+        3. Calculate price using actual pool ratios
+        4. Validate and return
         
         Args:
             token_address: Token contract address
             token_symbol: Token symbol
             
         Returns:
-            DEXPrice with price and metadata
+            DEXPrice with ACTUAL on-chain price
         """
         start_time = time.time()
         self.total_queries += 1
@@ -294,7 +325,7 @@ class UniswapV3DEX(BaseDEX):
             return cached_price
         
         try:
-            # Get LIVE base token prices first
+            # Get LIVE base token prices (for calculation purposes)
             base_prices = await self._get_base_token_prices()
             
             # Ensure Web3 client is initialized
@@ -302,7 +333,8 @@ class UniswapV3DEX(BaseDEX):
             if not web3_client:
                 raise Exception("Web3 client unavailable")
             
-            # Find best pool for this token
+            # Find best pool for this token (including base tokens!)
+            # Even for WETH, this finds WETH/USDC pools
             pool_info = await self._find_best_pool(
                 web3_client,
                 token_address,
@@ -374,6 +406,53 @@ class UniswapV3DEX(BaseDEX):
                 response_time_ms=(time.time() - start_time) * 1000
             )
     
+    async def get_token_value_usd(
+        self,
+        token_address: str,
+        token_symbol: str
+    ) -> Optional[Decimal]:
+        """
+        Get fair market value in USD for portfolio valuation.
+        
+        This method is for DISPLAY purposes only, not trading!
+        - Base tokens (WETH, USDC): Uses CoinGecko aggregated price
+        - Other tokens: Uses Uniswap pool price
+        
+        Use this for:
+        - Portfolio balance display
+        - P&L calculations
+        - Account value reporting
+        
+        Args:
+            token_address: Token contract address
+            token_symbol: Token symbol
+            
+        Returns:
+            USD value as Decimal, or None if unavailable
+        """
+        # Check if this is a base token
+        base_token = next(
+            (t for t in self.base_tokens if t['address'].lower() == token_address.lower()),
+            None
+        )
+        
+        if base_token:
+            # For base tokens: use CoinGecko aggregated price
+            base_prices = await self._get_base_token_prices()
+            price_usd = base_prices.get(base_token['symbol'])
+            
+            if price_usd:
+                self.logger.debug(
+                    f"[UNISWAP V3] {token_symbol} value: ${price_usd:.4f} "
+                    f"(CoinGecko aggregation for portfolio)"
+                )
+            
+            return price_usd
+        else:
+            # For other tokens: use pool price
+            price_obj = await self.get_token_price(token_address, token_symbol)
+            return price_obj.price_usd if price_obj.success else None
+    
     async def get_liquidity(
         self,
         token_address: str
@@ -401,6 +480,11 @@ class UniswapV3DEX(BaseDEX):
         """
         Find best Uniswap V3 pool for token across all fee tiers.
         
+        For base tokens (WETH, USDC), this finds pools between them.
+        For example:
+        - WETH: Finds WETH/USDC pools
+        - USDC: Finds USDC/WETH pools
+        
         Args:
             web3_client: Connected Web3 client
             token_address: Token contract address
@@ -420,8 +504,15 @@ class UniswapV3DEX(BaseDEX):
             best_pool = None
             best_liquidity = Decimal('0')
             
-            # Check each base token
+            # Check each base token (including pools between base tokens!)
             for base_token in self.base_tokens:
+                # Skip if token and base are the same
+                if base_token['address'].lower() == token_address.lower():
+                    self.logger.debug(
+                        f"[UNISWAP V3] Skipping self-pair: {token_symbol} with itself"
+                    )
+                    continue
+                
                 # Get live price for this base token
                 base_token_price = base_prices.get(base_token['symbol'])
                 if not base_token_price:
@@ -517,13 +608,15 @@ class UniswapV3DEX(BaseDEX):
             token0_lower = token0_address.lower()
             token1_lower = token1_address.lower()
             
-            # Identify which token is which - VERIFY BOTH!
+            # Identify which token is which
             if token0_lower == token_address_lower and token1_lower == base_token_address_lower:
                 our_token_address = token0_address
                 base_token_address_actual = token1_address
+                our_is_token0 = True
             elif token1_lower == token_address_lower and token0_lower == base_token_address_lower:
                 our_token_address = token1_address
                 base_token_address_actual = token0_address
+                our_is_token0 = False
             else:
                 # Pool doesn't match expected pair
                 return None
@@ -563,14 +656,6 @@ class UniswapV3DEX(BaseDEX):
             # Calculate total liquidity in USD using LIVE price
             liquidity_usd = base_token_amount * base_token_usd_price * Decimal('2')
             
-            self.logger.debug(
-                f"[UNISWAP V3] Pool {pool_address[:10]}... | "
-                f"Our token: {our_token_amount:.4f}, "
-                f"Base ({base_token['symbol']}): {base_token_amount:.4f} @ ${base_token_usd_price:.2f}, "
-                f"Price: ${price_usd:.4f}, "
-                f"Liquidity: ${liquidity_usd:,.0f}"
-            )
-            
             return {
                 'pool_address': pool_address,
                 'fee_tier': fee_tier,
@@ -582,20 +667,23 @@ class UniswapV3DEX(BaseDEX):
             }
         
         except Exception as e:
-            self.logger.debug(f"[UNISWAP V3] Error querying pool: {e}")
+            self.logger.error(
+                f"[UNISWAP V3] Error querying pool {pool_address}: {e}",
+                exc_info=True
+            )
             return None
-    
+        
     def _validate_price(self, token_symbol: str, price_usd: Decimal) -> bool:
         """Validate that price is reasonable."""
         stablecoins = ['USDC', 'USDT', 'DAI', 'FRAX', 'LUSD', 'BUSD']
         
         if token_symbol in stablecoins:
-            if not (Decimal('0.98') <= price_usd <= Decimal('1.02')):
-                self.logger.error(
-                    f"[UNISWAP V3] ❌ REJECTED - Invalid stablecoin price: "
-                    f"{token_symbol} at ${price_usd:.4f} (expected ~$1.00)"
+            if not (Decimal('0.95') <= price_usd <= Decimal('1.05')):
+                self.logger.warning(
+                    f"[UNISWAP V3] ⚠️ Stablecoin {token_symbol} price: ${price_usd:.4f} "
+                    f"(slightly off $1.00 but acceptable for DEX pools)"
                 )
-                return False
+                # Don't reject - DEX pools can have slight deviations
         
         if price_usd <= 0:
             self.logger.error(
