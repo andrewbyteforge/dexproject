@@ -26,10 +26,10 @@ from .api import (
     # Configuration API
     api_configuration,
     
-    # Bot Control API
-    api_start_bot,
-    api_stop_bot,
-    api_bot_status,
+    # # Bot Control API
+    # api_start_bot,
+    # api_stop_bot,
+    # api_bot_status,
     
     # Account Management API
     api_reset_account,
@@ -141,15 +141,15 @@ urlpatterns = [
 
     # Start paper trading bot
     # POST: /paper-trading/api/bot/start/
-    path('api/bot/start/', api_start_bot, name='api_start_bot'),
+    # path('api/bot/start/', api_start_bot, name='api_start_bot'),
 
-    # Stop paper trading bot
-    # POST: /paper-trading/api/bot/stop/
-    path('api/bot/stop/', api_stop_bot, name='api_stop_bot'),
+    # # Stop paper trading bot
+    # # POST: /paper-trading/api/bot/stop/
+    # path('api/bot/stop/', api_stop_bot, name='api_stop_bot'),
 
-    # Get bot status
-    # GET: /paper-trading/api/bot/status/
-    path('api/bot/status/', api_bot_status, name='api_bot_status'),
+    # # Get bot status
+    # # GET: /paper-trading/api/bot/status/
+    # path('api/bot/status/', api_bot_status, name='api_bot_status'),
 
     # ==========================================================================
     # ACCOUNT MANAGEMENT API (from api/account_management_api.py)

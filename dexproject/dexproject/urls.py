@@ -27,7 +27,7 @@ urlpatterns = [
     path('paper-trading/', include('paper_trading.urls')),
     
     # Analytics monitoring dashboard (includes both /analytics/ and /api/analytics/)
-    path('analytics/', include('analytics.urls')),
+    # path('analytics/', include('analytics.urls')),
     
     
     # API endpoints

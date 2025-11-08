@@ -56,10 +56,19 @@ import uuid
 # Add project root to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# Django setup
 import django  # noqa: E402
+from django.conf import settings  # noqa: E402
+
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'dexproject.settings')
-django.setup()
+
+# Only call django.setup() if Django hasn't been configured yet
+# This prevents conflicts when imported during Django startup
+if not settings.configured:
+    django.setup()
+
+
+
+
 
 from django.utils import timezone  # noqa: E402
 from django.contrib.auth.models import User  # noqa: E402
@@ -126,14 +135,14 @@ except ImportError:
 # ============================================================================
 # LOGGING CONFIGURATION
 # ============================================================================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('paper_trading_bot.log', encoding='utf-8')
-    ]
-)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+#     handlers=[
+#         logging.StreamHandler(),
+#         logging.FileHandler('paper_trading_bot.log', encoding='utf-8')
+#     ]
+# )
 logger = logging.getLogger(__name__)
 
 
