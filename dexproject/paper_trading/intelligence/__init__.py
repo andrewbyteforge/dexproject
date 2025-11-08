@@ -15,25 +15,25 @@ Main Components:
 File: dexproject/paper_trading/intelligence/__init__.py
 """
 
-from paper_trading.intelligence.base import (
+from paper_trading.intelligence.core.base import (
     IntelligenceEngine,
     IntelligenceLevel,
     MarketContext,
     TradingDecision
 )
 
-from paper_trading.intelligence.intel_config import (
+from paper_trading.intelligence.config.intel_config import (
     IntelLevelConfig,
     INTEL_CONFIGS
 )
 
-from paper_trading.intelligence.price_history import PriceHistory
+from paper_trading.intelligence.data.price_history import PriceHistory
 
-from paper_trading.intelligence.decision_maker import DecisionMaker
+from paper_trading.intelligence.strategies.decision_maker import DecisionMaker
 
-from paper_trading.intelligence.ml_features import MLFeatureCollector
+from paper_trading.intelligence.data.ml_features import MLFeatureCollector
 
-from paper_trading.intelligence.intel_slider import IntelSliderEngine
+from paper_trading.intelligence.core.intel_slider import IntelSliderEngine
 
 __all__ = [
     # Base classes

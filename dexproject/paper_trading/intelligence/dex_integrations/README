@@ -1,0 +1,424 @@
+# DEX Integrations - Multi-DEX Price Comparison
+
+**Location:** `dexproject/paper_trading/intelligence/dex_integrations/`  
+**Purpose:** DEX adapter implementations for querying token prices and liquidity across multiple decentralized exchanges
+
+---
+
+## Overview
+
+This module provides a unified interface for querying prices and liquidity from multiple DEXs (Uniswap, SushiSwap, Curve). Each DEX has its own adapter that implements the `BaseDEX` interface and returns standardized `DEXPrice` objects, ensuring consistency across different protocols.
+
+**Key Benefits:**
+- **Single Interface:** All DEXs use the same `get_token_price()` method
+- **Standardized Output:** All return `DEXPrice` objects with same structure
+- **Centralized Constants:** Single source of truth for addresses and ABIs
+- **Performance Tracking:** Built-in caching and metrics for each DEX
+- **Easy Extension:** Add new DEXs by implementing `BaseDEX`
+
+---
+
+## File Structure
+
+```
+dex_integrations/
+├── README                  # This file
+├── __init__.py            # Public API exports
+├── base.py                # BaseDEX class + DEXPrice dataclass
+├── constants.py           # âœ… SINGLE SOURCE OF TRUTH for all DEX constants
+├── uniswap_v3.py         # Uniswap V3 adapter (COMPLETE)
+├── sushiswap.py          # SushiSwap adapter (PLACEHOLDER)
+└── curve.py              # Curve adapter (PLACEHOLDER)
+```
+
+---
+
+## Architecture
+
+### Base Classes (`base.py`)
+
+#### `DEXPrice` Dataclass
+Standard price data structure returned by all DEX adapters:
+
+```python
+@dataclass
+class DEXPrice:
+    dex_name: str                # 'uniswap_v3', 'sushiswap', etc.
+    token_address: str           # Token contract address
+    token_symbol: str            # 'WETH', 'USDC', etc.
+    price_usd: Optional[Decimal] # Price in USD
+    liquidity_usd: Optional[Decimal]  # Pool liquidity in USD
+    pool_address: Optional[str]  # Pool/pair address
+    timestamp: datetime          # When fetched
+    success: bool                # Whether fetch succeeded
+    error_message: Optional[str] # Error details if failed
+    query_time_ms: float         # Query duration
+    data_source: str             # 'on_chain', 'api', 'cache'
+```
+
+#### `BaseDEX` Abstract Class
+All DEX adapters inherit from this and must implement:
+
+```python
+class BaseDEX(ABC):
+    @abstractmethod
+    async def get_token_price(
+        self,
+        token_address: str,
+        token_symbol: str
+    ) -> DEXPrice:
+        pass
+```
+
+**Provides:**
+- Web3 client initialization
+- Price caching with TTL
+- Performance tracking (success rate, cache hits, query times)
+- Common configuration
+
+---
+
+## DEX Implementations
+
+### 1. Uniswap V3 (`uniswap_v3.py`) âœ… COMPLETE
+
+**Status:** Fully implemented with fixed price calculation logic
+
+**Features:**
+- Queries all fee tiers (0.05%, 0.3%, 1%)
+- Checks multiple base tokens (WETH, USDC, USDT, DAI)
+- Selects pool with highest liquidity
+- Proper reserve-based price calculation using `balanceOf()`
+- Accurate liquidity calculation
+
+**Usage:**
+```python
+from paper_trading.intelligence.dex_integrations import UniswapV3DEX
+
+uniswap = UniswapV3DEX(chain_id=8453)
+price = await uniswap.get_token_price('0x...', 'WETH')
+
+if price.success:
+    print(f"Price: ${price.price_usd:.4f}")
+    print(f"Liquidity: ${price.liquidity_usd:,.0f}")
+```
+
+**Price Calculation:**
+1. Find best pool across fee tiers and base tokens
+2. Query token reserves using `token.balanceOf(pool_address)`
+3. Calculate price ratio: `price = base_reserves / token_reserves`
+4. Convert to USD using base token price
+5. Calculate liquidity: `2 * base_token_value` (symmetric pools)
+
+---
+
+### 2. SushiSwap (`sushiswap.py`) ⚠️ PLACEHOLDER
+
+**Status:** Placeholder implementation - returns error
+
+**TODO:**
+- Implement Uniswap V2-style price fetching
+- Use `factory.getPair(tokenA, tokenB)`
+- Query `pair.getReserves()`
+- Calculate price from reserves using constant product formula
+
+---
+
+### 3. Curve (`curve.py`) ⚠️ PLACEHOLDER
+
+**Status:** Placeholder implementation - returns error
+
+**TODO:**
+- Implement Curve-specific pool discovery
+- Handle multiple pool types (plain, lending, meta)
+- Query registry for token pools
+- Calculate price using `get_dy()` or `virtual_price`
+
+---
+
+## Constants Module (`constants.py`)
+
+### âœ… SINGLE SOURCE OF TRUTH
+
+All DEX constants are centralized here:
+
+**Contract Addresses by Chain:**
+- `UNISWAP_V3_FACTORY` - Uniswap V3 factory addresses
+- `UNISWAP_V3_ROUTER` - Uniswap V3 router addresses
+- `UNISWAP_V2_FACTORY` - Uniswap V2 factory addresses
+- `UNISWAP_V2_ROUTER` - Uniswap V2 router addresses
+- `SUSHISWAP_FACTORY` - SushiSwap factory addresses
+- `SUSHISWAP_ROUTER` - SushiSwap router addresses
+- `CURVE_REGISTRY` - Curve registry addresses
+
+**Base Token Addresses:**
+- `WETH_ADDRESS` - Wrapped ETH by chain
+- `USDC_ADDRESS` - USDC by chain
+- `USDT_ADDRESS` - Tether by chain
+- `DAI_ADDRESS` - DAI by chain
+
+**Contract ABIs (Minimal):**
+- `FACTORY_ABI` - Uniswap V3 factory
+- `POOL_ABI` - Uniswap V3 pool
+- `ERC20_ABI` - Standard ERC20
+- `UNISWAP_V2_PAIR_ABI` - Uniswap V2 pair
+- `UNISWAP_V2_FACTORY_ABI` - Uniswap V2 factory
+
+**Fee Tiers:**
+- `UNISWAP_V3_FEE_TIERS` - [500, 3000, 10000] (0.05%, 0.3%, 1%)
+
+**Helper Functions:**
+- `get_base_tokens(chain_id)` - Get base tokens for a chain
+- `get_dex_addresses(dex_name, chain_id)` - Get DEX addresses
+
+---
+
+## Usage Patterns
+
+### Basic Usage
+
+```python
+from paper_trading.intelligence.dex_integrations import UniswapV3DEX
+
+# Create DEX adapter
+dex = UniswapV3DEX(chain_id=8453, cache_ttl_seconds=60)
+
+# Get token price
+price = await dex.get_token_price(
+    token_address='0x4200000000000000000000000000000000000006',
+    token_symbol='WETH'
+)
+
+# Check result
+if price.success:
+    print(f"✅ {price.token_symbol}: ${price.price_usd:.4f}")
+    print(f"   Liquidity: ${price.liquidity_usd:,.0f}")
+    print(f"   Pool: {price.pool_address}")
+    print(f"   Query Time: {price.query_time_ms:.0f}ms")
+else:
+    print(f"❌ Error: {price.error_message}")
+
+# Get performance stats
+stats = dex.get_performance_stats()
+print(f"Success Rate: {stats['success_rate_percent']:.1f}%")
+print(f"Cache Hit Rate: {stats['cache_hit_rate_percent']:.1f}%")
+```
+
+### Multi-DEX Price Comparison
+
+```python
+from paper_trading.intelligence.dex_integrations import (
+    UniswapV3DEX,
+    SushiSwapDEX
+)
+
+# Create multiple DEX adapters
+dexs = [
+    UniswapV3DEX(chain_id=8453),
+    SushiSwapDEX(chain_id=8453)
+]
+
+# Query all DEXs
+prices = []
+for dex in dexs:
+    price = await dex.get_token_price('0x...', 'WETH')
+    if price.success:
+        prices.append(price)
+
+# Find best price
+if prices:
+    best = max(prices, key=lambda p: p.price_usd)
+    print(f"Best price on {best.dex_name}: ${best.price_usd:.4f}")
+```
+
+### Using Constants
+
+```python
+from paper_trading.intelligence.dex_integrations.constants import (
+    UNISWAP_V3_FACTORY,
+    WETH_ADDRESS,
+    get_base_tokens,
+    get_dex_addresses
+)
+
+# Get factory address for chain
+factory = UNISWAP_V3_FACTORY[8453]  # Base Mainnet
+
+# Get WETH address
+weth = WETH_ADDRESS[8453]
+
+# Get all base tokens for a chain
+base_tokens = get_base_tokens(8453)  # [WETH, USDC, USDT, DAI]
+
+# Get DEX addresses
+addresses = get_dex_addresses('uniswap_v3', 8453)
+print(f"Factory: {addresses['factory']}")
+print(f"Router: {addresses['router']}")
+```
+
+---
+
+## Integration with Other Components
+
+### Used By:
+
+1. **`dex_price_comparator.py`**
+   - Orchestrates price queries across multiple DEXs
+   - Uses DEX adapters to fetch prices in parallel
+   - Compares results to find best prices
+
+2. **`intelligence/analyzers/liquidity_analyzer.py`**
+   - Imports constants from `dex_integrations/constants.py`
+   - Uses same Uniswap V3 factory and pool ABIs
+   - Queries pool liquidity for risk assessment
+
+3. **`arbitrage_engine.py`** (when complete)
+   - Uses DEX adapters to find price discrepancies
+   - Identifies cross-DEX arbitrage opportunities
+   - Calculates net profit after gas costs
+
+---
+
+## Adding a New DEX
+
+To add a new DEX adapter:
+
+1. **Create new file** (e.g., `pancakeswap.py`)
+
+2. **Inherit from BaseDEX:**
+```python
+class PancakeSwapDEX(BaseDEX):
+    def __init__(self, chain_id: int = 56):
+        super().__init__(
+            dex_name="pancakeswap",
+            chain_id=chain_id
+        )
+```
+
+3. **Implement `get_token_price`:**
+```python
+async def get_token_price(
+    self,
+    token_address: str,
+    token_symbol: str
+) -> DEXPrice:
+    # 1. Check cache
+    # 2. Find pool/pair
+    # 3. Query price and liquidity
+    # 4. Return DEXPrice object
+    pass
+```
+
+4. **Add constants to `constants.py`:**
+```python
+PANCAKESWAP_FACTORY = {
+    56: '0x...',  # BSC
+}
+```
+
+5. **Export in `__init__.py`:**
+```python
+from paper_trading.intelligence.dex_integrations.pancakeswap import PancakeSwapDEX
+
+__all__ = [..., 'PancakeSwapDEX']
+```
+
+---
+
+## Performance Considerations
+
+### Caching Strategy
+- **Default TTL:** 60 seconds
+- **Cache Key Format:** `{dex_name}:price:{chain_id}:{token_address}`
+- **When to Cache:** Only successful queries with valid prices
+- **Cache Hit Benefits:** ~99% faster (no blockchain query needed)
+
+### Query Optimization
+- **Parallel Queries:** Use `asyncio.gather()` to query multiple DEXs simultaneously
+- **Fee Tier Optimization:** Try most common fee tier (0.3%) first
+- **Base Token Order:** Query WETH first (usually highest liquidity)
+
+### Performance Metrics
+Each DEX tracks:
+- Total queries
+- Successful queries
+- Cache hits
+- Average query time
+
+Access via `dex.get_performance_stats()`
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**"No pool found"**
+- Token may not have pools on this DEX
+- Try different base tokens
+- Check if DEX is deployed on this chain
+
+**"Web3 client not initialized"**
+- Engine config module not available
+- Check chain ID is supported
+- Verify RPC endpoint is accessible
+
+**"Price is None but success=True"**
+- Pool exists but reserves are zero
+- Pool may be inactive or drained
+- Query may have failed silently
+
+---
+
+## Future Enhancements
+
+1. **Complete SushiSwap Integration**
+   - Implement Uniswap V2-style price fetching
+   - Add support for all chains where SushiSwap is deployed
+
+2. **Complete Curve Integration**
+   - Handle multiple pool types
+   - Implement meta pool support
+   - Add stablecoin-specific optimizations
+
+3. **Oracle Integration**
+   - Use Chainlink for base token USD prices
+   - More accurate USD conversion
+   - Better handling of WETH price
+
+4. **Advanced Features**
+   - Historical price queries
+   - TWAP (Time-Weighted Average Price)
+   - Volume-based pool selection
+   - Multi-hop routing for better prices
+
+---
+
+## Testing
+
+### Unit Tests
+```python
+import pytest
+from paper_trading.intelligence.dex_integrations import UniswapV3DEX
+
+@pytest.mark.asyncio
+async def test_uniswap_v3_price():
+    dex = UniswapV3DEX(chain_id=8453)
+    price = await dex.get_token_price(
+        '0x4200000000000000000000000000000000000006',
+        'WETH'
+    )
+    assert price.success
+    assert price.price_usd > 0
+```
+
+### Integration Tests
+Test with real blockchain data on testnets (Base Sepolia, Ethereum Sepolia)
+
+---
+
+## Conclusion
+
+The DEX integrations module provides a clean, extensible architecture for multi-DEX price comparison. With centralized constants, standardized outputs, and comprehensive error handling, it's easy to add new DEXs and maintain existing integrations.
+
+**Remember:** This is a data provider module - it fetches prices and liquidity but does NOT execute trades. Trade execution is handled by `trading/services/dex_router_service.py`.

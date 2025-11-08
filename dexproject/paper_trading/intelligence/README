@@ -1,47 +1,798 @@
-# Updated File-by-File Descriptions
+# Intelligence Module - Comprehensive Guide
 
-## 1. **`__init__.py`** (58 lines)
-
-This file serves as the entry point for the intelligence module and controls what gets exported when other parts of your Django application import from the intelligence package. It brings together all the major classes from the various sub-modules and makes them available through a single import statement. The file explicitly lists all exportable classes in an `__all__` variable, which includes the base classes like IntelligenceEngine and MarketContext, the configuration classes, the component classes like DecisionMaker and MLFeatureCollector, and most importantly the main IntelSliderEngine. This clean organization means developers can simply import what they need without having to know the internal file structure of the intelligence module. Note that this module does not export any market analyzer classes because the system uses the existing CompositeMarketAnalyzer from the analyzers submodule directly.
+The intelligence module is the brain of the paper trading bot, orchestrating all trading decisions through a sophisticated multi-level intelligence system (1-10). This module has been reorganized into a logical folder structure for better maintainability and scalability.
 
 ---
 
-## 2. **`base.py`** (524 lines)
+## 📁 Folder Structure
 
-This foundational file contains all the core data structures and abstract base classes that the entire intelligence system builds upon. The most critical fix here was removing a duplicate import of the Decimal class that was causing unnecessary redundancy. The file defines the IntelligenceLevel enum which represents the ten intelligence levels as integers, the MarketContext dataclass which is a comprehensive container holding everything from token prices and volumes to MEV threats and network congestion, and the TradingDecision dataclass which packages up all information about a trading decision including the action, position sizing, risk scores, reasoning, and execution strategy. The IntelligenceEngine abstract base class provides the template that all intelligence implementations must follow, including threshold calculation methods and an adjust_for_intel_level method that modifies decisions based on how aggressive or cautious the current intelligence level is. The file also contains logic for applying intel-level adjustments, autonomous optimization for level ten, and a thought log generator that creates human-readable explanations of trading decisions.
+```
+intelligence/
+├── config/              # Intelligence level configurations
+│   └── intel_config.py
+├── core/                # Core base classes and main orchestrator
+│   ├── base.py
+│   └── intel_slider.py
+├── strategies/          # Trading strategies and decision logic
+│   ├── decision_maker.py
+│   └── arbitrage_engine.py
+├── data/                # Data collection and history tracking
+│   ├── price_history.py
+│   └── ml_features.py
+├── dex/                 # DEX integrations and price comparison
+│   ├── dex_integrations.py
+│   ├── dex_price_comparator.py
+│   └── protocols/       # Protocol-specific implementations
+│       ├── base.py
+│       ├── constants.py
+│       ├── uniswap_v3.py
+│       ├── sushiswap.py
+│       ├── curve.py
+│       └── __init__.py
+├── analyzers/           # Market analysis components (real blockchain data)
+│   ├── base.py
+│   ├── composite_analyzer.py
+│   ├── constants.py
+│   ├── gas_analyzer.py
+│   ├── liquidity_analyzer.py
+│   ├── market_state.py
+│   ├── mev_detector.py
+│   ├── volatility_analyzer.py
+│   └── __init__.py
+├── __init__.py          # Public API exports
+└── README               # This file
+```
 
 ---
 
-## 3. **`intel_config.py`** (179 lines)
+## 🎯 System Architecture
 
-This configuration file is the central registry for all ten intelligence levels, defining how each level behaves through the IntelLevelConfig dataclass. Each intelligence level has its own unique personality configured through parameters like risk tolerance (ranging from twenty percent for ultra-cautious level one to one hundred percent for autonomous level ten), maximum position size (from two percent at level one up to twenty-five percent at level ten), minimum confidence required before taking action, minimum position size in dollars, MEV protection settings, gas aggressiveness strategies, trade frequency expectations, and decision speed characteristics. The INTEL_CONFIGS dictionary maps each integer level to its full configuration object, making it trivial for the main engine to look up how it should behave based on the user's slider position. Level one is designed to be extremely conservative and might miss opportunities for safety, level five represents the balanced default that most users should start with, and level ten is the fully autonomous AI mode that takes maximum risks and collects machine learning training data for future improvement.
+### **Intelligence Levels (1-10)**
+
+The system adapts its behavior based on the intelligence level slider:
+
+| Level | Name | Risk Tolerance | Max Position | Confidence Required | Behavior |
+|-------|------|---------------|--------------|---------------------|----------|
+| 1 | Ultra Cautious | 20% | 2% | 95% | Maximum safety, misses opportunities |
+| 2 | Very Cautious | 25% | 3% | 90% | Very conservative |
+| 3 | Cautious | 30% | 5% | 85% | Safety first |
+| 4 | Moderately Cautious | 40% | 7% | 75% | Balanced toward safety |
+| 5 | Balanced (Default) | 50% | 10% | 70% | Optimal balance |
+| 6 | Moderately Aggressive | 60% | 12% | 65% | Balanced toward opportunity |
+| 7 | Aggressive | 70% | 15% | 60% | Prioritizes opportunities |
+| 8 | Very Aggressive | 80% | 18% | 55% | High risk tolerance |
+| 9 | Ultra Aggressive | 90% | 20% | 50% | Maximum aggression |
+| 10 | Autonomous AI | 100% | 25% | 45% | Full AI control + ML data collection |
+
+### **Decision Flow**
+
+```
+User Request → IntelSliderEngine
+    ↓
+1. Fetch Real Token Price (PriceFeedService)
+    ↓
+2. Update Price History
+    ↓
+3. Comprehensive Market Analysis (CompositeMarketAnalyzer)
+   - Gas conditions (blockchain RPC)
+   - Liquidity depth (Uniswap V3 pools)
+   - Volatility (price trends)
+   - MEV threats (heuristics)
+   - Market state (chaos detection)
+    ↓
+4. Decision Making (DecisionMaker)
+   - Calculate risk score
+   - Calculate opportunity score
+   - Calculate confidence
+   - Determine action (BUY/SKIP/SELL)
+   - Calculate position size
+   - Set stop loss
+   - Choose execution strategy
+    ↓
+5. Apply Intel Level Adjustments
+    ↓
+6. Collect ML Features (Level 10 only)
+    ↓
+7. Return TradingDecision
+```
 
 ---
 
-## 4. **`price_history.py`** (212 lines)
+## 📂 Folder Details
 
-This specialized data tracking module provides the PriceHistory dataclass which maintains a time-series record of token prices and their timestamps for historical analysis and trend detection. The class offers several analytical methods that help determine market momentum: get_price_change_percent calculates how much a token's price has changed over a specified time window (defaulting to sixty minutes for short-term momentum), is_trending_up checks if the last three recorded prices show a consistent upward pattern, is_trending_down does the opposite for detecting bearish trends, and get_volatility calculates the coefficient of variation to measure price stability. Each method includes robust error handling and detailed logging to track what trends are being detected and why. The class automatically manages memory by keeping only the most recent one hundred price points, and it integrates with Django's timezone utilities to ensure all timestamp comparisons are timezone-aware. This historical context is crucial for making intelligent trading decisions because it lets the system understand not just the current price but the trajectory and stability of price movements.
+### **1. config/** - Intelligence Level Configuration
+
+**Purpose:** Centralized configuration for all 10 intelligence levels.
+
+#### **intel_config.py** (179 lines)
+- **IntelLevelConfig dataclass**: Configuration for each intelligence level
+  - `level`: Intelligence level (1-10)
+  - `name`: Human-readable name
+  - `description`: Behavior description
+  - `risk_tolerance`: Risk tolerance percentage (0-100)
+  - `max_position_percent`: Max position size as % of portfolio
+  - `min_confidence_required`: Minimum confidence to trade (0-100)
+  - `min_position_usd`: Minimum position size in USD
+  - `use_mev_protection`: Whether to use MEV protection
+  - `gas_aggressiveness`: Gas strategy (minimal/low/standard/aggressive/ultra_aggressive)
+  - `trade_frequency`: Trading frequency (very_low/low/moderate/high/very_high)
+  - `decision_speed`: Decision speed (slow/moderate/fast)
+
+- **INTEL_CONFIGS dictionary**: Maps each level (1-10) to its configuration
+
+**Key Characteristics:**
+- Level 1: Ultra cautious, 95% confidence required, 2% max position
+- Level 5: Balanced default, 70% confidence required, 10% max position
+- Level 10: Autonomous AI, 45% confidence required, 25% max position + ML collection
 
 ---
 
-## 5. **`decision_maker.py`** (888 lines) ⚠️ OVER LIMIT
+### **2. core/** - Core Base Classes and Main Orchestrator
 
-This is the brain of the trading system and now the largest file at eight hundred and eighty-eight lines, which is eighty-eight lines over your specified eight hundred line limit. The DecisionMaker class takes all the analyzed market data from the CompositeMarketAnalyzer and intelligence level configuration to make actual trading decisions. The core workflow involves calculate_risk_score which produces a weighted risk assessment considering MEV threats, volatility, liquidity depth, network congestion, bot competition, and chaos events by extracting relevant data from the comprehensive analysis results, calculate_opportunity_score which evaluates potential profit based on price trends, momentum, volume changes, liquidity quality, and network conditions, and calculate_confidence_score which combines risk and opportunity with data quality to determine overall decision confidence. The determine_action method applies the configured thresholds to decide whether to buy or skip, checking that confidence exceeds the minimum required for the intelligence level, risk stays within tolerance, valid price data exists, and opportunity outweighs risk. Position sizing is intelligent and adaptive through calculate_position_size which starts with the configured maximum but adjusts down based on the opportunity-to-risk ratio and current volatility levels, while calculate_stop_loss sets tighter stops for higher-risk situations. The determine_execution_strategy method chooses gas strategies and decides whether to use MEV protection based on threat levels and the intelligence level's aggression settings. The class provides detailed explanation methods including generate_reasoning which creates human-readable text explaining why a decision was made, identify_risk_factors which lists the top five risks detected, identify_opportunity_factors which highlights positive signals, generate_mitigation_strategies which suggests ways to reduce identified risks, and assess_time_sensitivity which determines if the opportunity requires immediate action or can wait. Additionally, the file now contains two helper methods that were moved here when market_analyzer was removed: _calculate_momentum_score which computes momentum based on trend direction, volume changes, and price movement, and _assess_liquidity_score which evaluates liquidity quality by examining pool size, trading volume, depth scores, and expected slippage.
+**Purpose:** Foundation classes and the main intelligence engine.
+
+#### **base.py** (524 lines)
+**Core data structures and abstract base class:**
+
+- **IntelligenceLevel enum**: Represents the 10 intelligence levels as integers
+- **MarketContext dataclass**: Comprehensive market data container
+  - Token info (symbol, address, price)
+  - Volume and liquidity metrics
+  - Network conditions (gas, congestion)
+  - MEV threat levels
+  - Competition metrics
+  - Historical performance
+  - Data quality indicators
+
+- **TradingDecision dataclass**: Complete trading decision package
+  - Action (BUY/SELL/SKIP)
+  - Position sizing (percentage and USD)
+  - Stop loss and take profit levels
+  - Risk and opportunity scores
+  - Confidence level
+  - Execution strategy (gas, MEV protection)
+  - Reasoning and analysis
+  - Timing and processing metrics
+
+- **IntelligenceEngine abstract base class**: Template for all intelligence implementations
+  - `analyze(token_address, trade_size_usd) -> TradingDecision`
+  - `adjust_for_intel_level(decision) -> TradingDecision`
+  - `generate_thought_log(decision, context) -> Dict`
+
+**Key Features:**
+- Intel-level adjustments (tightens stops/reduces size for cautious levels)
+- Autonomous optimization (Level 10 adaptive behavior)
+- Thought log generation (human-readable decision explanations)
+
+#### **intel_slider.py** (673 lines) - MAIN ORCHESTRATOR
+**The brain that coordinates all components:**
+
+**Components Managed:**
+- `CompositeMarketAnalyzer`: Comprehensive market analysis
+- `DecisionMaker`: Trading decision logic
+- `MLFeatureCollector`: ML training data collection (Level 10)
+- `PriceFeedService`: Real-time token prices
+- `DEXPriceComparator`: Multi-DEX price comparison (Phase 2)
+- `ArbitrageDetector`: Arbitrage detection (Phase 2)
+
+**Main analyze() Method (16-step process):**
+1. Fetch real token price
+2. Update price history cache
+3. Retrieve existing price history for trends
+4. Run comprehensive market analysis
+5. Enhance market context with analysis results
+6. Calculate risk score
+7. Calculate opportunity score
+8. Determine action (BUY/SKIP/SELL)
+9. Calculate position size
+10. Calculate stop loss
+11. Convert percentages to USD amounts
+12. Enforce minimum position size
+13. Determine execution strategy
+14. Generate reasoning and identify factors
+15. Apply intel-level adjustments
+16. Collect ML features (Level 10)
+
+**Supporting Methods:**
+- `_update_price_history()`: Maintains last 100 prices per token
+- `_enhance_context_with_analysis()`: Integrates analysis data with price history
+- `_create_skip_decision()`: Generates safe skip decision on errors
+- `update_market_context()`: Stores historical contexts and tracks trends
+- `get_ml_training_data()`: Retrieves ML training samples (Level 10)
+
+**Key Features:**
+- Configuration overrides from database
+- Price history tracking (last 100 prices)
+- Market trend analysis
+- Volatility tracking
+- Complete backward compatibility
+- Phase 2 support (DEX comparison, arbitrage detection)
 
 ---
 
-## 6. **`ml_features.py`** (364 lines)
+### **3. strategies/** - Trading Strategies and Decision Logic
 
-This module implements the machine learning infrastructure exclusively for intelligence level ten, collecting comprehensive training data that could eventually power predictive models. The MLFeatureCollector class automatically captures features whenever a decision is made at level ten, extracting over forty different data points from each trading decision including all price metrics like current price and twenty-four hour changes, volume statistics, liquidity measurements, market characteristics like cap and holder count, network conditions including gas prices and congestion, MEV environment details, competition metrics about other bots, risk indicators, historical performance data, and the decision outputs which serve as labels for supervised learning. The collector maintains an in-memory cache of up to one thousand training samples, automatically trimming older data to prevent memory bloat, and provides methods to retrieve the full training dataset, clear collected data when needed, export data in multiple formats including Python dictionaries, JSON strings, or CSV format for compatibility with various machine learning tools, and get_feature_statistics which provides insights into the collected data like sample counts, action distribution (how many buys versus skips), average risk and opportunity scores, and timestamps of the oldest and newest samples. The feature extraction is completely automatic and transparent to the rest of the system, silently building a dataset that could be used to train models that learn which types of market conditions lead to successful trades versus failed ones.
+**Purpose:** Trading strategies, decision-making, and arbitrage detection.
+
+#### **decision_maker.py** (888 lines) ⚠️ OVER 800 LINE LIMIT
+**The decision-making brain:**
+
+**Core Methods:**
+- `calculate_risk_score(context, analysis)`: Weighted risk assessment
+  - MEV threats (25%)
+  - Volatility (20%)
+  - Liquidity depth (15%)
+  - Network congestion (15%)
+  - Bot competition (15%)
+  - Chaos events (10%)
+
+- `calculate_opportunity_score(context, analysis)`: Profit potential evaluation
+  - Price trends (30%)
+  - Momentum (25%)
+  - Volume changes (20%)
+  - Liquidity quality (15%)
+  - Network conditions (10%)
+
+- `calculate_confidence_score(risk, opportunity, context)`: Overall confidence
+  - Combines risk and opportunity
+  - Adjusts for data quality
+  - Normalizes to 0-100 scale
+
+- `determine_action(context, analysis)`: Action determination (BUY/SKIP/SELL)
+  - Checks confidence vs minimum required
+  - Verifies risk within tolerance
+  - Validates price data
+  - Ensures opportunity outweighs risk
+
+- `calculate_position_size(opportunity, risk, volatility)`: Adaptive position sizing
+  - Starts with configured maximum
+  - Adjusts down based on opportunity-to-risk ratio
+  - Reduces for high volatility
+
+- `calculate_stop_loss(risk_score, volatility)`: Stop loss calculation
+  - Tighter stops for higher risk
+  - Adjusts for volatility
+
+- `determine_execution_strategy(context, analysis)`: Execution strategy selection
+  - Gas strategy based on urgency and level
+  - MEV protection based on threat level
+  - Private relay usage for high MEV risk
+
+**Explanation Methods:**
+- `generate_reasoning()`: Human-readable decision explanation
+- `identify_risk_factors()`: Top 5 risks detected
+- `identify_opportunity_factors()`: Positive signals
+- `generate_mitigation_strategies()`: Risk reduction suggestions
+- `assess_time_sensitivity()`: Urgency determination
+
+**Helper Methods:**
+- `_calculate_momentum_score()`: Momentum based on trends, volume, price movement
+- `_assess_liquidity_score()`: Liquidity quality evaluation
+
+**Key Features:**
+- Weighted scoring system
+- Intel-level aware thresholds
+- Comprehensive risk assessment
+- Adaptive position sizing
+- Detailed reasoning generation
+
+#### **arbitrage_engine.py** (915 lines)
+**Unified arbitrage detection system (Phase 2):**
+
+**Features:**
+- Simple detection from DEXPriceComparison
+- Advanced detection from DEX price dictionary
+- Comprehensive cost accounting (gas, slippage)
+- MEV risk assessment
+- Liquidity-based trade sizing
+- Confidence scoring
+- Performance tracking
+
+**Data Classes:**
+- `ArbitrageOpportunity`: Complete arbitrage opportunity data
+  - Buy/sell DEX and prices
+  - Expected profit (USD and %)
+  - Costs (gas, slippage)
+  - Net profit after costs
+  - Confidence score
+  - Risk factors
+  - Liquidity constraints
+
+**Main Methods:**
+- `detect_from_comparison()`: Simple detection from price comparison
+- `detect_from_prices()`: Advanced detection from DEX price dictionary
+- `calculate_costs()`: Comprehensive cost calculation
+- `assess_mev_risk()`: MEV threat assessment
+- `calculate_optimal_size()`: Liquidity-constrained sizing
+- `calculate_confidence()`: Confidence scoring
+
+**Key Features:**
+- Multi-DEX price comparison
+- Real-time gas cost calculation
+- Slippage estimation
+- MEV protection recommendations
+- Liquidity-aware sizing
 
 ---
 
-## 7. **`intel_slider.py`** (673 lines) - MAIN ORCHESTRATOR
+### **4. data/** - Data Collection and History Tracking
 
-This is the main engine file that coordinates all the other components using a composition-based architecture where specialized objects handle specific responsibilities. The IntelSliderEngine inherits from the abstract IntelligenceEngine base class and serves as the single entry point for making trading decisions, managing a CompositeMarketAnalyzer which handles comprehensive market analysis using real blockchain data from multiple specialized analyzers, a DecisionMaker for actual decision logic, an MLFeatureCollector for level ten learning, and a PriceFeedService for fetching real-time token prices. The initialization process loads the appropriate intelligence level configuration from the configs dictionary, sets up all component instances, creates storage for price history tracking, market history, price trends, and volatility data, and optionally applies configuration overrides from the database if a strategy config object is provided. The heart of the system is the analyze method which orchestrates a sixteen-step process: first it fetches the real token price directly from the price service, then updates the price history cache with the new price, retrieves any existing price history for trend analysis, runs a comprehensive market analysis through the CompositeMarketAnalyzer which queries real blockchain data for gas prices, liquidity from Uniswap pools, volatility calculations, MEV threat detection, and market state assessment, enhances the market context by extracting and integrating data from the comprehensive analysis results including gas prices, liquidity metrics, volatility indices, MEV threat levels, and data quality ratings, calculates risk and opportunity scores by passing both the enhanced market context and comprehensive analysis results to the decision maker, determines the buy or skip action based on configured thresholds, calculates position size and stop loss percentages, converts percentage sizes to actual dollar amounts, enforces minimum position size requirements, determines execution strategy including gas settings and MEV protection, generates detailed reasoning and identifies risk factors and opportunities, builds the complete TradingDecision object with all calculated values, applies intel-level-specific adjustments to match the aggressiveness or caution of the current level, calculates total processing time, stores the decision in history for learning, updates market tracking data structures for trend analysis, and collects ML features if operating at level ten before finally returning the complete decision. Supporting methods include _update_price_history which maintains the last one hundred prices per token, _enhance_context_with_analysis which extracts data from the comprehensive analysis and integrates it with price history to build a complete picture of market conditions, _create_skip_decision which generates a safe skip decision when errors occur, update_market_context which stores historical contexts and tracks trends over time, and get_ml_training_data which retrieves collected training samples for level ten. The engine maintains complete backward compatibility with existing code by preserving the exact same public API, so no changes are needed to code that already uses the intelligence system, and it leverages your existing proven CompositeMarketAnalyzer infrastructure that already queries real blockchain data rather than duplicating that functionality.
+**Purpose:** Historical data tracking and ML feature collection.
+
+#### **price_history.py** (212 lines)
+**Time-series price tracking:**
+
+- **PriceHistory dataclass**: Historical price data
+  - `token_address`: Token contract address
+  - `token_symbol`: Token symbol
+  - `prices`: List of recent prices (last 100)
+  - `timestamps`: List of timestamps
+
+**Methods:**
+- `get_price_change_percent(period_minutes)`: Price change over time period
+- `is_trending_up()`: Checks if last 3 prices are increasing
+- `is_trending_down()`: Checks if last 3 prices are decreasing
+- `get_volatility()`: Calculates coefficient of variation
+
+**Key Features:**
+- Automatic memory management (last 100 prices)
+- Timezone-aware timestamps
+- Trend detection
+- Volatility calculation
+- Robust error handling
+
+#### **ml_features.py** (364 lines)
+**Machine learning infrastructure (Level 10 only):**
+
+**MLFeatureCollector class:**
+- Automatically captures 40+ features per decision
+- Maintains in-memory cache (max 1000 samples)
+- Auto-trims older data
+
+**Captured Features:**
+- Price metrics (current, 24h change, volatility, momentum)
+- Volume statistics
+- Liquidity measurements
+- Market characteristics (cap, holders)
+- Network conditions (gas, congestion)
+- MEV environment
+- Competition metrics
+- Risk indicators
+- Historical performance
+- Decision outputs (labels for supervised learning)
+
+**Methods:**
+- `collect_features(context, decision)`: Auto-capture on each decision
+- `get_training_data()`: Retrieve all collected samples
+- `clear_training_data()`: Clear collected data
+- `export_training_data(format)`: Export as dict/JSON/CSV
+- `get_feature_statistics()`: Sample counts, action distribution, average scores
+
+**Key Features:**
+- Transparent auto-collection
+- Multiple export formats
+- Statistics and insights
+- Supervised learning ready
 
 ---
 
-## Summary of Architecture
+### **5. dex/** - DEX Integrations and Price Comparison
 
-The refactored system now uses a clean single-source architecture where the IntelSliderEngine orchestrates three main components: the existing CompositeMarketAnalyzer from the analyzers submodule which handles all market data collection and analysis using real blockchain queries, the DecisionMaker which transforms that analysis into trading decisions based on intelligence level configuration, and the MLFeatureCollector which captures training data for future machine learning enhancements when operating at level ten. This eliminates all duplication by leveraging your existing analyzer infrastructure that already queries real gas prices from blockchain RPCs, real liquidity from Uniswap V3 pools, calculates volatility from price history, detects MEV threats using smart heuristics, and analyzes market state including chaos event detection. Each file was designed with a single responsibility in mind making the system easier to maintain, test, and extend, though note that decision_maker.py now exceeds the eight hundred line limit by eighty-eight lines due to the addition of helper methods that calculate momentum and assess liquidity scores using data from the comprehensive market analysis.
+**Purpose:** Multi-DEX price comparison and protocol integrations.
+
+#### **dex_price_comparator.py** (584 lines)
+**Multi-DEX price comparison orchestrator:**
+
+**DEXPriceComparison dataclass:**
+- Token info
+- Prices from each DEX
+- Best buy/sell prices
+- Price spread
+- Arbitrage potential
+- Liquidity metrics
+- Timestamp and metadata
+
+**Main Methods:**
+- `compare_prices_async()`: Parallel price queries across DEXs
+- `get_best_buy_price()`: Find best buy price
+- `get_best_sell_price()`: Find best sell price
+- `calculate_arbitrage_potential()`: Detect arbitrage opportunities
+- `get_price_spread()`: Calculate spread between best buy/sell
+
+**Key Features:**
+- Parallel queries with timeouts
+- Automatic failover
+- Cache integration
+- Comprehensive error handling
+- Real-time price comparison
+
+#### **dex_integrations.py** (629 lines)
+**DEX integration manager:**
+
+**Manages protocol integrations:**
+- UniswapV3DEX
+- SushiSwapDEX
+- CurveDEX
+
+**DEXPrice dataclass:**
+- DEX name
+- Token address and symbol
+- Price
+- Liquidity
+- Volume
+- Confidence score
+- Timestamp
+
+**Key Features:**
+- Protocol abstraction
+- Standardized price data
+- Error handling per DEX
+- Cache support
+
+---
+
+### **6. dex/protocols/** - Protocol-Specific Implementations
+
+**Purpose:** Individual DEX protocol integrations.
+
+#### **base.py** (250 lines)
+**Abstract base class for all DEX integrations:**
+
+- **BaseDEX abstract class**: Template for DEX implementations
+  - `get_price_async()`: Fetch token price
+  - `get_liquidity()`: Query liquidity
+  - `estimate_slippage()`: Calculate expected slippage
+  - `validate_token()`: Validate token address
+
+**Key Features:**
+- Common interface for all DEXs
+- Async/await support
+- Error handling patterns
+- Cache integration hooks
+
+#### **constants.py** (100 lines)
+**Shared constants for DEX protocols:**
+
+- Uniswap V3 factory address
+- Fee tiers (0.01%, 0.05%, 0.3%, 1%)
+- Factory ABI
+- Pool ABI
+- Common token addresses
+- Network-specific addresses
+
+#### **uniswap_v3.py** (450 lines)
+**Uniswap V3 protocol integration:**
+
+**UniswapV3DEX class:**
+- Queries all fee tiers for best price
+- Pool liquidity calculations
+- Tick data analysis
+- Price impact estimation
+
+**Key Methods:**
+- `get_price_async()`: Fetch price from V3 pools
+- `get_pool_for_pair()`: Find pool for token pair
+- `get_liquidity()`: Query pool liquidity
+- `calculate_price_impact()`: Estimate price impact
+
+**Key Features:**
+- Multi-fee-tier support
+- Real blockchain data
+- Concentrated liquidity handling
+- Tick math calculations
+
+#### **sushiswap.py** (180 lines)
+**SushiSwap protocol integration:**
+
+**SushiSwapDEX class:**
+- V2-style AMM queries
+- Reserves-based pricing
+- Constant product formula
+
+**Key Methods:**
+- `get_price_async()`: Fetch price from SushiSwap
+- `get_reserves()`: Query pair reserves
+- `calculate_price()`: Price from reserves
+
+#### **curve.py** (150 lines)
+**Curve Finance protocol integration:**
+
+**CurveDEX class:**
+- Stableswap queries
+- Specialized for stablecoin pairs
+- Low slippage calculations
+
+**Key Methods:**
+- `get_price_async()`: Fetch price from Curve pools
+- `get_virtual_price()`: Query virtual price
+- `estimate_swap_output()`: Calculate output amount
+
+---
+
+### **7. analyzers/** - Market Analysis Components
+
+**Purpose:** Real blockchain data analysis using specialized analyzers.
+
+See `analyzers/README` for detailed documentation of this subsystem.
+
+**Key Analyzers:**
+- **RealGasAnalyzer**: Network gas conditions from blockchain RPC
+- **RealLiquidityAnalyzer**: Uniswap V3 pool liquidity queries
+- **RealVolatilityAnalyzer**: Price volatility calculations
+- **MEVThreatDetector**: MEV threat detection using heuristics
+- **MarketStateAnalyzer**: Overall market conditions and chaos detection
+- **CompositeMarketAnalyzer**: Orchestrates all analyzers for comprehensive analysis
+
+**Key Features:**
+- Real blockchain data (no mock data)
+- Lazy initialization for performance
+- Comprehensive error handling
+- Structured logging
+- Cache integration
+
+---
+
+## 🔄 Integration Points
+
+### **Public API (from `__init__.py`):**
+
+```python
+from paper_trading.intelligence import (
+    # Base classes
+    IntelligenceEngine,
+    IntelligenceLevel,
+    MarketContext,
+    TradingDecision,
+    
+    # Configuration
+    IntelLevelConfig,
+    INTEL_CONFIGS,
+    
+    # Data classes
+    PriceHistory,
+    
+    # Component classes
+    DecisionMaker,
+    MLFeatureCollector,
+    
+    # Main engine
+    IntelSliderEngine,
+)
+```
+
+### **Main Entry Point:**
+
+```python
+# Initialize engine
+engine = IntelSliderEngine(
+    intel_level=5,  # Balanced default
+    account_id="user_account_id",
+    strategy_config=strategy_config_obj,  # Optional DB overrides
+    chain_id=8453  # Base mainnet
+)
+
+# Make trading decision
+decision = await engine.analyze(
+    token_address="0x...",
+    trade_size_usd=Decimal("1000.00")
+)
+
+# Access decision data
+if decision.action == "BUY":
+    print(f"Position size: ${decision.position_size_usd}")
+    print(f"Stop loss: {decision.stop_loss_percent}%")
+    print(f"Confidence: {decision.overall_confidence}%")
+    print(f"Reasoning: {decision.reasoning}")
+```
+
+---
+
+## 🎓 Key Concepts
+
+### **Composition over Inheritance**
+The system uses composition to combine specialized components rather than deep inheritance hierarchies. Each component has a single responsibility.
+
+### **Real Data, No Mocks**
+All market data comes from real blockchain queries:
+- Gas prices from RPC endpoints
+- Liquidity from Uniswap V3 contracts
+- Volatility from actual price history
+- MEV threats from heuristics based on liquidity
+
+### **Intelligence Level Adaptation**
+Every decision is adapted based on the intelligence level:
+- Risk tolerance affects confidence thresholds
+- Position sizing scales with aggressiveness
+- Stop losses tighten for cautious levels
+- MEV protection enabled/disabled by level
+
+### **Comprehensive Analysis**
+The CompositeMarketAnalyzer provides 360° market view:
+- Gas conditions (network state)
+- Liquidity depth (execution feasibility)
+- Volatility (price stability)
+- MEV threats (security risks)
+- Market state (chaos detection)
+
+### **Phase 2 Features (Optional)**
+When enabled, adds:
+- Multi-DEX price comparison
+- Arbitrage detection
+- Optimal price finding across DEXs
+
+---
+
+## 📊 File Line Counts
+
+| File | Lines | Status |
+|------|-------|--------|
+| config/intel_config.py | 179 | ✅ Under limit |
+| core/base.py | 524 | ✅ Under limit |
+| core/intel_slider.py | 673 | ✅ Under limit |
+| strategies/decision_maker.py | 888 | ⚠️ **OVER LIMIT** (88 lines over) |
+| strategies/arbitrage_engine.py | 915 | ⚠️ **OVER LIMIT** (115 lines over) |
+| data/price_history.py | 212 | ✅ Under limit |
+| data/ml_features.py | 364 | ✅ Under limit |
+| dex/dex_price_comparator.py | 584 | ✅ Under limit |
+| dex/dex_integrations.py | 629 | ✅ Under limit |
+
+**Note:** Two files exceed the 800-line limit and should be considered for refactoring in future iterations.
+
+---
+
+## 🚀 Performance Optimizations
+
+### **Lazy Initialization**
+Components initialize on first use rather than at startup:
+- Web3 clients connect when needed
+- Analyzers initialize when first called
+- Price feeds activate on demand
+
+### **Caching Strategy**
+Multiple cache layers reduce redundant queries:
+- Price history cache (in-memory)
+- DEX price cache (Redis)
+- Pool data cache (Redis)
+- Analysis results cache (short TTL)
+
+### **Parallel Queries**
+Multi-DEX price comparison runs in parallel:
+- asyncio for concurrent DEX queries
+- Timeout protection per query
+- Automatic failover on errors
+
+### **Memory Management**
+Automatic data trimming prevents memory bloat:
+- Price history limited to 100 points per token
+- ML features limited to 1000 samples
+- Market history rotates old data
+
+---
+
+## 🔐 Error Handling Strategy
+
+### **Graceful Degradation**
+System continues functioning even when components fail:
+- Missing gas data → Uses defaults
+- DEX query timeout → Uses cached price
+- Analysis error → Safe SKIP decision
+
+### **Comprehensive Logging**
+Structured logging at every level:
+- DEBUG: Detailed execution flow
+- INFO: Key decisions and data
+- WARNING: Degraded performance
+- ERROR: Failures with stack traces
+
+### **Safe Defaults**
+When data is unavailable, use safe conservative values:
+- High risk scores when uncertain
+- Low opportunity scores when data missing
+- Skip decisions when confidence low
+- Minimum position sizes when volatile
+
+---
+
+## 📈 Future Enhancements
+
+### **Planned Improvements**
+1. Split decision_maker.py (currently 888 lines) into sub-modules
+2. Split arbitrage_engine.py (currently 915 lines) into components
+3. Add backtesting support using historical data
+4. Implement ML models trained on Level 10 data
+5. Add TWAP/VWAP exit strategies
+6. Expand to additional DEXs (Balancer, 1inch)
+7. Add cross-chain arbitrage detection
+8. Implement portfolio-level risk management
+
+### **Phase 7 Features**
+- Production deployment optimization
+- Comprehensive monitoring (Prometheus/Grafana)
+- Advanced analytics dashboard
+- Mobile interface for monitoring
+
+---
+
+## 🛠️ Development Guidelines
+
+### **Adding New Intelligence Levels**
+1. Add configuration to `INTEL_CONFIGS` in `config/intel_config.py`
+2. Update level validation in `core/base.py`
+3. Test decision behavior across all levels
+
+### **Adding New Analyzers**
+1. Create analyzer class in `analyzers/` inheriting from `BaseAnalyzer`
+2. Add to `CompositeMarketAnalyzer` initialization
+3. Update comprehensive analysis integration
+
+### **Adding New DEX Protocols**
+1. Create protocol class in `dex/protocols/` inheriting from `BaseDEX`
+2. Add to `dex_integrations.py` manager
+3. Update `dex_price_comparator.py` to include new protocol
+
+### **Code Standards**
+- Maximum 800 lines per file (when practical)
+- Comprehensive error handling in all methods
+- Structured logging from start to finish
+- Full docstrings for all functions/classes
+- Type hints everywhere
+- Pylance and flake8 compliance
+
+---
+
+## 🎯 Quick Reference
+
+### **Common Tasks**
+
+**Change Intelligence Level:**
+```python
+engine.intel_level = 7  # Set to aggressive
+engine.config = INTEL_CONFIGS[7]  # Update config
+```
+
+**Override Configuration:**
+```python
+engine = IntelSliderEngine(
+    intel_level=5,
+    strategy_config=strategy_config  # DB overrides
+)
+```
+
+**Get ML Training Data:**
+```python
+if engine.intel_level == 10:
+    data = engine.get_ml_training_data()
+    # Export as CSV
+    csv_data = engine.ml_collector.export_training_data('csv')
+```
+
+**Access Price History:**
+```python
+history = engine.price_history_cache.get(token_address)
+if history:
+    volatility = history.get_volatility()
+    is_bullish = history.is_trending_up()
+```
+
+**Check Phase 2 Availability:**
+```python
+if engine.PHASE_2_AVAILABLE:
+    # Use multi-DEX comparison
+    comparison = await engine.dex_comparator.compare_prices_async(...)
+```
+
+---
+
+## 📞 Support
+
+For questions or issues:
+1. Check this README for architecture overview
+2. Review individual file docstrings for implementation details
+3. Examine analyzer README for market analysis specifics
+4. Check test files for usage examples
+
+---
+
+**Last Updated:** November 8, 2025  
+**Version:** 2.0 (Post-Reorganization)  
+**Structure:** Option 1 (Functional Grouping)

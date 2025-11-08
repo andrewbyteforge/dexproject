@@ -1,10 +1,11 @@
 """
-Uniswap V3 Constants and Network Configuration
+Uniswap V3 Constants and Network Configuration - ENHANCED FOR PHASE 3
 
-This module centralizes all Uniswap V3 related constants including:
+This module centralizes all Uniswap V3 and DEX-related constants including:
 - Factory addresses by chain
 - Contract ABIs (Factory and Pool)
 - Fee tiers
+- Gas estimates per chain (PHASE 3 ADDITION)
 - Engine config module availability flag
 
 File: dexproject/paper_trading/intelligence/analyzers/constants.py
@@ -58,7 +59,6 @@ FACTORY_ABI: List[Dict[str, Any]] = [
 ]
 
 # Uniswap V3 Pool ABI (minimal - just what we need for liquidity and price data)
-# UPDATED: Added token0() and token1() functions for proper TVL calculation
 POOL_ABI: List[Dict[str, Any]] = [
     {
         "inputs": [],
@@ -81,23 +81,46 @@ POOL_ABI: List[Dict[str, Any]] = [
         ],
         "stateMutability": "view",
         "type": "function"
-    },
-    {
-        "inputs": [],
-        "name": "token0",
-        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-        "stateMutability": "view",
-        "type": "function"
-    },
-    {
-        "inputs": [],
-        "name": "token1",
-        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-        "stateMutability": "view",
-        "type": "function"
     }
 ]
 
 # Common fee tiers for Uniswap V3 (in basis points)
 # 500 = 0.05%, 3000 = 0.3%, 10000 = 1%
 FEE_TIERS: List[int] = [500, 3000, 10000]
+
+
+# =============================================================================
+# GAS ESTIMATES - PHASE 3 ADDITION
+# =============================================================================
+
+# Gas cost estimates per chain (in gas units)
+# Used for cost calculations in arbitrage detection and trade execution
+# 
+# These are estimated gas units for typical DEX swap operations:
+# - Token approval: ~50,000 gas
+# - Buy swap: ~100,000-150,000 gas
+# - Sell swap: ~100,000-150,000 gas
+GAS_ESTIMATES_PER_CHAIN: Dict[int, int] = {
+    1: 150000,          # Ethereum mainnet (higher due to more expensive execution)
+    8453: 100000,       # Base mainnet (optimized L2)
+    84532: 100000,      # Base Sepolia testnet
+    42161: 80000,       # Arbitrum (efficient L2)
+    10: 100000,         # Optimism (L2)
+    11155111: 150000,   # Ethereum Sepolia testnet
+}
+
+# Default gas estimate if chain not found
+DEFAULT_GAS_ESTIMATE: int = 100000
+
+
+def get_gas_estimate(chain_id: int) -> int:
+    """
+    Get gas estimate for a specific chain.
+    
+    Args:
+        chain_id: Blockchain chain ID
+        
+    Returns:
+        Estimated gas units for the chain
+    """
+    return GAS_ESTIMATES_PER_CHAIN.get(chain_id, DEFAULT_GAS_ESTIMATE)
