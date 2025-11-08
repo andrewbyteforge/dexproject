@@ -19,12 +19,12 @@ from .config_api import (
     api_configuration,
 )
 
-# TEMPORARILY COMMENTED OUT TO FIND BLOCKING IMPORT
-# from .bot_control_api import (
-#     api_start_bot,
-#     api_stop_bot,
-#     api_bot_status,
-# )
+
+from .bot_control_api import (
+    api_start_bot,
+    api_stop_bot,
+    api_bot_status,
+)
 
 from .account_management_api import (
     api_reset_account,
@@ -53,9 +53,9 @@ __all__ = [
     'api_configuration',
 
     # Bot Control API - TEMPORARILY DISABLED
-    # 'api_start_bot',
-    # 'api_stop_bot',
-    # 'api_bot_status',
+    'api_start_bot',
+    'api_stop_bot',
+    'api_bot_status',
 
     # Account Management API
     'api_sessions_history',

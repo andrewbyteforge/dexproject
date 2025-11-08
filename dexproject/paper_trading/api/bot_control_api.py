@@ -43,12 +43,12 @@ from ..constants import (
 )
 
 # Import Celery tasks
+# Celery tasks - imported lazily to avoid blocking during Django startup
 if TYPE_CHECKING:
     from celery import Task
     run_paper_trading_bot: Task  # type: ignore
     stop_paper_trading_bot: Task  # type: ignore
-else:
-    from ..tasks import run_paper_trading_bot, stop_paper_trading_bot
+# Note: Actual imports moved inside functions to prevent module-level blocking
 
 # Import utilities
 from ..utils import get_default_user, get_single_trading_account
@@ -100,6 +100,8 @@ def api_start_bot(request: HttpRequest) -> JsonResponse:
         JsonResponse: Bot start confirmation with session details
     """
     try:
+        # Lazy import to prevent blocking during Django startup
+        from ..tasks import run_paper_trading_bot  # noqa: F811
         # Get default user and account
         user = get_default_user()
         account = get_single_trading_account()
@@ -323,6 +325,8 @@ def api_stop_bot(request: HttpRequest) -> JsonResponse:
         JsonResponse: Stop confirmation
     """
     try:
+        # Lazy import to prevent blocking during Django startup
+        from ..tasks import stop_paper_trading_bot  # noqa: F811
         # Get default user and account
         user = get_default_user()
         account = get_single_trading_account()
