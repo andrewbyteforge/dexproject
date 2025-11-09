@@ -36,6 +36,10 @@ from .autopilot import (
     AutoPilotPerformanceSnapshot,
 )
 
+from .orders import (
+    PaperOrder,
+)
+
 # Export all models for Django
 __all__ = [
     # Core trading models
@@ -55,4 +59,7 @@ __all__ = [
     # Auto Pilot models
     'AutoPilotLog',
     'AutoPilotPerformanceSnapshot',
+
+
+    'PaperOrder',
 ]

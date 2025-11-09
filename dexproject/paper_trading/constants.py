@@ -1,17 +1,18 @@
 """
-Paper Trading Constants - Enhanced with API Field Names
+Paper Trading Constants - Enhanced with API Field Names + Phase 7A Order Support
 
 This module contains all constant values used throughout the paper trading system.
 These prevent typos, enable IDE autocomplete, and serve as single source of truth.
 
 ENHANCED: Added API request/response field names and configuration constants
+PHASE 7A: Added order-related constants for advanced order types
 
 Location: paper_trading/constants.py
 
 Usage:
     from paper_trading.constants import (
         DecisionType, ConfidenceLevel, ThoughtLogFields,
-        ConfigAPIFields, BotControlFields
+        ConfigAPIFields, BotControlFields, OrderType, OrderStatus
     )
 """
 
@@ -259,8 +260,7 @@ class ConfigAPIFields:
     # Request fields (POST body)
     NAME: Final[str] = 'name'
     TRADING_MODE: Final[str] = 'trading_mode'
-    MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'    
-    MAX_TRADE_SIZE_USD: Final[str] = 'max_trade_size_usd'  # ← ADD THIS LINE
+    MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
     MAX_HOLD_HOURS: Final[str] = 'max_hold_hours'
@@ -317,7 +317,6 @@ class SessionMetadataFields:
     INTEL_LEVEL: Final[str] = 'intel_level'
     TRADING_MODE: Final[str] = 'trading_mode'
     MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
-    MAX_TRADE_SIZE_USD: Final[str] = 'max_trade_size_usd'  # ← ADD THIS LINE
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
     MAX_HOLD_HOURS: Final[str] = 'max_hold_hours'
@@ -430,19 +429,9 @@ def get_intel_level_from_trading_mode(trading_mode: str) -> int:
     return mode_to_intel.get(trading_mode, 5)  # Default to 5 if unknown
 
 
-
-
-
-
-
-
 # =============================================================================
 # PHASE 2: MULTI-DEX PRICE COMPARISON CONSTANTS
 # =============================================================================
-# Add these to the end of paper_trading/constants.py
-
-from typing import Final
-
 
 class DEXNames:
     """Supported DEX names for multi-DEX price comparison."""
@@ -576,7 +565,7 @@ def validate_arbitrage_opportunity(arb_data: dict) -> bool:
 
 
 # =============================================================================
-# HELPER FUNCTIONS
+# DEX HELPER FUNCTIONS
 # =============================================================================
 
 def get_dex_display_name(dex_name: str) -> str:
@@ -597,3 +586,188 @@ def get_dex_display_name(dex_name: str) -> str:
     }
     
     return display_names.get(dex_name, dex_name.upper())
+
+
+# =============================================================================
+# ORDER TYPES (Phase 7A - Advanced Order Types)
+# =============================================================================
+
+class OrderType:
+    """
+    Advanced order types for Phase 7A.
+    
+    These define the different types of orders users can place.
+    """
+    # Limit orders - execute at specific price or better
+    LIMIT_BUY: Final[str] = 'LIMIT_BUY'      # Buy when price drops to limit or below
+    LIMIT_SELL: Final[str] = 'LIMIT_SELL'    # Sell when price rises to limit or above
+    
+    # Stop-limit orders - trigger at stop, execute at limit
+    STOP_LIMIT_BUY: Final[str] = 'STOP_LIMIT_BUY'    # Buy when price rises to stop, execute at limit
+    STOP_LIMIT_SELL: Final[str] = 'STOP_LIMIT_SELL'  # Sell when price drops to stop, execute at limit
+    
+    # Trailing stop - dynamic stop that follows price
+    TRAILING_STOP: Final[str] = 'TRAILING_STOP'      # Stop loss that trails price upward
+    
+    # All valid order types
+    ALL: Final[tuple] = (
+        LIMIT_BUY, LIMIT_SELL,
+        STOP_LIMIT_BUY, STOP_LIMIT_SELL,
+        TRAILING_STOP
+    )
+    
+    # Order types that buy
+    BUY_ORDERS: Final[tuple] = (LIMIT_BUY, STOP_LIMIT_BUY)
+    
+    # Order types that sell
+    SELL_ORDERS: Final[tuple] = (LIMIT_SELL, STOP_LIMIT_SELL, TRAILING_STOP)
+    
+    # Limit-based orders
+    LIMIT_ORDERS: Final[tuple] = (LIMIT_BUY, LIMIT_SELL)
+    
+    # Stop-limit orders
+    STOP_LIMIT_ORDERS: Final[tuple] = (STOP_LIMIT_BUY, STOP_LIMIT_SELL)
+
+
+# =============================================================================
+# ORDER STATUS (Phase 7A)
+# =============================================================================
+
+class OrderStatus:
+    """
+    Order execution status for advanced order types.
+    
+    Tracks the lifecycle of an order from placement to completion.
+    """
+    # Active states
+    PENDING: Final[str] = 'PENDING'                    # Order placed, waiting for trigger
+    TRIGGERED: Final[str] = 'TRIGGERED'                # Stop price hit, ready to execute
+    PARTIALLY_FILLED: Final[str] = 'PARTIALLY_FILLED'  # Some quantity executed
+    
+    # Terminal states
+    FILLED: Final[str] = 'FILLED'          # Order fully executed
+    CANCELLED: Final[str] = 'CANCELLED'    # User cancelled order
+    EXPIRED: Final[str] = 'EXPIRED'        # Order expired (time-based)
+    FAILED: Final[str] = 'FAILED'          # Execution failed
+    
+    # All valid statuses
+    ALL: Final[tuple] = (
+        PENDING, TRIGGERED, PARTIALLY_FILLED,
+        FILLED, CANCELLED, EXPIRED, FAILED
+    )
+    
+    # Active statuses (order still in play)
+    ACTIVE: Final[tuple] = (PENDING, TRIGGERED, PARTIALLY_FILLED)
+    
+    # Terminal statuses (order complete)
+    TERMINAL: Final[tuple] = (FILLED, CANCELLED, EXPIRED, FAILED)
+
+
+# =============================================================================
+# MODEL FIELD NAMES - Orders (Phase 7A)
+# =============================================================================
+
+class OrderFields:
+    """
+    Field names for order models (Phase 7A).
+    
+    These apply to PaperLimitOrder, PaperStopLimitOrder, and PaperTrailingStopOrder.
+    """
+    # Identity
+    ORDER_ID: Final[str] = 'order_id'
+    ACCOUNT: Final[str] = 'account'
+    ORDER_TYPE: Final[str] = 'order_type'
+    
+    # Token details
+    TOKEN_ADDRESS: Final[str] = 'token_address'
+    TOKEN_SYMBOL: Final[str] = 'token_symbol'
+    TOKEN_NAME: Final[str] = 'token_name'
+    
+    # Order parameters
+    AMOUNT_USD: Final[str] = 'amount_usd'
+    AMOUNT_TOKEN: Final[str] = 'amount_token'
+    
+    # Price parameters
+    TRIGGER_PRICE: Final[str] = 'trigger_price'        # For limit/stop-limit orders
+    LIMIT_PRICE: Final[str] = 'limit_price'            # For stop-limit orders
+    STOP_PRICE: Final[str] = 'stop_price'              # For stop-limit orders
+    
+    # Trailing stop parameters
+    TRAIL_PERCENT: Final[str] = 'trail_percent'        # For trailing stops
+    TRAIL_AMOUNT: Final[str] = 'trail_amount'          # Alternative: fixed trail amount
+    HIGHEST_PRICE: Final[str] = 'highest_price'        # Tracks highest price seen
+    CURRENT_STOP_PRICE: Final[str] = 'current_stop_price'  # Current trailing stop
+    
+    # Execution
+    STATUS: Final[str] = 'status'
+    FILLED_AMOUNT_USD: Final[str] = 'filled_amount_usd'
+    FILLED_AMOUNT_TOKEN: Final[str] = 'filled_amount_token'
+    AVERAGE_FILL_PRICE: Final[str] = 'average_fill_price'
+    
+    # Timing
+    CREATED_AT: Final[str] = 'created_at'
+    EXPIRES_AT: Final[str] = 'expires_at'
+    TRIGGERED_AT: Final[str] = 'triggered_at'
+    FILLED_AT: Final[str] = 'filled_at'
+    CANCELLED_AT: Final[str] = 'cancelled_at'
+    
+    # Metadata
+    NOTES: Final[str] = 'notes'
+    ERROR_MESSAGE: Final[str] = 'error_message'
+    RELATED_TRADE: Final[str] = 'related_trade'        # Link to executed trade
+
+
+# =============================================================================
+# VALIDATION FUNCTIONS - Phase 7A Orders
+# =============================================================================
+
+def validate_order_type(order_type: str) -> bool:
+    """
+    Validate if order type is valid.
+    
+    Args:
+        order_type: Order type string
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    return order_type in OrderType.ALL
+
+
+def validate_order_status(status: str) -> bool:
+    """
+    Validate if order status is valid.
+    
+    Args:
+        status: Order status string
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    return status in OrderStatus.ALL
+
+
+def is_order_active(status: str) -> bool:
+    """
+    Check if order status indicates an active order.
+    
+    Args:
+        status: Order status string
+        
+    Returns:
+        True if order is still active, False if terminal
+    """
+    return status in OrderStatus.ACTIVE
+
+
+def is_order_terminal(status: str) -> bool:
+    """
+    Check if order status indicates a completed order.
+    
+    Args:
+        status: Order status string
+        
+    Returns:
+        True if order is in terminal state, False if still active
+    """
+    return status in OrderStatus.TERMINAL
