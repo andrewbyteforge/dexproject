@@ -8,40 +8,47 @@ Services:
 - Price Feed Service: Real-time token price aggregation with caching
 - Simulator: Paper trade execution with real market data
 - WebSocket Service: Real-time client notifications
-- Order Manager Service: Advanced order type management (Phase 7A)
-
-UPDATED: Added OrderManager service for Phase 7A (Advanced Order Types)
+- Order Manager Service: Advanced order type management (Phase 7A Day 2)
+- Order Executor Service: Order execution engine (Phase 7A Day 4)
 
 File: paper_trading/services/__init__.py
 """
 
-# Price Feed Service
+# Import price feed service components
 from .price_feed_service import (
     PriceFeedService,
     get_default_price_feed_service,
-    get_bulk_token_prices_simple
+    get_bulk_token_prices_simple,
 )
 
-# Simulator Service
+# Import simulator components
 from .simulator import (
     SimplePaperTradingSimulator,
     SimplePaperTradeRequest,
     SimplePaperTradeResult,
-    get_simulator
+    get_simulator,
 )
 
-# WebSocket Service
+# Import WebSocket service components
 from .websocket_service import (
-    PaperTradingWebSocketService,
-    get_websocket_service
+    websocket_service as PaperTradingWebSocketService,
+    websocket_service,
 )
 
-# Order Manager Service - Phase 7A (NEW)
+# Import Order Manager components (Phase 7A Day 2)
 from .order_manager import (
     OrderManager,
-    get_order_manager
+    get_order_manager,
 )
 
+# Import Order Executor components (Phase 7A Day 4)
+from .order_executor import (
+    OrderExecutor,
+    get_order_executor,
+    execute_order,
+)
+
+# Define public API
 __all__ = [
     # Price Feed Service
     'PriceFeedService',
@@ -56,9 +63,14 @@ __all__ = [
     
     # WebSocket Service
     'PaperTradingWebSocketService',
-    'get_websocket_service',
+    'websocket_service',
     
-    # Order Manager Service - Phase 7A
+    # Order Manager Service - Phase 7A Day 2
     'OrderManager',
     'get_order_manager',
+    
+    # Order Executor Service - Phase 7A Day 4
+    'OrderExecutor',
+    'get_order_executor',
+    'execute_order',
 ]
