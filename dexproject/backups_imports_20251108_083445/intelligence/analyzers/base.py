@@ -13,8 +13,19 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
+try:
+    import engine.config as engine_config_module
+    from engine.config import get_config
+    from engine.web3_client import Web3Client
+    ENGINE_CONFIG_MODULE_AVAILABLE = True
+except ImportError:
+    engine_config_module = None
+    get_config = None
+    Web3Client = None
+    ENGINE_CONFIG_MODULE_AVAILABLE = False
+
 # Import constants for engine availability check
-from paper_trading.intelligence.analyzers.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     ENGINE_CONFIG_MODULE_AVAILABLE,
     engine_config_module,
     get_config,

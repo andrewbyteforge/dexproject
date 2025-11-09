@@ -6,6 +6,7 @@ This module centralizes ALL DEX-related constants including:
 - Contract ABIs (minimal - only what we need)
 - Fee tiers and configuration
 - Base token addresses (WETH, USDC, etc.)
+- Gas estimates per chain
 
 This is the SINGLE SOURCE OF TRUTH for all DEX constants.
 Both analyzers and DEX integrations import from here.
@@ -257,6 +258,49 @@ UNISWAP_V2_FACTORY_ABI: List[Dict[str, Any]] = [
 
 
 # =============================================================================
+# GAS ESTIMATES - MOVED FROM ANALYZERS
+# =============================================================================
+
+# Gas cost estimates per chain (in gas units)
+# Used for cost calculations in arbitrage detection and trade execution
+# 
+# These are estimated gas units for typical DEX swap operations:
+# - Token approval: ~50,000 gas
+# - Buy swap: ~100,000-150,000 gas
+# - Sell swap: ~100,000-150,000 gas
+GAS_ESTIMATES_PER_CHAIN: Dict[int, int] = {
+    1: 150000,          # Ethereum mainnet (higher due to more expensive execution)
+    8453: 100000,       # Base mainnet (optimized L2)
+    84532: 100000,      # Base Sepolia testnet
+    42161: 80000,       # Arbitrum (efficient L2)
+    10: 100000,         # Optimism (L2)
+    11155111: 150000,   # Ethereum Sepolia testnet
+}
+
+# Default gas estimate if chain not found
+DEFAULT_GAS_ESTIMATE: int = 100000
+
+
+def get_gas_estimate(chain_id: int) -> int:
+    """
+    Get gas estimate for a specific chain.
+    
+    Args:
+        chain_id: Blockchain chain ID
+        
+    Returns:
+        Estimated gas units for the chain
+        
+    Example:
+        >>> get_gas_estimate(8453)
+        100000
+        >>> get_gas_estimate(1)
+        150000
+    """
+    return GAS_ESTIMATES_PER_CHAIN.get(chain_id, DEFAULT_GAS_ESTIMATE)
+
+
+# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -302,6 +346,11 @@ def get_dex_addresses(dex_name: str, chain_id: int) -> Dict[str, str]:
         
     Raises:
         ValueError: If DEX or chain not supported
+        
+    Example:
+        >>> get_dex_addresses('uniswap_v3', 8453)
+        {'factory': '0x33128a8fC17869897dcE68Ed026d694621f6FDfD', 
+         'router': '0x2626664c2603336E57B271c5C0b26F421741e481'}
     """
     if dex_name == 'uniswap_v3':
         return {

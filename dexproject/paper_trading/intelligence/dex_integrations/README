@@ -234,7 +234,7 @@ if prices:
 ### Using Constants
 
 ```python
-from paper_trading.intelligence.dex_integrations.constants import (
+from from paper_trading.intelligence.dex_integrations.constants import (
     UNISWAP_V3_FACTORY,
     WETH_ADDRESS,
     get_base_tokens,

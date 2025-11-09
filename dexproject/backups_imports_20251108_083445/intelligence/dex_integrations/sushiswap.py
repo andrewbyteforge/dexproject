@@ -15,7 +15,7 @@ from typing import Optional
 from paper_trading.intelligence.dex_integrations.base import BaseDEX, DEXPrice
 
 # Import constants
-from paper_trading.intelligence.dex_integrations.constants import (
+from from paper_trading.intelligence.dex_integrations.constants import (
     SUSHISWAP_FACTORY,
     SUSHISWAP_ROUTER,
     get_base_tokens

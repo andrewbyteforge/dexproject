@@ -144,22 +144,20 @@ DECISION_TYPES = [
 
 # Base Mainnet (8453)
 BASE_MAINNET_TOKENS = {
-    # Original 4 tokens
-    'WETH': '0x4200000000000000000000000000000000000006',
-    'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-    'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
-    'CBETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+    # Original 4 tokens - Core trading pairs
+    'WETH': '0x4200000000000000000000000000000000000006',  # Wrapped Ether
+    'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  # USD Coin
+    'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',   # Dai Stablecoin
+    'CBETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', # Coinbase Wrapped Staked ETH
     
-    # Week 1 additions - Verified
+    # Week 1 additions - Base native tokens with excellent Uniswap V3 liquidity
+    'DEGEN': '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', # Degen (Base) - $47.8M liquidity
+    'BRETT': '0x532f27101965dd16442E59d40670FaF5eBB142E4', # Brett (Base) - $2.02B liquidity
     
-    'DEGEN': '0x4ed4e862860bed51a9570b96d89af5e1b0efefed',  # Degen (Base native)
-    
-    'BRETT': '0x532f27101965dd16442e59d40670faf5ebb142e4',  # Brett (Base native)
-     # NEW Week 1 additions - HIGH LIQUIDITY ONLY
-    'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',  # Aerodrome - $500M+ liquidity
-    'VIRTUAL': '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b',  # Virtual Protocol - $100M+ 
-    'MORPHO': '0x58D97B57BB95320F9a05dC918Aef65434969c2B2',  # Morpho Blue - $80M+
-    
+    # Week 1 additions - High Uniswap V3 liquidity tokens
+    'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',    # Aerodrome Finance - $837K Uni V3 liquidity
+    'VIRTUAL': '0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b', # Virtual Protocol - $1.13M Uni V3 liquidity
+    'MORPHO': '0x58d97b57bb95320f9a05dc918aef65434969c2b2',  # Morpho - $291K Uni V3 liquidity
 }
 
 # Base Sepolia (84532) - Testnet

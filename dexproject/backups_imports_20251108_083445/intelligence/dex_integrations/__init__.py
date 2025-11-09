@@ -6,36 +6,22 @@ Each DEX has its own adapter that implements the BaseDEX interface and returns
 standardized DEXPrice objects.
 
 Available DEXs:
-- UniswapV3DEX: Uniswap V3 integration (COMPLETE)
-- SushiSwapDEX: SushiSwap integration (PLACEHOLDER)
-- CurveDEX: Curve Finance integration (PLACEHOLDER)
+- UniswapV3DEX: Uniswap V3 integration (PLACEHOLDER - TODO)
+- SushiSwapDEX: SushiSwap integration (PLACEHOLDER - TODO)
+- CurveDEX: Curve Finance integration (PLACEHOLDER - TODO)
 
 Usage:
-    from paper_trading.intelligence.dex_integrations import UniswapV3DEX, DEXPrice
+    from paper_trading.intelligence.dex_integrations import UNISWAP_V3_FACTORY
     
-    # Create DEX adapter
-    uniswap = UniswapV3DEX(chain_id=8453)
-    
-    # Get token price
-    price = await uniswap.get_token_price(
-        token_address='0x...',
-        token_symbol='WETH'
-    )
-    
-    if price.success:
-        print(f"Price: ${price.price_usd}")
-        print(f"Liquidity: ${price.liquidity_usd}")
+    # Get DEX constants for trading
+    factory = UNISWAP_V3_FACTORY[8453]  # Base Mainnet
 
 File: dexproject/paper_trading/intelligence/dex_integrations/__init__.py
 """
 
-# Import base classes
-from paper_trading.intelligence.dex_integrations.base import (
-    BaseDEX,
-    DEXPrice
-)
-
-# Import constants (for external use)
+# =============================================================================
+# Import constants from the centralized constants file
+# =============================================================================
 from paper_trading.intelligence.dex_integrations.constants import (
     # Uniswap V3
     UNISWAP_V3_FACTORY,
@@ -67,6 +53,11 @@ from paper_trading.intelligence.dex_integrations.constants import (
     UNISWAP_V2_PAIR_ABI,
     UNISWAP_V2_FACTORY_ABI,
     
+    # Gas estimates
+    GAS_ESTIMATES_PER_CHAIN,
+    DEFAULT_GAS_ESTIMATE,
+    get_gas_estimate,
+    
     # Helper functions
     get_base_tokens,
     get_dex_addresses,
@@ -75,10 +66,13 @@ from paper_trading.intelligence.dex_integrations.constants import (
     FEE_TIERS
 )
 
-# Import DEX implementations
-from paper_trading.intelligence.dex_integrations.uniswap_v3 import UniswapV3DEX
-from paper_trading.intelligence.dex_integrations.sushiswap import SushiSwapDEX
-from paper_trading.intelligence.dex_integrations.curve import CurveDEX
+# =============================================================================
+# COMMENTED OUT - DEX implementations don't exist yet
+# =============================================================================
+# TODO: Create these DEX adapter classes
+# from paper_trading.intelligence.dex_integrations.uniswap_v3 import UniswapV3DEX
+# from paper_trading.intelligence.dex_integrations.sushiswap import SushiSwapDEX
+# from paper_trading.intelligence.dex_integrations.curve import CurveDEX
 
 
 # =============================================================================
@@ -86,14 +80,14 @@ from paper_trading.intelligence.dex_integrations.curve import CurveDEX
 # =============================================================================
 
 __all__ = [
-    # Base classes
-    'BaseDEX',
-    'DEXPrice',
+    # Base classes (TODO: uncomment when implemented)
+    # 'BaseDEX',
+    # 'DEXPrice',
     
-    # DEX implementations
-    'UniswapV3DEX',
-    'SushiSwapDEX',
-    'CurveDEX',
+    # DEX implementations (TODO: uncomment when implemented)
+    # 'UniswapV3DEX',
+    # 'SushiSwapDEX',
+    # 'CurveDEX',
     
     # Uniswap V3 constants
     'UNISWAP_V3_FACTORY',
@@ -125,6 +119,11 @@ __all__ = [
     'ERC20_ABI',
     'UNISWAP_V2_PAIR_ABI',
     'UNISWAP_V2_FACTORY_ABI',
+    
+    # Gas estimates
+    'GAS_ESTIMATES_PER_CHAIN',
+    'DEFAULT_GAS_ESTIMATE',
+    'get_gas_estimate',
     
     # Helper functions
     'get_base_tokens',

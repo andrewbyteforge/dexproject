@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 # Import constants for engine availability check
-from paper_trading.intelligence.analyzers.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     ENGINE_CONFIG_MODULE_AVAILABLE,
     engine_config_module,
     get_config,

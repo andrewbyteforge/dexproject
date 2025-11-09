@@ -21,7 +21,7 @@ import logging
 from paper_trading.defaults import IntelligenceDefaults
 
 # Import constants (including engine availability flag)
-from paper_trading.intelligence.analyzers.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     UNISWAP_V3_FACTORY,
     FACTORY_ABI,
     POOL_ABI,

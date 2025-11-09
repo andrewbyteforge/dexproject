@@ -28,7 +28,7 @@ from engine.web3_client import Web3Client
 from engine.config import get_config
 
 # Import Uniswap constants from analyzers
-from paper_trading.intelligence.analyzers.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     UNISWAP_V3_FACTORY,
     FEE_TIERS,
     FACTORY_ABI,

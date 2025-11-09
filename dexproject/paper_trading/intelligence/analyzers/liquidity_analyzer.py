@@ -16,7 +16,7 @@ from typing import Dict, Any, Optional
 
 # Import base analyzer, defaults, and constants
 from paper_trading.intelligence.analyzers.base import BaseAnalyzer
-from paper_trading.intelligence.analyzers.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     UNISWAP_V3_FACTORY,
     FACTORY_ABI,
     POOL_ABI,

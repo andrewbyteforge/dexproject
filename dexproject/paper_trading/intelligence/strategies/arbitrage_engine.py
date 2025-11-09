@@ -38,7 +38,7 @@ from paper_trading.defaults import (
 )
 
 # Import gas estimates from centralized analyzers constants (Phase 3)
-from paper_trading.intelligence.analyzers.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     GAS_ESTIMATES_PER_CHAIN,
     DEFAULT_GAS_ESTIMATE,
     get_gas_estimate
