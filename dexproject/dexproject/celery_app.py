@@ -89,6 +89,7 @@ app.conf.update(
         'paper_trading.tasks.stop_paper_trading_bot': {'queue': 'paper_trading'},
         'paper_trading.tasks.get_bot_status': {'queue': 'paper_trading'},
         'paper_trading.tasks.cleanup_old_sessions': {'queue': 'paper_trading'},
+        'paper_trading.tasks.monitor_orders_task': {'queue': 'paper_trading'},  # Phase 7A order monitoring
         
         # =============================================================================
         # ANALYTICS AND REPORTING TASKS - BACKGROUND PROCESSING
@@ -355,6 +356,14 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour=3, minute=0),  # Daily at 3 AM
         'options': {'queue': 'paper_trading'},
         'kwargs': {'days': 30}  # Keep sessions for 30 days
+    },
+
+    # Phase 7A - Monitor orders every 30 seconds
+    'monitor-paper-trading-orders': {
+        'task': 'paper_trading.tasks.monitor_orders_task',
+        'schedule': 30.0,  # Every 30 seconds
+        'options': {'queue': 'paper_trading'},
+        'kwargs': {'chain_id': 84532}  # Base Sepolia
     },
     
     # Update risk statistics
