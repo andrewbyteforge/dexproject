@@ -29,14 +29,17 @@ Usage:
 File: dexproject/paper_trading/intelligence/dex_integrations/__init__.py
 """
 
-# Import base classes
-from paper_trading.intelligence.dex.protocols.base import (
-    BaseDEX,
-    DEXPrice
-)
+# =============================================================================
+# COMMENTED OUT - Base classes don't exist yet
+# =============================================================================
+# TODO: Create base.py with BaseDEX and DEXPrice classes
+# from paper_trading.intelligence.dex_integrations.base import (
+#     BaseDEX,
+#     DEXPrice
+# )
 
 # Import constants (for external use)
-from paper_trading.intelligence.dex.protocols.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     # Uniswap V3
     UNISWAP_V3_FACTORY,
     UNISWAP_V3_ROUTER,
@@ -71,14 +74,22 @@ from paper_trading.intelligence.dex.protocols.constants import (
     get_base_tokens,
     get_dex_addresses,
     
+    # Gas estimates
+    GAS_ESTIMATES_PER_CHAIN,
+    DEFAULT_GAS_ESTIMATE,
+    get_gas_estimate,
+    
     # Backward compatibility
     FEE_TIERS
 )
 
-# Import DEX implementations
-from paper_trading.intelligence.dex.protocols.uniswap_v3 import UniswapV3DEX
-from paper_trading.intelligence.dex.protocols.sushiswap import SushiSwapDEX
-from paper_trading.intelligence.dex.protocols.curve import CurveDEX
+# =============================================================================
+# COMMENTED OUT - DEX implementations don't exist yet
+# =============================================================================
+# TODO: Create these DEX adapter classes
+# from paper_trading.intelligence.dex_integrations.uniswap_v3 import UniswapV3DEX
+# from paper_trading.intelligence.dex_integrations.sushiswap import SushiSwapDEX
+# from paper_trading.intelligence.dex_integrations.curve import CurveDEX
 
 
 # =============================================================================
@@ -86,14 +97,14 @@ from paper_trading.intelligence.dex.protocols.curve import CurveDEX
 # =============================================================================
 
 __all__ = [
-    # Base classes
-    'BaseDEX',
-    'DEXPrice',
+    # Base classes (TODO: uncomment when implemented)
+    # 'BaseDEX',
+    # 'DEXPrice',
     
-    # DEX implementations
-    'UniswapV3DEX',
-    'SushiSwapDEX',
-    'CurveDEX',
+    # DEX implementations (TODO: uncomment when implemented)
+    # 'UniswapV3DEX',
+    # 'SushiSwapDEX',
+    # 'CurveDEX',
     
     # Uniswap V3 constants
     'UNISWAP_V3_FACTORY',
@@ -125,6 +136,11 @@ __all__ = [
     'ERC20_ABI',
     'UNISWAP_V2_PAIR_ABI',
     'UNISWAP_V2_FACTORY_ABI',
+    
+    # Gas estimates
+    'GAS_ESTIMATES_PER_CHAIN',
+    'DEFAULT_GAS_ESTIMATE',
+    'get_gas_estimate',
     
     # Helper functions
     'get_base_tokens',
