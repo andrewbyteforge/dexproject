@@ -1,0 +1,483 @@
+/**
+ * Paper Trading Orders - CSS Styles
+ * 
+ * Comprehensive styling for order management pages including:
+ * - Order type selector cards
+ * - Price field displays
+ * - Order summary sections
+ * - Active orders table
+ * - Order history table
+ * - Status badges and indicators
+ * - Responsive design
+ * 
+ * File: static/css/orders.css
+ */
+
+/* =============================================================================
+   ORDER TYPE SELECTOR
+   ============================================================================= */
+
+.order-type-selector {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.order-type-card {
+    position: relative;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.order-type-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(0, 123, 255, 0.5);
+    transform: translateY(-2px);
+}
+
+.order-type-card.selected {
+    background: rgba(0, 123, 255, 0.15);
+    border-color: #007bff;
+    box-shadow: 0 0 20px rgba(0, 123, 255, 0.3);
+}
+
+.order-type-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.order-type-card label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    margin: 0;
+    text-align: center;
+    color: #ffffff;
+}
+
+.order-type-card label i {
+    font-size: 2rem;
+}
+
+.order-type-card label span {
+    display: block;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.order-type-card label small {
+    display: block;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
+
+/* =============================================================================
+   CURRENT PRICE DISPLAY
+   ============================================================================= */
+
+.current-price-display {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #10b981;
+}
+
+.current-price-display #current_price {
+    flex: 1;
+}
+
+.current-price-display button {
+    margin-left: 0.5rem;
+}
+
+/* =============================================================================
+   ORDER SUMMARY
+   ============================================================================= */
+
+.order-summary {
+    background: rgba(0, 123, 255, 0.1);
+    border: 1px solid rgba(0, 123, 255, 0.3);
+    border-radius: 12px;
+    padding: 1.5rem;
+}
+
+.order-summary h6 {
+    color: #007bff;
+    font-weight: 600;
+    margin-bottom: 1rem;
+}
+
+.summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.summary-label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+}
+
+.summary-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+/* =============================================================================
+   PRICE FIELDS
+   ============================================================================= */
+
+.price-field {
+    transition: all 0.3s ease;
+}
+
+.price-field input {
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+}
+
+/* =============================================================================
+   ORDER INFO SIDEBAR
+   ============================================================================= */
+
+.order-info-item {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.order-info-item:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.order-info-item strong {
+    color: #00d4aa;
+    font-size: 0.9rem;
+}
+
+.order-info-item p {
+    margin-top: 0.25rem;
+    margin-bottom: 0;
+}
+
+/* =============================================================================
+   ACTIVE ORDERS TABLE
+   ============================================================================= */
+
+#orders_table {
+    font-size: 0.9rem;
+}
+
+#orders_table th {
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 2px solid rgba(0, 212, 170, 0.3);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
+    padding: 1rem 0.75rem;
+}
+
+#orders_table td {
+    padding: 0.75rem;
+    vertical-align: middle;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#orders_table tbody tr {
+    transition: all 0.2s ease;
+}
+
+#orders_table tbody tr:hover {
+    background: rgba(0, 123, 255, 0.1);
+}
+
+.order-row.table-success {
+    background: rgba(16, 185, 129, 0.2) !important;
+    animation: pulse 0.5s ease-in-out;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+/* =============================================================================
+   STATUS BADGES
+   ============================================================================= */
+
+.badge {
+    font-weight: 600;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* =============================================================================
+   STAT CARDS
+   ============================================================================= */
+
+.stat-label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1;
+}
+
+/* =============================================================================
+   FILTER FORM
+   ============================================================================= */
+
+#filter_form .form-label {
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+#filter_form .form-select,
+#filter_form .form-control {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    font-size: 0.9rem;
+}
+
+#filter_form .form-select:focus,
+#filter_form .form-control:focus {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+#filter_form .form-select option {
+    background: #1a1a2e;
+    color: #ffffff;
+}
+
+/* =============================================================================
+   EMPTY STATE
+   ============================================================================= */
+
+.text-center i.display-1 {
+    opacity: 0.3;
+}
+
+/* =============================================================================
+   WEBSOCKET STATUS INDICATOR
+   ============================================================================= */
+
+#ws_status {
+    font-size: 0.85rem;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+#ws_status i {
+    animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* =============================================================================
+   MODAL CUSTOMIZATION
+   ============================================================================= */
+
+.modal-content {
+    border: 1px solid rgba(0, 212, 170, 0.3);
+    box-shadow: 0 0 30px rgba(0, 212, 170, 0.2);
+}
+
+.modal-header {
+    background: rgba(0, 212, 170, 0.1);
+}
+
+.modal-footer {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* =============================================================================
+   PAGINATION
+   ============================================================================= */
+
+.pagination {
+    gap: 0.5rem;
+}
+
+.pagination .page-link {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    transition: all 0.2s ease;
+}
+
+.pagination .page-link:hover {
+    background: rgba(0, 123, 255, 0.2);
+    border-color: #007bff;
+    color: #ffffff;
+}
+
+.pagination .page-item.active .page-link {
+    background: #007bff;
+    border-color: #007bff;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+/* =============================================================================
+   RESPONSIVE DESIGN
+   ============================================================================= */
+
+/* Tablets */
+@media (max-width: 992px) {
+    .order-type-selector {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+    }
+
+    #orders_table {
+        font-size: 0.85rem;
+    }
+
+    #orders_table th,
+    #orders_table td {
+        padding: 0.5rem;
+    }
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+    .order-type-selector {
+        grid-template-columns: 1fr;
+    }
+
+    .order-type-card {
+        padding: 1.5rem;
+    }
+
+    .order-summary {
+        padding: 1rem;
+    }
+
+    .summary-value {
+        font-size: 1rem;
+    }
+
+    .stat-value {
+        font-size: 1.25rem;
+    }
+
+    /* Make table scrollable on mobile */
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    #orders_table {
+        min-width: 800px;
+    }
+
+    /* Stack filter form on mobile */
+    #filter_form {
+        display: flex;
+        flex-direction: column;
+    }
+
+    #filter_form>div {
+        width: 100% !important;
+    }
+}
+
+/* =============================================================================
+   UTILITY CLASSES
+   ============================================================================= */
+
+.font-monospace {
+    font-family: 'Courier New', Courier, monospace;
+}
+
+.text-truncate-custom {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 150px;
+}
+
+/* Button groups */
+.btn-group-sm .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+/* Success/Error animations */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.toast {
+    animation: slideIn 0.3s ease-out;
+}
+
+/* Loading spinner in buttons */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+    border-width: 0.15em;
+}

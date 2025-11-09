@@ -730,3 +730,35 @@ class PaperTradingConsumer(AsyncWebsocketConsumer):
             event: Dictionary containing portfolio data
         """
         await self.send(text_data=json.dumps(event))
+
+
+    async def order_update(self, event):
+        """Handle order status updates."""
+        logger.info(f"Broadcasting order update: {event.get('order_id', 'unknown')}")
+        
+        await self.send(text_data=json.dumps({
+            'type': 'order_update',
+            'order': event.get('order', {}),
+            'timestamp': timezone.now().isoformat()
+        }))
+    
+    async def order_filled(self, event):
+        """Handle order filled notification."""
+        logger.info(f"Broadcasting order filled: {event.get('order_id', 'unknown')}")
+        
+        await self.send(text_data=json.dumps({
+            'type': 'order_filled',
+            'order': event.get('order', {}),
+            'timestamp': timezone.now().isoformat()
+        }))
+    
+    async def order_cancelled(self, event):
+        """Handle order cancellation notification."""
+        logger.info(f"Broadcasting order cancelled: {event.get('order_id', 'unknown')}")
+        
+        await self.send(text_data=json.dumps({
+            'type': 'order_cancelled',
+            'order': event.get('order', {}),
+            'reason': event.get('reason', 'Unknown'),
+            'timestamp': timezone.now().isoformat()
+        }))

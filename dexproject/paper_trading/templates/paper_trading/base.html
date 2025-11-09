@@ -364,6 +364,7 @@
                 </div>
                 
                 <!-- Navigation -->
+                <!-- Navigation -->
                 <nav class="paper-nav">
                     <a href="{% url 'paper_trading:dashboard' %}" class="paper-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
                         <i class="bi bi-speedometer2"></i>
@@ -376,6 +377,10 @@
                     <a href="{% url 'paper_trading:trades' %}" class="paper-nav-link {% if request.resolver_match.url_name == 'trades' %}active{% endif %}">
                         <i class="bi bi-list-ul"></i>
                         Trades
+                    </a>
+                    <a href="{% url 'paper_trading:orders_active' %}" class="paper-nav-link {% if 'orders' in request.resolver_match.url_name %}active{% endif %}">
+                        <i class="bi bi-clock-history"></i>
+                        Orders
                     </a>
                     <a href="{% url 'paper_trading:configuration' %}" class="paper-nav-link {% if request.resolver_match.url_name == 'configuration' %}active{% endif %}">
                         <i class="bi bi-gear"></i>

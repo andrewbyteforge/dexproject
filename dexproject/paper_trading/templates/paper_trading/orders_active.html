@@ -1,0 +1,330 @@
+{% extends "paper_trading/base.html" %}
+{% load static %}
+
+{% block title %}Active Orders - Paper Trading{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/orders.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <!-- Page Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1">
+                <i class="bi bi-clock-history me-2"></i>
+                Active Orders
+            </h2>
+            <p class="text-muted mb-0">Monitor and manage your pending orders</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-warning" id="cancel_all_btn">
+                <i class="bi bi-x-circle me-2"></i>
+                Cancel All
+            </button>
+            <a href="{% url 'paper_trading:orders_place' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-2"></i>
+                Place New Order
+            </a>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card card-glass text-center">
+                <div class="card-body py-3">
+                    <div class="stat-label">Total Active</div>
+                    <div class="stat-value" id="total_active">{{ active_orders.count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-glass text-center">
+                <div class="card-body py-3">
+                    <div class="stat-label">Pending</div>
+                    <div class="stat-value text-warning" id="total_pending">
+                        {{ pending_count }}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-glass text-center">
+                <div class="card-body py-3">
+                    <div class="stat-label">Triggered</div>
+                    <div class="stat-value text-info" id="total_triggered">
+                        {{ triggered_count }}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-glass text-center">
+                <div class="card-body py-3">
+                    <div class="stat-label">Total Value</div>
+                    <div class="stat-value text-success" id="total_value">
+                        ${{ total_value|floatformat:2 }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card card-glass mb-4">
+        <div class="card-body">
+            <form id="filter_form" method="get" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="filter_order_type" class="form-label small">Order Type</label>
+                    <select class="form-select" id="filter_order_type" name="order_type">
+                        <option value="">All Types</option>
+                        <option value="LIMIT_BUY">Limit Buy</option>
+                        <option value="LIMIT_SELL">Limit Sell</option>
+                        <option value="STOP_LIMIT_BUY">Stop Limit Buy</option>
+                        <option value="STOP_LIMIT_SELL">Stop Limit Sell</option>
+                        <option value="TRAILING_STOP">Trailing Stop</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="filter_status" class="form-label small">Status</label>
+                    <select class="form-select" id="filter_status" name="status">
+                        <option value="">All Status</option>
+                        <option value="PENDING">Pending</option>
+                        <option value="TRIGGERED">Triggered</option>
+                        <option value="PARTIALLY_FILLED">Partially Filled</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="filter_token" class="form-label small">Token</label>
+                    <input type="text" class="form-control" id="filter_token" name="token" placeholder="Symbol or address">
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-funnel me-2"></i>Apply Filters
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Active Orders Table -->
+    <div class="card card-glass">
+        <div class="card-body">
+            {% if active_orders %}
+            <div class="table-responsive">
+                <table class="table table-dark table-hover align-middle" id="orders_table">
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Type</th>
+                            <th>Token</th>
+                            <th>Amount (USD)</th>
+                            <th>Trigger Price</th>
+                            <th>Limit Price</th>
+                            <th>Trail</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Expires</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders_tbody">
+                        {% for order in active_orders %}
+                        <tr class="order-row" data-order-id="{{ order.order_id }}">
+                            <td>
+                                <span class="font-monospace small">{{ order.order_id|slice:":8" }}...</span>
+                            </td>
+                            <td>
+                                <span class="badge {% if 'BUY' in order.order_type %}bg-success{% else %}bg-danger{% endif %}">
+                                    {{ order.get_order_type_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <strong>{{ order.token_symbol }}</strong>
+                                <br>
+                                <span class="small text-muted font-monospace">{{ order.token_address|slice:":10" }}...</span>
+                            </td>
+                            <td class="text-end">
+                                <strong>${{ order.amount_usd|floatformat:2 }}</strong>
+                            </td>
+                            <td class="text-end">
+                                {% if order.trigger_price %}
+                                    ${{ order.trigger_price|floatformat:8 }}
+                                {% else %}
+                                    <span class="text-muted">--</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if order.limit_price %}
+                                    ${{ order.limit_price|floatformat:8 }}
+                                {% else %}
+                                    <span class="text-muted">--</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if order.trail_percent %}
+                                    {{ order.trail_percent }}%
+                                {% else %}
+                                    <span class="text-muted">--</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge 
+                                    {% if order.status == 'PENDING' %}bg-warning
+                                    {% elif order.status == 'TRIGGERED' %}bg-info
+                                    {% elif order.status == 'PARTIALLY_FILLED' %}bg-primary
+                                    {% endif %}">
+                                    {{ order.get_status_display }}
+                                </span>
+                            </td>
+                            <td class="small">
+                                {{ order.created_at|date:"M d, Y" }}<br>
+                                <span class="text-muted">{{ order.created_at|time:"H:i:s" }}</span>
+                            </td>
+                            <td class="small">
+                                {% if order.expires_at %}
+                                    {{ order.expires_at|date:"M d, Y" }}<br>
+                                    <span class="text-muted">{{ order.expires_at|time:"H:i:s" }}</span>
+                                {% else %}
+                                    <span class="text-muted">GTC</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-outline-info view-order-btn" 
+                                            data-order-id="{{ order.order_id }}"
+                                            data-bs-toggle="tooltip" title="View Details">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-outline-danger cancel-order-btn" 
+                                            data-order-id="{{ order.order_id }}"
+                                            data-bs-toggle="tooltip" title="Cancel Order">
+                                        <i class="bi bi-x-circle"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if is_paginated %}
+            <nav aria-label="Orders pagination" class="mt-4">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page=1">First</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    {% for num in page_obj.paginator.page_range %}
+                        {% if page_obj.number == num %}
+                        <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <li class="page-item"><a class="page-link" href="?page={{ num }}">{{ num }}</a></li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}">Next</a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}">Last</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+
+            {% else %}
+            <!-- Empty State -->
+            <div class="text-center py-5">
+                <i class="bi bi-inbox display-1 text-muted mb-3"></i>
+                <h5 class="text-muted">No Active Orders</h5>
+                <p class="text-muted mb-4">You don't have any active orders at the moment.</p>
+                <a href="{% url 'paper_trading:orders_place' %}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-2"></i>
+                    Place Your First Order
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- WebSocket Connection Status -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+        <div id="ws_status" class="badge bg-secondary">
+            <i class="bi bi-circle-fill me-1"></i>
+            Connecting...
+        </div>
+    </div>
+</div>
+
+<!-- Order Details Modal -->
+<div class="modal fade" id="orderDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Order Details
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="order_details_body">
+                <!-- Populated dynamically -->
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Cancel Confirmation Modal -->
+<div class="modal fade" id="cancelConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="bi bi-exclamation-triangle text-warning me-2"></i>
+                    Confirm Cancellation
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to cancel this order?</p>
+                <p class="text-muted small mb-0">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No, Keep Order</button>
+                <button type="button" class="btn btn-danger" id="confirm_cancel_btn">Yes, Cancel Order</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/orders.js' %}"></script>
+<script>
+    // Initialize active orders page
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeActiveOrdersPage();
+        
+        // Initialize WebSocket for real-time updates
+        initializeOrderWebSocket();
+    });
+</script>
+{% endblock %}

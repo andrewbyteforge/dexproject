@@ -9,7 +9,7 @@ File Path: dexproject/paper_trading/urls.py
 
 from django.urls import path
 from . import views
-
+from . import views_orders
 # Import API functions from the new api package structure
 from .api import (
     # Data API endpoints
@@ -120,6 +120,16 @@ urlpatterns = [
     # GET: /paper-trading/api/analytics/export/
     # Downloads analytics data as CSV file
     path('api/analytics/export/', views.api_analytics_export, name='api_analytics_export'),
+
+
+    # Order Management Views
+    path('orders/place/', views_orders.orders_place_submit, name='orders_place'),
+    path('orders/active/', views_orders.orders_active_view, name='orders_active'),
+    path('orders/history/', views_orders.orders_history_view, name='orders_history'),
+    
+    # Order API Endpoints
+    path('api/orders/cancel/', views_orders.api_cancel_order, name='api_cancel_order'),
+    path('api/orders/<uuid:order_id>/', views_orders.api_order_details, name='api_order_details'),
 
     # ==========================================================================
     # CONFIGURATION API (from api/config_api.py)
