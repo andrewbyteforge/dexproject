@@ -20,14 +20,28 @@ import logging
 # Import defaults for initialization logging
 from paper_trading.defaults import IntelligenceDefaults
 
-# Import constants (including engine availability flag)
+# Import DEX constants
 from paper_trading.intelligence.dex_integrations.constants import (
     UNISWAP_V3_FACTORY,
     FACTORY_ABI,
     POOL_ABI,
     FEE_TIERS,
-    ENGINE_CONFIG_MODULE_AVAILABLE
 )
+
+# =============================================================================
+# ENGINE AVAILABILITY CHECK
+# =============================================================================
+# Check if engine config module is available for Web3 connectivity
+try:
+    import engine.config as engine_config_module
+    from engine.config import get_config
+    from engine.web3_client import Web3Client
+    ENGINE_CONFIG_MODULE_AVAILABLE = True
+except ImportError:
+    engine_config_module = None  # type: ignore
+    get_config = None  # type: ignore
+    Web3Client = None  # type: ignore
+    ENGINE_CONFIG_MODULE_AVAILABLE = False
 
 # Import base analyzer
 from paper_trading.intelligence.analyzers.base import BaseAnalyzer

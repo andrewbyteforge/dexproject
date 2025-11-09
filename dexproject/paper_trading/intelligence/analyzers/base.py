@@ -13,13 +13,20 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
-# Import constants for engine availability check
-from paper_trading.intelligence.dex_integrations.constants import (
-    ENGINE_CONFIG_MODULE_AVAILABLE,
-    engine_config_module,
-    get_config,
-    Web3Client
-)
+# =============================================================================
+# ENGINE AVAILABILITY CHECK
+# =============================================================================
+# Check if engine config module is available for Web3 connectivity
+try:
+    import engine.config as engine_config_module
+    from engine.config import get_config
+    from engine.web3_client import Web3Client
+    ENGINE_CONFIG_MODULE_AVAILABLE = True
+except ImportError:
+    engine_config_module = None  # type: ignore
+    get_config = None  # type: ignore
+    Web3Client = None  # type: ignore
+    ENGINE_CONFIG_MODULE_AVAILABLE = False
 
 # Type hints for Web3Client
 if TYPE_CHECKING:

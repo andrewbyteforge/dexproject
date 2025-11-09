@@ -1,95 +1,102 @@
 """
-DEX Integrations Module - Public API
+Modular Market Analyzers for Paper Trading Intelligence
 
-This module provides DEX adapter implementations for multi-DEX price comparison.
-Each DEX has its own adapter that implements the BaseDEX interface and returns
-standardized DEXPrice objects.
+Separate analyzer modules for different aspects of market analysis,
+making the system easier to maintain and extend.
 
-Available DEXs:
-- UniswapV3DEX: Uniswap V3 integration (COMPLETE)
-- SushiSwapDEX: SushiSwap integration (PLACEHOLDER)
-- CurveDEX: Curve Finance integration (PLACEHOLDER)
+This module provides a clean public API for all analyzer components:
+- RealGasAnalyzer: Network gas conditions
+- RealLiquidityAnalyzer: Uniswap V3 pool liquidity
+- RealVolatilityAnalyzer: Price volatility and trends
+- MEVThreatDetector: MEV threat analysis
+- MarketStateAnalyzer: Overall market conditions
+- CompositeMarketAnalyzer: Comprehensive analysis coordinator
 
-Usage:
-    from paper_trading.intelligence.dex.protocols import UniswapV3DEX, DEXPrice
-    
-    # Create DEX adapter
-    uniswap = UniswapV3DEX(chain_id=8453)
-    
-    # Get token price
-    price = await uniswap.get_token_price(
-        token_address='0x...',
-        token_symbol='WETH'
-    )
-    
-    if price.success:
-        print(f"Price: ${price.price_usd}")
-        print(f"Liquidity: ${price.liquidity_usd}")
-
-File: dexproject/paper_trading/intelligence/dex_integrations/__init__.py
+File: dexproject/paper_trading/intelligence/analyzers/__init__.py
 """
 
-# =============================================================================
-# COMMENTED OUT - Base classes don't exist yet
-# =============================================================================
-# TODO: Create base.py with BaseDEX and DEXPrice classes
-# from paper_trading.intelligence.dex_integrations.base import (
-#     BaseDEX,
-#     DEXPrice
-# )
+import logging
 
-# Import constants (for external use)
+# Import defaults for initialization logging
+from paper_trading.defaults import IntelligenceDefaults
+
+# Import DEX constants
 from paper_trading.intelligence.dex_integrations.constants import (
-    # Uniswap V3
     UNISWAP_V3_FACTORY,
-    UNISWAP_V3_ROUTER,
-    UNISWAP_V3_FEE_TIERS,
-    
-    # Uniswap V2
-    UNISWAP_V2_FACTORY,
-    UNISWAP_V2_ROUTER,
-    
-    # SushiSwap
-    SUSHISWAP_FACTORY,
-    SUSHISWAP_ROUTER,
-    
-    # Curve
-    CURVE_REGISTRY,
-    CURVE_ADDRESS_PROVIDER,
-    
-    # Base tokens
-    WETH_ADDRESS,
-    USDC_ADDRESS,
-    USDT_ADDRESS,
-    DAI_ADDRESS,
-    
-    # ABIs
     FACTORY_ABI,
     POOL_ABI,
-    ERC20_ABI,
-    UNISWAP_V2_PAIR_ABI,
-    UNISWAP_V2_FACTORY_ABI,
-    
-    # Helper functions
-    get_base_tokens,
-    get_dex_addresses,
-    
-    # Gas estimates
-    GAS_ESTIMATES_PER_CHAIN,
-    DEFAULT_GAS_ESTIMATE,
-    get_gas_estimate,
-    
-    # Backward compatibility
-    FEE_TIERS
+    FEE_TIERS,
 )
 
 # =============================================================================
-# COMMENTED OUT - DEX implementations don't exist yet
+# ENGINE AVAILABILITY CHECK
 # =============================================================================
-# TODO: Create these DEX adapter classes
-# from paper_trading.intelligence.dex_integrations.uniswap_v3 import UniswapV3DEX
-# from paper_trading.intelligence.dex_integrations.sushiswap import SushiSwapDEX
-# from paper_trading.intelligence.dex_integrations.curve import CurveDEX
+# Check if engine config module is available for Web3 connectivity
+try:
+    import engine.config as engine_config_module
+    from engine.config import get_config
+    from engine.web3_client import Web3Client
+    ENGINE_CONFIG_MODULE_AVAILABLE = True
+except ImportError:
+    engine_config_module = None  # type: ignore
+    get_config = None  # type: ignore
+    Web3Client = None  # type: ignore
+    ENGINE_CONFIG_MODULE_AVAILABLE = False
+
+# Import base analyzer
+from paper_trading.intelligence.analyzers.base import BaseAnalyzer
+
+# Import all specific analyzers
+from paper_trading.intelligence.analyzers.gas_analyzer import RealGasAnalyzer
+from paper_trading.intelligence.analyzers.liquidity_analyzer import RealLiquidityAnalyzer
+from paper_trading.intelligence.analyzers.volatility_analyzer import RealVolatilityAnalyzer
+from paper_trading.intelligence.analyzers.mev_detector import MEVThreatDetector
+from paper_trading.intelligence.analyzers.market_state import MarketStateAnalyzer
+from paper_trading.intelligence.analyzers.composite_analyzer import CompositeMarketAnalyzer
+
+# Configure module logger
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# MODULE INITIALIZATION
+# =============================================================================
+
+def _log_initialization() -> None:
+    """
+    Log analyzer initialization status.
+    
+    Provides visibility into:
+    - Engine config availability
+    - Data sources being used
+    - Configuration settings
+    """
+    logger.info("=" * 80)
+    logger.info("[ANALYZERS] Modular Market Analyzers - REAL DATA VERSION")
+    logger.info("=" * 80)
+    logger.info(
+        f"[ANALYZERS] Engine Config Module Available: {ENGINE_CONFIG_MODULE_AVAILABLE}"
+    )
+    
+    if ENGINE_CONFIG_MODULE_AVAILABLE:
+        logger.info("[ANALYZERS] ✅ Using REAL blockchain data (lazy initialization)")
+        logger.info("[ANALYZERS]    - Gas: Blockchain RPC queries")
+        logger.info("[ANALYZERS]    - Liquidity: Uniswap V3 pool queries")
+        logger.info("[ANALYZERS]    - Volatility: Price history calculations")
+        logger.info("[ANALYZERS]    - MEV: Smart heuristics (liquidity-based)")
+        logger.info("[ANALYZERS]    - Config: Initialized on-demand when analyzers run")
+    else:
+        logger.warning("[ANALYZERS] ⚠️ Engine config module unavailable")
+    
+    logger.info(
+        "[ANALYZERS] SKIP_TRADE_ON_MISSING_DATA: %s",
+        IntelligenceDefaults.SKIP_TRADE_ON_MISSING_DATA
+    )
+    logger.info("=" * 80)
+
+
+# Run initialization logging when module is imported
+_log_initialization()
 
 
 # =============================================================================
@@ -97,55 +104,21 @@ from paper_trading.intelligence.dex_integrations.constants import (
 # =============================================================================
 
 __all__ = [
-    # Base classes (TODO: uncomment when implemented)
-    # 'BaseDEX',
-    # 'DEXPrice',
-    
-    # DEX implementations (TODO: uncomment when implemented)
-    # 'UniswapV3DEX',
-    # 'SushiSwapDEX',
-    # 'CurveDEX',
-    
-    # Uniswap V3 constants
+    # Constants
     'UNISWAP_V3_FACTORY',
-    'UNISWAP_V3_ROUTER',
-    'UNISWAP_V3_FEE_TIERS',
-    'FEE_TIERS',  # Backward compatibility
-    
-    # Uniswap V2 constants
-    'UNISWAP_V2_FACTORY',
-    'UNISWAP_V2_ROUTER',
-    
-    # SushiSwap constants
-    'SUSHISWAP_FACTORY',
-    'SUSHISWAP_ROUTER',
-    
-    # Curve constants
-    'CURVE_REGISTRY',
-    'CURVE_ADDRESS_PROVIDER',
-    
-    # Base token addresses
-    'WETH_ADDRESS',
-    'USDC_ADDRESS',
-    'USDT_ADDRESS',
-    'DAI_ADDRESS',
-    
-    # ABIs
     'FACTORY_ABI',
     'POOL_ABI',
-    'ERC20_ABI',
-    'UNISWAP_V2_PAIR_ABI',
-    'UNISWAP_V2_FACTORY_ABI',
+    'FEE_TIERS',
+    'ENGINE_CONFIG_MODULE_AVAILABLE',
     
-    # Gas estimates
-    'GAS_ESTIMATES_PER_CHAIN',
-    'DEFAULT_GAS_ESTIMATE',
-    'get_gas_estimate',
+    # Base class
+    'BaseAnalyzer',
     
-    # Helper functions
-    'get_base_tokens',
-    'get_dex_addresses',
+    # Analyzers
+    'RealGasAnalyzer',
+    'RealLiquidityAnalyzer',
+    'RealVolatilityAnalyzer',
+    'MEVThreatDetector',
+    'MarketStateAnalyzer',
+    'CompositeMarketAnalyzer',
 ]
-
-
-__version__ = '1.0.0'
