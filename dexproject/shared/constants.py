@@ -144,10 +144,22 @@ DECISION_TYPES = [
 
 # Base Mainnet (8453)
 BASE_MAINNET_TOKENS = {
+    # Original 4 tokens
     'WETH': '0x4200000000000000000000000000000000000006',
     'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
     'CBETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+    
+    # Week 1 additions - Verified
+    
+    'DEGEN': '0x4ed4e862860bed51a9570b96d89af5e1b0efefed',  # Degen (Base native)
+    
+    'BRETT': '0x532f27101965dd16442e59d40670faf5ebb142e4',  # Brett (Base native)
+     # NEW Week 1 additions - HIGH LIQUIDITY ONLY
+    'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',  # Aerodrome - $500M+ liquidity
+    'VIRTUAL': '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b',  # Virtual Protocol - $100M+ 
+    'MORPHO': '0x58D97B57BB95320F9a05dC918Aef65434969c2B2',  # Morpho Blue - $80M+
+    
 }
 
 # Base Sepolia (84532) - Testnet

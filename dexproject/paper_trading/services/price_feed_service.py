@@ -303,6 +303,21 @@ class PriceFeedService:
                 "0x50c57259e8bbb31c10c1e2a9f98c171d7290d3e1": "dai",
                 # cbETH on Base
                 "0x2ae3f1ec7f1f5012cfe0f2108faadf6f0b9adcc1": "coinbase-wrapped-staked-eth",
+                
+                # Week 1 additions - Base native tokens
+                # WBTC on Base
+                "0x0555e30da8f98308edb960aa94c0db47230d2b9c": "wrapped-bitcoin",
+                # DEGEN on Base
+                "0x4ed4e862860bed51a9570b96d89af5e1b0efefed": "degen-base",
+                # TOSHI on Base
+                "0xac1bd2486aaf3b5c0fc3fd868558b082a531b2b4": "toshi",
+                # BRETT on Base
+                "0x532f27101965dd16442e59d40670faf5ebb142e4": "based-brett",
+                # USDbC (Bridged USDC) on Base
+                "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca": "bridged-usd-coin-base",
+                "0x940181a94a35a4569e4529a3cdfb74e38fd98631": "aerodrome-finance",  # AERO
+                "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b": "virtual-protocol",   # VIRTUAL
+                "0x58d97b57bb95320f9a05dc918aef65434969c2b2": "morpho-blue",        # MORPHO
             },
             # Ethereum mainnet (1)
             1: {
@@ -323,22 +338,19 @@ class PriceFeedService:
             "USDC": "usd-coin",
             "DAI": "dai",
             "CBETH": "coinbase-wrapped-staked-eth",
+            
+            # Week 1 additions
+            "WBTC": "wrapped-bitcoin",
+            "DEGEN": "degen-base",
+            "TOSHI": "toshi",
+            "BRETT": "based-brett",
+            "USDBC": "bridged-usd-coin-base",
         }
         if sym in symbol_fallback:
             return symbol_fallback[sym]
 
         # Unknown → let caller decide (e.g., skip and log once)
         return None
-
-
-
-
-
-
-
-
-
-
 
     async def _get_or_create_session(self) -> aiohttp.ClientSession:
         """
@@ -739,14 +751,9 @@ class PriceFeedService:
             )
             return {symbol: None for symbol, _ in tokens}
 
-
-
-
-
     # =========================================================================
     # CACHING METHODS (ENHANCED WITH STALE-WHILE-REVALIDATE)
     # =========================================================================
-
     def _get_cached_price(self, token_address: str) -> Optional[Decimal]:
         """
         Get cached price from Redis with fresh/stale distinction.

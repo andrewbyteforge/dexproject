@@ -97,7 +97,7 @@ from paper_trading.bot.market_analyzer import MarketAnalyzer  # noqa: E402
 # ============================================================================
 # INTELLIGENCE SYSTEM IMPORTS
 # ============================================================================
-from dexproject.paper_trading.intelligence.core.intel_slider import IntelSliderEngine  # noqa: E402
+from paper_trading.intelligence.core.intel_slider import IntelSliderEngine  # noqa: E402
 
 # ============================================================================
 # ENGINE CONFIG IMPORTS (✅ ADDED FOR FIX)
@@ -179,8 +179,8 @@ class EnhancedPaperTradingBot:
         account_name: str,
         intel_level: int = 5,
         use_real_prices: bool = True,
-        chain_id: int = 84532,
-        config_id: Optional[int] = None  # ← ADD THIS LINE
+        chain_id: int = 8453,  # ✅ MAINNET DEFAULT - Base Mainnet
+        config_id: Optional[int] = None
     ):
         """
         Initialize the enhanced paper trading bot.
@@ -787,8 +787,9 @@ class EnhancedPaperTradingBot:
         try:
             self.price_manager = create_price_manager(
                 use_real_prices=self.use_real_prices,
-                chain_id=self.chain_id
-            )
+                chain_id=self.chain_id,  # ← Must explicitly pass this!
+                token_list=None
+            )            
             logger.info(
                 f"[PRICE] Price manager initialized "
                 f"(real_prices={self.use_real_prices}, chain={self.chain_id})"
@@ -1165,8 +1166,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--chain-id',
         type=int,
-        default=84532,
-        help='Chain ID for price fetching (default: 84532 = Base Sepolia)'
+        default=8453,
+        help='Chain ID for price fetching (default: 8453 = Base Mainnet)'  # ✅ MAINNET
     )
     parser.add_argument(
         '--disable-circuit-breaker',
@@ -1205,7 +1206,7 @@ if __name__ == '__main__':
             1: "Ethereum Mainnet",
             8453: "Base Mainnet",
             11155111: "Ethereum Sepolia",
-            84532: "Base Sepolia"
+            8453: "Base Mainnet"  # ✅ MAINNET
         }
         print(f"⛓️  Chain: {chain_names.get(args.chain_id, f'Chain ID {args.chain_id}')}")
 

@@ -135,7 +135,7 @@ def build_default_token_list(chain_id: int = 8453) -> List[Dict[str, Any]]:
 # DEFAULT_TOKEN_LIST = build_default_token_list(chain_id=8453)  # Base Mainnet
 
 # Price update interval (seconds)
-PRICE_UPDATE_INTERVAL = 5  # Update prices every 5 seconds
+PRICE_UPDATE_INTERVAL = 30  # Update prices every 5 seconds
 
 # Mock price simulation settings
 MOCK_PRICE_VOLATILITY = 0.05  # +/- 5% max price change when simulating
@@ -182,7 +182,7 @@ class RealPriceManager:
     def __init__(
         self,
         use_real_prices: bool = True,
-        chain_id: int = 84532,
+        chain_id: int = 8453,
         token_list: Optional[List[Dict[str, Any]]] = None
     ):
         """
@@ -562,7 +562,7 @@ class RealPriceManager:
 
 def create_price_manager(
     use_real_prices: bool = True,
-    chain_id: int = 84532,
+    chain_id: int = 8453,
     token_list: Optional[List[Dict[str, Any]]] = None
 ) -> RealPriceManager:
     """

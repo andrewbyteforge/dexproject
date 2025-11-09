@@ -42,15 +42,15 @@ from paper_trading.models import (
 )
 
 # Import intelligence types
-from dexproject.paper_trading.intelligence.core.base import (
+from paper_trading.intelligence.core.base import (
     MarketContext,
     TradingDecision
 )
-from dexproject.paper_trading.intelligence.core.intel_slider import IntelSliderEngine
+from paper_trading.intelligence.core.intel_slider import IntelSliderEngine
 
 # Import arbitrage detection components
 try:
-    from dexproject.paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
+    from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
     from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector
     ARBITRAGE_AVAILABLE = True
 except ImportError as e:

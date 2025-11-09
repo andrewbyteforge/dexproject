@@ -37,7 +37,7 @@ from paper_trading.models import (
 )
 
 # Import intelligence types
-from dexproject.paper_trading.intelligence.core.base import TradingDecision
+from paper_trading.intelligence.core.base import TradingDecision
 
 # Import WebSocket service
 from paper_trading.services.websocket_service import websocket_service
@@ -84,7 +84,7 @@ except ImportError:
 # PHASE 2: Import Arbitrage Components (optional)
 try:
     from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector
-    from dexproject.paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
+    from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
     ARBITRAGE_AVAILABLE = True
 except ImportError:
     ARBITRAGE_AVAILABLE = False

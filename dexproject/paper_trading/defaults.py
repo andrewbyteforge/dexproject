@@ -35,8 +35,8 @@ class TradingDefaults:
     MIN_POSITION_SIZE_USD: Final[Decimal] = Decimal('10.00')
 
     # Risk management
-    DEFAULT_STOP_LOSS_PERCENT: Final[Decimal] = Decimal('2.0')
-    DEFAULT_TAKE_PROFIT_PERCENT: Final[Decimal] = Decimal('5.0')
+    DEFAULT_STOP_LOSS_PERCENT: Final[Decimal] = Decimal('1.0')
+    DEFAULT_TAKE_PROFIT_PERCENT: Final[Decimal] = Decimal('2.0')
     MAX_DAILY_LOSS_PERCENT: Final[Decimal] = Decimal('5.0')
 
     # Trade limits
@@ -44,7 +44,7 @@ class TradingDefaults:
     MIN_TRADE_INTERVAL_MINUTES: Final[int] = 5
 
     # Execution parameters
-    DEFAULT_TICK_INTERVAL_SECONDS: Final[int] = 60
+    DEFAULT_TICK_INTERVAL_SECONDS: Final[int] = 30  # Optimal
     MAX_TOKENS_PER_TICK: Final[int] = 5
 
 
