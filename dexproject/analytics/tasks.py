@@ -19,7 +19,7 @@ from django.db.models import Sum, Avg, Count
 
 from .models import (
     DecisionContext, DecisionFeature, ThoughtLog, DecisionMetrics,
-    LearningSession, ModelPerformance, FeatureImportance
+    LearningSession, ModelPerformance
 )
 
 logger = logging.getLogger(__name__)

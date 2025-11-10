@@ -1,8 +1,10 @@
 """
-Enhanced Celery Configuration with Risk-Integrated Trading Tasks
+Enhanced Celery Configuration with Risk-Integrated Trading Tasks + Phase 7B Strategies
 
 Updated to include the new risk-integrated trading workflows and proper task routing
 for the complete Phase 5.1C integration.
+
+Phase 7B: Added automated strategy execution tasks (DCA, Grid, TWAP, VWAP, Custom)
 
 File: dexproject/celery_app.py
 """
@@ -81,7 +83,7 @@ app.conf.update(
         'trading.tasks.validate_transaction': {'queue': 'execution.critical'},
         
         # =============================================================================
-        # PAPER TRADING TASKS - NEW SECTION
+        # PAPER TRADING TASKS - MEDIUM PRIORITY
         # =============================================================================
         
         # Paper trading bot control tasks
@@ -90,6 +92,20 @@ app.conf.update(
         'paper_trading.tasks.get_bot_status': {'queue': 'paper_trading'},
         'paper_trading.tasks.cleanup_old_sessions': {'queue': 'paper_trading'},
         'paper_trading.tasks.monitor_orders_task': {'queue': 'paper_trading'},  # Phase 7A order monitoring
+        
+        # =============================================================================
+        # STRATEGY EXECUTION TASKS - PHASE 7B (NEW)
+        # =============================================================================
+        
+        # DCA strategy execution
+        'paper_trading.execute_dca_interval': {'queue': 'paper_trading'},
+        'paper_trading.tasks.execute_dca_interval': {'queue': 'paper_trading'},
+        
+        # Strategy monitoring and notifications
+        'paper_trading.monitor_active_strategies': {'queue': 'paper_trading'},
+        'paper_trading.tasks.monitor_active_strategies': {'queue': 'paper_trading'},
+        'paper_trading.send_strategy_notification': {'queue': 'paper_trading'},
+        'paper_trading.tasks.send_strategy_notification': {'queue': 'paper_trading'},
         
         # =============================================================================
         # ANALYTICS AND REPORTING TASKS - BACKGROUND PROCESSING
@@ -175,155 +191,74 @@ app.conf.update(
         },
         # Paper trading specific timeouts
         'paper_trading.tasks.run_paper_trading_bot': {
-            'time_limit': 7200,  # 2 hours hard limit
-            'soft_time_limit': 7000,  # Just under 2 hours soft limit
+            'time_limit': 300,  # 5 minutes for bot execution
+            'soft_time_limit': 240,
         },
-        'paper_trading.tasks.stop_paper_trading_bot': {
-            'time_limit': 60,  # 1 minute
+        # Phase 7A order monitoring timeouts
+        'paper_trading.tasks.monitor_orders_task': {
+            'time_limit': 60,  # 1 minute for order monitoring
             'soft_time_limit': 45,
         },
-    },    
+        # Phase 7B strategy execution timeouts (NEW)
+        'paper_trading.execute_dca_interval': {
+            'time_limit': 120,  # 2 minutes for DCA interval execution
+            'soft_time_limit': 90,
+        },
+        'paper_trading.monitor_active_strategies': {
+            'time_limit': 60,  # 1 minute for strategy monitoring
+            'soft_time_limit': 45,
+        },
+        'paper_trading.send_strategy_notification': {
+            'time_limit': 30,  # 30 seconds for notifications
+            'soft_time_limit': 20,
+        },
+    },
     
-    # Result backend configuration
+    # Result backend
+    result_backend='redis://localhost:6379/1',
     result_expires=3600,  # Results expire after 1 hour
-    result_backend_transport_options={
-        'socket_keepalive': True,
-        'socket_keepalive_options': {},  # Empty for Windows compatibility
-    },
-
-    # Broker configuration
-    broker_transport_options={
-        'socket_keepalive': True,
-        'socket_keepalive_options': {},  # Empty for Windows compatibility
-    },
     
-    # Task serialization
+    # Serialization
     task_serializer='json',
-    accept_content=['json'],
     result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
+    accept_content=['json'],
     
-    # Concurrency settings for different queue types
-    worker_concurrency=4,  # Base concurrency
-    
-    # Queue priority settings
-    task_queue_ha_policy='all',
-    
-    # Error handling
-    task_reject_on_worker_lost=True,
-    task_ignore_result=False,
-    
-    # Task result compression
-    result_compression='gzip',
-    
-    # Monitoring and logging
-    worker_send_task_events=True,
+    # Task tracking
+    task_track_started=True,
     task_send_sent_event=True,
     
-    # Custom configuration for trading bot
-    task_create_missing_queues=True,
-    task_default_retry_delay=5,
-    task_max_retries=3,
+    # Error handling
+    task_ignore_result=False,
+    task_store_errors_even_if_ignored=True,
+    
+    # Concurrency settings
+    worker_max_tasks_per_child=1000,  # Restart worker after 1000 tasks to prevent memory leaks
+    worker_max_memory_per_child=500000,  # Restart if worker uses >500MB
+    
+    # Retry policy
+    task_default_retry_delay=60,  # Wait 60 seconds before retry
+    task_max_retries=3,  # Maximum 3 retries
+    
+    # Logging
+    worker_hijack_root_logger=False,  # Don't override Django logging
+    worker_log_format='[%(asctime)s: %(levelname)s/%(processName)s] %(message)s',
+    worker_task_log_format='[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s',
 )
 
-# Queue configuration
-app.conf.task_create_missing_queues = True
+# Load task modules from all registered Django apps
+app.autodiscover_tasks()
 
-# Autodiscover tasks in Django apps
-app.autodiscover_tasks(['paper_trading'])
-
-
-# Custom logging setup for trading operations
+# Configure Django logging for Celery
 @setup_logging.connect
 def config_loggers(*args, **kwargs):
-    """Configure custom loggers for trading operations."""
+    """Configure logging to use Django's logging configuration."""
     from logging.config import dictConfig
-    
-    dictConfig({
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'detailed': {
-                'format': '[{asctime}] {levelname} {name} {process:d} {thread:d} {message}',
-                'style': '{',
-            },
-            'trading': {
-                'format': '[{asctime}] 🔥 TRADING {levelname} {name} - {message}',
-                'style': '{',
-            },
-            'risk': {
-                'format': '[{asctime}] 🛡️ RISK {levelname} {name} - {message}',
-                'style': '{',
-            },
-            'paper': {
-                'format': '[{asctime}] 📝 PAPER {levelname} {name} - {message}',
-                'style': '{',
-            },
-        },
-        'handlers': {
-            'console': {
-                'class': 'logging.StreamHandler',
-                'formatter': 'detailed',
-                'level': 'INFO',
-            },
-            'trading_file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': 'logs/trading.log',
-                'maxBytes': 10485760,  # 10MB
-                'backupCount': 5,
-                'formatter': 'trading',
-                'level': 'DEBUG',
-            },
-            'risk_file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': 'logs/risk.log',
-                'maxBytes': 10485760,  # 10MB
-                'backupCount': 5,
-                'formatter': 'risk',
-                'level': 'DEBUG',
-            },
-            'paper_file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': 'logs/paper_trading.log',
-                'maxBytes': 10485760,  # 10MB
-                'backupCount': 5,
-                'formatter': 'paper',
-                'level': 'DEBUG',
-            },
-        },
-        'loggers': {
-            'trading': {
-                'handlers': ['console', 'trading_file'],
-                'level': 'DEBUG',
-                'propagate': False,
-            },
-            'risk': {
-                'handlers': ['console', 'risk_file'],
-                'level': 'DEBUG',
-                'propagate': False,
-            },
-            'paper_trading': {
-                'handlers': ['console', 'paper_file'],
-                'level': 'DEBUG',
-                'propagate': False,
-            },
-            'portfolio': {
-                'handlers': ['console', 'trading_file'],
-                'level': 'DEBUG',
-                'propagate': False,
-            },
-            'celery': {
-                'handlers': ['console'],
-                'level': 'INFO',
-                'propagate': False,
-            },
-        },
-    })
+    from django.conf import settings
+    dictConfig(settings.LOGGING)
 
 
 # =============================================================================
-# CELERY BEAT CONFIGURATION (PERIODIC TASKS)
+# CELERY BEAT SCHEDULE - PERIODIC TASKS
 # =============================================================================
 
 from celery.schedules import crontab
@@ -364,6 +299,13 @@ app.conf.beat_schedule = {
         'schedule': 30.0,  # Every 30 seconds
         'options': {'queue': 'paper_trading'},
         'kwargs': {'chain_id': 84532}  # Base Sepolia
+    },
+    
+    # Phase 7B - Monitor active strategies every 60 seconds (NEW)
+    'monitor-active-strategies': {
+        'task': 'paper_trading.monitor_active_strategies',
+        'schedule': 60.0,  # Every 60 seconds
+        'options': {'queue': 'paper_trading'},
     },
     
     # Update risk statistics
@@ -486,6 +428,7 @@ def setup_periodic_tasks(sender, **kwargs):
     logger.info(f"✅ Celery configured with risk-integrated trading tasks")
     logger.info(f"📋 Required queues: {', '.join(required_queues)}")
     logger.info(f"🔄 Beat schedule configured with {len(app.conf.beat_schedule)} periodic tasks")
+    logger.info(f"⭐ Phase 7B: Strategy execution tasks enabled")
 
 
 # =============================================================================
@@ -497,6 +440,7 @@ def worker_ready(sender=None, **kwargs):
     """Hook called when worker is ready."""
     logger = logging.getLogger('celery')
     logger.info("🚀 Celery worker ready for risk-integrated trading operations")
+    logger.info("🎯 Phase 7B: Strategy execution (DCA, Grid, TWAP, VWAP, Custom) ready")
 
 
 if __name__ == '__main__':

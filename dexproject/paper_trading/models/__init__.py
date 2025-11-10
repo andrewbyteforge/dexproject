@@ -6,6 +6,8 @@ This package contains all paper trading models organized into logical modules:
 - intelligence: AI decision tracking and strategy configuration
 - performance: Performance metrics and session tracking
 - autopilot: Auto Pilot intelligence and learning models
+- orders: Advanced order types (limit, stop-loss, take-profit)
+- strategies: Automated trading strategies (DCA, Grid, TWAP, VWAP, Custom) - Phase 7B
 
 File: dexproject/paper_trading/models/__init__.py
 """
@@ -37,7 +39,14 @@ from .autopilot import (
 )
 
 from .orders import (
+    # Advanced order types - Phase 7A
     PaperOrder,
+)
+
+from .strategies import (
+    # Automated trading strategies - Phase 7B
+    StrategyRun,
+    StrategyOrder,
 )
 
 # Export all models for Django
@@ -59,7 +68,11 @@ __all__ = [
     # Auto Pilot models
     'AutoPilotLog',
     'AutoPilotPerformanceSnapshot',
-
-
+    
+    # Advanced order types - Phase 7A
     'PaperOrder',
+    
+    # Automated trading strategies - Phase 7B
+    'StrategyRun',
+    'StrategyOrder',
 ]

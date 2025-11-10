@@ -41,7 +41,7 @@ from paper_trading.constants import (
 # Import services
 from paper_trading.services.order_manager import OrderManager
 from paper_trading.services.price_feed_service import PriceFeedService
-from paper_trading.services.websocket_service import send_order_update
+# from paper_trading.services.websocket_service import send_paper_trading_update
 
 logger = logging.getLogger(__name__)
 

@@ -771,3 +771,153 @@ def is_order_terminal(status: str) -> bool:
         True if order is in terminal state, False if still active
     """
     return status in OrderStatus.TERMINAL
+
+# =============================================================================
+# STRATEGY TYPES - Phase 7B
+# =============================================================================
+
+class StrategyType:
+    """
+    Trading strategy types for automated execution.
+    
+    Phase 7B: Advanced trading strategies with backtesting capabilities.
+    """
+    DCA: Final[str] = 'DCA'  # Dollar Cost Averaging
+    GRID: Final[str] = 'GRID'  # Grid Trading Bot
+    TWAP: Final[str] = 'TWAP'  # Time-Weighted Average Price
+    VWAP: Final[str] = 'VWAP'  # Volume-Weighted Average Price
+    CUSTOM: Final[str] = 'CUSTOM'  # User-defined custom strategies
+    
+    # All valid strategy types
+    ALL: Final[tuple] = (DCA, GRID, TWAP, VWAP, CUSTOM)
+
+
+# =============================================================================
+# STRATEGY STATUS - Phase 7B
+# =============================================================================
+
+class StrategyStatus:
+    """Strategy execution status for StrategyRun model."""
+    PENDING: Final[str] = 'PENDING'  # Created but not started
+    RUNNING: Final[str] = 'RUNNING'  # Currently executing
+    PAUSED: Final[str] = 'PAUSED'  # Temporarily paused
+    COMPLETED: Final[str] = 'COMPLETED'  # Finished successfully
+    CANCELLED: Final[str] = 'CANCELLED'  # Manually cancelled
+    FAILED: Final[str] = 'FAILED'  # Failed with error
+    
+    # All valid statuses
+    ALL: Final[tuple] = (PENDING, RUNNING, PAUSED, COMPLETED, CANCELLED, FAILED)
+    
+    # Active statuses (strategy is in progress)
+    ACTIVE: Final[tuple] = (RUNNING,)
+    
+    # Terminal statuses (strategy has finished)
+    TERMINAL: Final[tuple] = (COMPLETED, CANCELLED, FAILED)
+
+
+# =============================================================================
+# MODEL FIELD NAMES - StrategyRun (Phase 7B)
+# =============================================================================
+
+class StrategyRunFields:
+    """Field names for StrategyRun model."""
+    # Identity
+    STRATEGY_ID: Final[str] = 'strategy_id'
+    ACCOUNT: Final[str] = 'account'
+    STRATEGY_TYPE: Final[str] = 'strategy_type'
+    
+    # Configuration
+    CONFIG: Final[str] = 'config'
+    
+    # Execution status
+    STATUS: Final[str] = 'status'
+    PROGRESS_PERCENT: Final[str] = 'progress_percent'
+    CURRENT_STEP: Final[str] = 'current_step'
+    
+    # Performance tracking
+    TOTAL_ORDERS: Final[str] = 'total_orders'
+    COMPLETED_ORDERS: Final[str] = 'completed_orders'
+    FAILED_ORDERS: Final[str] = 'failed_orders'
+    TOTAL_INVESTED: Final[str] = 'total_invested'
+    AVERAGE_ENTRY: Final[str] = 'average_entry'
+    CURRENT_PNL: Final[str] = 'current_pnl'
+    
+    # Timing
+    CREATED_AT: Final[str] = 'created_at'
+    STARTED_AT: Final[str] = 'started_at'
+    PAUSED_AT: Final[str] = 'paused_at'
+    COMPLETED_AT: Final[str] = 'completed_at'
+    CANCELLED_AT: Final[str] = 'cancelled_at'
+    
+    # Metadata
+    NOTES: Final[str] = 'notes'
+    ERROR_MESSAGE: Final[str] = 'error_message'
+
+
+# =============================================================================
+# MODEL FIELD NAMES - StrategyOrder (Phase 7B)
+# =============================================================================
+
+class StrategyOrderFields:
+    """Field names for StrategyOrder linking model."""
+    ID: Final[str] = 'id'
+    STRATEGY_RUN: Final[str] = 'strategy_run'
+    ORDER: Final[str] = 'order'
+    ORDER_SEQUENCE: Final[str] = 'order_sequence'
+    CREATED_AT: Final[str] = 'created_at'
+
+
+# =============================================================================
+# VALIDATION FUNCTIONS - Phase 7B Strategies
+# =============================================================================
+
+def validate_strategy_type(strategy_type: str) -> bool:
+    """
+    Validate if strategy type is valid.
+    
+    Args:
+        strategy_type: Strategy type string
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    return strategy_type in StrategyType.ALL
+
+
+def validate_strategy_status(status: str) -> bool:
+    """
+    Validate if strategy status is valid.
+    
+    Args:
+        status: Strategy status string
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    return status in StrategyStatus.ALL
+
+
+def is_strategy_active(status: str) -> bool:
+    """
+    Check if strategy status indicates an active strategy.
+    
+    Args:
+        status: Strategy status string
+        
+    Returns:
+        True if strategy is still running, False if not
+    """
+    return status in StrategyStatus.ACTIVE
+
+
+def is_strategy_terminal(status: str) -> bool:
+    """
+    Check if strategy status indicates a completed strategy.
+    
+    Args:
+        status: Strategy status string
+        
+    Returns:
+        True if strategy is in terminal state, False if still active
+    """
+    return status in StrategyStatus.TERMINAL

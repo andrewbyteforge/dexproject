@@ -668,7 +668,8 @@ def update_position_prices_task(
             'error': str(e),
             'positions_updated': 0
         }
-    @shared_task(queue='paper_trading')
+    
+@shared_task(queue='paper_trading')
 def update_single_position_price(
     position_id: str,
     chain_id: int = 84532
