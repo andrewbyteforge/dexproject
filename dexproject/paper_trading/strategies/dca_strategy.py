@@ -160,7 +160,7 @@ class DCAStrategy(BaseStrategy):
         
         return True, None
     
-    async def execute(self) -> bool:
+    def execute(self) -> bool:
         """
         Execute DCA strategy.
         
@@ -224,7 +224,7 @@ class DCAStrategy(BaseStrategy):
             self._mark_failed(f"Execution error: {str(e)}")
             return False
     
-    async def pause(self) -> bool:
+    def pause(self) -> bool:
         """
         Pause DCA strategy execution.
         
@@ -245,7 +245,7 @@ class DCAStrategy(BaseStrategy):
         logger.info(f"DCA strategy {self.strategy_run.strategy_id} paused")
         return True
     
-    async def resume(self) -> bool:
+    def resume(self) -> bool:
         """
         Resume paused DCA strategy.
         
@@ -281,7 +281,7 @@ class DCAStrategy(BaseStrategy):
         
         return True
     
-    async def cancel(self) -> bool:
+    def cancel(self) -> bool:
         """
         Cancel DCA strategy execution.
         

@@ -112,7 +112,7 @@ class BaseStrategy(ABC):
         pass
     
     @abstractmethod
-    async def execute(self) -> bool:
+    def execute(self) -> bool:
         """
         Execute the trading strategy.
         
@@ -149,7 +149,7 @@ class BaseStrategy(ABC):
         pass
     
     @abstractmethod
-    async def pause(self) -> bool:
+    def pause(self) -> bool:
         """
         Pause strategy execution.
         
@@ -176,7 +176,7 @@ class BaseStrategy(ABC):
         pass
     
     @abstractmethod
-    async def resume(self) -> bool:
+    def resume(self) -> bool:
         """
         Resume paused strategy execution.
         
@@ -204,7 +204,7 @@ class BaseStrategy(ABC):
         pass
     
     @abstractmethod
-    async def cancel(self) -> bool:
+    def cancel(self) -> bool:
         """
         Cancel strategy execution.
         

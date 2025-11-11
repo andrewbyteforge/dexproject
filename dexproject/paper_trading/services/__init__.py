@@ -1,8 +1,9 @@
 """
-Paper Trading Services Package - Phase 7A Update
+Paper Trading Services Package - Phase 7B Update
 
 This package contains paper trading services for price feeds,
-trade simulation, WebSocket notifications, and order management.
+trade simulation, WebSocket notifications, order management,
+and strategy execution.
 
 Services:
 - Price Feed Service: Real-time token price aggregation with caching
@@ -10,6 +11,7 @@ Services:
 - WebSocket Service: Real-time client notifications
 - Order Manager Service: Advanced order type management (Phase 7A Day 2)
 - Order Executor Service: Order execution engine (Phase 7A Day 4)
+- Strategy Executor Service: Trading strategy execution and management (Phase 7B Day 4)
 
 File: paper_trading/services/__init__.py
 """
@@ -48,6 +50,12 @@ from .order_executor import (
     execute_order,
 )
 
+# Import Strategy Executor components (Phase 7B Day 4)
+from .strategy_executor import (
+    StrategyExecutor,
+    get_strategy_executor,
+)
+
 # Define public API
 __all__ = [
     # Price Feed Service
@@ -73,4 +81,8 @@ __all__ = [
     'OrderExecutor',
     'get_order_executor',
     'execute_order',
+    
+    # Strategy Executor Service - Phase 7B Day 4
+    'StrategyExecutor',
+    'get_strategy_executor',
 ]

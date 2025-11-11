@@ -15,6 +15,8 @@ Phase: 7B - Advanced Strategies
 """
 
 from .base_strategy import BaseStrategy
+from .dca_strategy import DCAStrategy
+from .grid_strategy import GridStrategy
 
 # Import strategy type and status constants
 from paper_trading.constants import (
@@ -33,6 +35,10 @@ from paper_trading.constants import (
 __all__ = [
     # Base class
     'BaseStrategy',
+    
+    # Strategy implementations
+    'DCAStrategy',
+    'GridStrategy',
     
     # Constants
     'StrategyType',
