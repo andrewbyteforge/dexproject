@@ -15,6 +15,8 @@ from decimal import Decimal
 import uuid
 import logging
 from typing import Optional
+from django.core.validators import MinValueValidator, MaxValueValidator
+from decimal import Decimal
 
 from .base import PaperTradingAccount, PaperTrade
 
@@ -328,6 +330,55 @@ class PaperStrategyConfiguration(models.Model):
     is_active = models.BooleanField(
         default=True,
         help_text="Whether this configuration is active"
+    )
+
+    enable_dca = models.BooleanField(
+        default=False,
+        help_text='Enable Dollar Cost Averaging (DCA) strategy - spreads buys over time'
+    )
+    
+    enable_grid = models.BooleanField(
+        default=False,
+        help_text='Enable Grid Trading strategy - places multiple orders at different price levels'
+    )
+    
+    enable_twap = models.BooleanField(
+        default=False,
+        help_text='Enable TWAP (Time-Weighted Average Price) strategy'
+    )
+    
+    enable_vwap = models.BooleanField(
+        default=False,
+        help_text='Enable VWAP (Volume-Weighted Average Price) strategy'
+    )
+    
+    dca_num_intervals = models.IntegerField(
+        default=5,
+        help_text='Number of DCA buy intervals (2-20)',
+        validators=[MinValueValidator(2), MaxValueValidator(20)]
+    )
+    
+    dca_interval_hours = models.IntegerField(
+        default=2,
+        help_text='Hours between each DCA buy (1-168 hours = 1 week max)',
+        validators=[MinValueValidator(1), MaxValueValidator(168)]
+    )
+    
+    grid_num_levels = models.IntegerField(
+        default=7,
+        help_text='Number of grid price levels (3-20)',
+        validators=[MinValueValidator(3), MaxValueValidator(20)]
+    )
+    
+    grid_profit_target_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('2.0'),
+        help_text='Target profit per grid level in percent (0.1-10.0%)',
+        validators=[
+            MinValueValidator(Decimal('0.1')),
+            MaxValueValidator(Decimal('10.0'))
+        ]
     )
     
     # ==========================================================================

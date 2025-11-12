@@ -37,14 +37,25 @@ class DecisionType:
     STOP_LOSS: Final[str] = 'STOP_LOSS'
     TAKE_PROFIT: Final[str] = 'TAKE_PROFIT'
     
+    # Strategy-related decisions (Phase 7B)
+    DCA_STRATEGY: Final[str] = 'DCA_STRATEGY'
+    GRID_STRATEGY: Final[str] = 'GRID_STRATEGY'
+    SPOT_BUY: Final[str] = 'SPOT_BUY'
+    
     # All valid decision types
-    ALL: Final[tuple] = (BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT)
+    ALL: Final[tuple] = (
+        BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT,
+        DCA_STRATEGY, GRID_STRATEGY, SPOT_BUY
+    )
     
     # Actionable decisions (require execution)
     ACTIONABLE: Final[tuple] = (BUY, SELL, STOP_LOSS, TAKE_PROFIT)
     
     # Non-actionable decisions
     NON_ACTIONABLE: Final[tuple] = (HOLD, SKIP)
+    
+    # Strategy decisions
+    STRATEGY_DECISIONS: Final[tuple] = (DCA_STRATEGY, GRID_STRATEGY, SPOT_BUY)
 
 
 # =============================================================================
@@ -238,6 +249,16 @@ class StrategyConfigFields:
     MAX_CONCURRENT_POSITIONS: Final[str] = 'max_concurrent_positions'
     MIN_LIQUIDITY_USD: Final[str] = 'min_liquidity_usd'
     MAX_SLIPPAGE_PERCENT: Final[str] = 'max_slippage_percent'
+    
+    # Phase 7B: Strategy preferences
+    ENABLE_DCA: Final[str] = 'enable_dca'
+    ENABLE_GRID: Final[str] = 'enable_grid'
+    ENABLE_TWAP: Final[str] = 'enable_twap'
+    ENABLE_VWAP: Final[str] = 'enable_vwap'
+    DCA_NUM_INTERVALS: Final[str] = 'dca_num_intervals'
+    DCA_INTERVAL_HOURS: Final[str] = 'dca_interval_hours'
+    GRID_NUM_LEVELS: Final[str] = 'grid_num_levels'
+    GRID_PROFIT_TARGET_PERCENT: Final[str] = 'grid_profit_target_percent'
     CONFIDENCE_THRESHOLD: Final[str] = 'confidence_threshold'
     ALLOWED_TOKENS: Final[str] = 'allowed_tokens'
     BLOCKED_TOKENS: Final[str] = 'blocked_tokens'
@@ -782,6 +803,7 @@ class StrategyType:
     
     Phase 7B: Advanced trading strategies with backtesting capabilities.
     """
+    SPOT: Final[str] = 'SPOT'  # Standard spot buy (existing behavior)
     DCA: Final[str] = 'DCA'  # Dollar Cost Averaging
     GRID: Final[str] = 'GRID'  # Grid Trading Bot
     TWAP: Final[str] = 'TWAP'  # Time-Weighted Average Price
@@ -789,7 +811,10 @@ class StrategyType:
     CUSTOM: Final[str] = 'CUSTOM'  # User-defined custom strategies
     
     # All valid strategy types
-    ALL: Final[tuple] = (DCA, GRID, TWAP, VWAP, CUSTOM)
+    ALL: Final[tuple] = (SPOT, DCA, GRID, TWAP, VWAP, CUSTOM)
+    
+    # Automated strategies (bot-selected)
+    AUTOMATED: Final[tuple] = (DCA, GRID, TWAP, VWAP)
 
 
 # =============================================================================
@@ -909,6 +934,110 @@ def is_strategy_active(status: str) -> bool:
     """
     return status in StrategyStatus.ACTIVE
 
+
+
+# =============================================================================
+# MARKET TREND CLASSIFICATIONS - Phase 7B
+# =============================================================================
+
+class MarketTrend:
+    """
+    Market trend classifications for strategy selection.
+    
+    Used by bot to determine which strategy is optimal based on
+    current market conditions and price action.
+    """
+    STRONG_UPTREND: Final[str] = 'strong_uptrend'  # Clear bullish momentum
+    UPTREND: Final[str] = 'uptrend'  # Moderate upward movement
+    SIDEWAYS: Final[str] = 'sideways'  # Ranging, no clear direction
+    RANGE_BOUND: Final[str] = 'range_bound'  # Trading in defined range
+    DOWNTREND: Final[str] = 'downtrend'  # Moderate downward movement
+    STRONG_DOWNTREND: Final[str] = 'strong_downtrend'  # Clear bearish momentum
+    
+    # All valid trend types
+    ALL: Final[tuple] = (
+        STRONG_UPTREND,
+        UPTREND,
+        SIDEWAYS,
+        RANGE_BOUND,
+        DOWNTREND,
+        STRONG_DOWNTREND
+    )
+    
+    # Bullish trends (DCA favorable)
+    BULLISH: Final[tuple] = (STRONG_UPTREND, UPTREND)
+    
+    # Neutral trends (Grid favorable)
+    NEUTRAL: Final[tuple] = (SIDEWAYS, RANGE_BOUND)
+    
+    # Bearish trends (caution)
+    BEARISH: Final[tuple] = (DOWNTREND, STRONG_DOWNTREND)
+
+
+# =============================================================================
+# STRATEGY SELECTION THRESHOLDS - Phase 7B
+# =============================================================================
+
+class StrategySelectionThresholds:
+    """
+    Decision thresholds for bot's strategy selection logic.
+    
+    These constants define when the bot should choose each strategy type
+    based on market conditions (volatility, trend, liquidity, confidence).
+    
+    Usage in market_analyzer.py's _select_strategy() method.
+    """
+    
+    # =========================================================================
+    # GRID STRATEGY THRESHOLDS
+    # =========================================================================
+    
+    # Grid Trading requires:
+    # - High volatility (price oscillates frequently)
+    # - Range-bound or sideways market (not trending)
+    # - Sufficient liquidity for multiple orders
+    
+    GRID_MIN_VOLATILITY: Final[Decimal] = Decimal('0.05')  # 5% volatility minimum
+    GRID_OPTIMAL_VOLATILITY: Final[Decimal] = Decimal('0.08')  # 8% is ideal
+    GRID_MIN_LIQUIDITY_USD: Final[Decimal] = Decimal('100000')  # $100k minimum liquidity
+    GRID_MIN_CONFIDENCE: Final[Decimal] = Decimal('50.0')  # 50% confidence threshold
+    
+    # =========================================================================
+    # DCA STRATEGY THRESHOLDS
+    # =========================================================================
+    
+    # DCA (Dollar Cost Averaging) requires:
+    # - Strong trending market (uptrend preferred)
+    # - High confidence in direction
+    # - Position size large enough to split meaningfully
+    
+    DCA_MIN_CONFIDENCE: Final[Decimal] = Decimal('70.0')  # 70% confidence minimum
+    DCA_MIN_POSITION_SIZE_USD: Final[Decimal] = Decimal('100')  # $100 minimum to DCA
+    DCA_OPTIMAL_POSITION_SIZE_USD: Final[Decimal] = Decimal('500')  # $500+ ideal for DCA
+    
+    # =========================================================================
+    # SPOT BUY THRESHOLDS (Fallback)
+    # =========================================================================
+    
+    # Spot Buy is the default/fallback strategy:
+    # - Quick execution needed
+    # - Clear trading signal
+    # - Good liquidity
+    # - Lower bar than specialized strategies
+    
+    SPOT_MIN_CONFIDENCE: Final[Decimal] = Decimal('40.0')  # Lower bar for spot buys
+    SPOT_MIN_LIQUIDITY_USD: Final[Decimal] = Decimal('50000')  # $50k minimum liquidity
+    
+    # =========================================================================
+    # GENERAL THRESHOLDS
+    # =========================================================================
+    
+    # Minimum confidence for ANY strategy
+    ABSOLUTE_MIN_CONFIDENCE: Final[Decimal] = Decimal('40.0')
+    
+    # Minimum liquidity for ANY strategy
+    ABSOLUTE_MIN_LIQUIDITY_USD: Final[Decimal] = Decimal('50000')
+    
 
 def is_strategy_terminal(status: str) -> bool:
     """
