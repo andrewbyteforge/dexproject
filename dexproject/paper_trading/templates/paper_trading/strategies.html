@@ -1,0 +1,505 @@
+{% extends 'paper_trading/base.html' %}
+{% load static %}
+
+{% block title %}Strategy Performance - Paper Trading{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Strategy Performance Specific Styles */
+    .strategy-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 1.5rem;
+        transition: all 0.3s;
+        height: 100%;
+    }
+    
+    .strategy-card:hover {
+        border-color: rgba(255, 255, 255, 0.2);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(0, 212, 170, 0.15);
+    }
+    
+    .strategy-card.strategy-dca {
+        border-left: 4px solid #0d6efd;
+    }
+    
+    .strategy-card.strategy-grid {
+        border-left: 4px solid #6610f2;
+    }
+    
+    .strategy-card.strategy-spot {
+        border-left: 4px solid #0dcaf0;
+    }
+    
+    .strategy-icon {
+        font-size: 2.5rem;
+        margin-bottom: 1rem;
+        display: block;
+    }
+    
+    .strategy-name {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #fff;
+    }
+    
+    .strategy-description {
+        font-size: 0.875rem;
+        color: rgba(255, 255, 255, 0.6);
+        margin-bottom: 1rem;
+    }
+    
+    .stat-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    .stat-row:last-child {
+        border-bottom: none;
+    }
+    
+    .stat-label {
+        font-size: 0.875rem;
+        color: rgba(255, 255, 255, 0.7);
+    }
+    
+    .stat-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #fff;
+    }
+    
+    .stat-value.positive {
+        color: #00d4aa;
+    }
+    
+    .stat-value.negative {
+        color: #ff4757;
+    }
+    
+    .success-rate-bar {
+        height: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 0.5rem;
+    }
+    
+    .success-rate-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #00d4aa 0%, #0d6efd 100%);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+    }
+    
+    .overall-stats-card {
+        background: linear-gradient(135deg, rgba(13, 110, 253, 0.1) 0%, rgba(0, 212, 170, 0.1) 100%);
+        border: 1px solid rgba(13, 110, 253, 0.3);
+    }
+    
+    .timeline-item {
+        background: rgba(255, 255, 255, 0.03);
+        border-left: 3px solid rgba(255, 255, 255, 0.2);
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        border-radius: 8px;
+        transition: all 0.2s;
+    }
+    
+    .timeline-item:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-left-color: #0d6efd;
+    }
+    
+    .timeline-item.status-completed {
+        border-left-color: #00d4aa;
+    }
+    
+    .timeline-item.status-failed {
+        border-left-color: #ff4757;
+    }
+    
+    .timeline-item.status-running {
+        border-left-color: #ffa502;
+    }
+    
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        color: rgba(255, 255, 255, 0.5);
+    }
+    
+    .empty-state-icon {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+    
+    .badge-strategy-type {
+        font-size: 0.75rem;
+        padding: 0.35rem 0.65rem;
+        border-radius: 6px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .badge-dca {
+        background: rgba(13, 110, 253, 0.2);
+        color: #0d6efd;
+    }
+    
+    .badge-grid {
+        background: rgba(102, 16, 242, 0.2);
+        color: #6610f2;
+    }
+    
+    .badge-spot {
+        background: rgba(13, 202, 240, 0.2);
+        color: #0dcaf0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-3">
+    
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div>
+                    <h1 class="h2 mb-2">
+                        <i class="bi bi-bar-chart-line me-2"></i>
+                        Strategy Performance History
+                    </h1>
+                    <p class="text-muted mb-0">Bot intelligence: Which strategies work best</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{% url 'paper_trading:configuration' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-gear me-1"></i>
+                        Configure
+                    </a>
+                    <a href="{% url 'paper_trading:dashboard' %}" class="btn btn-outline-light">
+                        <i class="bi bi-arrow-left me-1"></i>
+                        Dashboard
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overall Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass overall-stats-card text-center">
+                <div class="card-body py-3">
+                    <i class="bi bi-lightning-charge text-primary" style="font-size: 2rem;"></i>
+                    <h3 class="mb-1 mt-2">{{ total_strategies }}</h3>
+                    <p class="text-muted mb-0 small">Total Strategies</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass text-center">
+                <div class="card-body py-3">
+                    <i class="bi bi-check-circle {% if overall_success_rate >= 60 %}text-success{% elif overall_success_rate >= 40 %}text-warning{% else %}text-danger{% endif %}" style="font-size: 2rem;"></i>
+                    <h3 class="mb-1 mt-2">{{ overall_success_rate|floatformat:1 }}%</h3>
+                    <p class="text-muted mb-0 small">Success Rate</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass text-center">
+                <div class="card-body py-3">
+                    <i class="bi bi-graph-up {% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}" style="font-size: 2rem;"></i>
+                    <h3 class="mb-1 mt-2 {% if total_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        {% if total_pnl >= 0 %}+{% endif %}${{ total_pnl|floatformat:2 }}
+                    </h3>
+                    <p class="text-muted mb-0 small">Total P&L</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="card card-glass text-center">
+                <div class="card-body py-3">
+                    <i class="bi bi-percent {% if overall_avg_roi >= 0 %}text-success{% else %}text-danger{% endif %}" style="font-size: 2rem;"></i>
+                    <h3 class="mb-1 mt-2 {% if overall_avg_roi >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        {% if overall_avg_roi >= 0 %}+{% endif %}{{ overall_avg_roi|floatformat:1 }}%
+                    </h3>
+                    <p class="text-muted mb-0 small">Average ROI</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if total_strategies > 0 %}
+    
+    <!-- Strategy Performance by Type -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <h5 class="mb-4">
+                        <i class="bi bi-pie-chart me-2"></i>
+                        Performance by Strategy Type
+                    </h5>
+                    
+                    <div class="row g-3">
+                        <!-- DCA Strategy -->
+                        {% with stats=strategy_stats.DCA %}
+                        <div class="col-lg-4">
+                            <div class="strategy-card strategy-dca">
+                                <span class="strategy-icon">💰</span>
+                                <div class="strategy-name">Dollar Cost Averaging (DCA)</div>
+                                <div class="strategy-description">
+                                    Spreads purchases over time to reduce timing risk
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Times Used</span>
+                                    <span class="stat-value">{{ stats.total_count }}</span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Success Rate</span>
+                                    <span class="stat-value">{{ stats.success_rate|floatformat:1 }}%</span>
+                                </div>
+                                <div class="success-rate-bar">
+                                    <div class="success-rate-fill" style="width: {{ stats.success_rate }}%;"></div>
+                                </div>
+                                
+                                <div class="stat-row mt-3">
+                                    <span class="stat-label">Total P&L</span>
+                                    <span class="stat-value {% if stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                                        {% if stats.total_pnl >= 0 %}+{% endif %}${{ stats.total_pnl|floatformat:2 }}
+                                    </span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Average ROI</span>
+                                    <span class="stat-value {% if stats.avg_roi >= 0 %}positive{% else %}negative{% endif %}">
+                                        {% if stats.avg_roi >= 0 %}+{% endif %}{{ stats.avg_roi|floatformat:1 }}%
+                                    </span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Orders</span>
+                                    <span class="stat-value">{{ stats.completed_orders }} / {{ stats.total_orders }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endwith %}
+                        
+                        <!-- Grid Trading Strategy -->
+                        {% with stats=strategy_stats.GRID %}
+                        <div class="col-lg-4">
+                            <div class="strategy-card strategy-grid">
+                                <span class="strategy-icon">📊</span>
+                                <div class="strategy-name">Grid Trading</div>
+                                <div class="strategy-description">
+                                    Places orders at multiple price levels to profit from volatility
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Times Used</span>
+                                    <span class="stat-value">{{ stats.total_count }}</span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Success Rate</span>
+                                    <span class="stat-value">{{ stats.success_rate|floatformat:1 }}%</span>
+                                </div>
+                                <div class="success-rate-bar">
+                                    <div class="success-rate-fill" style="width: {{ stats.success_rate }}%;"></div>
+                                </div>
+                                
+                                <div class="stat-row mt-3">
+                                    <span class="stat-label">Total P&L</span>
+                                    <span class="stat-value {% if stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                                        {% if stats.total_pnl >= 0 %}+{% endif %}${{ stats.total_pnl|floatformat:2 }}
+                                    </span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Average ROI</span>
+                                    <span class="stat-value {% if stats.avg_roi >= 0 %}positive{% else %}negative{% endif %}">
+                                        {% if stats.avg_roi >= 0 %}+{% endif %}{{ stats.avg_roi|floatformat:1 }}%
+                                    </span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Orders</span>
+                                    <span class="stat-value">{{ stats.completed_orders }} / {{ stats.total_orders }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endwith %}
+                        
+                        <!-- Spot Buy Strategy -->
+                        {% with stats=strategy_stats.SPOT %}
+                        <div class="col-lg-4">
+                            <div class="strategy-card strategy-spot">
+                                <span class="strategy-icon">⚡</span>
+                                <div class="strategy-name">Spot Buy</div>
+                                <div class="strategy-description">
+                                    Fast execution for standard market conditions
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Times Used</span>
+                                    <span class="stat-value">{{ stats.total_count }}</span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Success Rate</span>
+                                    <span class="stat-value">{{ stats.success_rate|floatformat:1 }}%</span>
+                                </div>
+                                <div class="success-rate-bar">
+                                    <div class="success-rate-fill" style="width: {{ stats.success_rate }}%;"></div>
+                                </div>
+                                
+                                <div class="stat-row mt-3">
+                                    <span class="stat-label">Total P&L</span>
+                                    <span class="stat-value {% if stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                                        {% if stats.total_pnl >= 0 %}+{% endif %}${{ stats.total_pnl|floatformat:2 }}
+                                    </span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Average ROI</span>
+                                    <span class="stat-value {% if stats.avg_roi >= 0 %}positive{% else %}negative{% endif %}">
+                                        {% if stats.avg_roi >= 0 %}+{% endif %}{{ stats.avg_roi|floatformat:1 }}%
+                                    </span>
+                                </div>
+                                
+                                <div class="stat-row">
+                                    <span class="stat-label">Orders</span>
+                                    <span class="stat-value">{{ stats.completed_orders }} / {{ stats.total_orders }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        {% endwith %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Strategy Timeline -->
+    {% if recent_strategies %}
+    <div class="row">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <h5 class="mb-4">
+                        <i class="bi bi-clock-history me-2"></i>
+                        Recent Strategy Executions
+                    </h5>
+                    
+                    {% for strategy in recent_strategies %}
+                    <div class="timeline-item status-{{ strategy.status|lower }}">
+                        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <span class="badge badge-strategy-type badge-{{ strategy.strategy_type|lower }}">
+                                        {{ strategy.strategy_type }}
+                                    </span>
+                                    <span class="badge 
+                                        {% if strategy.status == 'COMPLETED' %}bg-success
+                                        {% elif strategy.status == 'FAILED' %}bg-danger
+                                        {% elif strategy.status == 'RUNNING' %}bg-warning
+                                        {% else %}bg-secondary
+                                        {% endif %}">
+                                        {{ strategy.status }}
+                                    </span>
+                                    <span class="small text-muted">
+                                        {{ strategy.created_at|date:"M d, Y H:i" }}
+                                    </span>
+                                </div>
+                                
+                                <div class="d-flex gap-4 flex-wrap small">
+                                    <div>
+                                        <span class="text-muted">Progress:</span>
+                                        <strong>{{ strategy.progress_percent|floatformat:0 }}%</strong>
+                                    </div>
+                                    <div>
+                                        <span class="text-muted">Orders:</span>
+                                        <strong>{{ strategy.completed_orders }}/{{ strategy.total_orders }}</strong>
+                                    </div>
+                                    <div>
+                                        <span class="text-muted">Invested:</span>
+                                        <strong>${{ strategy.total_invested|floatformat:2 }}</strong>
+                                    </div>
+                                    <div>
+                                        <span class="text-muted">P&L:</span>
+                                        <strong class="{% if strategy.current_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                            {% if strategy.current_pnl >= 0 %}+{% endif %}${{ strategy.current_pnl|floatformat:2 }}
+                                        </strong>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="text-end">
+                                <small class="text-muted d-block">ID: {{ strategy.strategy_id|slice:":8" }}...</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    {% else %}
+    
+    <!-- Empty State -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-body">
+                    <div class="empty-state">
+                        <i class="bi bi-bar-chart empty-state-icon"></i>
+                        <h4 class="mb-3">No Strategy Data Yet</h4>
+                        <p class="mb-4">
+                            Start the paper trading bot to see strategy performance metrics.<br>
+                            The bot will intelligently select strategies based on market conditions.
+                        </p>
+                        <a href="{% url 'paper_trading:configuration' %}" class="btn btn-primary">
+                            <i class="bi bi-gear me-2"></i>
+                            Configure Bot
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Initialize tooltips if Bootstrap is loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+        
+        console.log('Strategy performance page loaded');
+    });
+</script>
+{% endblock %}

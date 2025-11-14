@@ -36,6 +36,9 @@ from .api import (
     api_sessions_history,
     api_delete_session,
     api_reset_account,
+
+
+    
 )
 
 app_name = 'paper_trading'
@@ -182,5 +185,7 @@ urlpatterns = [
     path('api/sessions/<uuid:session_id>/export/', api_export_session_csv, name='api_export_session_csv'),
 
     path('api/account/reset/', api_reset_account, name='api_reset_account'),
+
+    path('strategies/', views.strategies_view, name='strategies'),
 
 ]

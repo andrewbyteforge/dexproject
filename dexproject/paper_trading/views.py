@@ -12,6 +12,8 @@ REFACTORED: Split into logical modules for better organization:
 - views_portfolio.py: Portfolio positions view
 - views_configuration.py: Configuration management
 - views_analytics.py: Analytics dashboard and API endpoints
+- views_sessions.py: Sessions history and comparison
+- views_strategies.py: Strategy performance history (Phase 7B)
 
 File: dexproject/paper_trading/views.py
 """
@@ -36,6 +38,7 @@ from .views_analytics import (
     api_analytics_export    
 )
 from .views_sessions import sessions_history_view
+from .views_strategies import strategies_view
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,7 @@ __all__ = [
     'configuration_view',
     'analytics_view',
     'sessions_history_view',
+    'strategies_view',
     
     # API functions
     'api_analytics_data',
