@@ -29,7 +29,8 @@ from paper_trading.models import (
     PaperTradingSession,
     PaperPosition
 )
-from paper_trading.bot import EnhancedPaperTradingBot
+# CIRCULAR IMPORT FIX: Removed 'from paper_trading.bot import EnhancedPaperTradingBot'
+# This import is now done inside run_paper_trading_bot() function to break circular dependency
 from paper_trading.services.price_feed_service import PriceFeedService
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,10 @@ def run_paper_trading_bot(
 
         # Initialize bot with configuration
         logger.info(f"🔧 Initializing bot for account: {session.account.name}")
+        
+        # CIRCULAR IMPORT FIX: Import here to avoid circular dependency
+        # This is called at runtime, not module load time, breaking the circular chain
+        from paper_trading.bot import EnhancedPaperTradingBot
         
         bot = EnhancedPaperTradingBot(
             account_name=session.account.name,
@@ -763,5 +768,3 @@ def update_single_position_price(
             'error': error_msg,
             'position_id': str(position_id)
         }
-    
-    

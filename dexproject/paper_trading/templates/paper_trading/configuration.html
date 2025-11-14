@@ -5,6 +5,109 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/paper_trading_configuration.css' %}">
+<style>
+    /* Additional styles for Advanced Strategies section */
+    .strategy-toggle-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        transition: all 0.3s ease;
+    }
+    
+    .strategy-toggle-card:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    
+    .strategy-toggle-card.enabled {
+        border-color: #007bff;
+        background: rgba(0, 123, 255, 0.05);
+    }
+    
+    .strategy-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.5rem;
+    }
+    
+    .strategy-info {
+        flex: 1;
+    }
+    
+    .strategy-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #fff;
+        margin-bottom: 0.25rem;
+    }
+    
+    .strategy-description {
+        font-size: 0.875rem;
+        color: rgba(255, 255, 255, 0.6);
+        margin: 0;
+    }
+    
+    .strategy-toggle {
+        flex-shrink: 0;
+        margin-left: 1rem;
+    }
+    
+    .strategy-toggle input[type="checkbox"] {
+        width: 50px;
+        height: 26px;
+        cursor: pointer;
+    }
+    
+    .strategy-params {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        display: none;
+    }
+    
+    .strategy-params.show {
+        display: block;
+    }
+    
+    .strategy-param-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    
+    .coming-soon-badge {
+        display: inline-block;
+        background: rgba(255, 193, 7, 0.2);
+        color: #ffc107;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-left: 0.5rem;
+    }
+    
+    .strategy-info-box {
+        background: rgba(13, 110, 253, 0.1);
+        border-left: 3px solid #0d6efd;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+    }
+    
+    .strategy-info-box p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.9rem;
+    }
+    
+    .strategy-info-box strong {
+        color: #fff;
+    }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -250,7 +353,7 @@
                             </div>
                         </div>
 
-                        <!-- Max Position Size Per Token (NEW - Phase 1) -->
+                        <!-- Max Position Size Per Token (Phase 1) -->
                         <div class="form-group-enhanced">
                             <label class="form-label-enhanced">
                                 <span class="label-text">
@@ -276,7 +379,7 @@
                             </small>
                         </div>
 
-                        <!-- Max Trade Size USD (NEW FIELD) -->
+                        <!-- Max Trade Size USD -->
                         <div class="form-group-enhanced">
                             <label class="form-label-enhanced">
                                 <span class="label-text">
@@ -449,6 +552,205 @@
                 </div>
             </div>
         </div>
+        
+        <!-- ========================================================================= -->
+        <!-- 🆕 ADVANCED STRATEGIES SECTION - PHASE 7B -->
+        <!-- ========================================================================= -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="config-section">
+                    <div class="section-header">
+                        <h4 class="section-title">
+                            <i class="bi bi-lightning-charge"></i>
+                            Advanced Strategies
+                            <span class="badge bg-info ms-2">Phase 7B</span>
+                        </h4>
+                    </div>
+                    
+                    <!-- Strategy Info Box -->
+                    <div class="strategy-info-box">
+                        <p>
+                            <strong>🤖 Intelligent Strategy Selection:</strong> Your bot automatically chooses the best entry strategy 
+                            based on real-time market conditions (volatility, trend, liquidity). Enable the strategies you want 
+                            the bot to use, and configure their parameters below.
+                        </p>
+                    </div>
+                    
+                    <!-- DCA Strategy -->
+                    <div class="strategy-toggle-card" id="dca-card">
+                        <div class="strategy-header">
+                            <div class="strategy-info">
+                                <div class="strategy-title">
+                                    💰 Dollar Cost Averaging (DCA)
+                                </div>
+                                <p class="strategy-description">
+                                    Spread buys over multiple intervals to average entry price and reduce timing risk. 
+                                    Bot selects this for strong trending markets with high confidence.
+                                </p>
+                            </div>
+                            <div class="strategy-toggle">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" 
+                                           type="checkbox" 
+                                           name="enable_dca" 
+                                           id="enable-dca"
+                                           {% if strategy_config.enable_dca %}checked{% endif %}
+                                           onchange="toggleStrategyParams('dca')">
+                                    <label class="form-check-label" for="enable-dca">Enable</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- DCA Parameters (collapsible) -->
+                        <div class="strategy-params" id="dca-params" {% if strategy_config.enable_dca %}style="display:block;"{% endif %}>
+                            <div class="strategy-param-row">
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Number of Intervals
+                                        <span class="form-value" id="dca-intervals-value">{{ strategy_config.dca_num_intervals|default:'5' }}</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="dca_num_intervals" 
+                                           class="form-range"
+                                           min="2" max="20" step="1"
+                                           value="{{ strategy_config.dca_num_intervals|default:'5' }}"
+                                           oninput="updateRangeValue('dca-intervals-value', this.value)">
+                                    <small class="text-muted">Split buy into 2-20 separate orders</small>
+                                </div>
+                                
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Interval Duration (hours)
+                                        <span class="form-value" id="dca-hours-value">{{ strategy_config.dca_interval_hours|default:'2' }}</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="dca_interval_hours" 
+                                           class="form-range"
+                                           min="1" max="168" step="1"
+                                           value="{{ strategy_config.dca_interval_hours|default:'2' }}"
+                                           oninput="updateRangeValue('dca-hours-value', this.value)">
+                                    <small class="text-muted">Time between each buy (1-168 hours)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Grid Trading Strategy -->
+                    <div class="strategy-toggle-card" id="grid-card">
+                        <div class="strategy-header">
+                            <div class="strategy-info">
+                                <div class="strategy-title">
+                                    📊 Grid Trading
+                                </div>
+                                <p class="strategy-description">
+                                    Place multiple buy/sell orders at different price levels to profit from volatility. 
+                                    Bot selects this for range-bound markets with high volatility (8%+).
+                                </p>
+                            </div>
+                            <div class="strategy-toggle">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" 
+                                           type="checkbox" 
+                                           name="enable_grid" 
+                                           id="enable-grid"
+                                           {% if strategy_config.enable_grid %}checked{% endif %}
+                                           onchange="toggleStrategyParams('grid')">
+                                    <label class="form-check-label" for="enable-grid">Enable</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Grid Parameters (collapsible) -->
+                        <div class="strategy-params" id="grid-params" {% if strategy_config.enable_grid %}style="display:block;"{% endif %}>
+                            <div class="strategy-param-row">
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Number of Grid Levels
+                                        <span class="form-value" id="grid-levels-value">{{ strategy_config.grid_num_levels|default:'7' }}</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="grid_num_levels" 
+                                           class="form-range"
+                                           min="3" max="20" step="1"
+                                           value="{{ strategy_config.grid_num_levels|default:'7' }}"
+                                           oninput="updateRangeValue('grid-levels-value', this.value)">
+                                    <small class="text-muted">Number of price levels (3-20)</small>
+                                </div>
+                                
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Profit Target per Level
+                                        <span class="form-value" id="grid-profit-value">{{ strategy_config.grid_profit_target_percent|default:'2.0' }}%</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="grid_profit_target_percent" 
+                                           class="form-range"
+                                           min="0.1" max="10.0" step="0.1"
+                                           value="{{ strategy_config.grid_profit_target_percent|default:'2.0' }}"
+                                           oninput="updateRangeValue('grid-profit-value', this.value, '%')">
+                                    <small class="text-muted">Target profit per grid level (0.1-10%)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- TWAP Strategy (Coming Soon) -->
+                    <div class="strategy-toggle-card disabled" style="opacity: 0.6;">
+                        <div class="strategy-header">
+                            <div class="strategy-info">
+                                <div class="strategy-title">
+                                    ⏰ TWAP (Time-Weighted Average Price)
+                                    <span class="coming-soon-badge">COMING SOON</span>
+                                </div>
+                                <p class="strategy-description">
+                                    Split large orders over time to minimize market impact. 
+                                    Optimal for executing large positions gradually.
+                                </p>
+                            </div>
+                            <div class="strategy-toggle">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" 
+                                           type="checkbox" 
+                                           name="enable_twap" 
+                                           id="enable-twap"
+                                           disabled>
+                                    <label class="form-check-label" for="enable-twap">Enable</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- VWAP Strategy (Coming Soon) -->
+                    <div class="strategy-toggle-card disabled" style="opacity: 0.6;">
+                        <div class="strategy-header">
+                            <div class="strategy-info">
+                                <div class="strategy-title">
+                                    📈 VWAP (Volume-Weighted Average Price)
+                                    <span class="coming-soon-badge">COMING SOON</span>
+                                </div>
+                                <p class="strategy-description">
+                                    Execute based on volume patterns for better fill prices. 
+                                    Ideal for high-volume tokens with consistent trading.
+                                </p>
+                            </div>
+                            <div class="strategy-toggle">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" 
+                                           type="checkbox" 
+                                           name="enable_vwap" 
+                                           id="enable-vwap"
+                                           disabled>
+                                    <label class="form-check-label" for="enable-vwap">Enable</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- ========================================================================= -->
+        <!-- END ADVANCED STRATEGIES SECTION -->
+        <!-- ========================================================================= -->
         
         <!-- Form Actions -->
         <div class="row mb-4">
@@ -811,6 +1113,44 @@
 <script src="{% static 'js/paper_trading_reset.js' %}"></script>
 
 <script>
+/**
+ * Toggle strategy parameters visibility when strategy is enabled/disabled
+ * Updates card styling to indicate enabled state
+ */
+function toggleStrategyParams(strategyType) {
+    const checkbox = document.getElementById(`enable-${strategyType}`);
+    const params = document.getElementById(`${strategyType}-params`);
+    const card = document.getElementById(`${strategyType}-card`);
+    
+    if (checkbox.checked) {
+        params.style.display = 'block';
+        card.classList.add('enabled');
+    } else {
+        params.style.display = 'none';
+        card.classList.remove('enabled');
+    }
+}
+
+/**
+ * Initialize strategy cards on page load
+ * Set initial state based on checkbox values
+ */
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize DCA card state
+    const dcaCheckbox = document.getElementById('enable-dca');
+    const dcaCard = document.getElementById('dca-card');
+    if (dcaCheckbox && dcaCheckbox.checked) {
+        dcaCard.classList.add('enabled');
+    }
+    
+    // Initialize Grid card state
+    const gridCheckbox = document.getElementById('enable-grid');
+    const gridCard = document.getElementById('grid-card');
+    if (gridCheckbox && gridCheckbox.checked) {
+        gridCard.classList.add('enabled');
+    }
+});
+
 /**
  * Stop a specific trading session
  * @param {string} sessionId - Session ID (UUID)

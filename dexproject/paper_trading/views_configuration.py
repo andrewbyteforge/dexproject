@@ -1,11 +1,12 @@
 """
-Paper Trading Views - Configuration Management - ENHANCED WITH DETAILED LOGGING
+Paper Trading Views - Configuration Management - ENHANCED WITH PHASE 7B STRATEGIES
 
 Strategy configuration management view with pagination, CRUD operations,
 and configuration activation. Handles trading strategy settings.
 
-ENHANCED: Now includes detailed "from X to Y" logging for every configuration change
-that appears in the Django server logs (IDE console/terminal).
+ENHANCED: 
+- Detailed "from X to Y" logging for every configuration change
+- Phase 7B: Support for DCA, Grid, TWAP, VWAP strategy preferences
 
 File: dexproject/paper_trading/views_configuration.py
 """
@@ -79,6 +80,17 @@ def log_new_configuration_values(config_data: Dict[str, Any]) -> None:
     logger.info(f"  💧 Min Liquidity: ${config_data.get('min_liquidity_usd', 'N/A')}")
     logger.info(f"  📉 Max Slippage: {config_data.get('max_slippage_percent', 'N/A')}%")
     logger.info(f"  🎲 Confidence Threshold: {config_data.get('confidence_threshold', 'N/A')}%")
+    # Phase 7B: Advanced Strategies
+    logger.info(f"  💰 DCA Strategy: {'✓ ENABLED' if config_data.get('enable_dca') else '✗ DISABLED'}")
+    if config_data.get('enable_dca'):
+        logger.info(f"     └─ Intervals: {config_data.get('dca_num_intervals', 'N/A')}")
+        logger.info(f"     └─ Interval Hours: {config_data.get('dca_interval_hours', 'N/A')}")
+    logger.info(f"  📊 Grid Strategy: {'✓ ENABLED' if config_data.get('enable_grid') else '✗ DISABLED'}")
+    if config_data.get('enable_grid'):
+        logger.info(f"     └─ Levels: {config_data.get('grid_num_levels', 'N/A')}")
+        logger.info(f"     └─ Profit Target: {config_data.get('grid_profit_target_percent', 'N/A')}%")
+    logger.info(f"  ⏰ TWAP Strategy: {'✓ ENABLED' if config_data.get('enable_twap') else '✗ DISABLED'}")
+    logger.info(f"  📈 VWAP Strategy: {'✓ ENABLED' if config_data.get('enable_vwap') else '✗ DISABLED'}")
 
 
 def log_configuration_differences(old_config: PaperStrategyConfiguration, new_data: Dict[str, Any]) -> None:
@@ -158,9 +170,54 @@ def log_configuration_differences(old_config: PaperStrategyConfiguration, new_da
         logger.info(f"  📉 Max Slippage: {old_config.max_slippage_percent}% → {new_data.get('max_slippage_percent')}%")
         changes_detected = True
 
-    # Confidence Threshold - THIS IS THE IMPORTANT ONE YOU CHANGED
+    # Confidence Threshold
     if old_config.confidence_threshold != new_data.get('confidence_threshold'):
         logger.info(f"  🎲 Confidence Threshold: {old_config.confidence_threshold}% → {new_data.get('confidence_threshold')}%")
+        changes_detected = True
+
+    # Phase 7B: Advanced Strategies
+    # DCA Strategy
+    old_dca = '✓ ENABLED' if old_config.enable_dca else '✗ DISABLED'
+    new_dca = '✓ ENABLED' if new_data.get('enable_dca') else '✗ DISABLED'
+    if old_config.enable_dca != new_data.get('enable_dca'):
+        logger.info(f"  💰 DCA Strategy: {old_dca} → {new_dca}")
+        changes_detected = True
+    
+    if old_config.dca_num_intervals != new_data.get('dca_num_intervals'):
+        logger.info(f"     └─ DCA Intervals: {old_config.dca_num_intervals} → {new_data.get('dca_num_intervals')}")
+        changes_detected = True
+    
+    if old_config.dca_interval_hours != new_data.get('dca_interval_hours'):
+        logger.info(f"     └─ DCA Interval Hours: {old_config.dca_interval_hours} → {new_data.get('dca_interval_hours')}")
+        changes_detected = True
+    
+    # Grid Strategy
+    old_grid = '✓ ENABLED' if old_config.enable_grid else '✗ DISABLED'
+    new_grid = '✓ ENABLED' if new_data.get('enable_grid') else '✗ DISABLED'
+    if old_config.enable_grid != new_data.get('enable_grid'):
+        logger.info(f"  📊 Grid Strategy: {old_grid} → {new_grid}")
+        changes_detected = True
+    
+    if old_config.grid_num_levels != new_data.get('grid_num_levels'):
+        logger.info(f"     └─ Grid Levels: {old_config.grid_num_levels} → {new_data.get('grid_num_levels')}")
+        changes_detected = True
+    
+    if old_config.grid_profit_target_percent != new_data.get('grid_profit_target_percent'):
+        logger.info(f"     └─ Grid Profit Target: {old_config.grid_profit_target_percent}% → {new_data.get('grid_profit_target_percent')}%")
+        changes_detected = True
+    
+    # TWAP Strategy
+    old_twap = '✓ ENABLED' if old_config.enable_twap else '✗ DISABLED'
+    new_twap = '✓ ENABLED' if new_data.get('enable_twap') else '✗ DISABLED'
+    if old_config.enable_twap != new_data.get('enable_twap'):
+        logger.info(f"  ⏰ TWAP Strategy: {old_twap} → {new_twap}")
+        changes_detected = True
+    
+    # VWAP Strategy
+    old_vwap = '✓ ENABLED' if old_config.enable_vwap else '✗ DISABLED'
+    new_vwap = '✓ ENABLED' if new_data.get('enable_vwap') else '✗ DISABLED'
+    if old_config.enable_vwap != new_data.get('enable_vwap'):
+        logger.info(f"  📈 VWAP Strategy: {old_vwap} → {new_vwap}")
         changes_detected = True
 
     if not changes_detected:
@@ -176,7 +233,9 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
     """
     Strategy configuration management view with pagination and delete.
 
-    ENHANCED: Now includes detailed logging of all configuration changes.
+    ENHANCED: 
+    - Detailed logging of all configuration changes
+    - Phase 7B: Support for DCA, Grid, TWAP, VWAP strategy preferences
 
     Handles display, updates, and deletion of trading strategy configurations.
     Supports configuration activation, deactivation, and CRUD operations.
@@ -194,7 +253,6 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
         logger.debug(f"Loading configuration view for account {account.account_id}")
 
         # Handle delete action if requested
-        # Handle delete action if requested
         if request.method == 'POST' and request.POST.get('action') == 'delete':
             config_id = request.POST.get('config_id')
             if config_id:
@@ -210,7 +268,6 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     if total_configs <= 1:
                         messages.warning(request, "Cannot delete the last configuration")
                     else:
-                        # ✅ REMOVED THE is_active CHECK - Allow deleting selected configs!
                         config_name = config_to_delete.name
                         was_active = config_to_delete.is_active
                         
@@ -245,11 +302,11 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                             
                 except PaperStrategyConfiguration.DoesNotExist:
                     messages.error(request, "Configuration not found")
-                    return redirect('paper_trading:configuration')  # ✅ ADD THIS
+                    return redirect('paper_trading:configuration')
                 except Exception as e:
                     messages.error(request, f"Error loading configuration: {str(e)}")
                     logger.error(f"Error loading configuration: {e}", exc_info=True)
-                    return redirect('paper_trading:configuration')  # ✅ ADD THIS
+                    return redirect('paper_trading:configuration')
 
                     
 
@@ -304,6 +361,15 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'min_liquidity_usd': Decimal(request.POST.get('min_liquidity_usd', '1000')),
                     'max_slippage_percent': Decimal(request.POST.get('max_slippage_percent', '3')),
                     'confidence_threshold': Decimal(request.POST.get('confidence_threshold', '70')),
+                    # Phase 7B: Advanced Strategies
+                    'enable_dca': request.POST.get('enable_dca') == 'on',
+                    'enable_grid': request.POST.get('enable_grid') == 'on',
+                    'enable_twap': request.POST.get('enable_twap') == 'on',
+                    'enable_vwap': request.POST.get('enable_vwap') == 'on',
+                    'dca_num_intervals': int(request.POST.get('dca_num_intervals', '5')),
+                    'dca_interval_hours': int(request.POST.get('dca_interval_hours', '2')),
+                    'grid_num_levels': int(request.POST.get('grid_num_levels', '7')),
+                    'grid_profit_target_percent': Decimal(request.POST.get('grid_profit_target_percent', '2.0')),
                 }
 
                 # Determine action: create new or update existing
@@ -321,7 +387,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                             'use_smart_lane': config_data['use_smart_lane'],
                             'fast_lane_threshold_usd': config_data['fast_lane_threshold_usd'],
                             'max_position_size_percent': config_data['max_position_size_percent'],
-                            'max_trade_size_usd': config_data['max_trade_size_usd'],  # ← NEW
+                            'max_trade_size_usd': config_data['max_trade_size_usd'],
                             'max_position_size_per_token_percent': config_data['max_position_size_per_token_percent'],
                             'stop_loss_percent': config_data['stop_loss_percent'],
                             'take_profit_percent': config_data['take_profit_percent'],
@@ -331,6 +397,15 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                             'min_liquidity_usd': config_data['min_liquidity_usd'],
                             'max_slippage_percent': config_data['max_slippage_percent'],
                             'confidence_threshold': config_data['confidence_threshold'],
+                            # Phase 7B: Advanced Strategies
+                            'enable_dca': config_data['enable_dca'],
+                            'enable_grid': config_data['enable_grid'],
+                            'enable_twap': config_data['enable_twap'],
+                            'enable_vwap': config_data['enable_vwap'],
+                            'dca_num_intervals': config_data['dca_num_intervals'],
+                            'dca_interval_hours': config_data['dca_interval_hours'],
+                            'grid_num_levels': config_data['grid_num_levels'],
+                            'grid_profit_target_percent': config_data['grid_profit_target_percent'],
                             'is_active': True,
                         }
                     )
@@ -394,6 +469,15 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'min_liquidity_usd': Decimal('1000'),
                     'max_slippage_percent': Decimal('3'),
                     'confidence_threshold': Decimal('70'),
+                    # Phase 7B: Advanced Strategies defaults
+                    'enable_dca': False,
+                    'enable_grid': False,
+                    'enable_twap': False,
+                    'enable_vwap': False,
+                    'dca_num_intervals': 5,
+                    'dca_interval_hours': 2,
+                    'grid_num_levels': 7,
+                    'grid_profit_target_percent': Decimal('2.0'),
                     'is_active': True
                 }
                 config = PaperStrategyConfiguration.objects.create(**default_config_data)
@@ -429,6 +513,7 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
             'total_configs': all_configs.count(),
             'account': account,
             'bot_running': bot_running,
+            'active_session': active_session,
             'active_sessions': active_sessions,
             'page_obj': page_obj,
         }
