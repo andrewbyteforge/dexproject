@@ -693,6 +693,74 @@ class IntelSliderEngine(IntelligenceEngine):
                 f"Decision making error: {str(decision_error)}"
             )
 
+    async def evaluate_position_exit(
+        self,
+        market_context: MarketContext,
+        position_data: Dict[str, Any],
+        account_balance: Decimal,
+        existing_positions: Dict[str, Any]
+    ) -> TradingDecision:
+        """
+        Evaluate whether to exit an existing position (SELL decision).
+        
+        This method analyzes an existing position and decides whether it's time
+        to sell based on:
+        - Market conditions changing
+        - Position P&L performance
+        - Risk increasing
+        - Better opportunities elsewhere
+        
+        Args:
+            market_context: Current market context for the token
+            position_data: Information about the existing position
+            account_balance: Current account balance
+            existing_positions: All existing positions
+            
+        Returns:
+            TradingDecision with SELL, HOLD, or SKIP action
+        """
+        try:
+            # Extract position information
+            entry_price = Decimal(str(position_data.get('entry_price', 0)))
+            current_price = Decimal(str(position_data.get('current_price', 0)))
+            invested_usd = Decimal(str(position_data.get('invested_usd', 0)))
+            current_value_usd = Decimal(str(position_data.get('current_value_usd', 0)))
+            hold_time_hours = float(position_data.get('hold_time_hours', 0))
+            
+            self.logger.info(
+                f"[EVALUATE EXIT] Analyzing position for {market_context.token_symbol}: "
+                f"Entry=${entry_price:.4f}, Current=${current_price:.4f}, "
+                f"Hold time={hold_time_hours:.1f}h"
+            )
+            
+            # Use make_decision with position parameters to determine exit
+            decision = await self.make_decision(
+                market_context=market_context,
+                account_balance=account_balance,
+                existing_positions=list(existing_positions.values()) if existing_positions else [],
+                position_entry_price=entry_price,
+                position_current_value=current_value_usd,
+                position_invested=invested_usd,
+                position_hold_time_hours=hold_time_hours
+            )
+            
+            self.logger.info(
+                f"[EVALUATE EXIT] Decision for {market_context.token_symbol}: "
+                f"{decision.action} (Confidence: {decision.overall_confidence:.1f}%)"
+            )
+            
+            return decision
+            
+        except Exception as exit_error:
+            self.logger.error(
+                f"[EVALUATE EXIT] Error evaluating position exit: {exit_error}",
+                exc_info=True
+            )
+            return self._create_skip_decision(
+                market_context,
+                f"Position exit evaluation error: {str(exit_error)}"
+            )
+
     def _create_skip_decision(
         self,
         market_context: MarketContext,

@@ -515,6 +515,20 @@ class RealPriceManager:
         """Get the current token list with latest prices."""
         return self.token_list
     
+
+    def get_all_tokens(self) -> List[Dict[str, Any]]:
+        """
+        Get all tokens with current prices.
+        
+        Alias for get_token_list() for backwards compatibility.
+        
+        Returns:
+            List of token dictionaries with current prices
+        """
+        return self.get_token_list()
+    
+
+    
     def get_token_price(self, symbol: str) -> Optional[Decimal]:
         """Get the current price for a specific token."""
         for token in self.token_list:
@@ -554,6 +568,13 @@ class RealPriceManager:
             'api_reduction_percent': f"{api_reduction:.1f}%",
             'bulk_fetching_enabled': True
         }
+
+
+
+
+
+
+
 
 
 # =============================================================================

@@ -312,12 +312,17 @@ class MarketAnalyzer:
                 return
 
             # Import here to avoid circular dependency
-            from trading.services.transaction_manager import transaction_manager
+            try:
+                from trading.services import transaction_manager
+            except ImportError:
+                logger.debug("[TX MANAGER] Transaction manager module not available")
+                return
 
             # Get status of all pending transactions
             for tx_hash in list(self.pending_transactions):
                 try:
-                    status = transaction_manager.get_transaction_status(tx_hash)
+                    # Type ignore: transaction_manager is optional and dynamically imported
+                    status = transaction_manager.get_transaction_status(tx_hash)  # type: ignore[attr-defined]
 
                     if status == 'confirmed':
                         logger.info(f"[TX MANAGER] Transaction {tx_hash} confirmed")
@@ -358,52 +363,58 @@ class MarketAnalyzer:
                 pos.unrealized_pnl_usd for pos in positions.values()
             )
 
-            # Get completed trades for realized P&L
-            completed_trades = PaperTrade.objects.filter(
+            # Get all trades for this account
+            all_trades = PaperTrade.objects.filter(
                 account=self.account,
-                session=self.session,
                 status='EXECUTED'
             )
+            
+            total_trades = all_trades.count()
 
-            total_realized_pnl = sum(
-                trade.profit_loss_usd or Decimal('0')
-                for trade in completed_trades
-            )
-
-            # Calculate win rate
-            profitable_trades = completed_trades.filter(
-                profit_loss_usd__gt=0
-            ).count()
-            total_trades = completed_trades.count()
-            win_rate = (
-                (profitable_trades / total_trades * 100)
-                if total_trades > 0
-                else Decimal('0')
-            )
-
-            # Update or create metrics
-            metrics, created = PaperPerformanceMetrics.objects.get_or_create(
+            # Calculate realized P&L from CLOSED positions only
+            from paper_trading.models import PaperPosition
+            closed_positions = PaperPosition.objects.filter(
                 account=self.account,
-                session=self.session,
+                is_open=False
+            )
+            
+            total_realized_pnl = sum(
+                pos.realized_pnl_usd or Decimal('0')
+                for pos in closed_positions
+            )
+            
+            # Calculate win rate from closed positions
+            profitable_positions = closed_positions.filter(
+                realized_pnl_usd__gt=0
+            ).count()
+            total_closed = closed_positions.count()
+            
+            win_rate = Decimal('0')
+            if total_closed > 0:
+                win_rate = Decimal(str((profitable_positions / total_closed) * 100))
+
+            # Update or create metrics - use SESSION, not account!
+            from django.utils import timezone
+
+            metrics, created = PaperPerformanceMetrics.objects.get_or_create(
+                session=self.session,  
                 defaults={
                     'total_trades': 0,
                     'winning_trades': 0,
                     'losing_trades': 0,
                     'win_rate': Decimal('0'),
-                    'total_profit_loss': Decimal('0'),
-                    'unrealized_pnl': Decimal('0'),
-                    'realized_pnl': Decimal('0')
+                    'total_pnl_usd': Decimal('0'),
+                    'period_start': self.session.started_at if self.session else timezone.now(),  # ✅ ADD THIS
+                    'period_end': timezone.now()  # ✅ ADD THIS
                 }
             )
 
-            # Update metrics
+            # Update metrics with correct field names
             metrics.total_trades = total_trades
-            metrics.winning_trades = profitable_trades
-            metrics.losing_trades = total_trades - profitable_trades
+            metrics.winning_trades = profitable_positions
+            metrics.losing_trades = total_closed - profitable_positions
             metrics.win_rate = win_rate
-            metrics.realized_pnl = total_realized_pnl
-            metrics.unrealized_pnl = total_unrealized_pnl
-            metrics.total_profit_loss = total_realized_pnl + total_unrealized_pnl
+            metrics.total_pnl_usd = Decimal(str(total_realized_pnl + total_unrealized_pnl))  # Always Decimal # ✅ Correct field
             metrics.save()
 
             logger.debug(
@@ -416,12 +427,11 @@ class MarketAnalyzer:
             logger.error(
                 f"[MARKET ANALYZER] Failed to update metrics: {e}",
                 exc_info=True
-            )
+            ) 
 
     # =========================================================================
     # INTELLIGENT POSITION SELL CHECK - NEW!
     # =========================================================================
-
     def _check_position_sells(
         self,
         price_manager: Any,
@@ -517,7 +527,7 @@ class MarketAnalyzer:
             price_history = price_manager.get_price_history(token_symbol, limit=24)
 
             # Calculate position metrics
-            avg_entry_price = position.average_entry_price
+            avg_entry_price = position.average_entry_price_usd
             hold_time = timezone.now() - position.opened_at
             hold_time_hours = hold_time.total_seconds() / 3600
 
@@ -541,9 +551,9 @@ class MarketAnalyzer:
                     self.intelligence_engine.analyzer.analyze_comprehensive
                 )(
                     token_address=token_address,
-                    trade_size_usd=float(current_value),
+                    trade_size_usd=Decimal(str(current_value)),
                     chain_id=self.intelligence_engine.chain_id,
-                    price_history=[Decimal(str(p)) for p in price_history],
+                    price_history=[{'price': Decimal(str(p))} for p in price_history],
                     current_price=current_price
                 )
             except Exception as e:
@@ -565,22 +575,19 @@ class MarketAnalyzer:
                 volatility = Decimal('0')
                 trend_direction = 'unknown'
                 data_quality = 'INSUFFICIENT'
-
+            
             # Create market context
             market_context = MarketContext(
+                token_symbol=token_symbol,
+                token_address=token_address,
                 current_price=current_price,
                 price_24h_ago=price_history[0] if price_history else current_price,
-                liquidity=liquidity,
+                liquidity_usd=liquidity,
                 volatility=volatility,
-                gas_price=Decimal('1.0'),
-                trend=trend_direction,
-                data_quality=data_quality
+                gas_price_gwei=Decimal('1.0'),
+                trend_direction=trend_direction,
+                confidence_in_data=100.0 if data_quality == 'GOOD' else 50.0
             )
-
-            # Add position-specific context
-            market_context.position_pnl_percent = pnl_percent
-            market_context.position_hold_hours = Decimal(str(hold_time_hours))
-            market_context.position_entry_price = avg_entry_price
 
             # Get existing positions for context
             all_positions = position_manager.get_all_positions()
@@ -600,13 +607,13 @@ class MarketAnalyzer:
                     # Check if we can sell this token at better price on another DEX
                     dex_prices = async_to_sync(self.dex_comparator.compare_prices)(
                         token_address=token_address,
-                        amount_in=float(position.quantity)
+                        token_symbol=token_symbol
                     )
 
-                    if dex_prices and len(dex_prices) >= 2:
+                    if dex_prices and dex_prices.prices and len(dex_prices.prices) >= 2:
                         # Check arbitrage opportunity
                         arb_opp = self.arbitrage_detector.analyze_opportunity(
-                            dex_prices=dex_prices,
+                            dex_prices=dex_prices.prices,  # ✅ Use .prices (the list)
                             trade_size_usd=float(current_value)
                         )
 
@@ -796,6 +803,11 @@ class MarketAnalyzer:
                     f"Symbol={token_symbol}, Address={token_address}, Price={current_price}"
                 )
                 return
+            
+            # Type assertions - tell Pylance these are not None after validation
+            assert token_symbol is not None
+            assert token_address is not None
+            assert isinstance(current_price, Decimal)
 
             logger.info(
                 f"[ANALYZE] Analyzing {token_symbol} at ${current_price:.2f} "
@@ -828,7 +840,7 @@ class MarketAnalyzer:
                     token_address=token_address,
                     trade_size_usd=initial_trade_size,
                     chain_id=self.intelligence_engine.chain_id,
-                    price_history=[Decimal(str(p)) for p in price_history],
+                    price_history=[{'price': Decimal(str(p))} for p in price_history] if price_history else None,
                     current_price=current_price
                 )
 
@@ -880,14 +892,17 @@ class MarketAnalyzer:
                 )
 
             # Create market context with REAL or fallback data
+            # Create market context with REAL or fallback data
             market_context = MarketContext(
+                token_symbol=token_symbol,
+                token_address=token_address,
                 current_price=current_price,
                 price_24h_ago=price_24h_ago,
-                liquidity=liquidity_usd,
+                liquidity_usd=liquidity_usd,  # ✅ CORRECT parameter name
                 volatility=volatility,
-                gas_price=gas_price,
-                trend=trend_direction,
-                data_quality=data_quality
+                gas_price_gwei=gas_price,
+                trend_direction=trend_direction,
+                confidence_in_data=100.0 if data_quality == 'GOOD' else 50.0
             )
 
             # Get existing positions for better decision making
@@ -913,7 +928,7 @@ class MarketAnalyzer:
                         'token_symbol': token_symbol,
                         'token_address': token_address,
                         'quantity': float(all_positions[token_symbol].quantity),
-                        'entry_price': float(all_positions[token_symbol].average_entry_price),
+                        'entry_price': float(all_positions[token_symbol].average_entry_price_usd),
                         'current_price': float(current_price),
                         'invested_usd': float(all_positions[token_symbol].total_invested_usd),
                         'current_value_usd': float(all_positions[token_symbol].current_value_usd)
@@ -926,7 +941,7 @@ class MarketAnalyzer:
                 decision = async_to_sync(self.intelligence_engine.make_decision)(
                     market_context=market_context,
                     account_balance=self.account.current_balance_usd,
-                    existing_positions=existing_positions,
+                    existing_positions=list(existing_positions.values()),
                     token_address=token_address,
                     token_symbol=token_symbol
                 )
@@ -1184,7 +1199,7 @@ class MarketAnalyzer:
                     continue
 
                 # Calculate P&L percentage
-                entry_price = position.average_entry_price
+                entry_price = position.average_entry_price_usd
                 pnl_percent = ((current_price - entry_price) / entry_price) * Decimal('100')
 
                 # Get configured thresholds
@@ -1203,6 +1218,8 @@ class MarketAnalyzer:
                         f"{pnl_percent:.2f}% (threshold: -{stop_loss}%)"
                     )
                     
+                    token_address = getattr(position, 'token_address', '')
+                    
                     # Log the auto-close decision
                     self._log_thought(
                         action='SELL',
@@ -1216,17 +1233,33 @@ class MarketAnalyzer:
                             'pnl_percent': float(pnl_percent),
                             'stop_loss_threshold': float(stop_loss)
                         }
-                    )
-                    
+                    )                    
+
                     # Create a simple SELL decision for executor
                     from paper_trading.intelligence.core.base import TradingDecision
                     sell_decision = TradingDecision(
                         action='SELL',
-                        primary_reasoning=f"Stop-loss triggered at {pnl_percent:.2f}% loss",
+                        token_address=token_address or '',
+                        token_symbol=token_symbol,
+                        position_size_percent=Decimal('0'),
+                        position_size_usd=Decimal('0'),
+                        stop_loss_percent=Decimal('0'),
+                        take_profit_targets=[],
+                        execution_mode='FAST_LANE',
+                        use_private_relay=False,
+                        gas_strategy='standard',
+                        max_gas_price_gwei=Decimal('50'),
                         overall_confidence=Decimal('100'),
                         risk_score=Decimal('0'),
                         opportunity_score=Decimal('0'),
-                        position_size_usd=Decimal('0')
+                        primary_reasoning=f"Stop-loss triggered at {pnl_percent:.2f}% loss",
+                        risk_factors=[f"Stop-loss triggered at {pnl_percent:.2f}%"],
+                        opportunity_factors=[],
+                        mitigation_strategies=[],
+                        intel_level_used=self.intelligence_engine.intel_level,
+                        intel_adjustments={},
+                        time_sensitivity='critical',
+                        max_execution_time_ms=5000
                     )
                     
                     trade_executor.execute_trade(
@@ -1242,6 +1275,8 @@ class MarketAnalyzer:
                         f"[AUTO-CLOSE] Take-profit triggered for {token_symbol}: "
                         f"{pnl_percent:.2f}% (threshold: +{take_profit}%)"
                     )
+                    
+                    token_address = getattr(position, 'token_address', '')
                     
                     # Log the auto-close decision
                     self._log_thought(
@@ -1259,14 +1294,31 @@ class MarketAnalyzer:
                     )
                     
                     # Create a simple SELL decision for executor
+                    # Create a simple SELL decision for executor
                     from paper_trading.intelligence.core.base import TradingDecision
                     sell_decision = TradingDecision(
                         action='SELL',
-                        primary_reasoning=f"Take-profit triggered at {pnl_percent:.2f}% gain",
+                        token_address=token_address or '',
+                        token_symbol=token_symbol,
+                        position_size_percent=Decimal('0'),
+                        position_size_usd=Decimal('0'),
+                        stop_loss_percent=None,  # No stop-loss for exit trade
+                        take_profit_targets=[],
+                        execution_mode='FAST_LANE',
+                        use_private_relay=False,
+                        gas_strategy='standard',
+                        max_gas_price_gwei=Decimal('50'),
                         overall_confidence=Decimal('100'),
                         risk_score=Decimal('0'),
                         opportunity_score=Decimal('0'),
-                        position_size_usd=Decimal('0')
+                        primary_reasoning=f"Take-profit triggered at {pnl_percent:.2f}% gain",
+                        risk_factors=[],
+                        opportunity_factors=[f"Take-profit target reached: {pnl_percent:.2f}%"],
+                        mitigation_strategies=[],
+                        intel_level_used=self.intelligence_engine.intel_level,
+                        intel_adjustments={},
+                        time_sensitivity='high',
+                        max_execution_time_ms=10000
                     )
                     
                     trade_executor.execute_trade(
@@ -1319,7 +1371,7 @@ class MarketAnalyzer:
             confidence_level = self._calculate_confidence_level(confidence)
 
             # Create thought log
-            thought = PaperAIThoughtLog.objects.create(
+            PaperAIThoughtLog.objects.create(
                 account=self.account,
                 decision_type=action,
                 token_address=token_address,
@@ -1578,7 +1630,7 @@ class MarketAnalyzer:
                 if (volatility >= StrategySelectionThresholds.GRID_MIN_VOLATILITY and
                     trend in MarketTrend.NEUTRAL and
                     liquidity >= StrategySelectionThresholds.GRID_MIN_LIQUIDITY_USD and
-                    confidence >= StrategySelectionThresholds.GRID_MIN_CONFIDENCE):
+                   confidence >= StrategySelectionThresholds.GRID_MIN_CONFIDENCE):
                     
                     logger.info(
                         f"[STRATEGY SELECT] ✅ GRID selected for {token_symbol}: "
@@ -1594,7 +1646,7 @@ class MarketAnalyzer:
                 # DCA requires: strong trend + high confidence + meaningful position size
                 if (trend in MarketTrend.BULLISH and
                     confidence >= StrategySelectionThresholds.DCA_MIN_CONFIDENCE and
-                    position_size >= StrategySelectionThresholds.DCA_MIN_POSITION_SIZE_USD):
+                   position_size >= StrategySelectionThresholds.DCA_MIN_POSITION_SIZE_USD):
                     
                     logger.info(
                         f"[STRATEGY SELECT] ✅ DCA selected for {token_symbol}: "
@@ -1679,8 +1731,7 @@ class MarketAnalyzer:
                 action='BUY',
                 reasoning=(
                     f"Bot selected DCA strategy: Spreading ${float(total_amount):.2f} "
-                    f"across {num_intervals} intervals to average entry price in "
-                    f"{decision.market_context.trend} market"
+                    f"across {num_intervals} intervals to average entry price"
                 ),
                 confidence=float(decision.overall_confidence),
                 decision_type=DecisionType.DCA_STRATEGY,
@@ -1690,8 +1741,7 @@ class MarketAnalyzer:
                     'strategy_id': str(strategy_run.strategy_id),
                     'total_amount': float(total_amount),
                     'num_intervals': num_intervals,
-                    'interval_hours': interval_hours,
-                    'trend': decision.market_context.trend
+                    'interval_hours': interval_hours
                 }
             )
             
