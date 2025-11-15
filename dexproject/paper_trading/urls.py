@@ -10,9 +10,7 @@ File Path: dexproject/paper_trading/urls.py
 from django.urls import path
 from . import views
 from . import views_orders
-# Import API functions from the new api package structure
 from .api import (
-    # Data API endpoints
     api_ai_thoughts,
     api_portfolio_data,
     api_trades_data,
@@ -22,23 +20,27 @@ from .api import (
     api_performance_metrics,
     api_token_price,
     api_export_session_csv,
-    
+
     # Configuration API
     api_configuration,
-    
+
     # # Bot Control API
     api_start_bot,
     api_stop_bot,
     api_bot_status,
-    
+
     # Account Management API
     api_reset_account,
     api_sessions_history,
     api_delete_session,
     api_reset_account,
 
-
-    
+    # Strategy Management API (Phase 7B - Day 7)
+    api_active_strategies,
+    api_strategy_detail,
+    api_pause_strategy,
+    api_resume_strategy,
+    api_cancel_strategy,
 )
 
 app_name = 'paper_trading'
@@ -68,6 +70,10 @@ urlpatterns = [
     # Sessions history page - compare performance across sessions
     # GET: /paper-trading/sessions/
     path('sessions/', views.sessions_history_view, name='sessions'),
+
+    # Strategy performance history page - bot intelligence metrics
+    # GET: /paper-trading/strategies/
+    path('strategies/', views.strategies_view, name='strategies'),
 
     # ==========================================================================
     # DATA API ENDPOINTS (from api/data_api.py)
@@ -186,6 +192,33 @@ urlpatterns = [
 
     path('api/account/reset/', api_reset_account, name='api_reset_account'),
 
-    path('strategies/', views.strategies_view, name='strategies'),
+    # ==========================================================================
+    # STRATEGY MANAGEMENT API (from api/strategy_status.py & strategy_controls.py)
+    # Phase 7B - Day 7: Active strategies dashboard widget
+    # ==========================================================================
 
+    # Get all active strategies (RUNNING or PAUSED)
+    # GET: /paper-trading/api/strategies/active/
+    # Returns list of active strategies with progress, P&L, and ROI
+    path('api/strategies/active/', api_active_strategies, name='api_active_strategies'),
+
+    # Get detailed information about a specific strategy
+    # GET: /paper-trading/api/strategies/<strategy_id>/
+    # Returns comprehensive strategy details including execution log
+    path('api/strategies/<uuid:strategy_id>/', api_strategy_detail, name='api_strategy_detail'),
+
+    # Pause a running strategy
+    # POST: /paper-trading/api/strategies/<strategy_id>/pause/
+    # Changes status from RUNNING to PAUSED
+    path('api/strategies/<uuid:strategy_id>/pause/', api_pause_strategy, name='api_pause_strategy'),
+
+    # Resume a paused strategy
+    # POST: /paper-trading/api/strategies/<strategy_id>/resume/
+    # Changes status from PAUSED to RUNNING
+    path('api/strategies/<uuid:strategy_id>/resume/', api_resume_strategy, name='api_resume_strategy'),
+
+    # Cancel/terminate a strategy (permanent)
+    # POST: /paper-trading/api/strategies/<strategy_id>/cancel/
+    # Changes status to CANCELLED (cannot be resumed)
+    path('api/strategies/<uuid:strategy_id>/cancel/', api_cancel_strategy, name='api_cancel_strategy'),
 ]

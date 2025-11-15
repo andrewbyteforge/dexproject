@@ -28,15 +28,22 @@ from .bot_control_api import (
 
 from .account_management_api import (
     api_reset_account,
-)
-
-from .account_management_api import (
-    api_reset_account,
     api_sessions_history,
 )
 
 from .session_delete_api import api_delete_session
 from .session_export_api import api_export_session_csv
+
+from .strategy_status import (
+    api_active_strategies,
+    api_strategy_detail,
+)
+
+from .strategy_controls import (
+    api_pause_strategy,
+    api_resume_strategy,
+    api_cancel_strategy,
+)
 
 __all__ = [
     # Data API endpoints
@@ -62,4 +69,11 @@ __all__ = [
     'api_delete_session',
     'api_export_session_csv',
     'api_reset_account',
+    
+    # Strategy Management API (Phase 7B - Day 7)
+    'api_active_strategies',
+    'api_strategy_detail',
+    'api_pause_strategy',
+    'api_resume_strategy',
+    'api_cancel_strategy',
 ]

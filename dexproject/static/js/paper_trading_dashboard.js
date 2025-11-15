@@ -1052,10 +1052,11 @@ function setupPollingIntervals() {
     const metricsInterval = setInterval(() => {
         console.log('[Backup Polling] Fetching metrics (30s interval)');
         fetchMetrics();
+        loadActiveStrategies(); // Also refresh active strategies
     }, config.metricsUpdateInterval);
     state.updateIntervals.push(metricsInterval);
 
-    console.log('Backup polling enabled: 30s metrics refresh only');
+    console.log('Backup polling enabled: 30s metrics & strategies refresh');
 }
 
 // ========================================
@@ -1123,6 +1124,219 @@ function sendPing() {
     }
 }
 
+
+// ========================================
+// Active Strategies Management (Phase 7B - Day 7)
+// ========================================
+
+/**
+ * Load and display active strategies
+ */
+async function loadActiveStrategies() {
+    try {
+        const response = await fetch('/paper-trading/api/strategies/active/');
+        const data = await response.json();
+
+        if (data.success) {
+            displayActiveStrategies(data.strategies, data.count);
+        } else {
+            console.error('Failed to load active strategies:', data.error);
+        }
+    } catch (error) {
+        console.error('Error loading active strategies:', error);
+    }
+}
+
+/**
+ * Display active strategies in the widget
+ */
+function displayActiveStrategies(strategies, count) {
+    const container = document.getElementById('active-strategies-container');
+    const countBadge = document.getElementById('active-strategies-count');
+    const noStrategiesMessage = document.getElementById('no-active-strategies');
+
+    // Update count badge
+    if (countBadge) {
+        countBadge.textContent = count;
+    }
+
+    if (!strategies || strategies.length === 0) {
+        // Show empty state
+        if (noStrategiesMessage) {
+            noStrategiesMessage.style.display = 'block';
+        }
+        // Hide any existing strategy cards
+        const existingCards = container.querySelectorAll('.strategy-card');
+        existingCards.forEach(card => card.remove());
+        return;
+    }
+
+    // Hide empty state message
+    if (noStrategiesMessage) {
+        noStrategiesMessage.style.display = 'none';
+    }
+
+    // Build HTML for strategies
+    let html = '';
+    strategies.forEach(strategy => {
+        const statusColor = strategy.status === 'RUNNING' ? 'success' : 'warning';
+        const progressPercent = strategy.progress_percent || 0;
+        const pnlClass = strategy.current_pnl >= 0 ? 'text-success' : 'text-danger';
+        const pnlSign = strategy.current_pnl >= 0 ? '+' : '';
+
+        html += `
+            <div class="strategy-card mb-3" data-strategy-id="${strategy.strategy_id}">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <span class="badge badge-${strategy.strategy_type.toLowerCase()}">${strategy.strategy_type}</span>
+                        <strong class="ms-2">${strategy.token_symbol}</strong>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        ${strategy.status === 'RUNNING' ? `
+                            <button class="btn btn-sm btn-outline-warning" onclick="pauseStrategy('${strategy.strategy_id}')" title="Pause">
+                                <i class="bi bi-pause-fill"></i>
+                            </button>
+                        ` : `
+                            <button class="btn btn-sm btn-outline-success" onclick="resumeStrategy('${strategy.strategy_id}')" title="Resume">
+                                <i class="bi bi-play-fill"></i>
+                            </button>
+                        `}
+                        <button class="btn btn-sm btn-outline-danger" onclick="cancelStrategy('${strategy.strategy_id}')" title="Cancel">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="progress mb-2" style="height: 6px;">
+                    <div class="progress-bar bg-${statusColor}" role="progressbar" 
+                         style="width: ${progressPercent}%" 
+                         aria-valuenow="${progressPercent}" aria-valuemin="0" aria-valuemax="100">
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        ${strategy.completed_orders}/${strategy.total_orders} orders
+                    </small>
+                    <div class="text-end">
+                        <small class="${pnlClass} fw-bold">
+                            ${pnlSign}$${strategy.current_pnl.toFixed(2)}
+                        </small>
+                        <small class="text-muted ms-2">
+                            (${strategy.current_roi >= 0 ? '+' : ''}${strategy.current_roi.toFixed(1)}%)
+                        </small>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    // Update container (preserve no-strategies message but hide it)
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+
+    // Remove old strategy cards
+    const oldCards = container.querySelectorAll('.strategy-card');
+    oldCards.forEach(card => card.remove());
+
+    // Add new strategy cards before the no-strategies message
+    const firstChild = container.firstChild;
+    tempDiv.querySelectorAll('.strategy-card').forEach(card => {
+        container.insertBefore(card, firstChild);
+    });
+}
+
+/**
+ * Pause a running strategy
+ */
+async function pauseStrategy(strategyId) {
+    if (!confirm('Pause this strategy? It will stop executing new orders but can be resumed later.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/paper-trading/api/strategies/${strategyId}/pause/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCsrfToken(),
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('Strategy paused successfully', 'success');
+            loadActiveStrategies(); // Refresh the list
+        } else {
+            showToast(`Failed to pause strategy: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error pausing strategy:', error);
+        showToast('Error pausing strategy', 'error');
+    }
+}
+
+/**
+ * Resume a paused strategy
+ */
+async function resumeStrategy(strategyId) {
+    try {
+        const response = await fetch(`/paper-trading/api/strategies/${strategyId}/resume/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCsrfToken(),
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('Strategy resumed successfully', 'success');
+            loadActiveStrategies(); // Refresh the list
+        } else {
+            showToast(`Failed to resume strategy: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error resuming strategy:', error);
+        showToast('Error resuming strategy', 'error');
+    }
+}
+
+/**
+ * Cancel/terminate a strategy permanently
+ */
+async function cancelStrategy(strategyId) {
+    if (!confirm('Cancel this strategy? This action cannot be undone. The strategy will be terminated permanently.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/paper-trading/api/strategies/${strategyId}/cancel/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCsrfToken(),
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('Strategy cancelled successfully', 'info');
+            loadActiveStrategies(); // Refresh the list
+        } else {
+            showToast(`Failed to cancel strategy: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error cancelling strategy:', error);
+        showToast('Error cancelling strategy', 'error');
+    }
+}
+
+/**
+ * Get CSRF token from page
+ */
+function getCsrfToken() {
+    const tokenElement = document.querySelector('[name=csrfmiddlewaretoken]');
+    return tokenElement ? tokenElement.value : '';
+}
 // ========================================
 // Initialization
 // ========================================
@@ -1140,6 +1354,7 @@ function initializeDashboard() {
     fetchRecentTrades();
     fetchOpenPositions();
     fetchMetrics();
+    loadActiveStrategies();
 
     // Initialize thought counter from existing server-rendered thoughts
     const thoughtContainer = document.getElementById('thought-log-container');
