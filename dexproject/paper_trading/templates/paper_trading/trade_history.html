@@ -416,36 +416,28 @@
                                         </td>
                                         
                                         <!-- Amount Out -->
+                                        <!-- Amount Out -->
                                         <td>
-                                            {% if trade.actual_amount_out %}
-                                                <div>{{ trade.actual_amount_out|floatformat:4 }} {{ trade.token_out_symbol }}</div>
-                                            {% elif trade.expected_amount_out %}
-                                                <div class="text-muted">
-                                                    ~{{ trade.expected_amount_out|floatformat:4 }} {{ trade.token_out_symbol }}
-                                                </div>
+                                            {% if trade.amount_out %}
+                                                <div>{{ trade.amount_out|floatformat:4 }} {{ trade.token_out_symbol }}</div>
                                             {% else %}
                                                 <span class="text-muted">—</span>
                                             {% endif %}
                                         </td>
-                                        
+
                                         <!-- Gas Cost -->
                                         <td>
                                             <div class="gas-cost">
                                                 <i class="bi bi-fuel-pump"></i>
-                                                ${{ trade.simulated_gas_cost_usd|default:0|floatformat:2 }}
+                                                ${{ trade.gas_cost_usd|default:0|floatformat:2 }}
                                             </div>
-                                            {% if trade.simulated_gas_price_gwei %}
-                                                <div class="text-muted" style="font-size: 0.75rem;">
-                                                    {{ trade.simulated_gas_price_gwei|floatformat:0 }} Gwei
-                                                </div>
-                                            {% endif %}
                                         </td>
-                                        
+
                                         <!-- Slippage -->
                                         <td>
-                                            {% if trade.simulated_slippage_percent %}
-                                                <span class="{% if trade.simulated_slippage_percent > 1 %}text-warning{% endif %}">
-                                                    {{ trade.simulated_slippage_percent|floatformat:2 }}%
+                                            {% if trade.slippage_percent %}
+                                                <span class="{% if trade.slippage_percent > 1 %}text-warning{% endif %}">
+                                                    {{ trade.slippage_percent|floatformat:2 }}%
                                                 </span>
                                             {% else %}
                                                 <span class="text-muted">—</span>

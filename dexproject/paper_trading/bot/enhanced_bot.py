@@ -841,7 +841,12 @@ class EnhancedPaperTradingBot:
                 circuit_breaker_manager=self.circuit_breaker_manager,
                 chain_id=self.chain_id
             )
-            logger.info("[EXECUTOR] Trade executor initialized")
+            
+            # ✅ RESET CIRCUIT BREAKER ON BOT STARTUP
+            # This clears any previous consecutive failures and gives the bot a fresh start
+            self.trade_executor.reset_circuit_breaker()
+            
+            logger.info("[EXECUTOR] Trade executor initialized with circuit breaker reset")
         except Exception as e:
             logger.error(f"[EXECUTOR] Failed to initialize trade executor: {e}", exc_info=True)
             raise

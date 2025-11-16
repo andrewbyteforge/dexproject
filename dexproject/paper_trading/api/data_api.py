@@ -15,7 +15,7 @@ from django.http import JsonResponse, HttpRequest
 from django.views.decorators.http import require_http_methods
 from django.db.models import Sum
 from django.utils import timezone
-
+import decimal
 # Import models
 from ..models import (
     PaperTrade,
@@ -271,39 +271,57 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
 def api_recent_trades(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for most recent trades (last 24 hours).
-
+    
+    Uses values() query to avoid decimal conversion errors with corrupted data.
+    Individual trades with invalid decimals are skipped with warnings.
+    
     Returns:
-        JsonResponse: Recent trades list
+        JsonResponse: Recent trades list with success status
     """
     try:
         account = get_single_trading_account()
-
+        
         # Get trades from last 24 hours
         since_time = timezone.now() - timedelta(hours=24)
+        
+        # Use values() to get raw data and handle decimals manually
+        # This bypasses Django's model field converters that fail on invalid decimals
         recent_trades = PaperTrade.objects.filter(
             account=account,
             created_at__gte=since_time
+        ).values(
+            'trade_id', 'trade_type', 'token_in_symbol', 
+            'token_out_symbol', 'amount_in_usd', 'executed_at', 'status'
         ).order_by('-created_at')[:20]
-
-        # Format trades - FIXED: Use correct field names
+        
+        # Format trades with individual error handling
         trades_data = []
         for trade in recent_trades:
-            trades_data.append({
-                'trade_id': str(trade.trade_id),
-                'trade_type': trade.trade_type,
-                'token_in_symbol': trade.token_in_symbol,
-                'token_out_symbol': trade.token_out_symbol,
-                'amount_in_usd': float(trade.amount_in_usd),
-                'executed_at': trade.executed_at.isoformat() if trade.executed_at else None,
-                'status': trade.status,
-            })
-
+            try:
+                # Safely convert each trade, handling potential decimal errors
+                trades_data.append({
+                    'trade_id': str(trade['trade_id']),
+                    'trade_type': trade['trade_type'],
+                    'token_in_symbol': trade['token_in_symbol'],
+                    'token_out_symbol': trade['token_out_symbol'],
+                    'amount_in_usd': float(trade['amount_in_usd']) if trade['amount_in_usd'] is not None else 0.0,
+                    'executed_at': trade['executed_at'].isoformat() if trade['executed_at'] else None,
+                    'status': trade['status'],
+                })
+            except (decimal.InvalidOperation, ValueError, TypeError) as e:
+                # Skip trades with corrupted decimal data
+                logger.warning(
+                    f"Skipping trade with invalid decimal data: "
+                    f"trade_id={trade.get('trade_id')}, error={e}"
+                )
+                continue
+        
         return JsonResponse({
             'success': True,
             'trades': trades_data,
             'count': len(trades_data)
         })
-
+        
     except Exception as e:
         logger.error(f"Error in recent trades API: {e}", exc_info=True)
         return JsonResponse({

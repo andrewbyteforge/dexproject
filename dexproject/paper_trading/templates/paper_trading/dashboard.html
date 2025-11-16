@@ -6,6 +6,48 @@
 {% block extra_css %}
 <!-- Paper trading dashboard specific styles -->
 <link rel="stylesheet" href="{% static 'css/paper_trading_dashboard.css' %}">
+<style>
+/* Pagination Styles - Bootstrap themed for dark glassmorphism */
+.pagination-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 15px;
+    padding: 10px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.pagination-info {
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* Bootstrap pagination dark theme overrides */
+.pagination .page-link {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    transition: all 0.2s;
+}
+
+.pagination .page-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.pagination .page-item.active .page-link {
+    background: #0d6efd;
+    border-color: #0d6efd;
+    color: #fff;
+}
+
+.pagination .page-item.disabled .page-link {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.3);
+}
+</style>
 {% endblock %}
 
 {% block content %}
@@ -264,10 +306,87 @@
                             </tbody>
                         </table>
                     </div>
+                    
+                    <!-- 🆕 TRADES PAGINATION - BOOTSTRAP (FIXED) -->
+                    {% if trades_page_obj and trades_page_obj.paginator.count > 0 %}
+                    <div class="pagination-controls">
+                        <div class="pagination-info">
+                            Showing {{ trades_page_obj.start_index }} - {{ trades_page_obj.end_index }} of {{ trades_page_obj.paginator.count }} trades
+                        </div>
+                        <nav aria-label="Trades pagination">
+                            <ul class="pagination pagination-sm mb-0">
+                                <!-- First Page -->
+                                <li class="page-item {% if trades_page_obj.number == 1 %}disabled{% endif %}">
+                                    {% if trades_page_obj.number > 1 %}
+                                        <a class="page-link" href="?trades_page=1{% if request.GET.positions_page %}&positions_page={{ request.GET.positions_page }}{% endif %}" aria-label="First">
+                                            <span aria-hidden="true">&laquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&laquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                                
+                                <!-- Previous Page -->
+                                <li class="page-item {% if not trades_page_obj.has_previous %}disabled{% endif %}">
+                                    {% if trades_page_obj.has_previous %}
+                                        <a class="page-link" href="?trades_page={{ trades_page_obj.previous_page_number }}{% if request.GET.positions_page %}&positions_page={{ request.GET.positions_page }}{% endif %}" aria-label="Previous">
+                                            <span aria-hidden="true">&lsaquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&lsaquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                                
+                                <!-- Page Numbers -->
+                                {% for num in trades_page_obj.paginator.page_range %}
+                                    {% if num == trades_page_obj.number %}
+                                        <li class="page-item active" aria-current="page">
+                                            <span class="page-link">{{ num }}</span>
+                                        </li>
+                                    {% elif num > trades_page_obj.number|add:'-3' and num < trades_page_obj.number|add:'3' %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?trades_page={{ num }}{% if request.GET.positions_page %}&positions_page={{ request.GET.positions_page }}{% endif %}">{{ num }}</a>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                <!-- Next Page -->
+                                <li class="page-item {% if not trades_page_obj.has_next %}disabled{% endif %}">
+                                    {% if trades_page_obj.has_next %}
+                                        <a class="page-link" href="?trades_page={{ trades_page_obj.next_page_number }}{% if request.GET.positions_page %}&positions_page={{ request.GET.positions_page }}{% endif %}" aria-label="Next">
+                                            <span aria-hidden="true">&rsaquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&rsaquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                                
+                                <!-- Last Page -->
+                                <li class="page-item {% if trades_page_obj.number == trades_page_obj.paginator.num_pages %}disabled{% endif %}">
+                                    {% if trades_page_obj.number < trades_page_obj.paginator.num_pages %}
+                                        <a class="page-link" href="?trades_page={{ trades_page_obj.paginator.num_pages }}{% if request.GET.positions_page %}&positions_page={{ request.GET.positions_page }}{% endif %}" aria-label="Last">
+                                            <span aria-hidden="true">&raquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&raquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
-            <!-- Active Strategies Widget (Phase 7B - Day 7) -->
+            <!-- Active Strategies Widget -->
             <div class="card card-glass mb-3">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="card-title mb-0">
@@ -282,7 +401,6 @@
                 </div>
                 <div class="card-body">
                     <div id="active-strategies-container">
-                        <!-- Active strategies will be loaded here via JavaScript -->
                         <div id="no-active-strategies" class="text-center text-muted py-4">
                             <i class="bi bi-diagram-3 fs-3 mb-2 d-block"></i>
                             <p class="mb-0">No active strategies running</p>
@@ -291,6 +409,7 @@
                     </div>
                 </div>
             </div>
+            
             <!-- Open Positions -->
             <div class="card card-glass">
                 <div class="card-header">
@@ -335,70 +454,148 @@
                             </tbody>
                         </table>
                     </div>
+                    
+                    <!-- 🆕 POSITIONS PAGINATION - BOOTSTRAP (FIXED) -->
+                    {% if positions_page_obj and positions_page_obj.paginator.count > 0 %}
+                    <div class="pagination-controls">
+                        <div class="pagination-info">
+                            Showing {{ positions_page_obj.start_index }} - {{ positions_page_obj.end_index }} of {{ positions_page_obj.paginator.count }} positions
+                        </div>
+                        <nav aria-label="Positions pagination">
+                            <ul class="pagination pagination-sm mb-0">
+                                <!-- First Page -->
+                                <li class="page-item {% if positions_page_obj.number == 1 %}disabled{% endif %}">
+                                    {% if positions_page_obj.number > 1 %}
+                                        <a class="page-link" href="?positions_page=1{% if request.GET.trades_page %}&trades_page={{ request.GET.trades_page }}{% endif %}" aria-label="First">
+                                            <span aria-hidden="true">&laquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&laquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                                
+                                <!-- Previous Page -->
+                                <li class="page-item {% if not positions_page_obj.has_previous %}disabled{% endif %}">
+                                    {% if positions_page_obj.has_previous %}
+                                        <a class="page-link" href="?positions_page={{ positions_page_obj.previous_page_number }}{% if request.GET.trades_page %}&trades_page={{ request.GET.trades_page }}{% endif %}" aria-label="Previous">
+                                            <span aria-hidden="true">&lsaquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&lsaquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                                
+                                <!-- Page Numbers -->
+                                {% for num in positions_page_obj.paginator.page_range %}
+                                    {% if num == positions_page_obj.number %}
+                                        <li class="page-item active" aria-current="page">
+                                            <span class="page-link">{{ num }}</span>
+                                        </li>
+                                    {% elif num > positions_page_obj.number|add:'-3' and num < positions_page_obj.number|add:'3' %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?positions_page={{ num }}{% if request.GET.trades_page %}&trades_page={{ request.GET.trades_page }}{% endif %}">{{ num }}</a>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                <!-- Next Page -->
+                                <li class="page-item {% if not positions_page_obj.has_next %}disabled{% endif %}">
+                                    {% if positions_page_obj.has_next %}
+                                        <a class="page-link" href="?positions_page={{ positions_page_obj.next_page_number }}{% if request.GET.trades_page %}&trades_page={{ request.GET.trades_page }}{% endif %}" aria-label="Next">
+                                            <span aria-hidden="true">&rsaquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&rsaquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                                
+                                <!-- Last Page -->
+                                <li class="page-item {% if positions_page_obj.number == positions_page_obj.paginator.num_pages %}disabled{% endif %}">
+                                    {% if positions_page_obj.number < positions_page_obj.paginator.num_pages %}
+                                        <a class="page-link" href="?positions_page={{ positions_page_obj.paginator.num_pages }}{% if request.GET.trades_page %}&trades_page={{ request.GET.trades_page }}{% endif %}" aria-label="Last">
+                                            <span aria-hidden="true">&raquo;</span>
+                                        </a>
+                                    {% else %}
+                                        <span class="page-link">
+                                            <span aria-hidden="true">&raquo;</span>
+                                        </span>
+                                    {% endif %}
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
+    
     <!-- Quick Actions Row -->
     <div class="row">
-            <div class="col-12">
-                <div class="card card-glass">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">
-                            <i class="bi bi-lightning me-2"></i>
-                            Quick Actions & Navigation
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-lg mb-3">
-                                <a href="/paper-trading/trades/" class="btn btn-primary w-100 py-3">
-                                    <i class="bi bi-list-ul fs-4 mb-2 d-block"></i>
-                                    <strong>Trade History</strong>
-                                    <small class="d-block mt-1">View all executed trades</small>
-                                </a>
-                            </div>
-                            <div class="col-lg mb-3">
-                                <a href="/paper-trading/orders/active/" class="btn btn-outline-primary w-100 py-3" style="border-color: #6f42c1; color: #6f42c1;">
-                                    <i class="bi bi-clock-history fs-4 mb-2 d-block"></i>
-                                    <strong>Orders</strong>
-                                    <small class="d-block mt-1">Place & manage orders</small>
-                                </a>
-                            </div>
-                            <div class="col-lg mb-3">
-                                <a href="/paper-trading/portfolio/" class="btn btn-success w-100 py-3">
-                                    <i class="bi bi-pie-chart fs-4 mb-2 d-block"></i>
-                                    <strong>Portfolio</strong>
-                                    <small class="d-block mt-1">Current positions & holdings</small>
-                                </a>
-                            </div>
-                            <div class="col-lg mb-3">
-                                <a href="/paper-trading/configuration/" class="btn btn-warning w-100 py-3">
-                                    <i class="bi bi-gear fs-4 mb-2 d-block"></i>
-                                    <strong>Strategy Config</strong>
-                                    <small class="d-block mt-1">Adjust bot parameters</small>
-                                </a>
-                            </div>
-                            <div class="col-lg mb-3">
-                                <a href="/paper-trading/analytics/" class="btn btn-info w-100 py-3">
-                                    <i class="bi bi-bar-chart fs-4 mb-2 d-block"></i>
-                                    <strong>Analytics</strong>
-                                    <small class="d-block mt-1">Performance insights</small>
-                                </a>
-                            </div>
-                            <div class="col-lg mb-3">
-                                <a href="/analytics/monitoring/" class="btn btn-secondary w-100 py-3">
-                                    <i class="bi bi-speedometer2 fs-4 mb-2 d-block"></i>
-                                    <strong>System Monitor</strong>
-                                    <small class="d-block mt-1">Performance & metrics</small>
-                                </a>
-                            </div>
+        <div class="col-12">
+            <div class="card card-glass">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-lightning me-2"></i>
+                        Quick Actions & Navigation
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-lg mb-3">
+                            <a href="/paper-trading/trades/" class="btn btn-primary w-100 py-3">
+                                <i class="bi bi-list-ul fs-4 mb-2 d-block"></i>
+                                <strong>Trade History</strong>
+                                <small class="d-block mt-1">View all executed trades</small>
+                            </a>
+                        </div>
+                        <div class="col-lg mb-3">
+                            <a href="/paper-trading/orders/active/" class="btn btn-outline-primary w-100 py-3" style="border-color: #6f42c1; color: #6f42c1;">
+                                <i class="bi bi-clock-history fs-4 mb-2 d-block"></i>
+                                <strong>Orders</strong>
+                                <small class="d-block mt-1">Place & manage orders</small>
+                            </a>
+                        </div>
+                        <div class="col-lg mb-3">
+                            <a href="/paper-trading/portfolio/" class="btn btn-success w-100 py-3">
+                                <i class="bi bi-pie-chart fs-4 mb-2 d-block"></i>
+                                <strong>Portfolio</strong>
+                                <small class="d-block mt-1">Current positions & holdings</small>
+                            </a>
+                        </div>
+                        <div class="col-lg mb-3">
+                            <a href="/paper-trading/configuration/" class="btn btn-warning w-100 py-3">
+                                <i class="bi bi-gear fs-4 mb-2 d-block"></i>
+                                <strong>Strategy Config</strong>
+                                <small class="d-block mt-1">Adjust bot parameters</small>
+                            </a>
+                        </div>
+                        <div class="col-lg mb-3">
+                            <a href="/paper-trading/analytics/" class="btn btn-info w-100 py-3">
+                                <i class="bi bi-bar-chart fs-4 mb-2 d-block"></i>
+                                <strong>Analytics</strong>
+                                <small class="d-block mt-1">Performance insights</small>
+                            </a>
+                        </div>
+                        <div class="col-lg mb-3">
+                            <a href="/analytics/monitoring/" class="btn btn-secondary w-100 py-3">
+                                <i class="bi bi-speedometer2 fs-4 mb-2 d-block"></i>
+                                <strong>System Monitor</strong>
+                                <small class="d-block mt-1">Performance & metrics</small>
+                            </a>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+</div>
 
 <!-- Toast Container -->
 <div id="toast-container"></div>
@@ -408,14 +605,13 @@
 <!-- Paper Trading Dashboard JavaScript -->
 <script src="{% static 'js/paper_trading_dashboard.js' %}?v=2"></script>
 <script>
-// AI Chat placeholder function (from original template)
+// AI Chat placeholder function
 function sendAIMessage() {
     const input = document.getElementById('ai-chat-input');
     if (input) {
         const message = input.value.trim();
         if (message) {
             console.log('Sending message to AI:', message);
-            // Add your WebSocket/API call here
             input.value = '';
         }
     }
@@ -424,7 +620,6 @@ function sendAIMessage() {
 // Reset account function
 function resetPaperAccount() {
     if (confirm('Are you sure you want to reset your paper trading account? This will clear all trades and positions.')) {
-        // Add your reset logic here
         console.log('Resetting paper account...');
     }
 }

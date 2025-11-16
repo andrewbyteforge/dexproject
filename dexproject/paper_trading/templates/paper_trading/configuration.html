@@ -182,6 +182,7 @@
     <!-- Configuration Form -->
     <form method="post" action="{% url 'paper_trading:configuration' %}" id="config-form">
         {% csrf_token %}
+        <input type="hidden" name="action" value="save">
         
         <!-- Basic Settings -->
         <div class="row mb-4">

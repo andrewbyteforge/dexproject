@@ -272,7 +272,7 @@ def _extract_config_parameters(config: PaperStrategyConfiguration) -> Dict[str, 
         
         # Position sizing
         StrategyConfigFields.MAX_POSITION_SIZE_PERCENT: float(config.max_position_size_percent),
-        StrategyConfigFields.MAX_TRADE_SIZE_USD: float(config.max_trade_size_usd),  # ← ADD THIS
+        StrategyConfigFields.MAX_TRADE_SIZE_USD: float(config.max_trade_size_usd),  # ← FIX THIS LINE
         StrategyConfigFields.MAX_DAILY_TRADES: config.max_daily_trades,
         StrategyConfigFields.MAX_CONCURRENT_POSITIONS: config.max_concurrent_positions,
         

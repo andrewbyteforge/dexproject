@@ -17,7 +17,10 @@ import logging
 from decimal import Decimal
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from paper_trading.models import PaperStrategyConfiguration
 # Django imports
 from django.utils import timezone
 
@@ -51,16 +54,18 @@ class DecisionMaker:
         logger: Logger instance
     """
     
-    def __init__(self, config: IntelLevelConfig, intel_level: int):
+    def __init__(self, config: IntelLevelConfig, intel_level: int, strategy_config: Optional['PaperStrategyConfiguration'] = None):
         """
         Initialize the decision maker.
         
         Args:
             config: Intelligence level configuration
             intel_level: Intelligence level (1-10)
+            strategy_config: Optional user strategy configuration with stop loss/take profit settings
         """
         self.config = config
         self.intel_level = intel_level
+        self.strategy_config = strategy_config  # 🆕 Store user's strategy config
         self.converter = TypeConverter()
         self.normalizer = MarketDataNormalizer()
         self.logger = logging.getLogger(f'{__name__}.DecisionMaker')
@@ -68,6 +73,23 @@ class DecisionMaker:
         self.logger.info(
             f"[DECISION MAKER] Initialized for Level {intel_level} ({config.name})"
         )
+        
+        # 🆕 Log strategy config if provided
+        if self.strategy_config:
+            self.logger.info(
+                f"[DECISION MAKER] Strategy config loaded: "
+                f"Stop Loss={self.strategy_config.stop_loss_percent}%, "
+                f"Take Profit={self.strategy_config.take_profit_percent}%"
+            )
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     def calculate_risk_score(
         self,
@@ -330,9 +352,16 @@ class DecisionMaker:
         """
         Calculate overall confidence in the decision (0-100).
         
+        Enhanced formula that:
+        - Rewards strong positive signals (high opportunity, low risk)
+        - Penalizes weak signals (low opportunity, high risk)
+        - Gives bonuses for exceptional market conditions
+        - Produces realistic confidence range (0-90%)
+        - GRACEFULLY HANDLES MISSING DATA (cold start protection)
+        
         Args:
-            risk_score: Calculated risk score
-            opportunity_score: Calculated opportunity score
+            risk_score: Calculated risk score (0-100)
+            opportunity_score: Calculated opportunity score (0-100)
             context: Market context for data confidence
             
         Returns:
@@ -343,35 +372,90 @@ class DecisionMaker:
             risk_score = self.converter.to_decimal(risk_score)
             opportunity_score = self.converter.to_decimal(opportunity_score)
             
-            # Base confidence from risk/opportunity balance
-            if opportunity_score > risk_score:
-                base_confidence = opportunity_score - (risk_score / Decimal('2'))
-            else:
-                base_confidence = Decimal('50') - (risk_score - opportunity_score)
+            # ================================================================
+            # PHASE 1: Calculate base confidence from opportunity-risk spread
+            # ================================================================
+            spread = opportunity_score - risk_score
             
-            # Adjust for data confidence
+            if spread > 0:
+                # Positive signal: Opportunity exceeds risk
+                # Confidence scales with both opportunity level AND spread magnitude
+                base_confidence = (opportunity_score * Decimal('0.7')) + (spread * Decimal('0.3'))
+            else:
+                # Negative signal: Risk exceeds opportunity
+                # Start with opportunity, penalize by half the risk excess
+                base_confidence = opportunity_score - (abs(spread) * Decimal('0.5'))
+            
+            # ================================================================
+            # PHASE 2: Bonuses for exceptional market conditions
+            # ================================================================
+            
+            # Bonus for very low risk (< 30)
+            # Low risk = safer trade = higher confidence
+            if risk_score < Decimal('30'):
+                low_risk_bonus = (Decimal('30') - risk_score) * Decimal('0.5')
+                base_confidence += low_risk_bonus
+                self.logger.debug(f"[CONFIDENCE] Low risk bonus: +{low_risk_bonus:.1f}%")
+            
+            # Bonus for very high opportunity (> 70)
+            # Strong opportunity = better trade = higher confidence
+            if opportunity_score > Decimal('70'):
+                high_opp_bonus = (opportunity_score - Decimal('70')) * Decimal('0.3')
+                base_confidence += high_opp_bonus
+                self.logger.debug(f"[CONFIDENCE] High opportunity bonus: +{high_opp_bonus:.1f}%")
+            
+            # Bonus for strong positive spread (spread > 30)
+            # Clear signal = higher confidence
+            if spread > Decimal('30'):
+                strong_signal_bonus = (spread - Decimal('30')) * Decimal('0.2')
+                base_confidence += strong_signal_bonus
+                self.logger.debug(f"[CONFIDENCE] Strong signal bonus: +{strong_signal_bonus:.1f}%")
+            
+            # ================================================================
+            # PHASE 3: Adjust for data quality (WITH COLD START PROTECTION)
+            # ================================================================
+            
+            # Get data confidence from market context
             data_confidence = self.converter.to_decimal(
                 context.confidence_in_data,
-                Decimal('100')
+                Decimal('100')  # Default to 100% if not set
             )
-            confidence_multiplier = data_confidence / Decimal('100')
             
-            # Adjust for price data availability
+            # CRITICAL FIX: Don't let poor data quality destroy good signals
+            # This protects against "cold start" when there's no price history yet
+            # 
+            # Without floor: 48% base * 0.50 multiplier = 24% final (too low!)
+            # With floor:    48% base * 0.75 multiplier = 36% final (reasonable!)
+            # 
+            # As data accumulates, multiplier naturally rises above 0.75
+            confidence_multiplier = max(
+                Decimal('0.75'),  # Minimum 75% multiplier (cold start protection)
+                data_confidence / Decimal('100')
+            )
+            
+            # Small bonus for real price data availability
             if context.current_price > 0:
-                confidence_multiplier *= Decimal('1.1')  # 10% boost for real prices
+                confidence_multiplier *= Decimal('1.05')  # 5% boost for real prices
             
-            # Final confidence
-            confidence_score = base_confidence * confidence_multiplier
+            # Apply data quality multiplier to base confidence
+            final_confidence = base_confidence * confidence_multiplier
             
-            # Ensure within bounds
-            confidence_score = max(Decimal('0'), min(Decimal('100'), confidence_score))
+            # ================================================================
+            # PHASE 4: Ensure realistic bounds
+            # ================================================================
             
-            self.logger.debug(
-                f"[CONFIDENCE] {context.token_symbol}: {confidence_score:.1f}% "
-                f"(Base={base_confidence:.1f}, Data={data_confidence:.1f}%)"
+            # Clamp to 0-100
+            final_confidence = max(Decimal('0'), min(Decimal('100'), final_confidence))
+            
+            # Enhanced logging with all key metrics
+            self.logger.info(
+                f"[CONFIDENCE] {context.token_symbol}: {final_confidence:.1f}% "
+                f"(Base={base_confidence:.1f}, Data={data_confidence:.1f}%, "
+                f"Multiplier={confidence_multiplier:.2f}, "
+                f"Opp={opportunity_score:.1f}, Risk={risk_score:.1f}, Spread={spread:+.1f})"
             )
             
-            return confidence_score
+            return final_confidence
             
         except Exception as e:
             self.logger.error(
@@ -379,7 +463,7 @@ class DecisionMaker:
                 exc_info=True
             )
             return Decimal('50')  # Neutral on error
-    
+
     def determine_action(
         self,
         risk_score: Decimal,
@@ -438,7 +522,6 @@ class DecisionMaker:
                     invested=position_invested,
                     hold_time_hours=position_hold_time_hours or 0
                 )
-
             
             # Otherwise, evaluate whether to BUY (new position entry)
             return self._evaluate_buy_decision(
@@ -476,14 +559,14 @@ class DecisionMaker:
         """
         # Check minimum requirements
         if confidence_score < self.config.min_confidence_required:
-            self.logger.debug(
+            self.logger.info(
                 f"[BUY EVAL] SKIP - Low confidence "
                 f"({confidence_score:.1f} < {self.config.min_confidence_required})"
             )
             return 'SKIP'
         
         if risk_score > self.config.risk_tolerance:
-            self.logger.debug(
+            self.logger.info(
                 f"[BUY EVAL] SKIP - High risk "
                 f"({risk_score:.1f} > {self.config.risk_tolerance})"
             )
@@ -496,11 +579,12 @@ class DecisionMaker:
             )
             return 'SKIP'
         
-        # Opportunity must exceed risk
-        if opportunity_score <= risk_score:
-            self.logger.debug(
+        # Opportunity should be at least 80% of risk (more balanced)
+        risk_threshold = risk_score * Decimal('0.8')
+        if opportunity_score < risk_threshold:
+            self.logger.info(
                 f"[BUY EVAL] SKIP - Opportunity "
-                f"({opportunity_score:.1f}) <= Risk ({risk_score:.1f})"
+                f"({opportunity_score:.1f} < {risk_threshold:.1f} [Risk*0.8])"
             )
             return 'SKIP'
         
@@ -527,6 +611,7 @@ class DecisionMaker:
         Evaluate whether to SELL existing position.
         
         Considers multiple factors:
+        - User-configured stop loss and take profit thresholds
         - Current P&L percentage
         - Market trend deterioration
         - Risk increasing beyond comfort
@@ -561,6 +646,30 @@ class DecisionMaker:
                 f"Risk={risk_score:.1f}, Opp={opportunity_score:.1f}, "
                 f"Hold={hold_time_hours:.1f}h"
             )
+            
+            # ════════════════════════════════════════════════════════════════════
+            # 🆕 SELL Criterion 0A: User-configured TAKE PROFIT hit
+            # ════════════════════════════════════════════════════════════════════
+            if self.strategy_config and hasattr(self.strategy_config, 'take_profit_percent'):
+                take_profit_threshold = self.converter.to_decimal(self.strategy_config.take_profit_percent)
+                if pnl_percent >= take_profit_threshold:
+                    self.logger.info(
+                        f"[SELL EVAL] ✅ SELL - {context.token_symbol}: "
+                        f"Take profit hit ({pnl_percent:+.2f}% >= {take_profit_threshold:+.2f}%)"
+                    )
+                    return 'SELL'
+            
+            # ════════════════════════════════════════════════════════════════════
+            # 🆕 SELL Criterion 0B: User-configured STOP LOSS hit
+            # ════════════════════════════════════════════════════════════════════
+            if self.strategy_config and hasattr(self.strategy_config, 'stop_loss_percent'):
+                stop_loss_threshold = self.converter.to_decimal(self.strategy_config.stop_loss_percent)
+                if pnl_percent <= -stop_loss_threshold:
+                    self.logger.info(
+                        f"[SELL EVAL] ✅ SELL - {context.token_symbol}: "
+                        f"Stop loss hit ({pnl_percent:+.2f}% <= -{stop_loss_threshold:+.2f}%)"
+                    )
+                    return 'SELL'
             
             # SELL Criterion 1: Market turned significantly bearish
             if context.trend_direction == 'bearish' and opportunity_score < 30:
@@ -600,7 +709,9 @@ class DecisionMaker:
             # SELL Criterion 5: Held too long with minimal gains
             # This prevents positions from sitting idle
             max_hold_threshold = 48.0  # 48 hours default
-            if hasattr(self.config, 'max_hold_hours'):
+            if self.strategy_config and hasattr(self.strategy_config, 'max_hold_hours'):
+                max_hold_threshold = float(self.strategy_config.max_hold_hours) * 0.75  # 75% of max
+            elif hasattr(self.config, 'max_hold_hours'):
                 max_hold_threshold = float(self.config.max_hold_hours) * 0.75  # 75% of max
             
             if hold_time_hours > max_hold_threshold and pnl_percent < 5:
@@ -648,7 +759,15 @@ class DecisionMaker:
                 exc_info=True
             )
             return 'SKIP'  # Safe default - don't sell on error
-    
+
+
+
+
+
+
+
+
+
     def calculate_position_size(
         self,
         risk_score: Decimal,

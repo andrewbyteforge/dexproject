@@ -131,7 +131,6 @@ class SimplePaperTradingSimulator:
     def __init__(self):
         """
         Initialize the paper trading simulator.
-        
         Sets up:
         - Price feed service for real token prices
         - Logger for trade execution tracking
@@ -145,6 +144,9 @@ class SimplePaperTradingSimulator:
         # Initialize price feed service for real data
         # This service fetches real prices from Alchemy/CoinGecko
         self.price_service = PriceFeedService(chain_id=self.chain_id)
+        
+        # ✅ ADD THIS LINE HERE - Initialize persistent event loop for async operations
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         
         self.logger.info(
             f"[SIMULATOR] Initialized with real data integration "
@@ -416,6 +418,7 @@ class SimplePaperTradingSimulator:
     # REAL DATA FETCHING METHODS
     # =========================================================================
     
+    # Replace the _get_token_price_sync method with:
     def _get_token_price_sync(
         self,
         token_address: str,
@@ -425,8 +428,7 @@ class SimplePaperTradingSimulator:
         Fetch REAL token price from APIs (synchronous wrapper).
         
         This method wraps the async price feed service in a synchronous
-        interface for use in Django ORM context. It fetches real prices
-        from Alchemy (primary) and CoinGecko (fallback).
+        interface for use in Django ORM context.
         
         Args:
             token_address: Token contract address
@@ -434,37 +436,73 @@ class SimplePaperTradingSimulator:
             
         Returns:
             Token price in USD, or None if fetch fails
-            
-        Note:
-            This uses asyncio.run() to bridge async/sync contexts.
-            In production with async Django, you could call the async
-            version directly.
         """
         try:
-            # Create a new event loop for async operation
-            # This is necessary because Django ORM is synchronous
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Get or create persistent event loop
+            if self._event_loop is None or self._event_loop.is_closed():
+                self._event_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._event_loop)
+                self.logger.debug("[SIMULATOR] Created new event loop for async operations")
             
-            try:
-                # Call the async price feed service
-                price = loop.run_until_complete(
-                    self.price_service.get_token_price(
-                        token_address,
-                        token_symbol
-                    )
+            # Call the async price feed service using the persistent loop
+            price = self._event_loop.run_until_complete(
+                self.price_service.get_token_price(
+                    token_address,
+                    token_symbol
                 )
-                return price
-            finally:
-                # Clean up the event loop
-                loop.close()
-                
+            )
+            return price
+                    
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                # Loop was closed externally, recreate it
+                self._event_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._event_loop)
+                self.logger.warning("[SIMULATOR] Event loop was closed, recreated it")
+                # Retry the price fetch
+                try:
+                    price = self._event_loop.run_until_complete(
+                        self.price_service.get_token_price(
+                            token_address,
+                            token_symbol
+                        )
+                    )
+                    return price
+                except Exception as retry_error:
+                    self.logger.error(
+                        f"[PRICE] Retry failed for {token_symbol}: {retry_error}",
+                        exc_info=True
+                    )
+                    return None
+            raise
         except Exception as e:
             self.logger.error(
                 f"[PRICE] Error fetching price for {token_symbol}: {e}",
                 exc_info=True
             )
             return None
+
+    # Add cleanup method:
+    def cleanup(self) -> None:
+        """
+        Cleanup simulator resources including event loop and price service.
+        
+        Should be called when simulator is no longer needed.
+        """
+        try:
+            # Close price service aiohttp session
+            if self.price_service and hasattr(self.price_service, 'close'):
+                if self._event_loop and not self._event_loop.is_closed():
+                    self._event_loop.run_until_complete(self.price_service.close())
+                    self.logger.debug("[SIMULATOR] Closed price service session")
+            
+            # Close event loop
+            if self._event_loop and not self._event_loop.is_closed():
+                self._event_loop.close()
+                self.logger.debug("[SIMULATOR] Closed event loop")
+                
+        except Exception as e:
+            self.logger.error(f"[SIMULATOR] Cleanup error: {e}", exc_info=True)
     
     def _calculate_real_gas_cost(self) -> Optional[Dict[str, Any]]:
         """

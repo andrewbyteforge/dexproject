@@ -248,3 +248,4 @@ env/
 # Logs
 *.log
 logs/
+nul

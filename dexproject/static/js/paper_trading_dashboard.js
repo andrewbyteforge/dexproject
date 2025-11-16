@@ -103,7 +103,6 @@ function handleWebSocketMessage(event) {
                 console.log('WebSocket connection confirmed by server');
                 handleConnectionConfirmed(message);
                 break;
-
             case 'initial_snapshot':
                 console.log('Initial data snapshot received');
                 handleInitialSnapshot(message);
@@ -259,7 +258,8 @@ function handleConnectionConfirmed(message) {
  */
 function handleInitialSnapshot(message) {
     if (message.account) {
-        updatePortfolioValue(message.account.current_balance_usd);
+        // Fetch full metrics which includes portfolio value calculation
+        fetchMetrics();
     }
     if (message.session) {
         updateBotStatus(message.session.status === 'RUNNING' || message.session.status === 'active');
@@ -332,10 +332,10 @@ function handleAccountUpdated(data) {
 
     console.log('Processing account update:', data);
 
-    // Update portfolio value
-    if (data.current_balance_usd !== undefined) {
-        updatePortfolioValue(data.current_balance_usd);
-    }
+    // // Update portfolio value
+    // if (data.current_balance_usd !== undefined) {
+    //     updatePortfolioValue(data.current_balance_usd);
+    // }
 
     // Update total P&L
     if (data.total_pnl_usd !== undefined) {
@@ -441,20 +441,33 @@ function handleBotStatusUpdate(data) {
 function handlePortfolioUpdate(data) {
     if (!data) return;
 
-    // Update portfolio value
-    if (data.total_value !== undefined) {
-        updatePortfolioValue(data.total_value);
+    // Calculate total portfolio value: cash + open positions
+    let totalPortfolio = parseFloat(data.account_balance) || 0;
+    let totalPositionsValue = 0;
+
+    // Sum up all open position values
+    if (data.open_positions && Array.isArray(data.open_positions)) {
+        for (let position of data.open_positions) {
+            const posValue = parseFloat(position.current_value_usd) || 0;
+            totalPositionsValue += posValue;
+        }
     }
 
-    // Update P&L
-    if (data.total_pnl !== undefined) {
-        updateTotalPnL(data.total_pnl);
-    }
+    totalPortfolio += totalPositionsValue;
 
-    // Update return percentage
-    if (data.return_percentage !== undefined) {
-        updateReturnPercentage(data.return_percentage);
-    }
+    // ⭐ ADD THESE THREE LINES ⭐
+    updatePortfolioValue(totalPortfolio);
+
+    const initialBalance = 10000;
+    const totalPnL = totalPortfolio - initialBalance;
+    const returnPercentage = ((totalPnL / initialBalance) * 100);
+
+    updateTotalPnL(totalPnL);
+    updateReturnPercentage(returnPercentage);
+    // ⭐ END OF NEW LINES ⭐
+
+    // Log for debugging
+    console.log(`Portfolio Update: Cash=$${data.account_balance.toFixed(2)}, Positions=$${totalPositionsValue.toFixed(2)}, Total=$${totalPortfolio.toFixed(2)}, Return=${returnPercentage.toFixed(2)}%`);
 }
 
 /**
@@ -693,12 +706,16 @@ async function fetchOpenPositions() {
  */
 async function fetchMetrics() {
     const { config } = window.paperTradingDashboard;
-
     try {
         const response = await fetch(`${config.apiBaseUrl}metrics/`);
         if (response.ok) {
-            const metrics = await response.json();
-            updateMetrics(metrics);
+            const data = await response.json();
+            // Extract the metrics object from the response
+            if (data.success && data.metrics) {
+                updateMetrics(data.metrics);  // ✅ Pass only the metrics object
+            } else {
+                console.warn('Invalid metrics response:', data);
+            }
         }
     } catch (error) {
         console.error('Error fetching metrics:', error);
@@ -964,11 +981,12 @@ function removePositionFromTable(positionId) {
 function updateMetrics(metrics) {
     console.log('Updating metrics:', metrics);
 
-    // Update portfolio value
+    // Update portfolio value - ONLY use portfolio_value (cash + positions)
+    // Never fall back to current_balance as that's cash only!
     if (metrics.portfolio_value !== undefined && !isNaN(metrics.portfolio_value)) {
         updatePortfolioValue(metrics.portfolio_value);
-    } else if (metrics.current_balance !== undefined) {
-        updatePortfolioValue(metrics.current_balance);
+    } else {
+        console.warn('Portfolio value not provided in metrics, skipping update');
     }
 
     // Update P&L
@@ -1352,7 +1370,7 @@ function initializeDashboard() {
 
     // Initial data fetch
     fetchRecentTrades();
-    fetchOpenPositions();
+    // fetchOpenPositions();
     fetchMetrics();
     loadActiveStrategies();
 

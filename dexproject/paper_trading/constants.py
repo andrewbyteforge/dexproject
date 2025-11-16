@@ -242,6 +242,7 @@ class StrategyConfigFields:
     USE_SMART_LANE: Final[str] = 'use_smart_lane'
     FAST_LANE_THRESHOLD_USD: Final[str] = 'fast_lane_threshold_usd'
     MAX_POSITION_SIZE_PERCENT: Final[str] = 'max_position_size_percent'
+    MAX_TRADE_SIZE_USD: Final[str] = 'max_trade_size_usd'
     MAX_POSITION_SIZE_PER_TOKEN_PERCENT: Final[str] = 'max_position_size_per_token_percent'
     STOP_LOSS_PERCENT: Final[str] = 'stop_loss_percent'
     TAKE_PROFIT_PERCENT: Final[str] = 'take_profit_percent'
@@ -1029,12 +1030,37 @@ class StrategySelectionThresholds:
     SPOT_MIN_LIQUIDITY_USD: Final[Decimal] = Decimal('50000')  # $50k minimum liquidity
     
     # =========================================================================
+    # TWAP STRATEGY THRESHOLDS (Phase 7B - Day 9)
+    # =========================================================================
+
+    # TWAP (Time-Weighted Average Price) requires:
+    # - Very large position size (minimize market impact)
+    # - Lower liquidity tolerance (designed for illiquid markets)
+    # - Moderate volatility
+    # - Time-based execution to avoid detection
+
+    TWAP_MIN_POSITION_SIZE_USD: Final[Decimal] = Decimal('5000')  # $5000 minimum (large orders)
+    TWAP_OPTIMAL_POSITION_SIZE_USD: Final[Decimal] = Decimal('10000')  # $10k+ ideal
+    TWAP_MAX_LIQUIDITY_USD: Final[Decimal] = Decimal('500000')  # $500k max (for illiquid markets)
+    TWAP_MIN_CONFIDENCE: Final[Decimal] = Decimal('75.0')  # 75% confidence (high conviction needed)
+    TWAP_MIN_VOLATILITY: Final[Decimal] = Decimal('0.03')  # 3% minimum volatility
+    TWAP_MAX_VOLATILITY: Final[Decimal] = Decimal('0.15')  # 15% max (too volatile = risky)
+
+    # TWAP timing parameters
+    TWAP_MIN_EXECUTION_WINDOW_HOURS: Final[int] = 1  # Minimum 1 hour
+    TWAP_DEFAULT_EXECUTION_WINDOW_HOURS: Final[int] = 4  # Default 4 hours
+    TWAP_MAX_EXECUTION_WINDOW_HOURS: Final[int] = 24  # Maximum 24 hours
+    TWAP_MIN_CHUNKS: Final[int] = 3  # Minimum 3 orders
+    TWAP_DEFAULT_CHUNKS: Final[int] = 8  # Default 8 orders
+    TWAP_MAX_CHUNKS: Final[int] = 24  # Maximum 24 orders
+
+    # =========================================================================
     # GENERAL THRESHOLDS
     # =========================================================================
-    
+
     # Minimum confidence for ANY strategy
     ABSOLUTE_MIN_CONFIDENCE: Final[Decimal] = Decimal('40.0')
-    
+
     # Minimum liquidity for ANY strategy
     ABSOLUTE_MIN_LIQUIDITY_USD: Final[Decimal] = Decimal('50000')
     

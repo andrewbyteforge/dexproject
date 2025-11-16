@@ -18,23 +18,136 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-def validate_decimal_field(value, field_name: str, min_val: Decimal, max_val: Decimal, default: Decimal) -> Decimal:
-    """Validate and sanitize decimal values to prevent corruption."""
+from decimal import Decimal, InvalidOperation
+from typing import Optional
+import logging
+from django.core.exceptions import ValidationError
+
+
+def validate_decimal_field(
+    value: Optional[Decimal],
+    field_name: str,
+    min_value: Optional[Decimal] = None,
+    max_value: Optional[Decimal] = None,
+    default_value: Decimal = Decimal('0.00'),
+    decimal_places: int = 2
+) -> Decimal:
+    """
+    Validate and clean decimal field values.
+    
+    Prevents scientific notation and ensures proper decimal formatting.
+    Quantizes values to match database field precision.
+    
+    Args:
+        value: Decimal value to validate
+        field_name: Name of field (for logging)
+        min_value: Minimum allowed value (optional)
+        max_value: Maximum allowed value (optional)
+        default_value: Default value if validation fails
+        decimal_places: Number of decimal places for quantization (default: 2)
+        
+    Returns:
+        Validated and quantized Decimal value
+        
+    Raises:
+        ValidationError: If value is invalid and cannot be corrected
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Handle None values
     if value is None:
-        return default
+        logger.debug(f"[VALIDATION] {field_name} is None, using default: {default_value}")
+        return default_value
+    
+    # Check for NaN as string BEFORE conversion to Decimal
+    if isinstance(value, str) and value.lower() in ('nan', 'inf', '-inf', 'infinity', '-infinity'):
+        logger.warning(f"[VALIDATION] {field_name} is {value}, using default: {default_value}")
+        return default_value
     
     try:
+        # Convert to Decimal if not already
         if not isinstance(value, Decimal):
             value = Decimal(str(value))
         
-        if not value.is_finite() or value < min_val or value > max_val:
-            logger.warning(f"{field_name}: Invalid value {value}, using {default}")
-            return default
+        # Check for scientific notation in string representation
+        value_str = str(value)
+        if 'e' in value_str.lower() or 'E' in value_str:
+            logger.warning(f"[VALIDATION] {field_name} has scientific notation: {value_str}")
+            # Convert properly without scientific notation
+            value = Decimal(value).quantize(Decimal('0.00000001'))
         
-        return value
-    except Exception as e:
-        logger.error(f"{field_name}: Error validating value {value}: {e}", exc_info=True)
-        return default
+        # Check for NaN
+        if value.is_nan():
+            logger.error(f"[VALIDATION] {field_name} is NaN, using default: {default_value}")
+            return default_value
+        
+        # Check for Infinity
+        if value.is_infinite():
+            logger.error(f"[VALIDATION] {field_name} is Infinite, using default: {default_value}")
+            return default_value
+        
+        # Validate minimum value
+        if min_value is not None and value < min_value:
+            logger.warning(
+                f"[VALIDATION] {field_name} too small: {value} < {min_value}, "
+                f"using minimum: {min_value}"
+            )
+            value = min_value
+        
+        # Validate maximum value
+        if max_value is not None and value > max_value:
+            logger.warning(
+                f"[VALIDATION] {field_name} too large: {value} > {max_value}, "
+                f"using maximum: {max_value}"
+            )
+            value = max_value
+        
+        # Check if value is suspiciously large (likely a wei value used as USD)
+        if field_name.endswith('_usd') and value > Decimal('1000000'):
+            logger.error(
+                f"[VALIDATION] {field_name} suspiciously large: {value}. "
+                f"This might be a wei value mistakenly used as USD. Using default: {default_value}"
+            )
+            return default_value
+        
+        # CRITICAL: Quantize to match the database field's decimal_places
+        # This prevents decimal.InvalidOperation when reading from database
+        try:
+            if decimal_places == 2:
+                quantize_pattern = Decimal('0.01')
+            elif decimal_places == 18:
+                quantize_pattern = Decimal('0.000000000000000001')
+            else:
+                quantize_pattern = Decimal(10) ** -decimal_places
+            
+            # Attempt quantization
+            quantized_value = value.quantize(quantize_pattern)
+            
+            # CRITICAL: Check if quantization produced NaN or Infinity
+            if quantized_value.is_nan() or quantized_value.is_infinite():
+                logger.error(
+                    f"[VALIDATION] {field_name} quantization produced NaN/Inf for value {value}. "
+                    f"Using default: {default_value}"
+                )
+                return default_value
+            
+            value = quantized_value
+            logger.debug(f"[VALIDATION] {field_name} validated and quantized to {decimal_places} places: {value}")
+            return value
+            
+        except (InvalidOperation, ValueError) as e:
+            logger.error(
+                f"[VALIDATION] Quantization failed for {field_name}: {value} - {e}. "
+                f"Using default: {default_value}"
+            )
+            return default_value
+        
+    except (InvalidOperation, ValueError, TypeError) as e:
+        logger.error(
+            f"[VALIDATION] Failed to validate {field_name}: {value} - {e}. "
+            f"Using default: {default_value}"
+        )
+        return default_value
 
 
 # =============================================================================
@@ -389,7 +502,7 @@ class PaperTrade(models.Model):
         blank=True,
         help_text="Strategy that generated this trade"
     )
-    
+
     # Metadata for AI context
     metadata = models.JSONField(
         default=dict,
@@ -399,7 +512,6 @@ class PaperTrade(models.Model):
 
     def save(self, *args, **kwargs):
         """Validate and clean decimal fields before saving."""
-        
         
         # Convert None to Decimal for required fields with proper defaults
         if self.amount_in is None:
@@ -415,36 +527,61 @@ class PaperTrade(models.Model):
         if self.simulated_slippage_percent is None:
             self.simulated_slippage_percent = Decimal('0.50')
         
-        # Validate USD amounts ($0.01 to $100,000)
+        # Validate token amounts (18 decimal places for wei precision)
+        self.amount_in = validate_decimal_field(
+            self.amount_in, 'amount_in',
+            Decimal('0'), None, Decimal('0'),
+            decimal_places=18
+        )
+        
+        self.expected_amount_out = validate_decimal_field(
+            self.expected_amount_out, 'expected_amount_out',
+            Decimal('0'), None, Decimal('0'),
+            decimal_places=18
+        )
+        
+        # Validate actual_amount_out (nullable, 18 decimal places)
+        if self.actual_amount_out is not None:
+            self.actual_amount_out = validate_decimal_field(
+                self.actual_amount_out, 'actual_amount_out',
+                Decimal('0'), None, Decimal('0'),
+                decimal_places=18
+            )
+        
+        # Validate USD amounts (2 decimal places: $0.01 to $100,000)
         self.amount_in_usd = validate_decimal_field(
             self.amount_in_usd, 'amount_in_usd',
-            Decimal('0.01'), Decimal('100000.00'), Decimal('10.00')
+            Decimal('0.01'), Decimal('100000.00'), Decimal('10.00'),
+            decimal_places=2
         )
         
-        # Validate gas costs
+        # Validate gas costs (2 decimal places)
         self.simulated_gas_cost_usd = validate_decimal_field(
             self.simulated_gas_cost_usd, 'simulated_gas_cost_usd',
-            Decimal('0.01'), Decimal('500.00'), Decimal('0.50')
+            Decimal('0.01'), Decimal('500.00'), Decimal('0.50'),
+            decimal_places=2
         )
-        
-        # Validate slippage (0% to 50%)
+
+        # Validate slippage (2 decimal places: 0% to 50%)
         self.simulated_slippage_percent = validate_decimal_field(
             self.simulated_slippage_percent, 'simulated_slippage_percent',
-            Decimal('0.00'), Decimal('50.00'), Decimal('0.50')
+            Decimal('0.00'), Decimal('50.00'), Decimal('0.50'),
+            decimal_places=2
         )
-        
-        # Validate gas price (0.1 to 1000 gwei)
+
+        # Validate gas price (2 decimal places: 0.1 to 1000 gwei)
         self.simulated_gas_price_gwei = validate_decimal_field(
             self.simulated_gas_price_gwei, 'simulated_gas_price_gwei',
-            Decimal('0.1'), Decimal('1000.00'), Decimal('1.0')
+            Decimal('0.1'), Decimal('1000.00'), Decimal('1.0'),
+            decimal_places=2
         )
-        
+
         # Fix gas_used
         if not self.simulated_gas_used or self.simulated_gas_used <= 0:
             self.simulated_gas_used = 21000
-        
+
         super().save(*args, **kwargs)
-    
+
     class Meta:
         """Meta configuration."""
         db_table = 'paper_trades'
@@ -647,6 +784,64 @@ class PaperPosition(models.Model):
             )
         except Exception as e:
             logger.error(f"Error closing position {self.position_id}: {e}", exc_info=True)
+    
+    # =========================================================================
+    # BACKWARD COMPATIBILITY PROPERTIES
+    # =========================================================================
+    # These properties allow old code to work with correct database field names
+    # TODO: Remove these once all code is updated to use correct field names
+    
+    @property
+    def status(self) -> str:
+        """
+        Backward compatibility: Convert is_open boolean to status string.
+        
+        Old code expects: position.status == 'OPEN'
+        Database has: position.is_open == True
+        
+        Returns:
+            'OPEN' if position is open, 'CLOSED' if closed
+        """
+        return 'OPEN' if self.is_open else 'CLOSED'
+    
+    @property
+    def entry_price(self) -> Decimal:
+        """
+        Backward compatibility: Alias for average_entry_price_usd.
+        
+        Old code expects: position.entry_price
+        Database has: position.average_entry_price_usd
+        
+        Returns:
+            Average entry price in USD
+        """
+        return self.average_entry_price_usd
+    
+    @property
+    def amount(self) -> Decimal:
+        """
+        Backward compatibility: Alias for quantity.
+        
+        Old code expects: position.amount
+        Database has: position.quantity
+        
+        Returns:
+            Position quantity in wei
+        """
+        return self.quantity
+    
+    @property
+    def amount_invested_usd(self) -> Decimal:
+        """
+        Backward compatibility: Alias for total_invested_usd.
+        
+        Old code expects: position.amount_invested_usd
+        Database has: position.total_invested_usd
+        
+        Returns:
+            Total amount invested in USD
+        """
+        return self.total_invested_usd
 
 
 class PaperTradingConfig(models.Model):

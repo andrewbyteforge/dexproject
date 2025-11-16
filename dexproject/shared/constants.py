@@ -143,21 +143,43 @@ DECISION_TYPES = [
 # =============================================================================
 
 # Base Mainnet (8453)
+# Base Mainnet (8453)
 BASE_MAINNET_TOKENS = {
-    # Original 4 tokens - Core trading pairs
+    # ===== CORE TOKENS (Original 4) =====
     'WETH': '0x4200000000000000000000000000000000000006',  # Wrapped Ether
     'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  # USD Coin
     'DAI': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',   # Dai Stablecoin
     'CBETH': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', # Coinbase Wrapped Staked ETH
     
-    # Week 1 additions - Base native tokens with excellent Uniswap V3 liquidity
+    # ===== HIGH LIQUIDITY BASE NATIVE (Original additions) =====
     'DEGEN': '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', # Degen (Base) - $47.8M liquidity
     'BRETT': '0x532f27101965dd16442E59d40670FaF5eBB142E4', # Brett (Base) - $2.02B liquidity
+    'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',  # Aerodrome Finance - $837K
+    'VIRTUAL': '0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b', # Virtual Protocol - $1.13M
     
-    # Week 1 additions - High Uniswap V3 liquidity tokens
-    'AERO': '0x940181a94A35A4569E4529A3CDfB74e38FD98631',    # Aerodrome Finance - $837K Uni V3 liquidity
-    'VIRTUAL': '0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b', # Virtual Protocol - $1.13M Uni V3 liquidity
-    'MORPHO': '0x58d97b57bb95320f9a05dc918aef65434969c2b2',  # Morpho - $291K Uni V3 liquidity
+    # ===== NEW ADDITIONS - DEFI BLUE CHIPS =====
+    'USDT': '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',   # Tether USD - Stablecoin
+    'cbBTC': '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', # Coinbase Wrapped Bitcoin
+    'WELL': '0xA88594D404727625A9437C3f886C7643872296AE',  # Moonwell - DeFi protocol
+    'SEAM': '0x1C7a460413dD4e964f96D8dFC56E7223cE88CD85',  # Seamless Protocol
+    
+    # ===== MEME COINS WITH HIGH VOLUME =====
+    'TOSHI': '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4', # Toshi - Base mascot
+    'MOCHI': '0xF6e932Ca12afa26665dC4dDE7e27be02A7c02e50', # Mochi
+    'BALD': '0x27D2DECb4bFC9C76F0309b8E88dec3a601Fe25a8',  # Bald
+    'NORMIE': '0x7F12d13B34F5F4f0a9449c16Bcd42f0da47AF200', # Normie
+    'KEYCAT': '0x9a26F5433671751C3276a065f57e5a02D2817973', # Keycat
+    
+    # ===== GAMING & SOCIAL =====
+    'HIGHER': '0x0578d8A44db98B23BF096A382e016e29a5Ce0ffe', # Higher - Social token
+    'DOLA': '0x4621b7A9c75199271F773Ebd9A499dbd165c3191',  # Dola USD - Inverse Finance
+    'EURC': '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42',  # Euro Coin - Stablecoin
+    
+    # ===== INFRASTRUCTURE & TOOLS =====
+    'BASED': '0xBa5E6fa2f33f3955f0cef50c63dCC84861eAb663', # Based Markets
+    'OVN': '0xA3d1a8DEB97B111454B294E2324EfAD13a9d8396',   # Overnight Finance
+    'USDbC': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA', # USD Base Coin (Bridged USDC)
+    'axlUSDC': '0xEB466342C4d449BC9f53A865D5Cb90586f405215', # Axelar USDC
 }
 
 # Base Sepolia (84532) - Testnet

@@ -318,6 +318,20 @@ class PriceFeedService:
                 "0x940181a94a35a4569e4529a3cdfb74e38fd98631": "aerodrome-finance",  # AERO
                 "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b": "virtual-protocol",   # VIRTUAL
                 "0x58d97b57bb95320f9a05dc918aef65434969c2b2": "morpho-blue",        # MORPHO
+                "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": "coinbase-wrapped-btc",      # cbBTC
+                "0xa88594d404727625a9437c3f886c7643872296ae": "moonwell",                   # WELL
+                "0x1c7a460413dd4e964f96d8dfc56e7223ce88cd85": "seamless-protocol",         # SEAM
+                "0xf6e932ca12afa26665dc4dde7e27be02a7c02e50": "mochi-2",                    # MOCHI
+                "0x27d2decb4bfc9c76f0309b8e88dec3a601fe25a8": "bald",                       # BALD
+                "0x7f12d13b34f5f4f0a9449c16bcd42f0da47af200": "normie",                     # NORMIE
+                "0x9a26f5433671751c3276a065f57e5a02d2817973": "keycat",                     # KEYCAT
+                "0x0578d8a44db98b23bf096a382e016e29a5ce0ffe": "higher",                     # HIGHER
+                "0x4621b7a9c75199271f773ebd9a499dbd165c3191": "dola-usd",                   # DOLA
+                "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42": "euro-coin",                  # EURC
+                "0xba5e6fa2f33f3955f0cef50c63dcc84861eab663": "based",                      # BASED
+                "0xa3d1a8deb97b111454b294e2324efad13a9d8396": "overnight-finance",          # OVN
+                "0xeb466342c4d449bc9f53a865d5cb90586f405215": "axlusdc",                    # axlUSDC
+                
             },
             # Ethereum mainnet (1)
             1: {
@@ -344,7 +358,22 @@ class PriceFeedService:
             "DEGEN": "degen-base",
             "TOSHI": "toshi",
             "BRETT": "based-brett",
-            "USDBC": "bridged-usd-coin-base",
+            "USDBC": "bridged-usd-coin-base",            
+            "CBBTC": "coinbase-wrapped-btc",
+            "WELL": "moonwell",
+            "SEAM": "seamless-protocol",
+            "MOCHI": "mochi-2",
+            "BALD": "bald",
+            "NORMIE": "normie",
+            "KEYCAT": "keycat",
+            "HIGHER": "higher",
+            "DOLA": "dola-usd",
+            "EURC": "euro-coin",
+            "BASED": "based",
+            "OVN": "overnight-finance",
+            "AXLUSDC": "axlusdc",
+            
+            
         }
         if sym in symbol_fallback:
             return symbol_fallback[sym]

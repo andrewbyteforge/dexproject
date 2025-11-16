@@ -551,9 +551,9 @@ if DATABASE_URL.startswith('postgresql'):
         raise
 
 elif DATABASE_URL.startswith('sqlite'):
-    # Optimized SQLite configuration for trading operations
-    db_path = BASE_DIR / 'db' / ('production.sqlite3' if PRODUCTION_MODE else 'development.sqlite3')
-
+    # CORRECTED: Use the db\development.sqlite3 that the bot is using
+    db_path = BASE_DIR / 'db' / 'development.sqlite3'
+    
     # Ensure db directory exists
     db_path.parent.mkdir(exist_ok=True)
 

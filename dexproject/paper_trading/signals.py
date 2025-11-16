@@ -113,7 +113,7 @@ def paper_account_created_or_updated(
                 # Use account-based WebSocket API
                 ws_service.send_update(
                     account_id=instance.account_id,
-                    message_type='account_update',
+                    message_type='account_updated',
                     data=account_data
                 )
                 logger.info(

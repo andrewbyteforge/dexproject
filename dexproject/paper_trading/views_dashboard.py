@@ -11,7 +11,7 @@ import logging
 from datetime import timedelta
 from decimal import Decimal
 from typing import Dict, Any
-
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.shortcuts import render
 from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
@@ -76,26 +76,81 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
                 old_session.save()
                 logger.info(f"Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
         
-        # Get recent trades - format them for safe display
+        # =====================================================================
+        # RECENT TRADES WITH PAGINATION (5 per page)
+        # =====================================================================
         try:
             raw_trades = PaperTrade.objects.filter(
                 account=account
-            ).order_by('-created_at')[:10]
-            recent_trades = [format_trade_for_template(trade) for trade in raw_trades]
+            ).order_by('-created_at')
+            
+            # Paginate trades - 5 per page
+            trades_page_number = request.GET.get('trades_page', 1)
+            trades_paginator = Paginator(raw_trades, 5)  # 5 trades per page
+            
+            # Safe page retrieval
+            if trades_paginator.num_pages == 0:
+                # No items, create empty page object manually
+                trades_page_obj = None
+                recent_trades = []
+            else:
+                try:
+                    trades_page_obj = trades_paginator.page(trades_page_number)
+                    recent_trades = [format_trade_for_template(trade) for trade in trades_page_obj]
+                except PageNotAnInteger:
+                    # Page is not an integer, deliver first page
+                    trades_page_obj = trades_paginator.page(1)
+                    recent_trades = [format_trade_for_template(trade) for trade in trades_page_obj]
+                except EmptyPage:
+                    # Page is out of range, deliver last page
+                    trades_page_obj = trades_paginator.page(trades_paginator.num_pages)
+                    recent_trades = [format_trade_for_template(trade) for trade in trades_page_obj]
+            
         except Exception as e:
-            logger.warning(f"Error fetching recent trades: {e}")
+            logger.warning(f"Error fetching recent trades: {e}", exc_info=True)
             recent_trades = []
+            trades_page_obj = None
         
-        # Get open positions - format them for safe display
+        # =====================================================================
+        # OPEN POSITIONS WITH PAGINATION (5 per page)
+        # =====================================================================
         try:
             raw_positions = PaperPosition.objects.filter(
                 account=account,
                 is_open=True
             ).order_by('-current_value_usd')
-            open_positions = [format_position_for_template(pos) for pos in raw_positions]
+            
+            # Paginate positions - 5 per page
+            positions_page_number = request.GET.get('positions_page', 1)
+            positions_paginator = Paginator(raw_positions, 5)  # 5 positions per page
+            
+            # Safe page retrieval
+            if positions_paginator.num_pages == 0:
+                # No items, create empty page object manually
+                positions_page_obj = None
+                open_positions = []
+                total_open_positions = 0
+            else:
+                try:
+                    positions_page_obj = positions_paginator.page(positions_page_number)
+                    open_positions = [format_position_for_template(pos) for pos in positions_page_obj]
+                    total_open_positions = raw_positions.count()
+                except PageNotAnInteger:
+                    # Page is not an integer, deliver first page
+                    positions_page_obj = positions_paginator.page(1)
+                    open_positions = [format_position_for_template(pos) for pos in positions_page_obj]
+                    total_open_positions = raw_positions.count()
+                except EmptyPage:
+                    # Page is out of range, deliver last page
+                    positions_page_obj = positions_paginator.page(positions_paginator.num_pages)
+                    open_positions = [format_position_for_template(pos) for pos in positions_page_obj]
+                    total_open_positions = raw_positions.count()
+            
         except Exception as e:
-            logger.warning(f"Error fetching open positions: {e}")
+            logger.warning(f"Error fetching open positions: {e}", exc_info=True)
             open_positions = []
+            positions_page_obj = None
+            total_open_positions = 0
         
         # Get recent AI thoughts - these are usually safe
         recent_thoughts = PaperAIThoughtLog.objects.filter(
@@ -181,8 +236,10 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'account_id': str(account.account_id),
             'active_session': active_session,
             'recent_trades': recent_trades,
+            'trades_page_obj': trades_page_obj,  # 🆕 Pagination object for trades
             'open_positions': open_positions,
-            'open_positions_count': len(open_positions),  # ADDED: For reset modal
+            'positions_page_obj': positions_page_obj,  # 🆕 Pagination object for positions
+            'open_positions_count': total_open_positions,  # 🆕 Total count (not just current page)
             'performance': performance,
             'recent_thoughts': formatted_thoughts,
             'total_trades': total_trades,  # Total trade executions

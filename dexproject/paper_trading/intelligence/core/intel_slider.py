@@ -132,7 +132,11 @@ class IntelSliderEngine(IntelligenceEngine):
 
         # Initialize components via composition
         self.composite_analyzer = CompositeMarketAnalyzer()
-        self.decision_maker = DecisionMaker(self.config, intel_level)
+        self.decision_maker = DecisionMaker(
+            config=self.config,
+            intel_level=intel_level,
+            strategy_config=strategy_config  # 🆕 Pass user's strategy config
+        )
         self.ml_collector = MLFeatureCollector(intel_level)
 
         # PHASE 2: Initialize DEX comparison and arbitrage detection
@@ -1154,6 +1158,9 @@ class IntelSliderEngine(IntelligenceEngine):
     ) -> MarketContext:
         """
         Enhance market context with comprehensive analysis data.
+        
+        CRITICAL: This method must populate ALL fields that DecisionMaker uses
+        for risk/opportunity calculations. Missing fields cause identical scores.
 
         Args:
             market_context: Base market context
@@ -1161,37 +1168,113 @@ class IntelSliderEngine(IntelligenceEngine):
             price_history: Historical price data
 
         Returns:
-            Enhanced market context
+            Enhanced market context with all analyzer results populated
         """
         try:
-            # Extract analysis metrics
+            # Extract analysis metrics from each analyzer
             gas_analysis = analysis_result.get('gas_analysis', {})
             liquidity_analysis = analysis_result.get('liquidity_analysis', {})
             volatility_analysis = analysis_result.get('volatility_analysis', {})
+            mev_analysis = analysis_result.get('mev_analysis', {})
+            market_state = analysis_result.get('market_state_analysis', {})
 
-            # Update market context with analysis data
+            # === GAS & NETWORK DATA ===
             if gas_analysis:
-                market_context.gas_price_gwei = gas_analysis.get(
+                market_context.gas_price_gwei = Decimal(str(gas_analysis.get(
                     'current_gas_price',
                     market_context.gas_price_gwei
-                )
+                )))
+                # CRITICAL: network_congestion used in DecisionMaker (15% weight)
+                market_context.network_congestion = float(gas_analysis.get(
+                    'network_congestion',
+                    market_context.network_congestion
+                ))
 
+            # === LIQUIDITY DATA ===
             if liquidity_analysis:
-                market_context.liquidity_usd = liquidity_analysis.get(
+                market_context.liquidity_usd = Decimal(str(liquidity_analysis.get(
                     'total_liquidity_usd',
                     market_context.liquidity_usd
-                )
+                )))
+                # CRITICAL: liquidity_depth_score used in DecisionMaker (20% weight)
+                market_context.liquidity_depth_score = float(liquidity_analysis.get(
+                    'liquidity_depth_score',
+                    market_context.liquidity_depth_score
+                ))
+                # CRITICAL: pool_liquidity_usd used in decision logic
+                market_context.pool_liquidity_usd = Decimal(str(liquidity_analysis.get(
+                    'pool_liquidity_usd',
+                    market_context.pool_liquidity_usd
+                )))
+                # CRITICAL: expected_slippage used in execution strategy
+                market_context.expected_slippage = Decimal(str(liquidity_analysis.get(
+                    'expected_slippage_percent',
+                    market_context.expected_slippage
+                )))
 
+            # === VOLATILITY DATA ===
             if volatility_analysis:
-                market_context.volatility = volatility_analysis.get(
-                    'volatility_index',
+                market_context.volatility = Decimal(str(volatility_analysis.get(
+                    'volatility_percent',
                     market_context.volatility
+                )))
+                # CRITICAL: volatility_index used in DecisionMaker (20% weight)
+                market_context.volatility_index = float(volatility_analysis.get(
+                    'volatility_index',
+                    market_context.volatility_index
+                ))
+                # CRITICAL: trend_direction used in opportunity score (30% weight)
+                market_context.trend_direction = volatility_analysis.get(
+                    'trend_direction',
+                    market_context.trend_direction
+                )
+                # Additional trend data
+                market_context.momentum = Decimal(str(volatility_analysis.get(
+                    'momentum_score',
+                    market_context.momentum
+                )))
+
+            # === MEV THREAT DATA ===
+            if mev_analysis:
+                # CRITICAL: mev_threat_level used in DecisionMaker (25% weight)
+                market_context.mev_threat_level = float(mev_analysis.get(
+                    'threat_level',
+                    market_context.mev_threat_level
+                ))
+                # CRITICAL: sandwich_risk used in execution strategy
+                market_context.sandwich_risk = float(mev_analysis.get(
+                    'sandwich_risk',
+                    market_context.sandwich_risk
+                ))
+                # CRITICAL: frontrun_probability used in execution strategy
+                market_context.frontrun_probability = float(mev_analysis.get(
+                    'frontrun_risk',
+                    market_context.frontrun_probability
+                ))
+
+            # === MARKET STATE DATA ===
+            if market_state:
+                # Chaos events affect risk score (+10 points)
+                market_context.chaos_event_detected = market_state.get(
+                    'chaos_event_detected',
+                    market_context.chaos_event_detected
                 )
 
+            # === OVERALL QUALITY ===
             # Set confidence in data from overall analysis
-            market_context.confidence_in_data = analysis_result.get(
+            market_context.confidence_in_data = float(analysis_result.get(
                 'overall_confidence',
                 market_context.confidence_in_data
+            ))
+
+            # Log what we populated (debugging)
+            self.logger.debug(
+                f"[ENHANCE CONTEXT] {market_context.token_symbol}: "
+                f"MEV={market_context.mev_threat_level:.1f}, "
+                f"Vol={market_context.volatility_index:.1f}, "
+                f"Liq={market_context.liquidity_depth_score:.1f}, "
+                f"Congestion={market_context.network_congestion:.1f}, "
+                f"Trend={market_context.trend_direction}"
             )
 
             return market_context

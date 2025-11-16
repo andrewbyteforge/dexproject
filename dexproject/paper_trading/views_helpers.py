@@ -45,10 +45,10 @@ def format_trade_for_template(trade) -> Dict[str, Any]:
             'token_in_address': trade.token_in_address or '',
             'token_out_address': trade.token_out_address or '',
             'amount_in': to_decimal(trade.amount_in, Decimal('0')),
-            'amount_out': to_decimal(trade.amount_out, Decimal('0')),
+            'amount_out': to_decimal(trade.actual_amount_out, Decimal('0')),  # ✅ FIXED: actual_amount_out
             'amount_in_usd': to_decimal(trade.amount_in_usd, Decimal('0')),
-            'gas_cost_usd': to_decimal(trade.gas_cost_usd, Decimal('0')),
-            'slippage_percent': to_decimal(trade.slippage_percent, Decimal('0')),
+            'gas_cost_usd': to_decimal(trade.simulated_gas_cost_usd, Decimal('0')),  # ✅ FIXED: simulated_gas_cost_usd
+            'slippage_percent': to_decimal(trade.simulated_slippage_percent, Decimal('0')),  # ✅ FIXED: simulated_slippage_percent
             'status': trade.status,
             'execution_time_ms': trade.execution_time_ms or 0,
             '_original': trade

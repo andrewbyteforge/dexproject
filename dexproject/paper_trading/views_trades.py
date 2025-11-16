@@ -99,7 +99,7 @@ def trade_history(request: HttpRequest) -> HttpResponse:
                 continue
         
         # Paginate the formatted trades
-        paginator = Paginator(formatted_trades, 25)
+        paginator = Paginator(formatted_trades, 5)
         page_number = request.GET.get('page', 1)
         
         try:
@@ -151,8 +151,8 @@ def trade_history(request: HttpRequest) -> HttpResponse:
                         COUNT(*) as total_trades,
                         COALESCE(SUM(CAST(amount_in_usd AS REAL)), 0) as total_volume,
                         COALESCE(AVG(CAST(amount_in_usd AS REAL)), 0) as avg_trade_size,
-                        COALESCE(SUM(CAST(gas_cost_usd AS REAL)), 0) as total_gas_cost
-                    FROM paper_trading_papertrade
+                        COALESCE(SUM(CAST(simulated_gas_cost_usd AS REAL)), 0) as total_gas_cost
+                    FROM paper_trades
                     WHERE {where_clause}
                 """, params)
                 
