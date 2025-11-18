@@ -1,0 +1,673 @@
+# Intelligence Core Module
+
+## Overview
+
+The `core` module contains the foundational intelligence components for the DEX Paper Trading Bot's Intel Slider system. This module was refactored from a monolithic 1,409-line `intel_slider.py` file into 6 focused, maintainable components, each under 500 lines.
+
+The Intel Slider Engine coordinates all intelligence components to make sophisticated trading decisions based on real blockchain data, with intelligence levels ranging from 1 (ultra-cautious) to 10 (fully autonomous ML-driven).
+
+## Architecture
+
+```
+core/
+├── intel_slider_engine.py    # Main orchestrator (493 lines)
+├── decision_engine.py         # Trading decision logic (449 lines)
+├── dex_operations.py          # Multi-DEX operations (248 lines)
+├── data_tracker.py            # Historical data tracking (248 lines)
+├── market_analyzer.py         # Market context building (244 lines)
+├── position_manager.py        # Position limits (148 lines)
+└── README.md                  # This file
+```
+
+## Component Details
+
+### 1. intel_slider_engine.py - Main Orchestrator
+
+**Purpose**: The main entry point that coordinates all intelligence components using composition patterns.
+
+**Key Class**: `IntelSliderEngine(IntelligenceEngine)`
+
+**Key Responsibilities**:
+- Initialize and coordinate all sub-components
+- Apply user strategy configuration overrides from dashboard
+- Provide backward compatibility with legacy interfaces
+- Manage Phase 2 component initialization
+- Handle resource cleanup
+
+**Key Methods**:
+- `__init__()` - Initializes all components with dependency injection
+- `_apply_strategy_config()` - Overrides hardcoded defaults with user settings
+- `make_decision()` - Main entry point for trading decisions (delegates to decision_engine)
+- `analyze_market()` - Analyzes market conditions (delegates to market_analyzer)
+- `analyze()` - Full analysis-to-decision pipeline
+- `cleanup()` - Asynchronous resource cleanup
+
+**Important Notes**:
+- Uses composition over inheritance for all components
+- Maintains `analyzer` property for backward compatibility
+- Handles both Phase 1 (position-aware) and Phase 2 (multi-DEX) features
+- Properly logs all configuration overrides with before/after values
+
+**Configuration Override Flow**:
+```python
+# Dashboard settings override hardcoded defaults
+if strategy_config.confidence_threshold:
+    config.min_confidence_required = new_value  # ✅ Correct field
+    self.confidence_threshold = new_value       # ✅ Parent class sync
+```
+
+---
+
+### 2. decision_engine.py - Trading Decision Logic
+
+**Purpose**: Orchestrates the complete trading decision-making process, including BUY/SELL/HOLD/SKIP decisions.
+
+**Key Class**: `DecisionEngine`
+
+**Key Responsibilities**:
+- Validate data quality before making decisions
+- Build complete TradingDecision objects
+- Evaluate position exits (SELL decisions)
+- Collect ML features for Level 10 intelligence
+- Track historical decisions for learning
+
+**Key Methods**:
+- `make_decision()` - Main decision-making entry point with full parameter set
+- `evaluate_position_exit()` - Determines when to sell existing positions
+- `build_decision_from_context()` - Delegates to DecisionMaker for strategy logic
+- `create_skip_decision()` - Creates safe SKIP decisions for error cases
+
+**Decision Flow**:
+```python
+1. Check data quality (confidence >= 40%)
+2. Calculate risk_score and opportunity_score via DecisionMaker
+3. Calculate confidence_score
+4. Determine action (BUY/SELL/HOLD/SKIP) with position awareness
+5. Calculate position sizing with USD limits
+6. Determine execution strategy (FAST_LANE vs SMART_LANE)
+7. Generate reasoning and risk factors
+8. Collect ML features (Level 10 only)
+9. Store in historical_decisions
+```
+
+**Critical Features**:
+- Supports position-aware SELL evaluation with entry price and hold time
+- Applies `max_trade_size_usd` limits to prevent oversized trades
+- ML feature collection for Level 10 (fully autonomous trading)
+- Comprehensive error handling with safe fallback decisions
+
+**Position Exit Parameters**:
+```python
+position_entry_price: Optional[Decimal]      # Entry price for P&L calculation
+position_current_value: Optional[Decimal]    # Current position value
+position_invested: Optional[Decimal]         # Original investment amount
+position_hold_time_hours: Optional[float]    # How long position held
+```
+
+---
+
+### 3. market_analyzer.py - Market Context Building
+
+**Purpose**: Analyzes market conditions and enhances market context with comprehensive data from all analyzers.
+
+**Key Class**: `MarketAnalyzer`
+
+**Key Responsibilities**:
+- Coordinate with CompositeMarketAnalyzer
+- Build complete MarketContext objects
+- Populate ALL fields required by DecisionMaker
+- Validate data quality
+
+**Key Methods**:
+- `analyze_market()` - Creates and enhances market context for a token
+- `enhance_context_with_analysis()` - Populates market context with analyzer results
+
+**Critical Context Fields Populated**:
+```python
+# GAS & NETWORK (15% weight in risk score)
+market_context.gas_price_gwei
+market_context.network_congestion
+
+# LIQUIDITY (20% weight in opportunity score)
+market_context.liquidity_depth_score
+market_context.pool_liquidity_usd
+market_context.expected_slippage
+
+# VOLATILITY (20% weight in opportunity score)
+market_context.volatility_index
+market_context.trend_direction  # 30% weight in opportunity
+market_context.momentum
+
+# MEV THREATS (25% weight in risk score)
+market_context.mev_threat_level
+market_context.sandwich_risk
+market_context.frontrun_probability
+
+# MARKET STATE
+market_context.chaos_event_detected  # +10 to risk score
+market_context.confidence_in_data    # Overall quality
+```
+
+**CRITICAL**: Missing or incorrect context fields cause DecisionMaker to produce identical risk/opportunity scores. This module ensures ALL fields are properly populated.
+
+---
+
+### 4. position_manager.py - Position Limits
+
+**Purpose**: Implements Phase 1 position-aware trading by enforcing position limits to prevent over-concentration.
+
+**Key Class**: `PositionManager`
+
+**Key Responsibilities**:
+- Check position limits before BUY decisions
+- Calculate current position as percentage of portfolio
+- Prevent over-concentration in single tokens
+- Provide clear reasoning for limit enforcement
+
+**Key Methods**:
+- `check_position_limits()` - Returns `(can_buy: bool, reason: str)`
+
+**Position Limit Logic**:
+```python
+# Configuration from dashboard
+max_position_per_token_percent = 25%  # Example: max 25% in any token
+
+# Current portfolio state
+portfolio_value = $10,000
+current_PEPE_position = $2,000  # 20% of portfolio
+
+# Check limit
+if 20% < 25%:
+    ✅ Can still buy more PEPE (5% remaining headroom)
+else:
+    ❌ Will HOLD to prevent over-concentration
+```
+
+**Important Notes**:
+- Returns `True` if no limit configured (fail-safe)
+- Returns `True` if limit is 0 or negative (disabled)
+- Returns `True` if portfolio value is zero (can't calculate %)
+- Returns `True` on errors (fail-safe with logging)
+- Provides detailed reasoning for debugging and user feedback
+
+---
+
+### 5. dex_operations.py - Multi-DEX Operations (Phase 2)
+
+**Purpose**: Handles Phase 2 features including multi-DEX price comparison and arbitrage detection.
+
+**Key Class**: `DEXOperations`
+
+**Key Responsibilities**:
+- Compare prices across Uniswap V3, SushiSwap, Curve
+- Detect profitable arbitrage opportunities
+- Route trades to best-priced DEX
+- Calculate net profit after gas costs
+
+**Key Methods**:
+- `compare_dex_prices()` - Finds best execution price across DEXs
+- `detect_arbitrage_opportunity()` - Identifies profitable sell opportunities
+- `cleanup()` - Async resource cleanup
+
+**Phase 2 Availability**:
+```python
+if PHASE_2_AVAILABLE:
+    # Multi-DEX comparison enabled
+    result = await dex_operations.compare_dex_prices(...)
+else:
+    # Falls back to single price source
+    result = None  # Bot operates in Phase 1 mode
+```
+
+**Arbitrage Detection**:
+```python
+# Example: Bot bought PEPE at $0.001000
+entry_price = Decimal('0.001000')
+
+# DEX prices now:
+# Uniswap V3: $0.001050  (+5.0% from entry)
+# SushiSwap:  $0.001045  (+4.5% from entry)
+# Curve:      $0.001040  (+4.0% from entry)
+
+opportunity = {
+    'is_profitable': True,
+    'sell_dex': 'Uniswap V3',
+    'sell_price': Decimal('0.001050'),
+    'net_profit_usd': Decimal('50.00'),  # After gas
+    'profit_margin_percent': Decimal('4.8')
+}
+```
+
+**Important Notes**:
+- Gracefully degrades if Phase 2 components unavailable
+- Calculates net profit after gas costs
+- Provides detailed logging for all operations
+- No-op if Phase 2 not initialized
+
+---
+
+### 6. data_tracker.py - Historical Data Tracking
+
+**Purpose**: Manages historical data, performance metrics, and ML training data collection.
+
+**Key Class**: `DataTracker`
+
+**Key Responsibilities**:
+- Track market contexts over time (last 50 per token)
+- Store price trends and volatility (last 20 measurements)
+- Collect performance metrics (last 1000)
+- Support ML training data collection
+
+**Key Methods**:
+- `update_market_context()` - Stores market context history
+- `track_performance()` - Records trading performance metrics
+- `update_price_history()` - Price tracking (currently disabled)
+- `get_market_history()` - Retrieve historical contexts
+- `get_price_trends()` - Get trend data for token
+- `get_volatility_history()` - Get volatility measurements
+- `clear_history()` - Clear tracking data
+
+**Tracked Data**:
+```python
+# Market History (per token, last 50)
+market_history[token_symbol] = [MarketContext, ...]
+
+# Price Trends (per token)
+price_trends[token_symbol] = {
+    'trend_direction': 'BULLISH',
+    'momentum': Decimal('65.5'),
+    'volatility': Decimal('12.3'),
+    'last_updated': datetime
+}
+
+# Volatility (per token, last 20)
+volatility_tracker[token_symbol] = [Decimal('10.5'), ...]
+
+# Performance (last 1000)
+performance_history = [
+    {
+        'token_symbol': 'PEPE',
+        'action': 'BUY',
+        'confidence': 72.5,
+        'risk_score': 45.2,
+        'opportunity_score': 68.3,
+        'processing_time_ms': 234.5,
+        'intel_level': 7,
+        'timestamp': datetime
+    },
+    ...
+]
+```
+
+**Memory Management**:
+- Automatically maintains rolling windows
+- Limits market history to 50 contexts per token
+- Limits volatility tracking to 20 measurements
+- Limits performance history to 1000 entries
+
+---
+
+## Component Interaction Flow
+
+### Complete Trading Decision Flow
+
+```
+1. IntelSliderEngine.make_decision()
+   │
+   ├─> PositionManager.check_position_limits()
+   │   └─> Returns (can_buy, reason)
+   │
+   ├─> DecisionEngine.make_decision()
+   │   │
+   │   ├─> Check data quality (confidence >= 40%)
+   │   │
+   │   ├─> DecisionEngine.build_decision_from_context()
+   │   │   │
+   │   │   ├─> DecisionMaker.calculate_risk_score()
+   │   │   ├─> DecisionMaker.calculate_opportunity_score()
+   │   │   ├─> DecisionMaker.calculate_confidence_score()
+   │   │   ├─> DecisionMaker.determine_action()
+   │   │   ├─> DecisionMaker.calculate_position_size()
+   │   │   ├─> Apply max_trade_size_usd limit
+   │   │   ├─> DecisionMaker.calculate_stop_loss()
+   │   │   ├─> DecisionMaker.determine_execution_strategy()
+   │   │   └─> Build TradingDecision object
+   │   │
+   │   ├─> Store in historical_decisions
+   │   │
+   │   └─> MLFeatureCollector.collect_features() [Level 10 only]
+   │
+   └─> DataTracker.track_performance()
+```
+
+### Market Analysis Flow
+
+```
+1. IntelSliderEngine.analyze()
+   │
+   ├─> MarketAnalyzer.analyze_market()
+   │   │
+   │   ├─> Create initial MarketContext
+   │   │
+   │   ├─> CompositeMarketAnalyzer.analyze_comprehensive()
+   │   │   ├─> GasAnalyzer (network congestion, gas prices)
+   │   │   ├─> LiquidityAnalyzer (pool depth, slippage)
+   │   │   ├─> VolatilityAnalyzer (trends, momentum)
+   │   │   ├─> MEVAnalyzer (sandwich risk, frontrun probability)
+   │   │   └─> MarketStateAnalyzer (chaos events)
+   │   │
+   │   └─> MarketAnalyzer.enhance_context_with_analysis()
+   │       └─> Populate ALL MarketContext fields
+   │
+   ├─> IntelSliderEngine.make_decision()
+   │
+   └─> DataTracker.track_performance()
+```
+
+### Phase 2 DEX Operations Flow
+
+```
+1. DecisionEngine.evaluate_position_exit()
+   │
+   ├─> DEXOperations.compare_dex_prices()
+   │   │
+   │   ├─> DEXPriceComparator.compare_prices()
+   │   │   ├─> Query Uniswap V3
+   │   │   ├─> Query SushiSwap
+   │   │   ├─> Query Curve
+   │   │   └─> Find best price
+   │   │
+   │   └─> Return best_dex and price_advantage
+   │
+   ├─> DEXOperations.detect_arbitrage_opportunity()
+   │   │
+   │   ├─> ArbitrageDetector.find_opportunity()
+   │   │   ├─> Compare entry price vs current DEX prices
+   │   │   ├─> Calculate gross profit
+   │   │   ├─> Subtract gas costs
+   │   │   └─> Validate profitability
+   │   │
+   │   └─> Return net_profit_usd and sell_dex
+   │
+   └─> Make SELL decision if profitable
+```
+
+---
+
+## Key Design Patterns
+
+### 1. Composition Over Inheritance
+All components use composition for flexibility and testability:
+```python
+class IntelSliderEngine:
+    def __init__(self):
+        self.position_manager = PositionManager()
+        self.decision_engine = DecisionEngine()
+        self.market_analyzer = MarketAnalyzer()
+        self.dex_operations = DEXOperations()
+        self.data_tracker = DataTracker()
+```
+
+### 2. Dependency Injection
+Components receive dependencies via constructor:
+```python
+decision_engine = DecisionEngine(
+    decision_maker=decision_maker,
+    ml_collector=ml_collector,
+    intel_level=7
+)
+```
+
+### 3. Fail-Safe Defaults
+All components return safe defaults on errors:
+```python
+# Position limits: allow trade on error
+return True, f"Position check error: {error}"
+
+# DEX operations: return None if Phase 2 unavailable
+return None  # Falls back to Phase 1 mode
+
+# Decision engine: return SKIP decision on fatal errors
+return self.create_skip_decision(context, reason)
+```
+
+### 4. Single Responsibility Principle
+Each file has one clear purpose:
+- `position_manager.py` - Only position limits
+- `dex_operations.py` - Only DEX operations
+- `decision_engine.py` - Only decision-making
+- `market_analyzer.py` - Only market analysis
+- `data_tracker.py` - Only data tracking
+- `intel_slider_engine.py` - Only orchestration
+
+---
+
+## Critical Configuration Fields
+
+### Strategy Config Overrides (from Dashboard)
+
+```python
+strategy_config.confidence_threshold              # Minimum confidence to trade
+strategy_config.risk_threshold                    # Maximum acceptable risk
+strategy_config.opportunity_threshold             # Minimum opportunity score
+strategy_config.max_position_size_per_token_percent  # Position limit (e.g., 25%)
+strategy_config.max_trade_size_usd               # Max USD per trade
+```
+
+### Intel Level Config (Hardcoded Defaults)
+
+```python
+config.min_confidence_required   # ← Overridden by confidence_threshold
+config.risk_tolerance             # ← Overridden by risk_threshold
+config.name                       # e.g., "Cautious Trader" or "Aggressive Growth"
+config.max_position_size          # Default position sizing
+config.stop_loss_percent          # Default stop loss
+```
+
+---
+
+## Error Handling Strategy
+
+All components implement consistent error handling:
+
+```python
+try:
+    # Attempt operation
+    result = await component.operation()
+    logger.info(f"[COMPONENT] Operation successful: {result}")
+    return result
+
+except Exception as error:
+    logger.error(
+        f"[COMPONENT] Operation failed: {error}",
+        exc_info=True  # ← Full stack trace
+    )
+    # Return safe default
+    return safe_default_value
+```
+
+**Key Principles**:
+- Always log errors with full stack traces (`exc_info=True`)
+- Always return safe defaults (never raise to caller)
+- Use descriptive log prefixes (`[COMPONENT]`, `[OPERATION]`)
+- Provide clear error reasons in skip decisions
+
+---
+
+## Logging Strategy
+
+All components use structured logging with consistent prefixes:
+
+```python
+logger.info("[INTEL SLIDER] Initialized: Level 7 - Aggressive Growth")
+logger.info("[POSITION CHECK] Current PEPE position: 20% of portfolio")
+logger.info("[DEX COMPARISON] Best price: $0.00105 on Uniswap V3")
+logger.warning("[ARBITRAGE] No profitable arbitrage found for PEPE")
+logger.error("[MAKE_DECISION] Fatal error: {error}", exc_info=True)
+```
+
+**Log Levels**:
+- `DEBUG` - Detailed internal state (enabled in dev)
+- `INFO` - Normal operations and decisions
+- `WARNING` - Non-critical issues (Phase 2 unavailable, low confidence)
+- `ERROR` - Critical failures requiring investigation
+
+---
+
+## Testing Considerations
+
+### Unit Testing
+Each component can be tested independently:
+```python
+def test_position_limits():
+    manager = PositionManager(strategy_config)
+    can_buy, reason = manager.check_position_limits(
+        market_context,
+        existing_positions,
+        portfolio_value
+    )
+    assert can_buy == False
+    assert "over-concentration" in reason
+```
+
+### Integration Testing
+Test component interactions:
+```python
+async def test_decision_pipeline():
+    engine = IntelSliderEngine(intel_level=7)
+    decision = await engine.make_decision(
+        market_context,
+        account_balance=Decimal('10000'),
+        existing_positions=[]
+    )
+    assert decision.action in ['BUY', 'SELL', 'HOLD', 'SKIP']
+    assert decision.overall_confidence >= 0
+```
+
+### Mocking Phase 2 Components
+```python
+# Test Phase 1 mode (no DEX operations)
+dex_ops = DEXOperations(
+    dex_comparator=None,  # Phase 2 unavailable
+    arbitrage_detector=None,
+    chain_id=84532
+)
+result = await dex_ops.compare_dex_prices(...)
+assert result is None  # Gracefully handles unavailability
+```
+
+---
+
+## Performance Considerations
+
+### Memory Management
+- **Market History**: 50 contexts × 10 tokens = ~500 contexts max
+- **Volatility Tracking**: 20 measurements × 10 tokens = ~200 measurements
+- **Performance History**: 1000 metrics total
+- **Historical Decisions**: 100 decisions (per engine instance)
+
+### Processing Time
+Typical decision pipeline (Intel Level 7):
+1. Market analysis: 150-300ms
+2. Decision calculation: 50-100ms
+3. ML feature collection (L10): 20-50ms
+4. **Total**: 220-450ms per decision
+
+### Database Queries
+Components minimize database queries:
+- Position Manager: 1 query (fetch existing positions)
+- Decision Engine: 0 queries (uses in-memory data)
+- Data Tracker: 0 queries (pure memory cache)
+
+---
+
+## Migration Guide
+
+### From Monolithic intel_slider.py
+
+**Before**:
+```python
+from paper_trading.intelligence.intel_slider import IntelSliderEngine
+```
+
+**After**:
+```python
+from paper_trading.intelligence.core.intel_slider_engine import IntelSliderEngine
+```
+
+**API Changes**:
+- ✅ All public methods unchanged
+- ✅ All parameters unchanged
+- ✅ Backward compatibility maintained via `analyzer` property
+- ⚠️ Internal methods now private (prefixed with `_`) or moved to sub-components
+
+### Importing Individual Components
+
+If you need direct access to sub-components:
+```python
+from paper_trading.intelligence.core.position_manager import PositionManager
+from paper_trading.intelligence.core.decision_engine import DecisionEngine
+from paper_trading.intelligence.core.market_analyzer import MarketAnalyzer
+from paper_trading.intelligence.core.dex_operations import DEXOperations
+from paper_trading.intelligence.core.data_tracker import DataTracker
+```
+
+---
+
+## Future Enhancements
+
+### Planned Improvements
+1. **Price History**: Enable `PriceHistory` tracking once interface is defined
+2. **ML Training**: Expand feature collection for Level 10 models
+3. **Phase 2 Optimization**: Add more DEXs (Balancer, Pancake)
+4. **Caching**: Add Redis caching for market analysis results
+5. **Metrics**: Export Prometheus metrics for monitoring
+
+### Extension Points
+- Add new analyzers to `CompositeMarketAnalyzer`
+- Extend `DecisionMaker` strategies for new intel levels
+- Add custom position sizing algorithms
+- Implement advanced arbitrage strategies
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**Issue**: Identical risk/opportunity scores for all tokens
+- **Cause**: Missing or zero MarketContext fields
+- **Solution**: Check `MarketAnalyzer.enhance_context_with_analysis()` logs
+- **Fix**: Ensure all analyzers return proper data
+
+**Issue**: Position limits not enforced
+- **Cause**: `strategy_config` not passed to engine
+- **Solution**: Pass config in `IntelSliderEngine.__init__()`
+- **Fix**: `engine = IntelSliderEngine(strategy_config=config)`
+
+**Issue**: Phase 2 features not working
+- **Cause**: Import errors for DEX components
+- **Solution**: Check for ImportError in logs
+- **Fix**: Install Phase 2 dependencies or run in Phase 1 mode
+
+**Issue**: Memory usage growing unbounded
+- **Cause**: Historical data not being limited
+- **Solution**: Check DataTracker rolling window logic
+- **Fix**: Verify `pop(0)` calls when limits exceeded
+
+---
+
+## Support
+
+For questions or issues:
+1. Check logs with appropriate log level (DEBUG for detailed info)
+2. Review method docstrings for parameter requirements
+3. Verify strategy_config settings in dashboard
+4. Check Phase 2 availability if using DEX features
+
+---
+
+## Version History
+
+- **v2.0** (Current): Split into 6 modular components
+- **v1.0**: Original monolithic intel_slider.py (1,409 lines)
