@@ -205,8 +205,506 @@ Default list includes 9 tokens: WETH, USDC, DAI, WBTC, UNI, AAVE, LINK, MATIC, A
 - `MOCK_PRICE_VOLATILITY` = ±5% per tick for simulation
 - Cache support via Django cache framework
 
+
 ---
 
+### `token_analyzer.py` ⭐ NEW in v4.0
+
+**Purpose:** Individual token analysis for buy opportunity detection
+
+This module performs comprehensive analysis of individual tokens to identify trading opportunities. It integrates real blockchain data (gas prices, liquidity, volatility) with the intelligence engine to make informed buy decisions. The analyzer is position-aware, meaning it uses different logic when analyzing tokens for initial positions versus adding to existing positions.
+
+**Key Class:** `TokenAnalyzer`
+
+**Responsibilities:**
+- Analyze tokens using REAL blockchain data from CompositeMarketAnalyzer
+- Calculate initial trade sizes based on account balance and risk tolerance
+- Build comprehensive market context (volatility, trend, liquidity, gas costs)
+- Coordinate with intelligence engine for trading decisions
+- Delegate strategy selection and execution to StrategySelector and StrategyLauncher
+- Track trade cooldowns to prevent overtrading
+- Monitor arbitrage opportunities during analysis
+
+**Key Methods:**
+- `analyze_token()` - Main analysis pipeline for a single token
+- `_build_market_context()` - Constructs market context with real blockchain data
+- `_calculate_initial_trade_size()` - Determines appropriate position size
+- Helper methods for arbitrage tracking and statistics
+
+**Analysis Pipeline:**
+1. Check if token is on cooldown (prevents overtrading same token)
+2. Fetch current price from price manager
+3. Build comprehensive market context with real data:
+   - Current gas price (REAL from network)
+   - Liquidity metrics (REAL from DEX)
+   - Volatility analysis (REAL from price history)
+   - Market trend detection
+4. Get intelligence engine decision (BUY/SELL/HOLD)
+5. If BUY decision, delegate to StrategySelector for strategy choice
+6. Pass to StrategyLauncher or TradeExecutor for execution
+
+**Integration Points:**
+- Uses `IntelSliderEngine` for trading decisions
+- Calls `CompositeMarketAnalyzer` for real blockchain data
+- Delegates to `StrategySelector` for strategy choice (SPOT/DCA/GRID/TWAP)
+- Delegates to `StrategyLauncher` for advanced strategy initialization
+- Delegates to `TradeExecutor` for SPOT trade execution
+- Tracks arbitrage via optional `ArbitrageDetector` and `DEXPriceComparator`
+
+**Real Data Integration:**
+This analyzer emphasizes REAL data over simulated data:
+- Gas prices: Fetched from actual network
+- Liquidity: Calculated from DEX reserves
+- Volatility: Computed from actual price history
+- Trend: Detected from price movements
+
+---
+
+### `position_evaluator.py` ⭐ NEW in v4.0
+
+**Purpose:** Intelligent AI-driven position exit analysis
+
+This module evaluates existing positions for smart exit opportunities using AI analysis, NOT hard thresholds. It's fundamentally different from auto-close (stop-loss/take-profit) because it makes intelligent decisions based on market conditions, sentiment changes, and arbitrage opportunities.
+
+**Key Class:** `PositionEvaluator`
+
+**Responsibilities:**
+- Evaluate open positions using AI analysis for exit timing
+- Detect when market conditions turn bearish
+- Identify when risk increases beyond acceptable levels
+- Find better opportunities elsewhere (including arbitrage)
+- Monitor technical signal deterioration
+- Track position performance and hold time
+- Prioritize arbitrage exits when profitable
+
+**Key Methods:**
+- `check_position_sells()` - Main evaluation loop for all open positions
+- `_should_consider_selling()` - Determines if position warrants sell analysis
+- `_analyze_position_exit()` - Uses intelligence engine to evaluate exit timing
+- `_check_arbitrage_exit()` - Looks for profitable arbitrage exits
+- Helper methods for arbitrage statistics
+
+**Decision Logic:**
+The evaluator uses a prioritized decision flow:
+1. **First Priority:** Check for arbitrage opportunities (instant profit)
+2. **Second Priority:** AI sentiment analysis (market conditions turning negative)
+3. **Fallback:** Hold position if neither condition triggers
+
+**When Positions Are Evaluated:**
+- Position is profitable (unrealized_pnl_percent > 0%)
+- Position has been held long enough (> 5 minutes minimum)
+- Token has current market price available
+- NOT on sell cooldown
+
+**AI Sentiment Analysis:**
+Uses intelligence engine to analyze:
+- Market trend changes (bullish → bearish)
+- Risk level increases
+- Technical indicators deteriorating
+- Volume and liquidity changes
+- Overall confidence in exit timing
+
+**Arbitrage Priority:**
+If an arbitrage opportunity is found with sufficient profit:
+- Overrides AI sentiment (profit is profit!)
+- Executes immediately via trade_executor
+- Logs arbitrage statistics
+
+**Integration Points:**
+- Uses `IntelSliderEngine` for exit timing analysis
+- Optional `ArbitrageDetector` for cross-DEX opportunities
+- Optional `DEXPriceComparator` for multi-DEX price comparison
+- Calls `TradeExecutor` to execute sell trades
+- Updates position via `PositionManager`
+
+**Difference from Auto-Close:**
+- **Auto-Close:** Hard thresholds (e.g., -5% = stop-loss)
+- **Position Evaluator:** AI analysis (e.g., "sentiment turning bearish with 75% confidence")
+
+---
+
+### `strategy_selector.py` ⭐ NEW in v4.0
+
+**Purpose:** Intelligent strategy selection based on market conditions
+
+This is the CORE intelligence of Phase 7B. The strategy selector analyzes market conditions (volatility, trend, liquidity, confidence) and automatically selects the optimal entry strategy for each token. This enables the bot to adapt its trading approach based on market conditions rather than using a one-size-fits-all approach.
+
+**Key Class:** `StrategySelector`
+
+**Responsibilities:**
+- Analyze market conditions for strategy appropriateness
+- Select optimal entry strategy (SPOT/DCA/GRID/TWAP)
+- Apply decision matrix based on thresholds
+- Respect strategy configuration preferences
+- Log strategy selection reasoning
+
+**Strategy Decision Matrix:**
+
+**Priority 1 - TWAP (Time-Weighted Average Price):**
+- Use when: Very large position + low liquidity
+- Reason: Minimize market impact on illiquid tokens
+- Conditions:
+  - Position size ≥ $500
+  - Liquidity < $100,000
+  - Confidence ≥ 70%
+  - Volatility moderate (0.01-0.20)
+
+**Priority 2 - GRID (Grid Trading):**
+- Use when: High volatility + range-bound market
+- Reason: Profit from price oscillations
+- Conditions:
+  - Volatility ≥ 0.15 (15%)
+  - Trend: Neutral/Sideways
+  - Liquidity ≥ $50,000
+  - Confidence ≥ 60%
+
+**Priority 3 - DCA (Dollar Cost Averaging):**
+- Use when: Strong bullish trend + high confidence
+- Reason: Build position gradually in trending market
+- Conditions:
+  - Trend: Bullish/Strong Bullish
+  - Confidence ≥ 70%
+  - Position size ≥ $100
+
+**Default - SPOT (Immediate Buy):**
+- Use when: Standard conditions
+- Reason: Fast execution, no special strategy needed
+- Conditions: None of the above criteria met
+
+**Key Method:**
+- `select_strategy()` - Main decision engine with prioritized checks
+
+**Configuration:**
+Respects strategy configuration preferences:
+- `enable_dca` - Enable/disable DCA strategy
+- `enable_grid` - Enable/disable GRID strategy
+- `enable_twap` - Enable/disable TWAP strategy
+
+**Integration Points:**
+- Called by `TokenAnalyzer` after intelligence engine decision
+- Uses `StrategySelectionThresholds` from constants
+- Uses `MarketContext` for market condition data
+- Uses `TradingDecision` for confidence and position size
+- Returns `StrategyType` constant for execution
+
+**Thresholds (from constants.py):**
+All threshold values are centralized in `paper_trading.constants.StrategySelectionThresholds`
+
+---
+
+### `strategy_launcher.py` ⭐ NEW in v4.0
+
+**Purpose:** Initialize and launch advanced trading strategies
+
+This module handles the creation and configuration of DCA, GRID, and TWAP strategy runs. It calculates strategy-specific parameters (number of orders, time intervals, price levels) and coordinates with the strategy executor service to start the strategies.
+
+**Key Class:** `StrategyLauncher`
+
+**Responsibilities:**
+- Calculate DCA parameters (order count, interval, size)
+- Calculate GRID parameters (price levels, order count, range)
+- Calculate TWAP parameters (slices, timing, size)
+- Initialize strategy runs in database
+- Log strategy launch decisions
+- Handle strategy launch errors gracefully
+
+**DCA Strategy Launch:**
+- Calculates number of orders (2-10) based on position size
+- Determines time interval between orders (10-60 minutes)
+- Divides total amount across orders equally
+- Creates `PaperStrategyRun` record with DCA parameters
+
+**GRID Strategy Launch:**
+- Calculates price grid levels around current price
+- Determines number of grid orders (3-10)
+- Sets price range (±5-20% based on volatility)
+- Creates equal-sized orders at each price level
+- Creates `PaperStrategyRun` record with GRID parameters
+
+**TWAP Strategy Launch:**
+- Calculates number of time slices (5-20)
+- Determines execution interval (1-30 minutes)
+- Divides large order into equal slices
+- Creates `PaperStrategyRun` record with TWAP parameters
+
+**Key Methods:**
+- `start_dca_strategy()` - Initialize DCA strategy
+- `start_grid_strategy()` - Initialize GRID strategy  
+- `start_twap_strategy()` - Initialize TWAP strategy
+- `_calculate_dca_params()` - Compute DCA-specific parameters
+- `_calculate_grid_params()` - Compute GRID-specific parameters
+- `_calculate_twap_params()` - Compute TWAP-specific parameters
+
+**Parameter Calculation Logic:**
+
+**DCA:**
+- Small position ($100-500): 2-5 orders
+- Medium position ($500-1000): 5-8 orders
+- Large position ($1000+): 8-10 orders
+- Interval: Longer for larger positions
+
+**GRID:**
+- Low volatility: Narrow price range (±5-10%)
+- High volatility: Wide price range (±10-20%)
+- More orders for larger positions
+- Equal spacing between price levels
+
+**TWAP:**
+- Very large orders: More slices (10-20)
+- Smaller orders: Fewer slices (5-10)
+- Faster execution for smaller amounts
+- Slower execution to minimize impact
+
+**Integration Points:**
+- Called by `TokenAnalyzer` after strategy selection
+- Creates records via `PaperStrategyRun` model
+- Coordinates with strategy executor service (background)
+- Logs decisions via `IntelSliderEngine` (if available)
+
+**Error Handling:**
+- Graceful failure if strategy executor unavailable
+- Falls back to SPOT trades on parameter calculation errors
+- Comprehensive logging of launch attempts
+- Never crashes the main bot loop
+
+---
+
+### `market_helpers.py` ⭐ NEW in v4.0
+
+**Purpose:** Utility functions for market analysis and trading operations
+
+This module provides helper utilities used across the trading system. It handles trade cooldowns (preventing overtrading), auto-close position checks (hard stop-loss/take-profit thresholds), AI thought logging, JSON sanitization, confidence calculations, and arbitrage statistics tracking.
+
+**Key Class:** `MarketHelpers`
+
+**Responsibilities:**
+- Manage trade cooldowns with separate timings for BUY vs SELL
+- Check positions for hard auto-close triggers (stop-loss, take-profit, max hold)
+- Log AI thought processes to database
+- Sanitize data for JSON serialization (handles Decimal, NaN, Infinity)
+- Calculate confidence levels from decision data
+- Track and report arbitrage statistics
+
+**Trade Cooldown Management:**
+Prevents overtrading the same token by enforcing cooldown periods:
+- **BUY Cooldown:** 5 minutes (moderate, prevents spam buying)
+- **SELL Cooldown:** 0 minutes (no restriction, let positions close quickly)
+
+**Auto-Close Position Checks:**
+Implements HARD thresholds for emergency position closure:
+- **Stop-Loss:** Position down by X% (default: -5%)
+- **Take-Profit:** Position up by Y% (default: +10%)
+- **Max Hold Time:** Position held longer than Z hours (default: 24h)
+
+These are different from intelligent sells (PositionEvaluator) - these are emergency exits.
+
+**AI Thought Logging:**
+Creates comprehensive AI thought logs for transparency:
+- Records action, reasoning, confidence
+- Includes metadata (token, price, position)
+- Supports different decision types (TRADE_DECISION, AUTO_CLOSE, etc.)
+- Links to account and session
+
+**JSON Sanitization:**
+Makes data safe for JSON serialization:
+- Converts Decimal to float
+- Replaces NaN with None
+- Replaces Infinity with None
+- Handles nested dictionaries recursively
+
+**Key Methods:**
+- `is_on_cooldown()` - Check if token is on trading cooldown
+- `set_cooldown()` - Set cooldown after trade
+- `should_auto_close_position()` - Check hard threshold triggers
+- `log_thought()` - Create AI thought log entry
+- `sanitize_for_json()` - Make data JSON-safe
+- `calculate_confidence_level()` - Convert numeric confidence to level string
+- `get_arbitrage_stats()` - Get arbitrage performance metrics
+
+**Cooldown Strategy:**
+- Different cooldowns for BUY vs SELL trades
+- SELL has no cooldown (emergency exits should be fast)
+- BUY has moderate cooldown (prevents overtrading)
+- Cooldowns stored by token symbol
+- Configurable via constructor parameters
+
+**Integration Points:**
+- Used by `MarketAnalyzer` for cooldown checks and auto-close
+- Used by `TokenAnalyzer` for cooldown management
+- Used by `PositionEvaluator` for cooldown checks
+- Creates `PaperAIThoughtLog` records
+- Uses `PaperStrategyConfiguration` for threshold values
+
+---
+
+### `metrics_logger.py` ⭐ NEW in v4.0
+
+**Purpose:** AI thought logging, performance metrics, and WebSocket status updates
+
+This module handles transparency and user communication by logging all AI decisions, updating performance metrics in the database, and broadcasting real-time status updates via WebSocket to the dashboard. It ensures users can see what the bot is thinking and how it's performing.
+
+**Key Class:** `MetricsLogger`
+
+**Responsibilities:**
+- Log AI thought processes with full reasoning for transparency
+- Update performance metrics (win rate, P&L, trade counts)
+- Send WebSocket status updates to dashboard
+- Sanitize data for JSON serialization
+- Calculate confidence levels for display
+- Track tick counts and session duration
+
+**AI Thought Logging:**
+Creates detailed logs of every decision:
+- Action taken (BUY, SELL, HOLD, AUTO_CLOSE)
+- Complete reasoning from intelligence engine
+- Confidence level (numeric and categorical)
+- Decision type classification
+- Metadata (token, price, position, etc.)
+- Links to account, session, and position
+
+**Performance Metrics Updates:**
+Updates `PaperPerformanceMetrics` model every 20 ticks:
+- Total trades executed
+- Win/loss counts and rates
+- Average profit per trade
+- Total realized and unrealized P&L
+- Session duration
+- Trade distribution by type
+- Strategy usage statistics
+
+**WebSocket Status Updates:**
+Broadcasts real-time bot status to dashboard:
+- Bot running status
+- Current tick count
+- Account balance and P&L
+- Open positions with current values
+- Recent trades
+- Circuit breaker status
+- Transaction manager status
+- Price manager statistics
+- Arbitrage statistics
+
+**Key Methods:**
+- `log_thought()` - Create comprehensive AI thought log
+- `update_performance_metrics()` - Update session metrics in DB
+- `send_bot_status_update()` - Broadcast status via WebSocket
+- `_sanitize_for_json()` - Make data JSON-safe
+- `_calculate_confidence_level()` - Convert numeric to categorical
+
+**Status Update Contents:**
+The WebSocket payload includes:
+```python
+{
+    'status': 'running',
+    'tick_count': 42,
+    'account': {
+        'balance_usd': 1000.00,
+        'total_pnl_usd': 50.25,
+        'total_pnl_percent': 5.03
+    },
+    'positions': [...],
+    'recent_trades': [...],
+    'circuit_breaker': {...},
+    'tx_manager': {...},
+    'price_manager': {...},
+    'arbitrage': {...}
+}
+```
+
+**Update Frequency:**
+- Performance metrics: Every 20 ticks (~60 seconds at 3-second tick rate)
+- WebSocket status: Every tick (~3 seconds)
+- AI thought logs: On every decision
+
+**Integration Points:**
+- Uses `websocket_service` for broadcasting
+- Updates `PaperPerformanceMetrics` model
+- Creates `PaperAIThoughtLog` records
+- Receives data from all manager components
+- Formats data for dashboard consumption
+
+**Design Philosophy:**
+Transparency is critical for user trust. Users need to see:
+1. What the bot decided (log_thought)
+2. Why it decided that (reasoning in logs)
+3. How it's performing (metrics updates)
+4. What it's doing right now (WebSocket status)
+
+---
+
+### `arbitrage_handler.py` ⭐ NEW in v4.0
+
+**Purpose:** Cross-DEX arbitrage detection and coordination
+
+This module manages the arbitrage detection infrastructure, including DEX price comparators and arbitrage opportunity analysis. It's responsible for initializing arbitrage components, updating gas prices for profit calculations, and tracking arbitrage performance statistics.
+
+**Key Class:** `ArbitrageHandler`
+
+**Responsibilities:**
+- Initialize DEX price comparator (multi-DEX price fetching)
+- Initialize arbitrage detector (opportunity analysis)
+- Update gas prices dynamically for accurate profit calculations
+- Track arbitrage opportunities found and executed
+- Provide arbitrage performance statistics
+- Clean up DEX connections on shutdown
+
+**Arbitrage Components:**
+
+**DEXPriceComparator:**
+- Fetches prices from multiple DEXs simultaneously
+- Compares prices across Uniswap V2, V3, SushiSwap, etc.
+- Returns best buy and sell prices
+- Handles API failures gracefully
+
+**ArbitrageDetector:**
+- Analyzes price spreads for profitability
+- Calculates net profit after gas costs
+- Applies minimum spread and profit thresholds
+- Provides opportunity scoring
+
+**Key Methods:**
+- `is_enabled()` - Check if arbitrage detection is active
+- `update_gas_price()` - Update gas price for profit calculations
+- `increment_opportunities_found()` - Track opportunities discovered
+- `increment_trades_executed()` - Track executed arbitrage trades
+- `get_arbitrage_stats()` - Get performance statistics
+- `cleanup()` - Clean up DEX connections on shutdown
+
+**Initialization Logic:**
+The handler initializes arbitrage detection only if:
+1. Arbitrage components are available (installed)
+2. Arbitrage is enabled in configuration
+3. Strategy config allows arbitrage (if present)
+
+**Configuration:**
+Uses configuration from `PaperStrategyConfiguration`:
+- `enable_arbitrage_detection` - Master enable/disable switch
+- Gas price thresholds
+- Minimum profit requirements
+- Minimum spread requirements
+
+**Statistics Tracking:**
+Maintains counts of:
+- Total opportunities found
+- Total trades executed
+- Success rate (executed / found)
+- Detector performance metrics
+- Comparator performance metrics
+
+**Integration Points:**
+- Used by `MarketAnalyzer` for initialization
+- Receives gas price updates from network
+- Provides stats to `MetricsLogger` for reporting
+- Coordinates with `ArbitrageExecutor` for trade execution
+
+**Gas Price Management:**
+Gas prices affect arbitrage profitability:
+- Higher gas = lower net profit
+- Handler updates detector dynamically
+- Ensures profit calculations stay current
+- Prevents unprofitable arbitrage attempts
+
+---
 ### `validation.py` ⭐ NEW in v4.0
 
 **Purpose:** Centralized validation logic to prevent database corruption
