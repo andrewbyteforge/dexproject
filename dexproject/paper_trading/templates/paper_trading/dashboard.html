@@ -429,29 +429,42 @@
                                     <th>P&L</th>
                                 </tr>
                             </thead>
-                            <tbody id="open-positions-tbody">
-                                {% if open_positions %}
-                                    {% for position in open_positions %}
-                                    <tr data-position-id="{{ position.position_id }}">
-                                        <td><small>{{ position.token_symbol }}</small></td>
-                                        <td><small>{{ position.quantity|floatformat:6 }}</small></td>
-                                        <td><small>${{ position.current_value_usd|floatformat:2 }}</small></td>
-                                        <td>
-                                            <small class="{% if position.unrealized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}">
-                                                {% if position.unrealized_pnl_usd >= 0 %}+{% endif %}${{ position.unrealized_pnl_usd|floatformat:2 }}
-                                            </small>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                {% else %}
-                                    <tr>
-                                        <td colspan="4" class="text-center text-muted py-4">
-                                            <i class="bi bi-briefcase fs-3 mb-2 d-block"></i>
-                                            <p class="mb-0">No open positions</p>
-                                        </td>
-                                    </tr>
-                                {% endif %}
-                            </tbody>
+                                <tbody id="open-positions-tbody">
+                                    {% if positions_page_obj and positions_page_obj.object_list %}
+                                        {% for position in positions_page_obj %}
+                                        <tr data-position-id="{{ position.position_id }}">
+                                            <td><small>{{ position.token_symbol }}</small></td>
+                                            <td><small>{{ position.quantity|floatformat:6 }}</small></td>
+                                            <td><small>${{ position.current_value_usd|floatformat:2 }}</small></td>
+                                            <td>
+                                                <small class="{% if position.unrealized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                                    {% if position.unrealized_pnl_usd >= 0 %}+{% endif %}${{ position.unrealized_pnl_usd|floatformat:2 }}
+                                                </small>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    {% elif open_positions %}
+                                        {% for position in open_positions %}
+                                        <tr data-position-id="{{ position.position_id }}">
+                                            <td><small>{{ position.token_symbol }}</small></td>
+                                            <td><small>{{ position.quantity|floatformat:6 }}</small></td>
+                                            <td><small>${{ position.current_value_usd|floatformat:2 }}</small></td>
+                                            <td>
+                                                <small class="{% if position.unrealized_pnl_usd >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                                    {% if position.unrealized_pnl_usd >= 0 %}+{% endif %}${{ position.unrealized_pnl_usd|floatformat:2 }}
+                                                </small>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    {% else %}
+                                        <tr>
+                                            <td colspan="4" class="text-center text-muted py-4">
+                                                <i class="bi bi-briefcase fs-3 mb-2 d-block"></i>
+                                                <p class="mb-0">No open positions</p>
+                                            </td>
+                                        </tr>
+                                    {% endif %}
+                                </tbody>
                         </table>
                     </div>
                     
