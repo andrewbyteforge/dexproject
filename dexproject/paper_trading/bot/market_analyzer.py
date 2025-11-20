@@ -65,6 +65,9 @@ from paper_trading.bot.token_analyzer import TokenAnalyzer
 from paper_trading.bot.position_evaluator import PositionEvaluator
 from paper_trading.bot.market_helpers import MarketHelpers
 
+# Import professional settings (Unibot/Maestro standards)
+from paper_trading.bot.professional_settings import PositionLimits
+
 logger = logging.getLogger(__name__)
 
 
@@ -213,8 +216,8 @@ class MarketAnalyzer:
         
         self.helpers = MarketHelpers(
             account=account,
-            intelligence_engine=intelligence_engine,
-            strategy_config=strategy_config
+            session=session,
+            use_tx_manager=use_tx_manager
         )
         
         logger.info(
@@ -232,16 +235,29 @@ class MarketAnalyzer:
         trade_executor: Any
     ) -> None:
         """
-        Execute one market tick cycle.
+        Execute one market tick cycle with professional trading bot logic.
 
-        This method coordinates all trading operations including:
-        - Updating prices
-        - Checking circuit breakers
-        - Evaluating positions for intelligent sells
-        - Checking auto-close positions (stop-loss/take-profit)
-        - Analyzing tokens for buy opportunities
-        - Executing trades (with strategy selection - Phase 7B)
-        - Updating metrics
+        This method follows Unibot/Maestro best practices:
+        1. Update prices and position values
+        2. SELL PATH: Process positions we OWN (exits first)
+           a) Intelligent sells (AI-driven market analysis)
+           b) Safety net (hard threshold auto-close)
+        3. BUY PATH: Process tokens we DON'T own (entries second)
+           a) Filter out owned tokens
+           b) Check position limits (max 5 open)
+           c) Analyze remaining tokens for BUY opportunities
+        4. Update metrics and send status
+
+        Professional Settings Applied:
+        - Max 5 open positions (prevents over-diversification)
+        - Position sizing: 20% per position (configurable)
+        - DCA enabled: Add to winning positions only
+        - Stop-loss: -5% (moderate risk)
+        - Multi-tier take-profit: 15%/30%/50%
+        - Max hold time: 48 hours (active trading)
+        - BUY cooldown: 15 min same token, 3 min any token
+        - SELL cooldown: 0 min (exit fast)
+        - MEV protection: >$1000 trades
 
         Args:
             price_manager: RealPriceManager instance
@@ -250,70 +266,193 @@ class MarketAnalyzer:
         """
         try:
             self.tick_count += 1
-            logger.info(f"[TICK {self.tick_count}] Starting market analysis tick...")
+            logger.info(
+                f"\n{'='*80}\n"
+                f"[TICK {self.tick_count}] Starting Professional Trading Cycle\n"
+                f"{'='*80}"
+            )
 
-            # Update prices first
+            # ================================================================
+            # PHASE 1: UPDATE MARKET DATA
+            # ================================================================
+            logger.info(f"[TICK {self.tick_count}] PHASE 1: Updating market data...")
+            
+            # Update all token prices
             self._update_market_prices(price_manager)
-
-            # Check circuit breakers
-            if self.circuit_breaker_manager:
-                if not self.circuit_breaker_manager.can_trade():
-                    logger.warning("[TICK] Circuit breaker is OPEN - skipping trading")
-                    return
-
+            
+            # Update position values with latest prices
+            tokens = price_manager.get_all_tokens()
+            position_manager.update_position_prices(tokens)
+            
             # Check pending transactions if using TX Manager
             if self.use_tx_manager and TRANSACTION_MANAGER_AVAILABLE:
-                self._check_pending_transactions()
+                self.pending_transactions = self.helpers.check_pending_transactions(
+                    self.pending_transactions
+                )
+            
+            logger.info(f"[TICK {self.tick_count}] ✅ Phase 1 complete - Market data updated")
 
-            # INTELLIGENT SELLS: Check existing positions for smart exit opportunities
-            # This runs BEFORE auto-close to make smarter decisions based on market conditions
-            self.position_evaluator.check_position_sells(
-                price_manager=price_manager,
-                position_manager=position_manager,
-                trade_executor=trade_executor
+            # ================================================================
+            # PHASE 2: CIRCUIT BREAKER CHECK
+            # ================================================================
+            if self.circuit_breaker_manager:
+                if not self.circuit_breaker_manager.can_trade():
+                    logger.warning(
+                        f"[TICK {self.tick_count}] ⛔ Circuit breaker OPEN - "
+                        "Skipping all trading operations"
+                    )
+                    return
+
+            # ================================================================
+            # PHASE 3: SELL PATH - PROCESS POSITIONS WE OWN (Priority 1)
+            # ================================================================
+            logger.info(
+                f"\n[TICK {self.tick_count}] PHASE 3: SELL PATH - "
+                "Evaluating existing positions..."
             )
-
-            # Check for auto-close triggers (stop-loss/take-profit)
-            # This is the SAFETY NET - hard thresholds that override intelligent decisions
-            self.helpers.check_auto_close_positions(
-                price_manager=price_manager,
-                position_manager=position_manager,
-                trade_executor=trade_executor
-            )
-
-            # Get tokens to analyze
-            tokens = price_manager.get_all_tokens()
-            logger.info(f"[TICK] Analyzing {len(tokens)} tokens")
-
-            # Analyze each token
-            for token_data in tokens:
-                self.token_analyzer.analyze_token(
-                    token_data=token_data,
+            
+            # Get current position count for logging
+            current_positions = position_manager.get_all_positions()
+            position_count = len(current_positions)
+            
+            if position_count > 0:
+                logger.info(
+                    f"[TICK {self.tick_count}] Evaluating {position_count} open positions"
+                )
+                
+                # 3a. INTELLIGENT SELLS (AI-driven exits)
+                # This analyzes market conditions and decides if we should exit
+                logger.info(
+                    f"[TICK {self.tick_count}] 3a. Checking intelligent sell signals..."
+                )
+                self.position_evaluator.check_position_sells(
                     price_manager=price_manager,
                     position_manager=position_manager,
-                    trade_executor=trade_executor
+                    trade_executor=trade_executor,
+                    thought_logger=self.helpers.log_thought
+                )
+                
+                # 3b. SAFETY NET (forced exits on hard thresholds)
+                # This is the last line of defense: stop-loss, take-profit, max hold time
+                logger.info(
+                    f"[TICK {self.tick_count}] 3b. Checking safety net triggers..."
+                )
+                self.position_evaluator.check_auto_close_positions(
+                    price_manager=price_manager,
+                    position_manager=position_manager,
+                    trade_executor=trade_executor,
+                    thought_logger=self.helpers.log_thought
+                )
+                
+                logger.info(
+                    f"[TICK {self.tick_count}] ✅ Phase 3 complete - "
+                    "Position evaluation finished"
+                )
+            else:
+                logger.info(
+                    f"[TICK {self.tick_count}] No open positions - Skipping SELL path"
                 )
 
+            # ================================================================
+            # PHASE 4: BUY PATH - PROCESS TOKENS WE DON'T OWN (Priority 2)
+            # ================================================================
+            logger.info(
+                f"\n[TICK {self.tick_count}] PHASE 4: BUY PATH - "
+                "Analyzing new opportunities..."
+            )
+            
+            # Reload positions in case any were closed in Phase 3
+            position_manager.load_positions()
+            current_positions = position_manager.get_all_positions()
+            position_count = len(current_positions)
+            
+            # PROFESSIONAL BOT RULE: Use industry-standard position limits
+            MAX_OPEN_POSITIONS = PositionLimits.MAX_OPEN_POSITIONS
+            
+            if position_count >= MAX_OPEN_POSITIONS:
+                logger.info(
+                    f"[TICK {self.tick_count}] ⚠️  Already at max positions "
+                    f"({position_count}/{MAX_OPEN_POSITIONS}) - Skipping BUY path"
+                )
+            else:
+                available_slots = MAX_OPEN_POSITIONS - position_count
+                logger.info(
+                    f"[TICK {self.tick_count}] {available_slots} position slots available "
+                    f"({position_count}/{MAX_OPEN_POSITIONS} filled)"
+                )
+                
+                # Get all available tokens
+                tokens = price_manager.get_all_tokens()
+                logger.info(
+                    f"[TICK {self.tick_count}] Analyzing {len(tokens)} tokens for BUY"
+                )
+                
+                # Token analyzer will:
+                # 1. Filter OUT tokens we already own
+                # 2. Check BUY cooldowns (15 min same token, 3 min any token)
+                # 3. Analyze remaining tokens with intelligence engine
+                # 4. Execute BUY if confidence is high enough
+                self.token_analyzer.analyze_tokens_for_buy(
+                    tokens=tokens,
+                    price_manager=price_manager,
+                    position_manager=position_manager,
+                    trade_executor=trade_executor,
+                    thought_logger=self.helpers.log_thought
+                )
+                
+                logger.info(
+                    f"[TICK {self.tick_count}] ✅ Phase 4 complete - "
+                    "BUY analysis finished"
+                )
+
+            # ================================================================
+            # PHASE 5: STATISTICS & STATUS UPDATES
+            # ================================================================
+            logger.info(
+                f"\n[TICK {self.tick_count}] PHASE 5: Updating metrics and status..."
+            )
+            
             # Update arbitrage stats from delegated components
-            self.arbitrage_opportunities_found = self.token_analyzer.arbitrage_opportunities_found
-            self.arbitrage_trades_executed = self.token_analyzer.arbitrage_trades_executed
-
-            # Update performance metrics
-            self._update_metrics(position_manager)
-
-            # Send status update via WebSocket
+            self.arbitrage_opportunities_found = (
+                self.position_evaluator.arbitrage_opportunities_found
+            )
+            self.arbitrage_trades_executed = (
+                self.position_evaluator.arbitrage_trades_executed
+            )
+            
+            # Update performance metrics every 20 ticks
+            if self.tick_count % 20 == 0:
+                self._update_metrics(position_manager)
+                logger.info(
+                    f"[TICK {self.tick_count}] Performance metrics updated "
+                    "(20-tick interval)"
+                )
+            
+            # Send WebSocket status update
             self._send_bot_status_update(
                 status='RUNNING',
                 price_manager=price_manager,
                 position_manager=position_manager,
                 trade_executor=trade_executor
             )
-
-            logger.info(f"[TICK {self.tick_count}] Market analysis tick completed")
+            
+            logger.info(
+                f"[TICK {self.tick_count}] ✅ Phase 5 complete - Status updated"
+            )
+            
+            # Final summary
+            logger.info(
+                f"\n{'='*80}\n"
+                f"[TICK {self.tick_count}] ✅ TICK COMPLETE\n"
+                f"Summary: {position_count}/{MAX_OPEN_POSITIONS} positions open, "
+                f"{self.arbitrage_opportunities_found} arb opps found, "
+                f"{self.arbitrage_trades_executed} arb trades executed\n"
+                f"{'='*80}\n"
+            )
 
         except Exception as e:
             logger.error(
-                f"[MARKET ANALYZER] Tick failed: {e}",
+                f"[TICK {self.tick_count}] ❌ TICK FAILED: {e}",
                 exc_info=True
             )
 
