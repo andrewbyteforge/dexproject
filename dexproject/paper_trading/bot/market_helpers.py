@@ -170,38 +170,42 @@ class MarketHelpers:
     ) -> List[Any]:
         """
         Check status of pending transactions (TX Manager integration).
-
+        
         Args:
             pending_transactions: List of pending transaction objects
-
+            
         Returns:
             Updated list of still-pending transactions
         """
         if not self.use_tx_manager:
             return []
-
+        
         try:
             # Try to import transaction manager
             try:
                 from trading.services.transaction_manager import get_transaction_manager
-                tx_manager = get_transaction_manager()
+                from asgiref.sync import async_to_sync  # ✅ ADD THIS IMPORT
+                
+                # ✅ FIX: Wrap async function with async_to_sync
+                tx_manager = async_to_sync(get_transaction_manager)(chain_id=8453)
+                
             except ImportError:
                 logger.debug("[TX CHECK] Transaction Manager not available")
                 return []
-
+            
             if not tx_manager:
                 return []
-
+            
             # Check each pending transaction
             still_pending = []
             for tx in pending_transactions:
                 tx_hash = getattr(tx, 'tx_hash', None)
                 if not tx_hash:
                     continue
-
+                
                 # Check transaction status
                 status = tx_manager.check_transaction_status(tx_hash)
-
+                
                 if status == 'pending':
                     still_pending.append(tx)
                 elif status == 'confirmed':
@@ -210,20 +214,24 @@ class MarketHelpers:
                     logger.warning(f"[TX CHECK] ❌ Transaction failed: {tx_hash}")
                 else:
                     logger.debug(f"[TX CHECK] Unknown status for {tx_hash}: {status}")
-
+            
             logger.debug(
                 f"[TX CHECK] Checked {len(pending_transactions)} transactions, "
                 f"{len(still_pending)} still pending"
             )
-
             return still_pending
-
+            
         except Exception as e:
             logger.error(
                 f"[TX CHECK] Error checking transactions: {e}",
                 exc_info=True
             )
             return pending_transactions  # Return original list on error
+
+
+
+
+
 
     # =========================================================================
     # ARBITRAGE STATISTICS

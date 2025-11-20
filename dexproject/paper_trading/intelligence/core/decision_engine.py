@@ -382,8 +382,10 @@ class DecisionEngine:
         )
 
         # Position sizing
+        # Position sizing
         pos_pct = Decimal('0')
         pos_usd = Decimal('0')
+
         if action == 'BUY':
             pos_pct = self.decision_maker.calculate_position_size(
                 risk_score,
@@ -394,8 +396,8 @@ class DecisionEngine:
 
             # Apply max_trade_size_usd limit if configured
             if hasattr(self.decision_maker, 'strategy_config') and \
-               self.decision_maker.strategy_config and \
-               hasattr(self.decision_maker.strategy_config, 'max_trade_size_usd'):
+                self.decision_maker.strategy_config and \
+                hasattr(self.decision_maker.strategy_config, 'max_trade_size_usd'):
                 max_trade_usd = Decimal(str(self.decision_maker.strategy_config.max_trade_size_usd))
                 if max_trade_usd > 0 and pos_usd > max_trade_usd:
                     self.logger.info(
@@ -405,6 +407,21 @@ class DecisionEngine:
                     pos_usd = max_trade_usd
                     # Recalculate percentage based on capped USD amount
                     pos_pct = (pos_usd / portfolio_value) * Decimal('100')
+
+        # 🆕 CRITICAL FIX: For SELL decisions, use the position's current value
+        elif action == 'SELL':
+            if position_current_value is not None:
+                pos_usd = Decimal(str(position_current_value))
+                if portfolio_value > 0:
+                    pos_pct = (pos_usd / portfolio_value) * Decimal('100')
+                self.logger.info(
+                    f"[POSITION SIZE] SELL position size: ${pos_usd:.2f} "
+                    f"({pos_pct:.2f}% of portfolio)"
+                )
+            else:
+                self.logger.warning(
+                    "[POSITION SIZE] SELL decision but no position_current_value provided!"
+                )
 
         # Execution parameters
         stop_loss = self.decision_maker.calculate_stop_loss(risk_score)

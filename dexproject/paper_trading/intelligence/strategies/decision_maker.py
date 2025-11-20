@@ -748,17 +748,17 @@ class DecisionMaker:
             
             # No sell criteria met - hold position
             self.logger.info(
-                f"[SELL EVAL] SKIP - {context.token_symbol}: "
+                f"[SELL EVAL] HOLD - {context.token_symbol}: "
                 f"No sell criteria met, holding position (P&L={pnl_percent:+.2f}%)"
             )
-            return 'SKIP'
+            return 'HOLD'
             
         except Exception as e:
             self.logger.error(
                 f"[SELL EVAL] Error evaluating sell: {e}",
                 exc_info=True
             )
-            return 'SKIP'  # Safe default - don't sell on error
+            return 'HOLD' # Safe default - don't sell on error
 
 
 

@@ -211,7 +211,7 @@ class MarketAnalyzer:
             intelligence_engine=intelligence_engine,
             arbitrage_detector=self.arbitrage_detector,
             dex_comparator=self.dex_comparator,
-            check_arbitrage=self.check_arbitrage
+            arbitrage_enabled=self.check_arbitrage  # ✅ CORRECT
         )
         
         self.helpers = MarketHelpers(

@@ -269,6 +269,7 @@ class TradeExecutor:
         - Manual intervention is needed
         - Starting a new trading session
         """
+        
         self.consecutive_failures = 0
         self.daily_trades_count = 0
         logger.info(
