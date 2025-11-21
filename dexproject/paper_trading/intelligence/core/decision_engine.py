@@ -395,9 +395,7 @@ class DecisionEngine:
             pos_usd = (pos_pct / Decimal('100')) * portfolio_value
 
             # Apply max_trade_size_usd limit if configured
-            if hasattr(self.decision_maker, 'strategy_config') and \
-                self.decision_maker.strategy_config and \
-                hasattr(self.decision_maker.strategy_config, 'max_trade_size_usd'):
+            if hasattr(self.decision_maker, 'strategy_config') and self.decision_maker.strategy_config and hasattr(self.decision_maker.strategy_config, 'max_trade_size_usd'):
                 max_trade_usd = Decimal(str(self.decision_maker.strategy_config.max_trade_size_usd))
                 if max_trade_usd > 0 and pos_usd > max_trade_usd:
                     self.logger.info(

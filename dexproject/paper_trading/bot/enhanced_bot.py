@@ -93,6 +93,7 @@ from paper_trading.bot.price_service_integration import (  # noqa: E402
 from paper_trading.bot.position_manager import PositionManager  # noqa: E402
 from paper_trading.bot.trade_executor import TradeExecutor  # noqa: E402
 from paper_trading.bot.market_analyzer import MarketAnalyzer  # noqa: E402
+from paper_trading.bot.validation import ValidationLimits  # noqa: E402
 
 # ============================================================================
 # INTELLIGENCE SYSTEM IMPORTS
@@ -844,12 +845,38 @@ class EnhancedPaperTradingBot:
             
             # ✅ RESET CIRCUIT BREAKER ON BOT STARTUP
             # This clears any previous consecutive failures and gives the bot a fresh start
-            self.trade_executor.reset_circuit_breaker()
+            self._check_and_reset_circuit_breaker_on_startup()
             
             logger.info("[EXECUTOR] Trade executor initialized with circuit breaker reset")
         except Exception as e:
             logger.error(f"[EXECUTOR] Failed to initialize trade executor: {e}", exc_info=True)
             raise
+        
+        
+    
+    def _check_and_reset_circuit_breaker_on_startup(self) -> None:
+        """Check if circuit breaker is stuck and auto-reset if needed."""
+        assert self.trade_executor is not None
+        
+        max_failures = ValidationLimits.MAX_CONSECUTIVE_FAILURES
+        current_failures = self.trade_executor.consecutive_failures
+        
+        if current_failures >= max_failures:
+            logger.warning(
+                f"[STARTUP] ⚠️ CIRCUIT BREAKER STUCK: "
+                f"{current_failures}/{max_failures} failures detected!"
+            )
+            logger.warning("[STARTUP] This would block all trading. Auto-resetting...")
+            self.trade_executor.reset_circuit_breaker()
+            logger.info("[STARTUP] ✅ Circuit breaker reset successfully")
+            logger.info("[STARTUP] Trading is now ENABLED - all safety systems operational")
+        else:
+            logger.info(
+                f"[STARTUP] ✅ Circuit breaker status: "
+                f"{current_failures}/{max_failures} failures (System operational)"
+            )
+
+    
 
     def _initialize_market_analyzer(self) -> None:
         """

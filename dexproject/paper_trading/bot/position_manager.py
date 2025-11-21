@@ -458,9 +458,20 @@ class PositionManager:
             position.last_updated = timezone.now()
 
             # Check if position should be closed
+            # Check if position should be closed
             if position.quantity <= Decimal('0.0001'):  # Essentially zero
+                # Set all fields first
+                position.quantity = Decimal('0')
+                position.current_value_usd = Decimal('0')
+                position.unrealized_pnl_usd = Decimal('0')
                 position.is_open = False
                 position.closed_at = timezone.now()
+                
+                # Save with ALL updated fields at once
+                position.save(update_fields=[
+                    'is_open', 'closed_at', 'quantity', 'realized_pnl_usd',
+                    'current_value_usd', 'unrealized_pnl_usd', 'last_updated'
+                ])
                 position.quantity = Decimal('0')
                 position.current_value_usd = Decimal('0')
                 position.unrealized_pnl_usd = Decimal('0')
@@ -478,8 +489,7 @@ class PositionManager:
                     f"Remaining: {position.quantity:.4f} tokens, "
                     f"Realized P&L: ${realized_pnl:+.2f}"
                 )
-
-            position.save()
+                position.save()  # ✅ NOW IN THE CORRECT LOCATION
 
             # Update account P&L
             self.update_account_pnl()

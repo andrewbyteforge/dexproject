@@ -531,13 +531,13 @@ class PaperTrade(models.Model):
         self.amount_in = validate_decimal_field(
             self.amount_in, 'amount_in',
             Decimal('0'), None, Decimal('0'),
-            decimal_places=18
+            decimal_places=0  # ← Changed from 18 to 0
         )
         
         self.expected_amount_out = validate_decimal_field(
             self.expected_amount_out, 'expected_amount_out',
             Decimal('0'), None, Decimal('0'),
-            decimal_places=18
+            decimal_places=0  # ← Changed from 18 to 0
         )
         
         # Validate actual_amount_out (nullable, 18 decimal places)
@@ -545,7 +545,7 @@ class PaperTrade(models.Model):
             self.actual_amount_out = validate_decimal_field(
                 self.actual_amount_out, 'actual_amount_out',
                 Decimal('0'), None, Decimal('0'),
-                decimal_places=18
+                decimal_places=0  # ← Changed from 18 to 0
             )
         
         # Validate USD amounts (2 decimal places: $0.01 to $100,000)

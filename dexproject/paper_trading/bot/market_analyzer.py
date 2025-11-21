@@ -312,8 +312,14 @@ class MarketAnalyzer:
             )
             
             # Get current position count for logging
-            current_positions = position_manager.get_all_positions()
-            position_count = len(current_positions)
+            # Get current position count for logging
+            # CRITICAL: Load ALL open positions for account, not filtered by session
+            # This ensures we can close positions from previous sessions
+            current_positions = PaperPosition.objects.filter(
+                account=self.account,
+                is_open=True
+            ).select_related('account')
+            position_count = current_positions.count()
             
             if position_count > 0:
                 logger.info(
@@ -363,8 +369,11 @@ class MarketAnalyzer:
             
             # Reload positions in case any were closed in Phase 3
             position_manager.load_positions()
-            current_positions = position_manager.get_all_positions()
-            position_count = len(current_positions)
+            current_positions = PaperPosition.objects.filter(
+                account=self.account,
+                is_open=True
+            ).select_related('account')
+            position_count = current_positions.count()
             
             # PROFESSIONAL BOT RULE: Use industry-standard position limits
             MAX_OPEN_POSITIONS = PositionLimits.MAX_OPEN_POSITIONS

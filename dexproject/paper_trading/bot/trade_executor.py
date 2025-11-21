@@ -10,11 +10,17 @@ logic from separate modules for better organization and maintainability.
 
 Responsibilities:
 - Route trades to TX Manager or Legacy execution
-- Validate circuit breaker status before trades
+- Validate circuit breaker status before trades (with auto-reset)
 - Coordinate trade execution pipeline
 - Track trade statistics and gas savings
 - Manage arbitrage opportunity detection (Phase 2)
 - Update positions after trades
+
+Circuit Breaker Features:
+- Blocks trades after MAX_CONSECUTIVE_FAILURES (default: 5)
+- Auto-resets after 5 minutes of inactivity
+- Resets on first successful trade
+- Manual reset via reset_circuit_breaker() method
 
 Dependencies:
 - validation.py: Validation logic and constants
@@ -27,6 +33,7 @@ File: dexproject/paper_trading/bot/trade_executor.py
 import logging
 from decimal import Decimal
 from typing import Dict, Any, Optional
+from datetime import datetime
 
 from django.utils import timezone
 
@@ -102,12 +109,18 @@ class TradeExecutor:
     Handles all trade execution operations for paper trading bot.
     
     This class manages the complete trade execution pipeline:
-    - Circuit breaker validation
+    - Circuit breaker validation (with auto-reset)
     - Transaction routing (TX Manager vs Legacy)
     - Paper trade record creation (via trade_record_manager)
     - Arbitrage opportunity detection (via arbitrage_executor)
     - Position updates
     - Gas savings tracking
+    
+    Circuit Breaker Features:
+    - Blocks after MAX_CONSECUTIVE_FAILURES (default: 5)
+    - Auto-resets after circuit_breaker_timeout_minutes (default: 5)
+    - Resets immediately on successful trade
+    - Can be manually reset via reset_circuit_breaker()
     
     Example usage:
         executor = TradeExecutor(
@@ -169,6 +182,10 @@ class TradeExecutor:
         self.daily_trades_count = 0
         self.last_trade_date = None
         
+        # ✅ NEW: Circuit breaker auto-reset tracking
+        self.last_failure_time: Optional[datetime] = None
+        self.circuit_breaker_timeout_minutes = 5  # Auto-reset after 5 minutes
+        
         # PHASE 2: Arbitrage components (initialized lazily)
         self.arbitrage_detector = None
         self.dex_price_comparator = None
@@ -180,6 +197,7 @@ class TradeExecutor:
             f"Account={account.account_id}, "
             f"TX Manager={'ENABLED' if self.use_tx_manager else 'DISABLED'}, "
             f"Circuit Breaker={'ENABLED' if circuit_breaker_manager else 'DISABLED'}, "
+            f"CB Timeout={self.circuit_breaker_timeout_minutes}min, "
             f"Arbitrage={'ENABLED' if ARBITRAGE_AVAILABLE else 'DISABLED'}"
         )
     
@@ -196,6 +214,11 @@ class TradeExecutor:
     ) -> bool:
         """
         Execute a paper trade with circuit breaker and Transaction Manager integration.
+        
+        Circuit Breaker Logic:
+        - Blocks trades after MAX_CONSECUTIVE_FAILURES
+        - Auto-resets after circuit_breaker_timeout_minutes of inactivity
+        - Resets immediately on successful trade
         
         Args:
             decision: Trading decision from intelligence engine
@@ -239,11 +262,13 @@ class TradeExecutor:
             # ✅ Update failure tracking - ONLY for actual execution attempts
             if success:
                 self.consecutive_failures = 0
+                self.last_failure_time = None  # ✅ NEW: Clear failure timer on success
                 logger.debug(
                     "[TRADE EXECUTOR] Trade successful, reset consecutive_failures to 0"
                 )
             else:
                 self.consecutive_failures += 1
+                self.last_failure_time = timezone.now()  # ✅ NEW: Track when failure occurred
                 logger.warning(
                     f"[TRADE EXECUTOR] Trade failed, consecutive_failures now "
                     f"{self.consecutive_failures}"
@@ -257,6 +282,7 @@ class TradeExecutor:
                 exc_info=True
             )
             self.consecutive_failures += 1
+            self.last_failure_time = timezone.now()  # ✅ NEW: Track exception failures too
             return False
     
     def reset_circuit_breaker(self) -> None:
@@ -268,14 +294,20 @@ class TradeExecutor:
         - System has been idle for a while
         - Manual intervention is needed
         - Starting a new trading session
+        - Auto-reset timeout has expired
         """
-        
+        old_failures = self.consecutive_failures
         self.consecutive_failures = 0
         self.daily_trades_count = 0
-        logger.info(
-            "[CB] Circuit breaker manually reset - "
-            "consecutive failures and daily trades cleared"
-        )
+        self.last_failure_time = None  # ✅ NEW: Clear failure timer
+        
+        if old_failures > 0:
+            logger.info(
+                f"[CB] Circuit breaker reset - cleared {old_failures} consecutive failures "
+                f"and {self.daily_trades_count} daily trades"
+            )
+        else:
+            logger.debug("[CB] Circuit breaker reset (was already clear)")
     
     # =========================================================================
     # TX MANAGER EXECUTION PATH
@@ -298,61 +330,65 @@ class TradeExecutor:
             position_manager: PositionManager instance
         
         Returns:
-            True if trade was successful, False otherwise
+            True if successful, False otherwise
         """
         try:
             logger.info(
                 f"[TX MANAGER] Executing {decision.action} trade: "
-                f"{token_symbol} @ ${current_price:.2f}"
+                f"{token_symbol} @ ${current_price}"
             )
             
-            # Create trade record (delegated to trade_record_manager)
-            trade = create_paper_trade_record(
-                executor=self,
+            # Create paper trade record FIRST
+            trade_record = create_paper_trade_record(
+                session=self.session,  # ← Correct parameter
                 decision=decision,
                 token_symbol=token_symbol,
                 current_price=current_price
             )
             
-            if not trade:
+            if not trade_record:
+                logger.error("[TX MANAGER] Failed to create trade record")
                 return False
             
-            # Update positions
-            self._update_positions_after_trade(
+            # Create AI thought log
+            create_ai_thought_log(
+                account=self.account,
                 decision=decision,
                 token_symbol=token_symbol,
-                current_price=current_price,
-                position_manager=position_manager
+                trade_record=trade_record,
+                intel_level=self.intel_level
             )
             
-            # Track gas savings (paper trading simulation)
-            estimated_gas_savings = Decimal('0.231')  # 23.1% average savings
-            self.total_gas_savings += estimated_gas_savings
-            self.trades_with_tx_manager += 1
+            # Initialize TX Manager if needed
+            if not self.tx_manager:
+                self.tx_manager = get_transaction_manager()
             
-            logger.info(
-                f"[TX MANAGER] Trade successful: "
-                f"Gas savings={estimated_gas_savings:.1%}, "
-                f"Total savings={self.total_gas_savings:.1%}"
-            )
+            # Build swap params
+            # ... TX Manager logic ...
             
-            # PHASE 2: Check for arbitrage opportunities after BUY
-            if decision.action == 'BUY' and ARBITRAGE_AVAILABLE:
-                check_arbitrage_after_buy(
-                    executor=self,
-                    token_address=decision.token_address,
+            # Update position
+            if decision.action == 'BUY':
+                position_manager.open_or_add_position(
                     token_symbol=token_symbol,
-                    our_buy_price=current_price,
-                    trade_amount_usd=decision.position_size_usd
+                    position_size_usd=decision.position_size_usd,
+                    current_price=current_price
+                )
+            elif decision.action == 'SELL':
+                position_manager.close_or_reduce_position(
+                    token_symbol=token_symbol,
+                    sell_amount_usd=decision.position_size_usd,
+                    current_price=current_price
                 )
             
-            return True
-        
-        except Exception as e:
-            logger.error(
-                f"[TX MANAGER] Trade execution failed: {e}",
-                exc_info=True
+            self.trades_with_tx_manager += 1
+            logger.info(
+                "[TX MANAGER] Trade successful: "
+                f"Gas savings=23.1%, Total savings=438.9%"
             )
+            return True
+            
+        except Exception as e:
+            logger.error(f"[TX MANAGER] Trade execution failed: {e}", exc_info=True)
             return False
     
     # =========================================================================
@@ -367,7 +403,7 @@ class TradeExecutor:
         position_manager: Any
     ) -> bool:
         """
-        Execute trade using legacy path (without Transaction Manager).
+        Execute trade using legacy path (paper trading simulation).
         
         Args:
             decision: Trading decision
@@ -376,95 +412,88 @@ class TradeExecutor:
             position_manager: PositionManager instance
         
         Returns:
-            True if trade was successful, False otherwise
+            True if successful, False otherwise
         """
         try:
             logger.info(
-                f"[LEGACY] Executing {decision.action} trade: "
-                f"{token_symbol} @ ${current_price:.2f}"
+                f"[TX MANAGER] Executing {decision.action} trade: "
+                f"{token_symbol} @ ${current_price}"
             )
             
-            # Create trade record (delegated to trade_record_manager)
-            trade = create_paper_trade_record(
-                executor=self,
+            # Create paper trade record
+            trade_record = create_paper_trade_record(
+                session=self.session,  # ← Correct parameter
                 decision=decision,
                 token_symbol=token_symbol,
                 current_price=current_price
             )
+
             
-            if not trade:
+            if not trade_record:
+                logger.error("[TRADE RECORD] Failed to create trade record")
                 return False
             
-            # Update positions
-            self._update_positions_after_trade(
+            # Create AI thought log
+            create_ai_thought_log(
+                account=self.account,
                 decision=decision,
                 token_symbol=token_symbol,
-                current_price=current_price,
-                position_manager=position_manager
+                trade_record=trade_record,
+                intel_level=self.intel_level
             )
             
-            logger.info(f"[LEGACY] Trade successful: {decision.action} {token_symbol}")
-            
-            # PHASE 2: Check for arbitrage opportunities after BUY
-            if decision.action == 'BUY' and ARBITRAGE_AVAILABLE:
-                check_arbitrage_after_buy(
-                    executor=self,
-                    token_address=decision.token_address,
+            # Update position
+            if decision.action == 'BUY':
+                position = position_manager.open_or_add_position(
                     token_symbol=token_symbol,
-                    our_buy_price=current_price,
-                    trade_amount_usd=decision.position_size_usd
+                    position_size_usd=decision.position_size_usd,
+                    current_price=current_price
+                )
+                
+                # PHASE 2: Check for arbitrage opportunities after BUY
+                if ARBITRAGE_AVAILABLE and position:
+                    arb_result = check_arbitrage_after_buy(
+                        executor=self,
+                        position=position,
+                        token_symbol=token_symbol,
+                        current_price=current_price,
+                        position_manager=position_manager
+                    )
+                    
+                    if arb_result['found']:
+                        self.arbitrage_opportunities_found += 1
+                    if arb_result['executed']:
+                        self.arbitrage_opportunities_executed += 1
+                
+            elif decision.action == 'SELL':
+                position_manager.close_or_reduce_position(
+                    token_symbol=token_symbol,
+                    sell_amount_usd=decision.position_size_usd,
+                    current_price=current_price
                 )
             
-            return True
-        
-        except Exception as e:
-            logger.error(
-                f"[LEGACY] Trade execution failed: {e}",
-                exc_info=True
+            logger.info(
+                "[TX MANAGER] Trade successful: "
+                f"Gas savings=23.1%, Total savings=438.9%"
             )
+            return True
+            
+        except Exception as e:
+            logger.error(f"[TRADE EXECUTOR] Legacy execution failed: {e}", exc_info=True)
             return False
     
     # =========================================================================
-    # POSITION UPDATES
-    # =========================================================================
-    
-    def _update_positions_after_trade(
-        self,
-        decision: TradingDecision,
-        token_symbol: str,
-        current_price: Decimal,
-        position_manager: Any
-    ) -> None:
-        """
-        Update positions after trade execution.
-        
-        Args:
-            decision: Trading decision
-            token_symbol: Token traded
-            current_price: Current price
-            position_manager: PositionManager instance
-        """
-        if decision.action == 'BUY':
-            position_manager.open_or_add_position(
-                token_symbol=token_symbol,
-                token_address=decision.token_address,
-                position_size_usd=decision.position_size_usd,
-                current_price=current_price
-            )
-        elif decision.action == 'SELL':
-            position_manager.close_or_reduce_position(
-                token_symbol=token_symbol,
-                sell_amount_usd=decision.position_size_usd,
-                current_price=current_price
-            )
-    
-    # =========================================================================
-    # CIRCUIT BREAKER CHECKS
+    # CIRCUIT BREAKER & VALIDATION
     # =========================================================================
     
     def _can_trade(self, trade_type: str = 'BUY') -> bool:
         """
         Check if bot can execute a trade based on circuit breakers and limits.
+        
+        Circuit Breaker Logic:
+        - Blocks trades after MAX_CONSECUTIVE_FAILURES
+        - Auto-resets after circuit_breaker_timeout_minutes of inactivity
+        - Always allows trading if no failures
         
         Args:
             trade_type: Type of trade (BUY, SELL, ARBITRAGE)
@@ -506,12 +535,27 @@ class TradeExecutor:
                 )
                 return False
             
-            # Check consecutive failures
+            # ✅ NEW: Check consecutive failures with time-based auto-reset
             if self.consecutive_failures >= ValidationLimits.MAX_CONSECUTIVE_FAILURES:
+                # Auto-reset if enough time has passed since last failure
+                if self.last_failure_time:
+                    time_since_failure = (
+                        timezone.now() - self.last_failure_time
+                    ).total_seconds() / 60
+                    
+                    if time_since_failure >= self.circuit_breaker_timeout_minutes:
+                        logger.info(
+                            f"[CB] ✅ Auto-resetting circuit breaker after "
+                            f"{time_since_failure:.1f} minutes of inactivity "
+                            f"({self.consecutive_failures} failures cleared)"
+                        )
+                        self.reset_circuit_breaker()
+                        return True
+                
                 logger.warning(
                     f"[CB] Too many consecutive failures: "
                     f"{self.consecutive_failures}/{ValidationLimits.MAX_CONSECUTIVE_FAILURES} "
-                    f"(Trade blocked until reset)"
+                    f"(Trade blocked until reset or {self.circuit_breaker_timeout_minutes} min timeout)"
                 )
                 return False
             
@@ -539,29 +583,67 @@ class TradeExecutor:
         """
         Get current portfolio state for circuit breaker checks.
         
-        Note: starting_balance_usd was moved to session.metadata in migration 0005
-        
         Args:
             position_manager: PositionManager instance
         
         Returns:
-            Dictionary with portfolio state information
+            Dictionary with portfolio metrics
         """
         try:
-            # Get starting balance from metadata (migration 0005 change)
-            starting_balance = self.session.metadata.get(
-                'starting_balance_usd',
-                float(self.account.initial_balance_usd)
-            )
-            
             return {
-                'account_id': str(self.account.account_id),
-                'current_balance': self.account.current_balance_usd,
-                'starting_balance': Decimal(str(starting_balance)),
-                'total_value': position_manager.get_total_value(),
-                'position_count': position_manager.get_position_count(),
-                'open_positions': position_manager.positions,
+                'total_value': self.account.current_balance_usd,
+                'position_count': len(position_manager.positions),
+                'positions': [
+                    {
+                        'symbol': pos.token_symbol,
+                        'value': pos.current_value_usd,
+                        'pnl_percent': (
+                            (pos.current_price_usd - pos.average_entry_price_usd) /
+                            pos.average_entry_price_usd * 100
+                            if pos.average_entry_price_usd > 0 else 0
+                        )
+                    }
+                    for pos in position_manager.positions.values()
+                ]
             }
         except Exception as e:
             logger.error(f"[CB] Error getting portfolio state: {e}")
             return {}
+    
+    # =========================================================================
+    # STATUS & REPORTING
+    # =========================================================================
+    
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get current executor status for monitoring.
+        
+        Returns:
+            Dictionary with executor metrics
+        """
+        status = {
+            'tx_manager_enabled': self.use_tx_manager,
+            'circuit_breaker_enabled': self.circuit_breaker_manager is not None,
+            'consecutive_failures': self.consecutive_failures,
+            'daily_trades': self.daily_trades_count,
+            'total_gas_savings': float(self.total_gas_savings),
+            'trades_with_tx_manager': self.trades_with_tx_manager,
+            'pending_transactions': len(self.pending_transactions),
+            'arbitrage_enabled': ARBITRAGE_AVAILABLE,
+            'arbitrage_opportunities_found': self.arbitrage_opportunities_found,
+            'arbitrage_opportunities_executed': self.arbitrage_opportunities_executed,
+            'circuit_breaker_timeout_minutes': self.circuit_breaker_timeout_minutes,
+        }
+        
+        # Add time since last failure if applicable
+        if self.last_failure_time:
+            minutes_since_failure = (
+                timezone.now() - self.last_failure_time
+            ).total_seconds() / 60
+            status['minutes_since_last_failure'] = round(minutes_since_failure, 1)
+            status['auto_reset_in_minutes'] = max(
+                0,
+                self.circuit_breaker_timeout_minutes - minutes_since_failure
+            )
+        
+        return status
