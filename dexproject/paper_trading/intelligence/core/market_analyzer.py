@@ -136,85 +136,84 @@ class MarketAnalyzer:
         """
         try:
             # Extract analysis metrics from each analyzer
+            # Extract analysis metrics from each analyzer
             gas_analysis = analysis_result.get('gas_analysis', {})
-            liquidity_analysis = analysis_result.get('liquidity_analysis', {})
-            volatility_analysis = analysis_result.get('volatility_analysis', {})
+            liquidity_analysis = analysis_result.get('liquidity', {})  # ✅ FIXED
+            volatility_analysis = analysis_result.get('volatility', {})  # ✅ FIXED
             mev_analysis = analysis_result.get('mev_analysis', {})
-            market_state = analysis_result.get('market_state_analysis', {})
-
+            market_state = analysis_result.get('market_state', {})  # ✅ FIXED
+            
             # === GAS & NETWORK DATA ===
             if gas_analysis:
-                market_context.gas_price_gwei = Decimal(str(gas_analysis.get(
-                    'current_gas_price',
-                    market_context.gas_price_gwei
-                )))
+                gas_price = gas_analysis.get('current_gas_price')
+                if gas_price is not None:
+                    market_context.gas_price_gwei = Decimal(str(gas_price))
+                
                 # CRITICAL: network_congestion used in DecisionMaker (15% weight)
-                market_context.network_congestion = float(gas_analysis.get(
-                    'network_congestion',
-                    market_context.network_congestion
-                ))
+                congestion = gas_analysis.get('network_congestion')
+                if congestion is not None:
+                    market_context.network_congestion = float(congestion)
 
             # === LIQUIDITY DATA ===
+            # === LIQUIDITY DATA ===
             if liquidity_analysis:
-                market_context.liquidity_usd = Decimal(str(liquidity_analysis.get(
-                    'total_liquidity_usd',
-                    market_context.liquidity_usd
-                )))
+                total_liq = liquidity_analysis.get('total_liquidity_usd')
+                if total_liq is not None:
+                    market_context.liquidity_usd = Decimal(str(total_liq))
+                
                 # CRITICAL: liquidity_depth_score used in DecisionMaker (20% weight)
-                market_context.liquidity_depth_score = float(liquidity_analysis.get(
-                    'liquidity_depth_score',
-                    market_context.liquidity_depth_score
-                ))
+                depth_score = liquidity_analysis.get('liquidity_depth_score')
+                if depth_score is not None:
+                    market_context.liquidity_depth_score = float(depth_score)
+                
                 # CRITICAL: pool_liquidity_usd used in decision logic
-                market_context.pool_liquidity_usd = Decimal(str(liquidity_analysis.get(
-                    'pool_liquidity_usd',
-                    market_context.pool_liquidity_usd
-                )))
+                pool_liq = liquidity_analysis.get('pool_liquidity_usd')
+                if pool_liq is not None:
+                    market_context.pool_liquidity_usd = Decimal(str(pool_liq))
+                
                 # CRITICAL: expected_slippage used in execution strategy
-                market_context.expected_slippage = Decimal(str(liquidity_analysis.get(
-                    'expected_slippage_percent',
-                    market_context.expected_slippage
-                )))
+                slippage = liquidity_analysis.get('expected_slippage_percent')
+                if slippage is not None:
+                    market_context.expected_slippage = Decimal(str(slippage))
 
             # === VOLATILITY DATA ===
+            # === VOLATILITY DATA ===
             if volatility_analysis:
-                market_context.volatility = Decimal(str(volatility_analysis.get(
-                    'volatility_percent',
-                    market_context.volatility
-                )))
+                vol_percent = volatility_analysis.get('volatility_percent')
+                if vol_percent is not None:
+                    market_context.volatility = Decimal(str(vol_percent))
+                
                 # CRITICAL: volatility_index used in DecisionMaker (20% weight)
-                market_context.volatility_index = float(volatility_analysis.get(
-                    'volatility_index',
-                    market_context.volatility_index
-                ))
+                vol_index = volatility_analysis.get('volatility_index')
+                if vol_index is not None:
+                    market_context.volatility_index = float(vol_index)
+                
                 # CRITICAL: trend_direction used in opportunity score (30% weight)
-                market_context.trend_direction = volatility_analysis.get(
-                    'trend_direction',
-                    market_context.trend_direction
-                )
+                trend = volatility_analysis.get('trend_direction')
+                if trend is not None:
+                    market_context.trend_direction = trend
+                
                 # Additional trend data
-                market_context.momentum = Decimal(str(volatility_analysis.get(
-                    'momentum_score',
-                    market_context.momentum
-                )))
+                momentum = volatility_analysis.get('momentum_score')
+                if momentum is not None:
+                    market_context.momentum = Decimal(str(momentum))
 
-            # === MEV THREAT DATA ===
-            if mev_analysis:
-                # CRITICAL: mev_threat_level used in DecisionMaker (25% weight)
-                market_context.mev_threat_level = float(mev_analysis.get(
-                    'threat_level',
-                    market_context.mev_threat_level
-                ))
-                # CRITICAL: sandwich_risk used in execution strategy
-                market_context.sandwich_risk = float(mev_analysis.get(
-                    'sandwich_risk',
-                    market_context.sandwich_risk
-                ))
-                # CRITICAL: frontrun_probability used in execution strategy
-                market_context.frontrun_probability = float(mev_analysis.get(
-                    'frontrun_risk',
-                    market_context.frontrun_probability
-                ))
+                # === MEV THREAT DATA ===
+                if mev_analysis:
+                    # CRITICAL: mev_threat_level used in DecisionMaker (25% weight)
+                    threat = mev_analysis.get('threat_level')
+                    if threat is not None:
+                        market_context.mev_threat_level = float(threat)
+                    
+                    # CRITICAL: sandwich_risk used in execution strategy
+                    sandwich = mev_analysis.get('sandwich_risk')
+                    if sandwich is not None:
+                        market_context.sandwich_risk = float(sandwich)
+                    
+                    # CRITICAL: frontrun_probability used in execution strategy
+                    frontrun = mev_analysis.get('frontrun_risk')
+                    if frontrun is not None:
+                        market_context.frontrun_probability = float(frontrun)
 
             # === MARKET STATE DATA ===
             if market_state:
@@ -226,10 +225,11 @@ class MarketAnalyzer:
 
             # === OVERALL QUALITY ===
             # Set confidence in data from overall analysis
-            market_context.confidence_in_data = float(analysis_result.get(
-                'overall_confidence',
-                market_context.confidence_in_data
-            ))
+            # === OVERALL QUALITY ===
+            # Set confidence in data from overall analysis
+            overall_conf = analysis_result.get('overall_confidence')
+            if overall_conf is not None:
+                market_context.confidence_in_data = float(overall_conf)
 
             # Log what we populated (debugging)
             self.logger.debug(

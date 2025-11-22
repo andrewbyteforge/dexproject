@@ -1,46 +1,75 @@
 """
-Paper Trading Bot - Modular Architecture
+Paper Trading Bot - Modular Architecture with Organized Subfolders
 
-This package provides a complete paper trading bot with:
-- Real-time price feeds (Alchemy, CoinGecko, DEX)
-- Intelligent decision making (Intel Slider 1-10)
-- Position management with auto-close
-- Trade execution (TX Manager + Legacy)
-- Circuit breaker protection
-- Performance tracking
-
-Usage:
-    from paper_trading.bot import EnhancedPaperTradingBot
-    
-    bot = EnhancedPaperTradingBot(
-        account_name='My_Bot',
-        intel_level=5,
-        use_real_prices=True,
-        chain_id=84532
-    )
-    
-    if bot.initialize():
-        bot.run()
-
-File: dexproject/paper_trading/bot/__init__.py
+This package provides a complete paper trading bot organized into functional modules.
 """
 
+# Main bot coordinator
 from paper_trading.bot.enhanced_bot import EnhancedPaperTradingBot
-from paper_trading.bot.price_service_integration import (
-    RealPriceManager,
-    create_price_manager
+
+# Buy operations
+from paper_trading.bot.buy import MarketAnalyzer, TokenAnalyzer
+
+# Sell operations
+from paper_trading.bot.sell import PositionEvaluator
+
+# Position management
+from paper_trading.bot.positions import PositionManager
+
+# Trade execution
+from paper_trading.bot.execution import (
+    TradeExecutor,
+    create_paper_trade_record,
+    create_ai_thought_log,
 )
-from paper_trading.bot.position_manager import PositionManager
-from paper_trading.bot.trade_executor import TradeExecutor
-from paper_trading.bot.market_analyzer import MarketAnalyzer
+
+# Arbitrage operations
+from paper_trading.bot.arbitrage import (
+    ArbitrageExecutor,
+    check_arbitrage_after_buy,
+)
+
+# Strategy operations
+from paper_trading.bot.strategies import (
+    select_optimal_strategy,
+    StrategySelector,
+    StrategyLauncher,
+)
+
+# Shared utilities
+from paper_trading.bot.shared import (
+    RealPriceManager,
+    create_price_manager,
+    validate_usd_amount,
+    validate_quantity,
+    validate_token_address,
+    ValidationResult,
+    ProfessionalSettings,
+    MetricsLogger,
+)
 
 __all__ = [
     'EnhancedPaperTradingBot',
-    'RealPriceManager',
-    'create_price_manager',
+    'MarketAnalyzer',
+    'TokenAnalyzer',
+    'PositionEvaluator',
     'PositionManager',
     'TradeExecutor',
-    'MarketAnalyzer'
+    'create_paper_trade_record',
+    'create_ai_thought_log',
+    'ArbitrageExecutor',
+    'check_arbitrage_after_buy',
+    'select_optimal_strategy',
+    'StrategySelector',
+    'StrategyLauncher',
+    'RealPriceManager',
+    'create_price_manager',
+    'validate_usd_amount',
+    'validate_quantity',
+    'validate_token_address',
+    'ValidationResult',
+    'ProfessionalSettings',
+    'MetricsLogger',
 ]
 
-__version__ = '3.0.0'
+__version__ = '4.0.0'

@@ -34,8 +34,8 @@ from paper_trading.constants import DecisionType
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from paper_trading.bot.price_service_integration import RealPriceManager
-    from paper_trading.bot.position_manager import PositionManager
-    from paper_trading.bot.trade_executor import TradeExecutor
+    from paper_trading.bot.positions import PositionManager
+    from paper_trading.bot.execution import TradeExecutor
     from paper_trading.models import PaperTradingAccount, PaperStrategyConfiguration
     from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
     from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector

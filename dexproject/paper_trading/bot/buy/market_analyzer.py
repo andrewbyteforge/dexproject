@@ -65,7 +65,7 @@ except ImportError:
 
 # Import delegated components
 from paper_trading.bot.token_analyzer import TokenAnalyzer
-from paper_trading.bot.position_evaluator import PositionEvaluator
+from paper_trading.bot.sell import PositionEvaluator
 from paper_trading.bot.market_helpers import MarketHelpers
 
 # Import professional settings (Unibot/Maestro standards)

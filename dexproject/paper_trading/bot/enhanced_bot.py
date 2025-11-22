@@ -90,10 +90,11 @@ from paper_trading.bot.price_service_integration import (  # noqa: E402
     create_price_manager,
     RealPriceManager
 )
-from paper_trading.bot.position_manager import PositionManager  # noqa: E402
-from paper_trading.bot.trade_executor import TradeExecutor  # noqa: E402
-from paper_trading.bot.market_analyzer import MarketAnalyzer  # noqa: E402
-from paper_trading.bot.validation import ValidationLimits  # noqa: E402
+from paper_trading.bot.buy import MarketAnalyzer
+from paper_trading.bot.positions import PositionManager
+from paper_trading.bot.execution import TradeExecutor
+from paper_trading.bot.shared import create_price_manager
+from paper_trading.bot.sell import PositionEvaluator
 
 # ============================================================================
 # INTELLIGENCE SYSTEM IMPORTS

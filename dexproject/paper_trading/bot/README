@@ -1,54 +1,86 @@
 # Paper Trading Bot - Module Overview
 
 **Location:** `dexproject/paper_trading/bot/`  
-**Version:** 4.0.0  
+**Version:** 4.1.0  
 **Purpose:** Modular paper trading bot with real-time price feeds, intelligent decision making, and transaction management
 
 ---
 
 ## Architecture Overview
 
-This bot is designed with a **separation of concerns** architecture where each module has a single, well-defined responsibility:
+This bot is designed with a **separation of concerns** architecture organized into **functional subfolders**, matching the structure of the `intelligence/` module. Each subfolder contains related components with a single, well-defined responsibility:
 
-- **Enhanced Bot** - Main orchestrator that coordinates all components
-- **Market Analyzer** - Market analysis, tick coordination, and decision logging
-- **Position Manager** - Position lifecycle management (open, update, close)
-- **Trade Executor** - Trade execution routing (TX Manager vs Legacy)
-- **Validation** - Data validation and integrity checks (NEW in v4.0)
-- **Trade Record Manager** - Database record creation and AI thought logging (NEW in v4.0)
-- **Arbitrage Executor** - Cross-DEX arbitrage detection and execution (Phase 2, NEW in v4.0)
-- **Price Service Integration** - Real-time price feeds from multiple sources
+### **Folder Structure:**
 
----
-
-## File Descriptions
-
-### `__init__.py`
-
-**Purpose:** Package initialization and public API exports
-
-This file defines what's available when someone imports from `paper_trading.bot`. It exports the main bot class and supporting components, making them easily accessible without needing to know the internal module structure. This follows Python's convention of using `__init__.py` to create a clean, public-facing API while hiding implementation details.
-
-**Key Exports:**
-- `EnhancedPaperTradingBot` - Main bot class
-- `RealPriceManager`, `create_price_manager` - Price feed management
-- `PositionManager` - Position operations
-- `TradeExecutor` - Trade execution
-- `MarketAnalyzer` - Market analysis
-
-**Usage Pattern:**
-```python
-from paper_trading.bot import EnhancedPaperTradingBot
-bot = EnhancedPaperTradingBot(account_name='MyBot', intel_level=5)
+```
+bot/
+├── enhanced_bot.py              # Main orchestrator
+├── README                       # This file
+├── __init__.py                  # Public API exports
+│
+├── buy/                         # Buy operations
+│   ├── market_analyzer.py       # Market analysis & tick coordination
+│   ├── token_analyzer.py        # Individual token analysis
+│   ├── market_helpers.py        # Market analysis utilities
+│   └── __init__.py
+│
+├── sell/                        # Sell operations
+│   ├── position_evaluator.py   # Intelligent sell decisions
+│   └── __init__.py
+│
+├── positions/                   # Position management
+│   ├── position_manager.py     # Position lifecycle management
+│   └── __init__.py
+│
+├── execution/                   # Trade execution
+│   ├── trade_executor.py       # Trade execution orchestration
+│   ├── trade_record_manager.py # Database record creation
+│   └── __init__.py
+│
+├── arbitrage/                   # Arbitrage operations
+│   ├── arbitrage_executor.py   # Arbitrage execution
+│   ├── arbitrage_handler.py    # Arbitrage coordination
+│   └── __init__.py
+│
+├── strategies/                  # Strategy operations
+│   ├── strategy_launcher.py    # Launch DCA/GRID/TWAP
+│   ├── strategy_selector.py    # Select optimal strategy
+│   └── __init__.py
+│
+└── shared/                      # Shared utilities
+    ├── price_service_integration.py  # Real-time price feeds
+    ├── validation.py            # Data validation
+    ├── professional_settings.py # Professional configuration
+    ├── metrics_logger.py        # Performance metrics & logging
+    └── __init__.py
 ```
 
 ---
 
-### `enhanced_bot.py`
+## Why This Structure?
+
+**Version 4.1.0 Reorganization Benefits:**
+
+✅ **Clear Organization** - Want to understand buying? Look in `buy/`. Want to understand selling? Look in `sell/`.  
+✅ **Consistent with `intelligence/`** - Matches the folder structure of the intelligence module  
+✅ **Easy Navigation** - Each folder has one clear purpose  
+✅ **Better Documentation** - Each subfolder has its own README.md  
+✅ **Improved Maintainability** - Easy to find and modify code  
+✅ **Logical Grouping** - Related files grouped together
+
+**This structure makes it easy for developers (especially those new to Python or with autism who prefer clear organization) to understand the codebase quickly.**
+
+---
+
+## Module Descriptions
+
+### **Root Level**
+
+#### `enhanced_bot.py`
 
 **Purpose:** Main bot orchestrator that coordinates all trading operations
 
-This is the entry point and heart of the bot system. It's responsible for initializing all components, managing the bot lifecycle (startup, run loop, shutdown), and coordinating between different managers. The bot handles signal management (Ctrl+C), sets up Django integration, and ensures graceful cleanup on exit. It implements the main run loop that triggers market ticks at regular intervals.
+This is the entry point and heart of the bot system. It's responsible for initializing all components, managing the bot lifecycle (startup, run loop, shutdown), and coordinating between different managers.
 
 **Key Class:** `EnhancedPaperTradingBot`
 
@@ -58,33 +90,33 @@ This is the entry point and heart of the bot system. It's responsible for initia
 - Set up optional components (Transaction Manager, Circuit Breakers)
 - Run main bot loop with configurable tick intervals
 - Handle graceful shutdown and cleanup
-- Provide command-line interface with argparse
 
-**Key Methods:**
-- `initialize()` - Sets up all components and validates configuration
-- `run()` - Main loop that calls market_analyzer.tick() repeatedly
-- `shutdown()` - Cleanup and final statistics logging
-- `_setup_signal_handlers()` - Catches Ctrl+C for graceful exit
+**Usage:**
+```python
+from paper_trading.bot import EnhancedPaperTradingBot
 
-**Integration Points:**
-- Uses `IntelSliderEngine` for decision-making (not the old `ai_engine.py`)
-- Coordinates `market_analyzer`, `position_manager`, `trade_executor`, and `price_manager`
-- Optional: `CircuitBreakerManager` for risk protection
-- Optional: Transaction Manager for gas optimization
+bot = EnhancedPaperTradingBot(
+    account_name='MyBot',
+    intel_level=5,
+    use_real_prices=True,
+    chain_id=84532
+)
 
-**Special Features:**
-- Windows UTF-8 console encoding fix
-- Dual logging (console + file with UTF-8 encoding)
-- Comprehensive startup banner showing all configuration
-- Real-time statistics display during shutdown
+if bot.initialize():
+    bot.run()
+```
 
 ---
 
-### `market_analyzer.py`
+### **buy/** - Buy Operations Module
+
+Contains all code related to **finding and executing BUY opportunities**.
+
+#### `buy/market_analyzer.py`
 
 **Purpose:** Market analysis engine and main bot loop coordinator
 
-This is the **brain** of the bot that runs on every tick. It analyzes market conditions, generates trading decisions using the Intelligence Engine, coordinates with all other managers, and logs AI thought processes. The analyzer is responsible for the complete decision-making pipeline: fetch prices → analyze tokens → make decisions → execute trades → update metrics. It also handles auto-close logic for positions that hit stop-loss or take-profit targets.
+The **brain** of the bot that runs on every tick. Analyzes market conditions, generates trading decisions, coordinates with all managers, and logs AI thought processes.
 
 **Key Class:** `MarketAnalyzer`
 
@@ -93,39 +125,113 @@ This is the **brain** of the bot that runs on every tick. It analyzes market con
 - Check circuit breaker status before trading
 - Update all token prices via price_manager
 - Analyze each token and generate trading decisions
-- Coordinate trade execution with trade_executor
-- Handle auto-close for risk management (stop-loss, take-profit, max hold time)
-- Update performance metrics periodically (every 20 ticks)
-- Log AI thought processes to database
+- Coordinate trade execution
+- Handle auto-close for risk management
+- Update performance metrics periodically
 - Send WebSocket status updates
 
 **Key Methods:**
 - `tick()` - Main coordination method called on each bot loop
-- `_analyze_token()` - Analyzes a single token and generates decision
-- `_check_auto_close_positions()` - Checks positions for auto-close triggers
-- `_update_performance_metrics()` - Updates session metrics in database
-- `_log_thought()` - Creates AI thought logs for transparency
-- `_send_bot_status_update()` - Sends WebSocket updates to UI
+- `_analyze_token()` - Analyzes a single token
+- `_check_auto_close_positions()` - Checks for auto-close triggers
+- `_update_performance_metrics()` - Updates session metrics
+- `_log_thought()` - Creates AI thought logs
+- `_send_bot_status_update()` - Sends WebSocket updates
 
-**Integration Points:**
-- Receives `IntelSliderEngine` for decision generation
-- Uses `price_manager` to fetch current prices
-- Calls `position_manager` to update position values
-- Calls `trade_executor` to execute trades
-- Updates `PaperPerformanceMetrics` model every 20 ticks
-- Creates `PaperAIThoughtLog` records for all decisions
-- Sends updates via `websocket_service`
+**Import:**
+```python
+from paper_trading.bot.buy import MarketAnalyzer
+```
 
-**Key Flow:**
-1. Check circuit breakers → 2. Update prices → 3. Check auto-close → 4. Analyze each token → 5. Execute trades → 6. Update metrics → 7. Send status
+#### `buy/token_analyzer.py`
+
+**Purpose:** Individual token analysis for buy opportunity detection
+
+Performs comprehensive analysis of individual tokens using REAL blockchain data (gas prices, liquidity, volatility) to identify trading opportunities.
+
+**Key Class:** `TokenAnalyzer`
+
+**Responsibilities:**
+- Analyze tokens using real blockchain data
+- Calculate initial trade sizes
+- Build comprehensive market context
+- Coordinate with intelligence engine
+- Delegate strategy selection
+- Track trade cooldowns
+
+**Import:**
+```python
+from paper_trading.bot.buy import TokenAnalyzer
+```
+
+#### `buy/market_helpers.py`
+
+**Purpose:** Utility functions for market analysis
+
+Provides helper utilities for trade cooldowns, auto-close checks, AI thought logging, JSON sanitization, and arbitrage statistics tracking.
+
+**Key Class:** `MarketHelpers`
+
+**Key Functions:**
+- Trade cooldown management
+- Auto-close position checks
+- AI thought logging
+- JSON sanitization
+- Confidence level calculation
+
+**Import:**
+```python
+from paper_trading.bot.buy.market_helpers import MarketHelpers
+```
 
 ---
 
-### `position_manager.py`
+### **sell/** - Sell Operations Module
+
+Contains all code related to **evaluating positions and executing SELL decisions**.
+
+#### `sell/position_evaluator.py`
+
+**Purpose:** Intelligent AI-driven position exit analysis
+
+Evaluates existing positions for smart exit opportunities using AI analysis, NOT hard thresholds. Makes intelligent decisions based on market conditions, sentiment changes, and arbitrage opportunities.
+
+**Key Class:** `PositionEvaluator`
+
+**Responsibilities:**
+- Evaluate open positions using AI analysis
+- Detect when market conditions turn bearish
+- Identify when risk increases beyond acceptable levels
+- Find better opportunities elsewhere (including arbitrage)
+- Monitor technical signal deterioration
+- Track position performance and hold time
+
+**Key Methods:**
+- `check_position_sells()` - Main evaluation loop
+- `_should_consider_selling()` - Determines if position warrants analysis
+- `_analyze_position_exit()` - Uses intelligence engine for exit timing
+- `_check_arbitrage_exit()` - Looks for profitable arbitrage exits
+
+**Two-Layer Sell System:**
+1. **Layer 1:** Intelligent AI-driven sell decisions (this module)
+2. **Layer 2:** Hard stop-loss/take-profit triggers (in market_helpers.py)
+
+**Import:**
+```python
+from paper_trading.bot.sell import PositionEvaluator
+```
+
+---
+
+### **positions/** - Position Management Module
+
+Contains all code related to **tracking and managing positions**.
+
+#### `positions/position_manager.py`
 
 **Purpose:** Complete position lifecycle management
 
-This manager handles everything related to positions: opening new positions, adding to existing ones, closing positions, and tracking profit/loss. It's responsible for maintaining the `PaperPosition` model in sync with current market prices and ensuring accurate P&L calculations. The manager implements auto-close logic for risk management and provides helper methods to query portfolio state.
+Handles everything related to positions: opening, closing, updating, tracking profit/loss, and maintaining the PaperPosition model in sync with current market prices.
 
 **Key Class:** `PositionManager`
 
@@ -134,804 +240,258 @@ This manager handles everything related to positions: opening new positions, add
 - Update position prices on every tick
 - Open new positions or add to existing ones
 - Close or reduce positions (full or partial sales)
-- Implement auto-close triggers (stop-loss, take-profit, max hold time)
+- Implement auto-close triggers
 - Calculate and update account-level P&L
-- Provide portfolio state queries (total value, position count, etc.)
+- Provide portfolio state queries
 
 **Key Methods:**
-- `load_positions()` - Loads open positions from database
-- `update_position_prices()` - Updates all positions with current prices
-- `check_auto_close_positions()` - Checks for auto-close conditions
-- `open_or_add_position()` - Opens new position or adds to existing
-- `close_or_reduce_position()` - Closes or partially sells position
-- `update_account_pnl()` - Updates account's total P&L
-- Helper methods: `get_position()`, `get_all_positions()`, `get_position_count()`, etc.
+- `load_positions()` - Loads open positions
+- `update_position_prices()` - Updates all positions
+- `check_auto_close_positions()` - Checks auto-close conditions
+- `open_or_add_position()` - Opens/adds to position
+- `close_or_reduce_position()` - Closes/reduces position
+- `update_account_pnl()` - Updates account P&L
 
 **Auto-Close Conditions:**
-- **Stop-Loss:** Position down by configured percentage (default: -5%)
-- **Take-Profit:** Position up by configured percentage (default: +10%)
-- **Max Hold Time:** Position held longer than max duration (default: 24 hours)
-
-**Integration Points:**
-- Updates `PaperPosition` model in database
-- Updates `PaperTradingAccount.total_pnl_usd` field
-- Used by `market_analyzer` for position updates
-- Used by `trade_executor` after trades
-- Provides state to `circuit_breaker_manager`
-
-**Design Pattern:**
-Uses an in-memory cache (`self.positions` dict) synced with database for performance, avoiding repeated queries during tick processing.
-
----
-
-### `price_service_integration.py`
-
-**Purpose:** Optimized real-time price feed management with bulk API fetching
-
-This module provides the critical price data for the entire bot. It's designed with **90% API call reduction** through bulk fetching - instead of making separate API calls for each token, it fetches all token prices in a single API call. The manager supports both real blockchain data (via CoinGecko, Alchemy, DEX) and mock price simulation for testing. It maintains price history for trend analysis and implements automatic fallback on API failures.
-
-**Key Class:** `RealPriceManager`
-
-**Responsibilities:**
-- Fetch real-time prices from multiple sources (CoinGecko, Alchemy, DEX)
-- **Optimize API usage** - 1 bulk call instead of N individual calls (90% reduction)
-- Maintain price history for each token (last 100 prices)
-- Support mock price simulation for testing
-- Handle API failures gracefully with fallbacks
-- Track API usage statistics
-
-**Key Methods:**
-- `initialize()` - Sets up price feed service
-- `update_all_prices()` - **BULK UPDATE** all token prices in 1 API call
-- `_update_token_price_mock()` - Simulates price movements for testing
-- Getters: `get_token_list()`, `get_token_price()`, `get_price_history()`, `get_statistics()`
-
-**Optimization Details:**
-- **Before:** 9 tokens × 1 call/token = 9 API calls per update
-- **After:** 9 tokens ÷ 1 bulk call = 1 API call per update
-- **Monthly Savings:** ~10,000 calls/day → ~1,100 calls/day (stays within free tier)
-
-**Token List (Base Sepolia):**
-Default list includes 9 tokens: WETH, USDC, DAI, WBTC, UNI, AAVE, LINK, MATIC, ARB with their contract addresses and CoinGecko IDs.
-
-**Integration Points:**
-- Uses `PriceFeedService` from `paper_trading.services.price_feed_service`
-- Supports async/sync operations (uses `async_to_sync` wrapper)
-- Called by `market_analyzer` on every tick
-- Provides prices to `position_manager` for P&L calculations
-
-**Configuration:**
-- `PRICE_UPDATE_INTERVAL` = 5 seconds (configurable)
-- `MOCK_PRICE_VOLATILITY` = ±5% per tick for simulation
-- Cache support via Django cache framework
-
-
----
-
-### `token_analyzer.py` ⭐ NEW in v4.0
-
-**Purpose:** Individual token analysis for buy opportunity detection
-
-This module performs comprehensive analysis of individual tokens to identify trading opportunities. It integrates real blockchain data (gas prices, liquidity, volatility) with the intelligence engine to make informed buy decisions. The analyzer is position-aware, meaning it uses different logic when analyzing tokens for initial positions versus adding to existing positions.
-
-**Key Class:** `TokenAnalyzer`
-
-**Responsibilities:**
-- Analyze tokens using REAL blockchain data from CompositeMarketAnalyzer
-- Calculate initial trade sizes based on account balance and risk tolerance
-- Build comprehensive market context (volatility, trend, liquidity, gas costs)
-- Coordinate with intelligence engine for trading decisions
-- Delegate strategy selection and execution to StrategySelector and StrategyLauncher
-- Track trade cooldowns to prevent overtrading
-- Monitor arbitrage opportunities during analysis
-
-**Key Methods:**
-- `analyze_token()` - Main analysis pipeline for a single token
-- `_build_market_context()` - Constructs market context with real blockchain data
-- `_calculate_initial_trade_size()` - Determines appropriate position size
-- Helper methods for arbitrage tracking and statistics
-
-**Analysis Pipeline:**
-1. Check if token is on cooldown (prevents overtrading same token)
-2. Fetch current price from price manager
-3. Build comprehensive market context with real data:
-   - Current gas price (REAL from network)
-   - Liquidity metrics (REAL from DEX)
-   - Volatility analysis (REAL from price history)
-   - Market trend detection
-4. Get intelligence engine decision (BUY/SELL/HOLD)
-5. If BUY decision, delegate to StrategySelector for strategy choice
-6. Pass to StrategyLauncher or TradeExecutor for execution
-
-**Integration Points:**
-- Uses `IntelSliderEngine` for trading decisions
-- Calls `CompositeMarketAnalyzer` for real blockchain data
-- Delegates to `StrategySelector` for strategy choice (SPOT/DCA/GRID/TWAP)
-- Delegates to `StrategyLauncher` for advanced strategy initialization
-- Delegates to `TradeExecutor` for SPOT trade execution
-- Tracks arbitrage via optional `ArbitrageDetector` and `DEXPriceComparator`
-
-**Real Data Integration:**
-This analyzer emphasizes REAL data over simulated data:
-- Gas prices: Fetched from actual network
-- Liquidity: Calculated from DEX reserves
-- Volatility: Computed from actual price history
-- Trend: Detected from price movements
-
----
-
-### `position_evaluator.py` ⭐ NEW in v4.0
-
-**Purpose:** Intelligent AI-driven position exit analysis
-
-This module evaluates existing positions for smart exit opportunities using AI analysis, NOT hard thresholds. It's fundamentally different from auto-close (stop-loss/take-profit) because it makes intelligent decisions based on market conditions, sentiment changes, and arbitrage opportunities.
-
-**Key Class:** `PositionEvaluator`
-
-**Responsibilities:**
-- Evaluate open positions using AI analysis for exit timing
-- Detect when market conditions turn bearish
-- Identify when risk increases beyond acceptable levels
-- Find better opportunities elsewhere (including arbitrage)
-- Monitor technical signal deterioration
-- Track position performance and hold time
-- Prioritize arbitrage exits when profitable
-
-**Key Methods:**
-- `check_position_sells()` - Main evaluation loop for all open positions
-- `_should_consider_selling()` - Determines if position warrants sell analysis
-- `_analyze_position_exit()` - Uses intelligence engine to evaluate exit timing
-- `_check_arbitrage_exit()` - Looks for profitable arbitrage exits
-- Helper methods for arbitrage statistics
-
-**Decision Logic:**
-The evaluator uses a prioritized decision flow:
-1. **First Priority:** Check for arbitrage opportunities (instant profit)
-2. **Second Priority:** AI sentiment analysis (market conditions turning negative)
-3. **Fallback:** Hold position if neither condition triggers
-
-**When Positions Are Evaluated:**
-- Position is profitable (unrealized_pnl_percent > 0%)
-- Position has been held long enough (> 5 minutes minimum)
-- Token has current market price available
-- NOT on sell cooldown
-
-**AI Sentiment Analysis:**
-Uses intelligence engine to analyze:
-- Market trend changes (bullish → bearish)
-- Risk level increases
-- Technical indicators deteriorating
-- Volume and liquidity changes
-- Overall confidence in exit timing
-
-**Arbitrage Priority:**
-If an arbitrage opportunity is found with sufficient profit:
-- Overrides AI sentiment (profit is profit!)
-- Executes immediately via trade_executor
-- Logs arbitrage statistics
-
-**Integration Points:**
-- Uses `IntelSliderEngine` for exit timing analysis
-- Optional `ArbitrageDetector` for cross-DEX opportunities
-- Optional `DEXPriceComparator` for multi-DEX price comparison
-- Calls `TradeExecutor` to execute sell trades
-- Updates position via `PositionManager`
-
-**Difference from Auto-Close:**
-- **Auto-Close:** Hard thresholds (e.g., -5% = stop-loss)
-- **Position Evaluator:** AI analysis (e.g., "sentiment turning bearish with 75% confidence")
-
----
-
-### `strategy_selector.py` ⭐ NEW in v4.0
-
-**Purpose:** Intelligent strategy selection based on market conditions
-
-This is the CORE intelligence of Phase 7B. The strategy selector analyzes market conditions (volatility, trend, liquidity, confidence) and automatically selects the optimal entry strategy for each token. This enables the bot to adapt its trading approach based on market conditions rather than using a one-size-fits-all approach.
-
-**Key Class:** `StrategySelector`
-
-**Responsibilities:**
-- Analyze market conditions for strategy appropriateness
-- Select optimal entry strategy (SPOT/DCA/GRID/TWAP)
-- Apply decision matrix based on thresholds
-- Respect strategy configuration preferences
-- Log strategy selection reasoning
-
-**Strategy Decision Matrix:**
-
-**Priority 1 - TWAP (Time-Weighted Average Price):**
-- Use when: Very large position + low liquidity
-- Reason: Minimize market impact on illiquid tokens
-- Conditions:
-  - Position size ≥ $500
-  - Liquidity < $100,000
-  - Confidence ≥ 70%
-  - Volatility moderate (0.01-0.20)
-
-**Priority 2 - GRID (Grid Trading):**
-- Use when: High volatility + range-bound market
-- Reason: Profit from price oscillations
-- Conditions:
-  - Volatility ≥ 0.15 (15%)
-  - Trend: Neutral/Sideways
-  - Liquidity ≥ $50,000
-  - Confidence ≥ 60%
-
-**Priority 3 - DCA (Dollar Cost Averaging):**
-- Use when: Strong bullish trend + high confidence
-- Reason: Build position gradually in trending market
-- Conditions:
-  - Trend: Bullish/Strong Bullish
-  - Confidence ≥ 70%
-  - Position size ≥ $100
-
-**Default - SPOT (Immediate Buy):**
-- Use when: Standard conditions
-- Reason: Fast execution, no special strategy needed
-- Conditions: None of the above criteria met
-
-**Key Method:**
-- `select_strategy()` - Main decision engine with prioritized checks
-
-**Configuration:**
-Respects strategy configuration preferences:
-- `enable_dca` - Enable/disable DCA strategy
-- `enable_grid` - Enable/disable GRID strategy
-- `enable_twap` - Enable/disable TWAP strategy
-
-**Integration Points:**
-- Called by `TokenAnalyzer` after intelligence engine decision
-- Uses `StrategySelectionThresholds` from constants
-- Uses `MarketContext` for market condition data
-- Uses `TradingDecision` for confidence and position size
-- Returns `StrategyType` constant for execution
-
-**Thresholds (from constants.py):**
-All threshold values are centralized in `paper_trading.constants.StrategySelectionThresholds`
-
----
-
-### `strategy_launcher.py` ⭐ NEW in v4.0
-
-**Purpose:** Initialize and launch advanced trading strategies
-
-This module handles the creation and configuration of DCA, GRID, and TWAP strategy runs. It calculates strategy-specific parameters (number of orders, time intervals, price levels) and coordinates with the strategy executor service to start the strategies.
-
-**Key Class:** `StrategyLauncher`
-
-**Responsibilities:**
-- Calculate DCA parameters (order count, interval, size)
-- Calculate GRID parameters (price levels, order count, range)
-- Calculate TWAP parameters (slices, timing, size)
-- Initialize strategy runs in database
-- Log strategy launch decisions
-- Handle strategy launch errors gracefully
-
-**DCA Strategy Launch:**
-- Calculates number of orders (2-10) based on position size
-- Determines time interval between orders (10-60 minutes)
-- Divides total amount across orders equally
-- Creates `PaperStrategyRun` record with DCA parameters
-
-**GRID Strategy Launch:**
-- Calculates price grid levels around current price
-- Determines number of grid orders (3-10)
-- Sets price range (±5-20% based on volatility)
-- Creates equal-sized orders at each price level
-- Creates `PaperStrategyRun` record with GRID parameters
-
-**TWAP Strategy Launch:**
-- Calculates number of time slices (5-20)
-- Determines execution interval (1-30 minutes)
-- Divides large order into equal slices
-- Creates `PaperStrategyRun` record with TWAP parameters
-
-**Key Methods:**
-- `start_dca_strategy()` - Initialize DCA strategy
-- `start_grid_strategy()` - Initialize GRID strategy  
-- `start_twap_strategy()` - Initialize TWAP strategy
-- `_calculate_dca_params()` - Compute DCA-specific parameters
-- `_calculate_grid_params()` - Compute GRID-specific parameters
-- `_calculate_twap_params()` - Compute TWAP-specific parameters
-
-**Parameter Calculation Logic:**
-
-**DCA:**
-- Small position ($100-500): 2-5 orders
-- Medium position ($500-1000): 5-8 orders
-- Large position ($1000+): 8-10 orders
-- Interval: Longer for larger positions
-
-**GRID:**
-- Low volatility: Narrow price range (±5-10%)
-- High volatility: Wide price range (±10-20%)
-- More orders for larger positions
-- Equal spacing between price levels
-
-**TWAP:**
-- Very large orders: More slices (10-20)
-- Smaller orders: Fewer slices (5-10)
-- Faster execution for smaller amounts
-- Slower execution to minimize impact
-
-**Integration Points:**
-- Called by `TokenAnalyzer` after strategy selection
-- Creates records via `PaperStrategyRun` model
-- Coordinates with strategy executor service (background)
-- Logs decisions via `IntelSliderEngine` (if available)
-
-**Error Handling:**
-- Graceful failure if strategy executor unavailable
-- Falls back to SPOT trades on parameter calculation errors
-- Comprehensive logging of launch attempts
-- Never crashes the main bot loop
-
----
-
-### `market_helpers.py` ⭐ NEW in v4.0
-
-**Purpose:** Utility functions for market analysis and trading operations
-
-This module provides helper utilities used across the trading system. It handles trade cooldowns (preventing overtrading), auto-close position checks (hard stop-loss/take-profit thresholds), AI thought logging, JSON sanitization, confidence calculations, and arbitrage statistics tracking.
-
-**Key Class:** `MarketHelpers`
-
-**Responsibilities:**
-- Manage trade cooldowns with separate timings for BUY vs SELL
-- Check positions for hard auto-close triggers (stop-loss, take-profit, max hold)
-- Log AI thought processes to database
-- Sanitize data for JSON serialization (handles Decimal, NaN, Infinity)
-- Calculate confidence levels from decision data
-- Track and report arbitrage statistics
-
-**Trade Cooldown Management:**
-Prevents overtrading the same token by enforcing cooldown periods:
-- **BUY Cooldown:** 5 minutes (moderate, prevents spam buying)
-- **SELL Cooldown:** 0 minutes (no restriction, let positions close quickly)
-
-**Auto-Close Position Checks:**
-Implements HARD thresholds for emergency position closure:
-- **Stop-Loss:** Position down by X% (default: -5%)
-- **Take-Profit:** Position up by Y% (default: +10%)
-- **Max Hold Time:** Position held longer than Z hours (default: 24h)
-
-These are different from intelligent sells (PositionEvaluator) - these are emergency exits.
-
-**AI Thought Logging:**
-Creates comprehensive AI thought logs for transparency:
-- Records action, reasoning, confidence
-- Includes metadata (token, price, position)
-- Supports different decision types (TRADE_DECISION, AUTO_CLOSE, etc.)
-- Links to account and session
-
-**JSON Sanitization:**
-Makes data safe for JSON serialization:
-- Converts Decimal to float
-- Replaces NaN with None
-- Replaces Infinity with None
-- Handles nested dictionaries recursively
-
-**Key Methods:**
-- `is_on_cooldown()` - Check if token is on trading cooldown
-- `set_cooldown()` - Set cooldown after trade
-- `should_auto_close_position()` - Check hard threshold triggers
-- `log_thought()` - Create AI thought log entry
-- `sanitize_for_json()` - Make data JSON-safe
-- `calculate_confidence_level()` - Convert numeric confidence to level string
-- `get_arbitrage_stats()` - Get arbitrage performance metrics
-
-**Cooldown Strategy:**
-- Different cooldowns for BUY vs SELL trades
-- SELL has no cooldown (emergency exits should be fast)
-- BUY has moderate cooldown (prevents overtrading)
-- Cooldowns stored by token symbol
-- Configurable via constructor parameters
-
-**Integration Points:**
-- Used by `MarketAnalyzer` for cooldown checks and auto-close
-- Used by `TokenAnalyzer` for cooldown management
-- Used by `PositionEvaluator` for cooldown checks
-- Creates `PaperAIThoughtLog` records
-- Uses `PaperStrategyConfiguration` for threshold values
-
----
-
-### `metrics_logger.py` ⭐ NEW in v4.0
-
-**Purpose:** AI thought logging, performance metrics, and WebSocket status updates
-
-This module handles transparency and user communication by logging all AI decisions, updating performance metrics in the database, and broadcasting real-time status updates via WebSocket to the dashboard. It ensures users can see what the bot is thinking and how it's performing.
-
-**Key Class:** `MetricsLogger`
-
-**Responsibilities:**
-- Log AI thought processes with full reasoning for transparency
-- Update performance metrics (win rate, P&L, trade counts)
-- Send WebSocket status updates to dashboard
-- Sanitize data for JSON serialization
-- Calculate confidence levels for display
-- Track tick counts and session duration
-
-**AI Thought Logging:**
-Creates detailed logs of every decision:
-- Action taken (BUY, SELL, HOLD, AUTO_CLOSE)
-- Complete reasoning from intelligence engine
-- Confidence level (numeric and categorical)
-- Decision type classification
-- Metadata (token, price, position, etc.)
-- Links to account, session, and position
-
-**Performance Metrics Updates:**
-Updates `PaperPerformanceMetrics` model every 20 ticks:
-- Total trades executed
-- Win/loss counts and rates
-- Average profit per trade
-- Total realized and unrealized P&L
-- Session duration
-- Trade distribution by type
-- Strategy usage statistics
-
-**WebSocket Status Updates:**
-Broadcasts real-time bot status to dashboard:
-- Bot running status
-- Current tick count
-- Account balance and P&L
-- Open positions with current values
-- Recent trades
-- Circuit breaker status
-- Transaction manager status
-- Price manager statistics
-- Arbitrage statistics
-
-**Key Methods:**
-- `log_thought()` - Create comprehensive AI thought log
-- `update_performance_metrics()` - Update session metrics in DB
-- `send_bot_status_update()` - Broadcast status via WebSocket
-- `_sanitize_for_json()` - Make data JSON-safe
-- `_calculate_confidence_level()` - Convert numeric to categorical
-
-**Status Update Contents:**
-The WebSocket payload includes:
+- Stop-Loss: Position down by configured % (default: -5%)
+- Take-Profit: Position up by configured % (default: +10%)
+- Max Hold Time: Position held too long (default: 24 hours)
+
+**Import:**
 ```python
-{
-    'status': 'running',
-    'tick_count': 42,
-    'account': {
-        'balance_usd': 1000.00,
-        'total_pnl_usd': 50.25,
-        'total_pnl_percent': 5.03
-    },
-    'positions': [...],
-    'recent_trades': [...],
-    'circuit_breaker': {...},
-    'tx_manager': {...},
-    'price_manager': {...},
-    'arbitrage': {...}
-}
-```
-
-**Update Frequency:**
-- Performance metrics: Every 20 ticks (~60 seconds at 3-second tick rate)
-- WebSocket status: Every tick (~3 seconds)
-- AI thought logs: On every decision
-
-**Integration Points:**
-- Uses `websocket_service` for broadcasting
-- Updates `PaperPerformanceMetrics` model
-- Creates `PaperAIThoughtLog` records
-- Receives data from all manager components
-- Formats data for dashboard consumption
-
-**Design Philosophy:**
-Transparency is critical for user trust. Users need to see:
-1. What the bot decided (log_thought)
-2. Why it decided that (reasoning in logs)
-3. How it's performing (metrics updates)
-4. What it's doing right now (WebSocket status)
-
----
-
-### `arbitrage_handler.py` ⭐ NEW in v4.0
-
-**Purpose:** Cross-DEX arbitrage detection and coordination
-
-This module manages the arbitrage detection infrastructure, including DEX price comparators and arbitrage opportunity analysis. It's responsible for initializing arbitrage components, updating gas prices for profit calculations, and tracking arbitrage performance statistics.
-
-**Key Class:** `ArbitrageHandler`
-
-**Responsibilities:**
-- Initialize DEX price comparator (multi-DEX price fetching)
-- Initialize arbitrage detector (opportunity analysis)
-- Update gas prices dynamically for accurate profit calculations
-- Track arbitrage opportunities found and executed
-- Provide arbitrage performance statistics
-- Clean up DEX connections on shutdown
-
-**Arbitrage Components:**
-
-**DEXPriceComparator:**
-- Fetches prices from multiple DEXs simultaneously
-- Compares prices across Uniswap V2, V3, SushiSwap, etc.
-- Returns best buy and sell prices
-- Handles API failures gracefully
-
-**ArbitrageDetector:**
-- Analyzes price spreads for profitability
-- Calculates net profit after gas costs
-- Applies minimum spread and profit thresholds
-- Provides opportunity scoring
-
-**Key Methods:**
-- `is_enabled()` - Check if arbitrage detection is active
-- `update_gas_price()` - Update gas price for profit calculations
-- `increment_opportunities_found()` - Track opportunities discovered
-- `increment_trades_executed()` - Track executed arbitrage trades
-- `get_arbitrage_stats()` - Get performance statistics
-- `cleanup()` - Clean up DEX connections on shutdown
-
-**Initialization Logic:**
-The handler initializes arbitrage detection only if:
-1. Arbitrage components are available (installed)
-2. Arbitrage is enabled in configuration
-3. Strategy config allows arbitrage (if present)
-
-**Configuration:**
-Uses configuration from `PaperStrategyConfiguration`:
-- `enable_arbitrage_detection` - Master enable/disable switch
-- Gas price thresholds
-- Minimum profit requirements
-- Minimum spread requirements
-
-**Statistics Tracking:**
-Maintains counts of:
-- Total opportunities found
-- Total trades executed
-- Success rate (executed / found)
-- Detector performance metrics
-- Comparator performance metrics
-
-**Integration Points:**
-- Used by `MarketAnalyzer` for initialization
-- Receives gas price updates from network
-- Provides stats to `MetricsLogger` for reporting
-- Coordinates with `ArbitrageExecutor` for trade execution
-
-**Gas Price Management:**
-Gas prices affect arbitrage profitability:
-- Higher gas = lower net profit
-- Handler updates detector dynamically
-- Ensures profit calculations stay current
-- Prevents unprofitable arbitrage attempts
-
----
-### `validation.py` ⭐ NEW in v4.0
-
-**Purpose:** Centralized validation logic to prevent database corruption
-
-This module contains all validation functions and constants that ensure data integrity throughout the trading system. It's **CRITICAL** for preventing wei values from being stored as USD amounts, catching NaN/Infinity values, and ensuring all decimal values are within realistic ranges.
-
-**Key Components:**
-- `ValidationLimits` - Centralized validation constants
-- `is_valid_decimal()` - Checks for NaN, Infinity, scientific notation
-- `validate_usd_amount()` - Validates USD amounts with min/max bounds
-- `validate_balance_update()` - Validates balance changes before applying
-- `decimal_to_str()` - Safe decimal-to-string conversion
-- `get_token_address_for_trade()` - Validates token addresses from constants
-
-**Validation Limits:**
-- Balance: $0 - $1,000,000
-- Trade Amount: Min $10, Max $100,000
-- Price: $0.00000001 - $1,000,000
-- Gas Cost: $0.01 - $1,000
-- Arbitrage Profit: $5 - $1,000
-- Daily Trades: Max 50 (configurable)
-- Consecutive Failures: Max 5
-
-**Why This Matters:**
-Without validation, the following can happen:
-- Wei values (e.g., 1000000000000000000) stored as USD amounts
-- NaN values causing database integrity errors
-- Infinity values from division by zero
-- Scientific notation causing decimal field overflow
-
-**Integration Points:**
-- Used by `trade_record_manager` before creating trade records
-- Used by `arbitrage_executor` to validate profits
-- Used by `trade_executor` for circuit breaker checks
-- Imports from `shared.constants` for token addresses
-
-**Usage Example:**
-```python
-from paper_trading.bot.validation import validate_usd_amount, ValidationLimits
-
-# Validate trade amount
-is_valid, error = validate_usd_amount(
-    amount=Decimal('100.00'),
-    field_name='trade_amount',
-    min_value=ValidationLimits.MIN_TRADE_USD,
-    max_value=ValidationLimits.MAX_TRADE_USD
-)
-
-if not is_valid:
-    logger.error(f"Validation failed: {error}")
-    return False
+from paper_trading.bot.positions import PositionManager
 ```
 
 ---
 
-### `trade_record_manager.py` ⭐ NEW in v4.0
+### **execution/** - Trade Execution Module
 
-**Purpose:** Database record creation for trades and AI thought logs
+Contains all code related to **executing trades and recording them**.
 
-This module handles all database write operations for trade records and AI transparency logs. It was extracted from `trade_executor.py` to improve maintainability and separate concerns. Every monetary value passes through validation before being written to the database.
-
-**Key Functions:**
-- `create_paper_trade_record()` - Creates complete paper trade record
-- `create_ai_thought_log()` - Creates AI decision transparency log
-
-**Responsibilities:**
-- Validate all monetary values before database write
-- Calculate wei amounts from USD values
-- Simulate realistic gas costs
-- Update account balance with validation
-- Update account statistics (total trades, win/loss counts)
-- Create AI thought logs using factory functions
-- Send WebSocket notifications for real-time UI updates
-
-**Trade Record Creation Flow:**
-1. Validate trade amount and price
-2. Check for zero/near-zero prices (division by zero prevention)
-3. Determine token addresses based on trade direction
-4. Simulate realistic gas costs
-5. Calculate wei amounts for both tokens
-6. Check for NaN/Infinity in all calculated values
-7. Create PaperTrade database record
-8. Validate and apply balance update
-9. Update account statistics
-10. Create AI thought log
-11. Send WebSocket notification
-
-**Integration Points:**
-- Called by `trade_executor` for both TX Manager and Legacy paths
-- Uses `validation` module for all checks
-- Uses `paper_trading.factories` for AI thought log creation
-- Sends updates via `websocket_service`
-- Updates `PaperTrade`, `PaperAIThoughtLog`, and `PaperTradingAccount` models
-
-**Gas Cost Simulation:**
-- Gas units: 21,000 - 500,000 (random within realistic range)
-- Gas price: 1-50 Gwei (random within realistic range)
-- Gas cost: Calculated in USD using approximate ETH price
-- Higher gas for arbitrage trades (300K-400K units)
-
----
-
-### `arbitrage_executor.py` ⭐ NEW in v4.0 (Phase 2)
-
-**Purpose:** Cross-DEX arbitrage detection and execution
-
-This module enables the bot to detect and execute arbitrage opportunities by comparing prices across multiple DEXs after regular buy trades. It's part of Phase 2 development and provides additional profit opportunities through price discrepancies.
-
-**Key Functions:**
-- `check_arbitrage_after_buy()` - Detects arbitrage opportunities after BUY trades
-- `execute_arbitrage_trade()` - Executes profitable arbitrage trades
-
-**Responsibilities:**
-- Initialize arbitrage components (detector, price comparator) lazily
-- Fetch prices from multiple DEXs (Uniswap, SushiSwap, etc.)
-- Validate price data to filter out testnet bad data
-- Detect arbitrage opportunities with profit calculations
-- Execute arbitrage trades when profit exceeds minimum threshold
-- Track arbitrage statistics (found vs executed)
-- Cap maximum profit to prevent database corruption from bad data
-
-**Arbitrage Detection Flow:**
-1. After BUY trade, fetch prices from all DEXs
-2. Filter out invalid prices (zero, near-zero, out of bounds)
-3. Calculate potential arbitrage profit
-4. Check if profit exceeds minimum threshold ($5)
-5. Cap profit at maximum ($1,000) to prevent bad data issues
-6. Execute arbitrage trade (sell on higher-priced DEX)
-7. Update account balance with profit
-8. Create trade record with arbitrage metadata
-9. Track statistics
-
-**Integration Points:**
-- Called by `trade_executor` after successful BUY trades
-- Uses `validation` module for profit validation
-- Uses `ArbitrageDetector` from `paper_trading.intelligence.strategies`
-- Uses `DEXPriceComparator` from `paper_trading.intelligence.dex`
-- Creates `PaperTrade` records with arbitrage metadata
-
-**Arbitrage Thresholds:**
-- Minimum profit: $5 (prevents tiny profit trades)
-- Maximum profit: $1,000 (prevents bad data corruption)
-- Minimum DEXs required: 2 (need price comparison)
-
-**Statistics Tracked:**
-- `arbitrage_opportunities_found` - Total opportunities detected
-- `arbitrage_opportunities_executed` - Total trades executed
-- Success rate calculated from these metrics
-
-**Example Arbitrage Flow:**
-```
-1. Bot buys WETH on Uniswap @ $2,500
-2. Arbitrage check finds SushiSwap price @ $2,525
-3. Profit potential: $25 (exceeds $5 minimum)
-4. Bot executes sell on SushiSwap @ $2,525
-5. Account balance increases by $25
-6. Trade recorded with arbitrage=True metadata
-```
-
----
-
-### `trade_executor.py` 🔄 REFACTORED in v4.0
+#### `execution/trade_executor.py`
 
 **Purpose:** Trade execution orchestration and routing
 
-This is the **execution layer** that turns trading decisions into actual trades. It was refactored in v4.0 to extract validation, record creation, and arbitrage logic into separate modules, making it more focused and maintainable (~580 lines vs previous 1,400 lines).
+The **execution layer** that turns trading decisions into actual trades. Routes to Transaction Manager (gas optimized) or Legacy execution.
 
 **Key Class:** `TradeExecutor`
 
 **Responsibilities:**
-- Execute paper trades based on Intelligence Engine decisions
-- Route to Transaction Manager (gas optimized) or Legacy execution
-- Validate circuit breaker status before trades
-- Coordinate with trade_record_manager for database writes
-- Coordinate with arbitrage_executor for profit opportunities
-- Track trade statistics (consecutive failures, daily trades)
-- Update positions via position_manager after trades
+- Execute paper trades based on decisions
+- Route to Transaction Manager or Legacy execution
+- Validate circuit breaker status
+- Coordinate with trade_record_manager
+- Coordinate with arbitrage_executor
+- Track trade statistics
+- Update positions after trades
 
 **Key Methods:**
-- `execute_trade()` - Main execution method with routing logic
-- `reset_circuit_breaker()` - Manual circuit breaker reset
-- `_execute_trade_with_tx_manager()` - Routes through Transaction Manager
-- `_execute_trade_legacy()` - Legacy execution without TX Manager
-- `_update_positions_after_trade()` - Updates position manager
-- `_can_trade()` - Circuit breaker and limit checks
-- `_get_portfolio_state()` - Gets portfolio state for circuit breaker
+- `execute_trade()` - Main execution method
+- `reset_circuit_breaker()` - Manual reset
+- `_execute_trade_with_tx_manager()` - TX Manager route
+- `_execute_trade_legacy()` - Legacy route
+- `_can_trade()` - Circuit breaker checks
 
-**Transaction Manager Integration:**
-When enabled, the executor routes trades through the Transaction Manager which provides:
-- Gas optimization (target: 23.1% savings)
-- Batch transaction handling
-- MEV protection (optional)
-- Real-time transaction status tracking
-- Failed transaction retry logic
-
-**Circuit Breaker Checks:**
-- Portfolio loss limits
-- Daily loss limits
-- Consecutive failure limits (max: 5)
-- Daily trade limits (default: 50)
-- Minimum balance requirements ($100 for trades, $50 for arbitrage)
-
-**Integration Points:**
-- Uses `validation` module for all validation checks
-- Calls `trade_record_manager` to create database records
-- Calls `arbitrage_executor` after BUY trades (if enabled)
-- Calls `position_manager` to update positions
-- Optional: `CircuitBreakerManager` for risk checks
-- Optional: Transaction Manager for gas optimization
-
-**Statistics Tracked:**
-- Total gas savings (Decimal)
-- Trades executed via TX Manager (count)
-- Consecutive failures (count)
-- Daily trades (count with date tracking)
-- Arbitrage opportunities (found and executed)
-
-**Execution Flow:**
+**Import:**
+```python
+from paper_trading.bot.execution import TradeExecutor
 ```
-1. execute_trade() called with decision
-2. Check circuit breaker (_can_trade)
-3. Route to TX Manager or Legacy
-4. Create trade record (via trade_record_manager)
-5. Update positions (via position_manager)
-6. Check arbitrage (via arbitrage_executor)
-7. Update failure tracking
-8. Return success/failure
+
+#### `execution/trade_record_manager.py`
+
+**Purpose:** Database record creation for trades and AI thought logs
+
+Handles all database write operations for trade records and AI transparency logs. Every monetary value passes through validation before being written.
+
+**Key Functions:**
+- `create_paper_trade_record()` - Creates trade record
+- `create_ai_thought_log()` - Creates AI decision log
+
+**Trade Record Creation Flow:**
+1. Validate all monetary values
+2. Check for zero/near-zero prices
+3. Determine token addresses
+4. Simulate realistic gas costs
+5. Calculate wei amounts
+6. Create database record
+7. Update account balance
+8. Create AI thought log
+9. Send WebSocket notification
+
+**Import:**
+```python
+from paper_trading.bot.execution import create_paper_trade_record, create_ai_thought_log
+```
+
+---
+
+### **arbitrage/** - Arbitrage Operations Module
+
+Contains all code related to **detecting and executing arbitrage opportunities**.
+
+#### `arbitrage/arbitrage_executor.py`
+
+**Purpose:** Cross-DEX arbitrage detection and execution
+
+Enables the bot to detect and execute arbitrage opportunities by comparing prices across multiple DEXs after regular buy trades.
+
+**Key Functions:**
+- `check_arbitrage_after_buy()` - Detects arbitrage after BUY trades
+- `execute_arbitrage_trade()` - Executes profitable arbitrage
+
+**Arbitrage Detection Flow:**
+1. After BUY trade, fetch prices from all DEXs
+2. Filter out invalid prices
+3. Calculate potential profit
+4. Check if profit exceeds minimum threshold ($5)
+5. Cap profit at maximum ($1,000)
+6. Execute arbitrage trade
+7. Update account balance
+8. Create trade record with arbitrage metadata
+
+**Import:**
+```python
+from paper_trading.bot.arbitrage import check_arbitrage_after_buy
+```
+
+#### `arbitrage/arbitrage_handler.py`
+
+**Purpose:** Cross-DEX arbitrage coordination
+
+Manages the arbitrage detection infrastructure, including DEX price comparators and opportunity analysis.
+
+**Key Class:** `ArbitrageHandler`
+
+**Responsibilities:**
+- Initialize DEX price comparator
+- Initialize arbitrage detector
+- Update gas prices for profit calculations
+- Track arbitrage statistics
+- Clean up DEX connections
+
+**Import:**
+```python
+from paper_trading.bot.arbitrage import ArbitrageHandler
+```
+
+---
+
+### **strategies/** - Strategy Operations Module
+
+Contains all code related to **selecting and launching trading strategies**.
+
+#### `strategies/strategy_selector.py`
+
+**Purpose:** Intelligent strategy selection based on market conditions
+
+The CORE intelligence of Phase 7B. Analyzes market conditions and automatically selects the optimal entry strategy (SPOT/DCA/GRID/TWAP) for each token.
+
+**Key Class:** `StrategySelector`
+
+**Strategy Decision Matrix:**
+- **TWAP:** Very large position + low liquidity
+- **GRID:** High volatility + range-bound market
+- **DCA:** Strong bullish trend + high confidence
+- **SPOT:** Standard conditions (default)
+
+**Import:**
+```python
+from paper_trading.bot.strategies import StrategySelector, select_optimal_strategy
+```
+
+#### `strategies/strategy_launcher.py`
+
+**Purpose:** Initialize and launch advanced trading strategies
+
+Handles creation and configuration of DCA, GRID, and TWAP strategy runs. Calculates strategy-specific parameters and coordinates with the strategy executor service.
+
+**Key Class:** `StrategyLauncher`
+
+**Key Methods:**
+- `start_dca_strategy()` - Initialize DCA
+- `start_grid_strategy()` - Initialize GRID
+- `start_twap_strategy()` - Initialize TWAP
+
+**Import:**
+```python
+from paper_trading.bot.strategies import StrategyLauncher
+```
+
+---
+
+### **shared/** - Shared Utilities Module
+
+Contains **shared utilities** used across multiple bot components.
+
+#### `shared/price_service_integration.py`
+
+**Purpose:** Optimized real-time price feed management
+
+Provides critical price data for the entire bot with 90% API call reduction through bulk fetching.
+
+**Key Class:** `RealPriceManager`
+
+**Optimization:**
+- **Before:** 9 tokens × 1 call/token = 9 API calls per update
+- **After:** 9 tokens ÷ 1 bulk call = 1 API call per update
+- **Monthly Savings:** ~10,000 calls/day → ~1,100 calls/day
+
+**Import:**
+```python
+from paper_trading.bot.shared import RealPriceManager, create_price_manager
+```
+
+#### `shared/validation.py`
+
+**Purpose:** Centralized validation logic to prevent database corruption
+
+Contains all validation functions to ensure data integrity. **CRITICAL** for preventing wei values from being stored as USD amounts.
+
+**Key Components:**
+- `ValidationLimits` - Centralized validation constants
+- `is_valid_decimal()` - Checks for NaN, Infinity
+- `validate_usd_amount()` - Validates USD amounts
+- `validate_balance_update()` - Validates balance changes
+
+**Import:**
+```python
+from paper_trading.bot.shared import (
+    validate_usd_amount,
+    validate_quantity,
+    validate_token_address,
+    ValidationResult
+)
+```
+
+#### `shared/professional_settings.py`
+
+**Purpose:** Professional trading settings and configurations
+
+Loads professional trading parameters, applies risk management rules, and manages gas settings.
+
+**Import:**
+```python
+from paper_trading.bot.shared import ProfessionalSettings
+```
+
+#### `shared/metrics_logger.py`
+
+**Purpose:** AI thought logging, performance metrics, and WebSocket updates
+
+Handles transparency and user communication by logging all AI decisions, updating performance metrics, and broadcasting real-time status updates.
+
+**Key Class:** `MetricsLogger`
+
+**Responsibilities:**
+- Log AI thought processes with full reasoning
+- Update performance metrics
+- Send WebSocket status updates
+- Sanitize data for JSON
+- Calculate confidence levels
+
+**Import:**
+```python
+from paper_trading.bot.shared import MetricsLogger
 ```
 
 ---
@@ -945,149 +505,136 @@ When enabled, the executor routes trades through the Transaction Manager which p
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
-        ┌────────────────────────────────────┐
-        │      MARKET ANALYZER (tick)        │
-        │    - Coordinates everything        │
-        │    - Main bot loop logic           │
-        └─────┬──────────┬──────────┬────────┘
+        ┌─────────────────────────────────────────┐
+        │      buy/market_analyzer.py (tick)      │
+        │         - Coordinates everything         │
+        │         - Main bot loop logic            │
+        └─────┬──────────┬──────────┬──────────────┘
               │          │          │
-    ┌─────────▼──┐  ┌───▼─────┐  ┌▼──────────────┐
-    │   PRICE    │  │POSITION │  │     TRADE     │
-    │  MANAGER   │  │MANAGER  │  │   EXECUTOR    │
-    │            │  │         │  │               │
-    │ - Fetches  │  │- Opens  │  │- Routes TX    │
-    │   prices   │  │- Updates│  │- Orchestrates │
-    │ - History  │  │- Closes │  │- Circuit Brks │
-    └────────────┘  └─────────┘  └───┬───────────┘
-                                     │
-              ┌──────────────────────┴────────────────┐
-              │                                       │
-    ┌─────────▼──────────┐  ┌───────────▼────────┐  │
-    │   TRADE RECORD     │  │    ARBITRAGE       │  │
-    │     MANAGER        │  │    EXECUTOR        │  │
-    │                    │  │                    │  │
-    │ - Creates trades   │  │- Detects arb       │  │
-    │ - AI thought logs  │  │- Executes arb      │  │
-    │ - Balance updates  │  │- Validates profit  │  │
-    └─────────┬──────────┘  └────────────────────┘  │
-              │                                      │
-              └──────────────────┬───────────────────┘
-                                 │
-                        ┌────────▼─────────┐
-                        │   VALIDATION     │
-                        │                  │
-                        │ - USD amounts    │
-                        │ - Balance updates│
-                        │ - Decimal checks │
-                        └──────────────────┘
+    ┌─────────▼──┐  ┌───▼──────┐  ┌▼────────────────┐
+    │ shared/    │  │positions/│  │ execution/      │
+    │ price_     │  │position_ │  │ trade_          │
+    │ service_   │  │manager   │  │ executor        │
+    │ integration│  │          │  │                 │
+    └────────────┘  └──────────┘  └───┬─────────────┘
+                                      │
+          ┌───────────────────────────┴─────────────────┐
+          │                                             │
+    ┌─────▼──────────┐  ┌────────────▼────────┐  ┌────▼─────────┐
+    │ execution/     │  │ arbitrage/          │  │ strategies/  │
+    │ trade_record_  │  │ arbitrage_          │  │ strategy_    │
+    │ manager        │  │ executor            │  │ selector     │
+    └─────┬──────────┘  └─────────────────────┘  └──────────────┘
+          │
+    ┌─────▼──────────┐
+    │ shared/        │
+    │ validation     │
+    └────────────────┘
 ```
 
-**Tick Flow (v4.0):**
-1. Bot calls `market_analyzer.tick()`
-2. Analyzer updates prices via `price_manager`
-3. Analyzer updates position values via `position_manager`
-4. Analyzer checks auto-close conditions
-5. Analyzer analyzes each token with Intelligence Engine
-6. Analyzer calls `trade_executor.execute_trade()`
-7. Executor validates via `validation` module
-8. Executor creates record via `trade_record_manager`
-9. Trade record manager validates all values
-10. Trade record manager creates database records
-11. Executor updates positions via `position_manager`
-12. Executor checks arbitrage via `arbitrage_executor` (if BUY)
-13. Arbitrage executor validates profit and creates trade
-14. Analyzer updates performance metrics every 20 ticks
+**Tick Flow (v4.1):**
+1. Bot calls `buy/market_analyzer.tick()`
+2. Analyzer updates prices via `shared/price_service_integration`
+3. Analyzer updates position values via `positions/position_manager`
+4. Analyzer checks auto-close via `buy/market_helpers`
+5. Analyzer analyzes tokens via `buy/token_analyzer`
+6. Token analyzer uses intelligence engine for decisions
+7. Token analyzer delegates to `strategies/strategy_selector`
+8. Analyzer calls `execution/trade_executor.execute_trade()`
+9. Executor validates via `shared/validation`
+10. Executor creates record via `execution/trade_record_manager`
+11. Trade record manager validates all values
+12. Executor updates positions via `positions/position_manager`
+13. Executor checks arbitrage via `arbitrage/arbitrage_executor`
+14. Analyzer updates metrics via `shared/metrics_logger`
+
+---
+
+## Public API (from `bot/__init__.py`)
+
+The main `bot/__init__.py` exports all public classes and functions, allowing clean imports:
+
+```python
+# Main bot
+from paper_trading.bot import EnhancedPaperTradingBot
+
+# Buy operations
+from paper_trading.bot import MarketAnalyzer, TokenAnalyzer
+
+# Sell operations
+from paper_trading.bot import PositionEvaluator
+
+# Position management
+from paper_trading.bot import PositionManager
+
+# Trade execution
+from paper_trading.bot import TradeExecutor, create_paper_trade_record, create_ai_thought_log
+
+# Arbitrage
+from paper_trading.bot import ArbitrageExecutor, check_arbitrage_after_buy
+
+# Strategies
+from paper_trading.bot import select_optimal_strategy, StrategySelector, StrategyLauncher
+
+# Shared utilities
+from paper_trading.bot import (
+    RealPriceManager,
+    create_price_manager,
+    validate_usd_amount,
+    validate_quantity,
+    ProfessionalSettings,
+    MetricsLogger
+)
+```
 
 ---
 
 ## Key Design Patterns
 
-### 1. **Separation of Concerns** ⭐ Enhanced in v4.0
-Each manager has a single, well-defined responsibility. The v4.0 refactoring took this further by extracting validation, record creation, and arbitrage logic into their own modules.
+### 1. **Functional Organization** ⭐ NEW in v4.1
+Files organized into functional subfolders matching the intelligence module structure:
+- `buy/` - Everything about buying
+- `sell/` - Everything about selling
+- `positions/` - Everything about position management
+- `execution/` - Everything about trade execution
+- `arbitrage/` - Everything about arbitrage
+- `strategies/` - Everything about strategy selection
+- `shared/` - Shared utilities
 
 **Benefits:**
-- Easier testing (can test validation without trade execution)
-- Better maintainability (know exactly where to fix bugs)
-- Clearer code (each file under 800 lines)
-- Reusability (validation used by multiple modules)
+- Clear organization matching project patterns
+- Easy to find code (want to understand selling? Check sell/ folder)
+- Better for developers who prefer structured organization
+- Consistent with intelligence/ module structure
 
-### 2. **Dependency Injection**
-Managers are passed to `market_analyzer.tick()` rather than being tightly coupled. This allows for easy testing and component swapping.
+### 2. **Separation of Concerns**
+Each module has a single, well-defined responsibility (from v4.0).
 
-### 3. **Optional Components**
-Transaction Manager, Circuit Breakers, and Arbitrage are optional, with graceful fallback if unavailable:
-```python
-try:
-    from trading.services.transaction_manager import get_transaction_manager
-    TRANSACTION_MANAGER_AVAILABLE = True
-except ImportError:
-    TRANSACTION_MANAGER_AVAILABLE = False
-```
+### 3. **Dependency Injection**
+Managers passed to functions rather than tightly coupled.
 
-### 4. **Synchronous Wrapper Pattern**
-Price manager is async internally but provides sync wrappers for compatibility:
-```python
-def create_price_manager(...):
-    manager = RealPriceManager(...)
-    async_to_sync(manager.initialize)()
-    return manager
-```
+### 4. **Optional Components**
+Transaction Manager, Circuit Breakers, and Arbitrage are optional with graceful fallback.
 
-### 5. **In-Memory Caching**
-Position manager caches positions in memory (`self.positions` dict) and syncs with database, avoiding repeated queries during tick processing.
+### 5. **Validation-First Pattern**
+All monetary values pass through validation before database operations.
 
-### 6. **Validation-First Pattern** ⭐ NEW in v4.0
-All monetary values pass through validation before database operations:
-```python
-# Always validate before database write
-is_valid, error = validate_usd_amount(amount, 'field_name')
-if not is_valid:
-    logger.error(error)
-    return None
-# Now safe to proceed
-```
-
-### 7. **Function Delegation** ⭐ NEW in v4.0
-Trade executor delegates to specialized modules rather than handling everything:
-```python
-# Instead of self._create_paper_trade_record()
-trade = create_paper_trade_record(executor=self, ...)
-
-# Instead of self._check_arbitrage_after_buy()
-check_arbitrage_after_buy(executor=self, ...)
-```
+### 6. **In-Memory Caching**
+Position manager caches positions in memory to avoid repeated database queries.
 
 ---
 
 ## Database Models Used
 
 - **PaperTradingAccount** - Account balance and totals
-- **PaperTradingSession** - Session tracking with metadata
+- **PaperTradingSession** - Session tracking
 - **PaperPosition** - Open/closed positions with P&L
 - **PaperTrade** - Individual trade records
 - **PaperAIThoughtLog** - AI decision transparency logs
 - **PaperPerformanceMetrics** - Session performance stats
 - **PaperStrategyConfiguration** - Strategy parameters
-
----
-
-## External Dependencies
-
-### Required:
-- Django ORM and timezone utilities
-- `paper_trading.intelligence.intel_slider` - IntelSliderEngine for decisions
-- `paper_trading.services.websocket_service` - Real-time UI updates
-- `paper_trading.services.price_feed_service` - Price data fetching
-- `paper_trading.factories` - Type-safe model creation
-- `paper_trading.defaults` - Default configuration values
-- `shared.constants` - Centralized token addresses
-
-### Optional:
-- `trading.services.transaction_manager` - Gas optimization (23.1% savings)
-- `engine.portfolio.CircuitBreakerManager` - Risk protection
-- `trading.services.dex_router_service` - DEX routing utilities
-- `paper_trading.intelligence.strategies.arbitrage_engine` - Arbitrage detection
-- `paper_trading.intelligence.dex.dex_price_comparator` - Multi-DEX price comparison
+- **StrategyRun** - Strategy execution tracking
+- **StrategyOrder** - Individual strategy orders
 
 ---
 
@@ -1095,384 +642,137 @@ check_arbitrage_after_buy(executor=self, ...)
 
 ### Bot Parameters:
 - `account_name` - Paper trading account identifier
-- `intel_level` - Intelligence level 1-10 (controls risk tolerance, position sizing)
+- `intel_level` - Intelligence level 1-10
 - `use_real_prices` - True for blockchain data, False for simulation
 - `chain_id` - Blockchain network (84532 = Base Sepolia)
-- `tick_interval` - Seconds between market ticks (default: 15)
+- `tick_interval` - Seconds between ticks (default: 15)
 
-### Strategy Configuration (from `PaperStrategyConfiguration`):
-- `max_position_size_percent` - Max % of account per position (default: 25%)
+### Strategy Configuration:
+- `max_position_size_percent` - Max % per position (default: 25%)
 - `stop_loss_percent` - Auto-close at loss % (default: -5%)
 - `take_profit_percent` - Auto-close at profit % (default: +10%)
 - `max_daily_trades` - Daily trade limit (default: 50)
-- `confidence_threshold` - Minimum confidence to trade (default: 40%)
+- `confidence_threshold` - Minimum confidence (default: 40%)
 
-### Validation Limits (from `ValidationLimits`):
-- `MIN_TRADE_USD` - Minimum trade amount ($10)
-- `MAX_TRADE_USD` - Maximum trade amount ($100,000)
-- `MIN_ARBITRAGE_PROFIT_USD` - Minimum arbitrage profit ($5)
-- `MAX_ARBITRAGE_PROFIT_USD` - Maximum arbitrage profit ($1,000)
-- `MAX_DAILY_TRADES` - Maximum trades per day (50)
-- `MAX_CONSECUTIVE_FAILURES` - Maximum failures before blocking (5)
-
----
-
-## Logging & Observability
-
-### Log Levels:
-- **INFO** - Trade executions, performance updates, tick summaries
-- **DEBUG** - Price updates, position changes, decision details
-- **WARNING** - Circuit breaker triggers, API failures, trade blocks
-- **ERROR** - Execution failures, database errors, critical issues
-
-### Log Destinations:
-- Console (stdout) - Real-time monitoring
-- File (`paper_trading_bot.log`) - Persistent storage with UTF-8 encoding
-
-### WebSocket Updates:
-- Trade notifications (real-time)
-- Performance metrics (after trades)
-- Portfolio updates (every tick)
-- Bot status (every tick)
-
-### Log Prefixes (for easy filtering):
-- `[TRADE EXECUTOR]` - Trade execution operations
-- `[TRADE RECORD]` - Database record creation
-- `[ARBITRAGE]` - Arbitrage detection and execution
-- `[VALIDATION]` - Validation checks
-- `[CB]` - Circuit breaker operations
-- `[TX MANAGER]` - Transaction Manager operations
-- `[LEGACY]` - Legacy execution path
-- `[AI THOUGHT]` - AI thought logging
+### Validation Limits:
+- `MIN_TRADE_USD` - Minimum trade ($10)
+- `MAX_TRADE_USD` - Maximum trade ($100,000)
+- `MIN_ARBITRAGE_PROFIT_USD` - Minimum arbitrage ($5)
+- `MAX_ARBITRAGE_PROFIT_USD` - Maximum arbitrage ($1,000)
+- `MAX_DAILY_TRADES` - Maximum per day (50)
+- `MAX_CONSECUTIVE_FAILURES` - Maximum failures (5)
 
 ---
 
 ## Testing Recommendations
 
-### Unit Testing:
-- **validation.py**: Test all validation functions with edge cases
-  - NaN, Infinity, zero values
-  - Wei values mistakenly used as USD
-  - Min/max boundary conditions
-- **trade_record_manager.py**: Test database record creation
-  - Mock database operations
-  - Test balance update validation
-  - Test WebSocket notification failures
-- **arbitrage_executor.py**: Test arbitrage detection
-  - Mock price comparisons
-  - Test profit validation and capping
-  - Test minimum threshold enforcement
-- **trade_executor.py**: Test execution routing
-  - Mock record manager and arbitrage executor
-  - Test circuit breaker integration
-  - Test failure tracking
-- **Other managers**: Test each manager class independently
-  - Mock dependencies (Intelligence Engine, WebSocket service)
-  - Test edge cases (zero balance, no positions, API failures)
+### Unit Testing by Module:
+- **shared/validation.py**: Test all validation functions with edge cases
+- **execution/trade_record_manager.py**: Test database record creation
+- **arbitrage/arbitrage_executor.py**: Test arbitrage detection
+- **execution/trade_executor.py**: Test execution routing
+- **positions/position_manager.py**: Test position lifecycle
+- **buy/market_analyzer.py**: Test tick coordination
+- **sell/position_evaluator.py**: Test intelligent sell decisions
 
 ### Integration Testing:
 - Test full tick cycle with all components
 - Test Transaction Manager routing
 - Test Circuit Breaker triggers
-- Test auto-close conditions
 - Test arbitrage flow end-to-end
-- Test validation preventing corruption
-
-### Simulation Testing:
-- Use `use_real_prices=False` for deterministic testing
-- Test with mock price volatility
-- Verify P&L calculations
-- Test with various intelligence levels
-
----
-
-## Performance Considerations
-
-### Optimization Strategies:
-1. **Bulk API Fetching** - 90% reduction in price API calls
-2. **In-Memory Position Cache** - Avoids database queries on every tick
-3. **Periodic Metrics Updates** - Only every 20 ticks, not every tick
-4. **Async Price Fetching** - Non-blocking I/O for price updates
-5. **Database Field Updates** - Use `update_fields` to minimize writes
-6. **Validation Module** - Prevents expensive database rollbacks from bad data
-7. **Lazy Initialization** - Arbitrage components only created when needed
-
-### Bottlenecks to Watch:
-- Price API rate limits (stay within free tier)
-- Database writes on high-frequency trading
-- WebSocket message queue buildup
-- Transaction Manager pending TX accumulation
-- Validation overhead (minimal, but worth monitoring)
-
-### File Size Guidelines:
-All files kept under 800 lines for maintainability:
-- `validation.py` - ~350 lines ✅
-- `trade_record_manager.py` - ~450 lines ✅
-- `arbitrage_executor.py` - ~290 lines ✅
-- `trade_executor.py` - ~580 lines ✅
-
----
-
-## Common Issues & Solutions
-
-### Issue: "Circuit Breaker blocking all trades"
-**Solution:** Check `_can_trade()` reasons, verify balance, reset daily counters if needed
-```python
-executor.reset_circuit_breaker()
-```
-
-### Issue: "Price updates failing"
-**Solution:** Check API rate limits, verify CoinGecko IDs, ensure network connectivity
-
-### Issue: "Positions not closing at stop-loss"
-**Solution:** Verify `check_auto_close_positions()` is called, check strategy config thresholds
-
-### Issue: "Transaction Manager not routing trades"
-**Solution:** Verify `TRANSACTION_MANAGER_AVAILABLE=True`, check import errors, enable in config
-
-### Issue: "Validation errors blocking trades"
-**Solution:** Check log for specific validation failure, verify USD amounts not wei values
-```
-[TRADE RECORD] Invalid trade amount: position_size_usd too large: 1000000.00 > 100000.00
-```
-
-### Issue: "Arbitrage not detecting opportunities"
-**Solution:** Verify `ARBITRAGE_AVAILABLE=True`, check DEX price comparator is working, ensure minimum 2 valid prices
-
-### Issue: "Database corruption from large values"
-**Solution:** This should be prevented by validation module. If it occurs:
-1. Check validation is being called before database writes
-2. Verify ValidationLimits constants are appropriate
-3. Check for wei values in logs (look for values > 1M)
 
 ---
 
 ## Version History
 
-### v4.0.0 (Current) - Trade Executor Refactoring
+### v4.1.0 (Current) - Folder Reorganization
 **Major Changes:**
-- ✅ Split `trade_executor.py` (1,400 lines) into 4 focused modules
-- ✅ Created `validation.py` for centralized validation
-- ✅ Created `trade_record_manager.py` for database operations
-- ✅ Created `arbitrage_executor.py` for Phase 2 arbitrage logic
-- ✅ Refactored `trade_executor.py` to ~580 lines
-- ✅ All files now under 800 line guideline
-- ✅ Improved separation of concerns
-- ✅ Better testability and maintainability
+- ✅ Reorganized bot/ folder into functional subfolders
+- ✅ Created 7 subfolders: buy, sell, positions, execution, arbitrage, strategies, shared
+- ✅ Added `__init__.py` to each subfolder for clean imports
+- ✅ Updated all import statements
+- ✅ Matches intelligence/ module structure
+- ✅ Improved navigation and maintainability
 
 **Benefits:**
-- Easier to find and fix bugs
-- Validation logic reusable across modules
-- Can test record creation independently
-- Arbitrage logic clearly separated
-- Code review more manageable
+- Clear organization by function
+- Easy to find code by purpose
+- Consistent with project patterns
+- Better for developers who prefer structured organization
+
+### v4.0.0 - Trade Executor Refactoring
+- Split trade_executor.py into 4 focused modules
+- Created validation.py for centralized validation
+- Created trade_record_manager.py for database operations
+- Created arbitrage_executor.py for arbitrage logic
+- All files now under 800 line guideline
 
 ### v3.0.0 - Intelligence Engine Integration
-- Integrated IntelSliderEngine for decisions
-- Removed old ai_engine.py dependency
+- Integrated IntelSliderEngine
 - Added Phase 2 arbitrage support
 - Improved circuit breaker integration
 
 ### v2.0.0 - Price Service Optimization
 - 90% API call reduction via bulk fetching
 - Real price integration via multiple sources
-- Mock price simulation for testing
 
 ### v1.0.0 - Initial Release
 - Basic paper trading functionality
-- Position management
-- Trade execution
 
 ---
 
-## Migration Guide: v3.0 → v4.0
+## Migration Guide: v4.0 → v4.1
 
-If you have code importing from the old `trade_executor.py`, here's what changed:
+If you have code importing from the old flat structure:
 
-### Old Imports (v3.0):
+### Old Imports (v4.0):
 ```python
-from paper_trading.bot.trade_executor import (
-    TradeExecutor,
-    ValidationLimits,
-    validate_usd_amount,
-    _get_token_address_for_trade
-)
-```
-
-### New Imports (v4.0):
-```python
-# Trade executor (still the same)
+from paper_trading.bot.market_analyzer import MarketAnalyzer
+from paper_trading.bot.position_manager import PositionManager
 from paper_trading.bot.trade_executor import TradeExecutor
-
-# Validation (now in separate module)
-from paper_trading.bot.validation import (
-    ValidationLimits,
-    validate_usd_amount,
-    validate_balance_update,
-    is_valid_decimal,
-    decimal_to_str,
-    get_token_address_for_trade  # Note: no underscore prefix
-)
-
-# Record creation (now in separate module)
-from paper_trading.bot.trade_record_manager import (
-    create_paper_trade_record,
-    create_ai_thought_log
-)
-
-# Arbitrage (now in separate module)
-from paper_trading.bot.arbitrage_executor import (
-    check_arbitrage_after_buy,
-    execute_arbitrage_trade
-)
+from paper_trading.bot.validation import validate_usd_amount
+from paper_trading.bot.position_evaluator import PositionEvaluator
 ```
 
-### Method Signature Changes:
-The extracted functions now take an `executor` parameter:
-
-**Old (v3.0):**
+### New Imports (v4.1):
 ```python
-class TradeExecutor:
-    def _create_paper_trade_record(self, decision, token_symbol, current_price):
-        ...
+# Buy operations
+from paper_trading.bot.buy import MarketAnalyzer, TokenAnalyzer
+
+# Sell operations
+from paper_trading.bot.sell import PositionEvaluator
+
+# Position management
+from paper_trading.bot.positions import PositionManager
+
+# Trade execution
+from paper_trading.bot.execution import TradeExecutor, create_paper_trade_record
+
+# Shared utilities
+from paper_trading.bot.shared import validate_usd_amount, RealPriceManager
+
+# Or use the main bot __init__.py (recommended):
+from paper_trading.bot import (
+    MarketAnalyzer,
+    PositionManager,
+    TradeExecutor,
+    PositionEvaluator,
+    validate_usd_amount
+)
 ```
 
-**New (v4.0):**
-```python
-# Now a module-level function
-def create_paper_trade_record(executor, decision, token_symbol, current_price):
-    ...
-```
-
-### If You Were Calling Internal Methods:
-If you were calling `executor._create_paper_trade_record()` directly (you probably weren't), you'll need to update:
-
-```python
-# Old
-trade = executor._create_paper_trade_record(decision, symbol, price)
-
-# New
-from paper_trading.bot.trade_record_manager import create_paper_trade_record
-trade = create_paper_trade_record(executor, decision, symbol, price)
-```
-
----
-
-## Is This Documentation Approach Good Practice?
-
-**YES! This is excellent practice for large projects. Here's why:**
-
-### ✅ Benefits of Module-Level README Files:
-
-1. **Onboarding New Developers**
-   - New team members can understand the codebase quickly
-   - Reduces time spent reading code to understand architecture
-   - Provides context that code comments can't capture
-
-2. **Maintenance & Refactoring**
-   - Documents original design intent
-   - Makes it easier to identify side effects of changes
-   - Helps prevent breaking integrations
-   - **v4.0 Example:** This README made the refactoring easier by documenting what each piece did
-
-3. **Code Reviews**
-   - Reviewers can verify changes match documented behavior
-   - Easier to spot when documentation needs updating
-   - Provides architectural context for review comments
-
-4. **Knowledge Preservation**
-   - Captures "why" decisions were made, not just "what"
-   - Survives team member turnover
-   - Prevents rediscovering solutions to solved problems
-
-5. **API Documentation**
-   - Clear public interfaces vs internal implementation
-   - Usage examples for common patterns
-   - Integration points documented
-   - **v4.0 Example:** Migration guide helps users adapt to changes
-
-### 📋 Best Practices for README Files:
-
-**DO:**
-- ✅ Place README.md in each significant module/package
-- ✅ Update documentation when code changes (like this v4.0 update!)
-- ✅ Include data flow diagrams (text-based is fine)
-- ✅ Document design decisions and trade-offs
-- ✅ Provide usage examples
-- ✅ List dependencies and integration points
-- ✅ Include troubleshooting sections
-- ✅ Document version changes and migration guides
-
-**DON'T:**
-- ❌ Duplicate what's already in docstrings
-- ❌ Document implementation details that change frequently
-- ❌ Write a novel - keep it concise and scannable
-- ❌ Let documentation get stale - update it with code changes
-
-### 📁 Recommended Documentation Structure for Large Projects:
-
-```
-dexproject/
-├── README.md                          # Project overview
-├── ARCHITECTURE.md                    # High-level architecture
-├── paper_trading/
-│   ├── README.md                      # App overview
-│   ├── bot/
-│   │   ├── README.md                  # ← THIS FILE (module overview)
-│   │   ├── enhanced_bot.py            # Code with docstrings
-│   │   ├── trade_executor.py          # Code with docstrings
-│   │   ├── validation.py              # Code with docstrings
-│   │   ├── trade_record_manager.py    # Code with docstrings
-│   │   ├── arbitrage_executor.py      # Code with docstrings
-│   ├── intelligence/
-│   │   ├── README.md                  # Intelligence system docs
-│   │   ├── *.py
-│   ├── services/
-│   │   ├── README.md                  # Services overview
-│   │   ├── *.py
-```
-
-### 🎯 When to Create Module README Files:
-
-**Create README.md when:**
-- Module has 3+ files that work together
-- Module has external dependencies
-- Module has complex data flows
-- Module will be used by other teams
-- Module implements a significant feature
-- **Module undergoes major refactoring** (like v4.0)
-
-**Skip README.md when:**
-- Single file utility modules
-- Self-explanatory helper functions
-- Temporary/experimental code
-
----
-
-## Additional Documentation to Consider
-
-Beyond this README, you might want:
-
-1. **API_REFERENCE.md** - Detailed API documentation for each public method
-2. **CHANGELOG.md** - Track changes, especially breaking changes
-3. **DEPLOYMENT.md** - How to deploy the bot
-4. **TESTING.md** - Testing strategy and how to run tests
-5. **CONTRIBUTING.md** - Code style, PR process, etc.
-6. **MIGRATION_GUIDES.md** - Detailed migration guides for major versions
+**The main bot `__init__.py` re-exports everything, so you can import from `paper_trading.bot` directly without knowing the internal folder structure!**
 
 ---
 
 ## Conclusion
 
-This modular architecture makes the paper trading bot maintainable, testable, and extensible. The v4.0 refactoring improved this further by breaking down large files into focused modules, each with a single responsibility. Each component has clear responsibilities, well-defined interfaces, and proper error handling.
+The v4.1 folder reorganization improves the paper trading bot by organizing code into clear, functional subfolders. This structure:
 
-**Key Takeaways from v4.0 Refactoring:**
-- **Validation module** prevents database corruption
-- **Trade record manager** separates database operations
-- **Arbitrage executor** isolates Phase 2 logic
-- **Refactored executor** focuses on orchestration
-- **All files** now under 800 lines for maintainability
+- **Matches the intelligence/ module** for consistency
+- **Makes code easy to find** by purpose (buy/sell/positions/etc.)
+- **Improves maintainability** with logical grouping
+- **Helps developers** understand the codebase quickly
+- **Provides clear separation** of concerns
 
-The documentation you're maintaining by updating this README.md will pay dividends as the project grows and new developers join the team.
-
-**Remember:** Code explains HOW, documentation explains WHY. Both are essential for long-term project success.
+**Key Takeaway:** Want to understand selling? Look in `sell/`. Want to understand buying? Look in `buy/`. Clear, simple, organized.
