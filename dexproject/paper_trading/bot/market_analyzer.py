@@ -385,7 +385,8 @@ class MarketAnalyzer:
                 logger.info(
                     f"[TICK {self.tick_count}] ⚠️  Already at max positions "
                     f"({position_count}/{MAX_OPEN_POSITIONS}) - Skipping BUY path"
-                )           
+                )
+                return          
 
             else:
                 available_slots = MAX_OPEN_POSITIONS - position_count

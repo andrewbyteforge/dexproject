@@ -53,7 +53,8 @@ class ValidationLimits:
     MAX_TRADE_USD: Decimal = Decimal('100000.00')  # $100K max per trade
     
     # Price limits (USD)
-    MIN_PRICE_USD: Decimal = Decimal('0.000000000000001')
+    # Price limits (USD) - Raised to prevent overflow with micro-cap tokens
+    MIN_PRICE_USD: Decimal = Decimal('0.0000001')  # $0.0000001 = 1e-7 minimum
     MAX_PRICE_USD: Decimal = Decimal('1000000.00')
     
     # Gas limits (USD)
@@ -67,6 +68,7 @@ class ValidationLimits:
     # Trading limits
     MAX_DAILY_TRADES: int = TradingDefaults.MAX_DAILY_TRADES
     MAX_CONSECUTIVE_FAILURES: int = 5
+    MAX_TOKEN_QUANTITY: Decimal = Decimal('1000000000000')  # 1 trillion max
     
     # Gas simulation limits
     MIN_GAS_UNITS: int = 21000
