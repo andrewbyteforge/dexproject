@@ -64,12 +64,12 @@ except ImportError:
     TRANSACTION_MANAGER_AVAILABLE = False
 
 # Import delegated components
-from paper_trading.bot.token_analyzer import TokenAnalyzer
+from paper_trading.bot.buy.token_analyzer import TokenAnalyzer
 from paper_trading.bot.sell import PositionEvaluator
-from paper_trading.bot.market_helpers import MarketHelpers
+from paper_trading.bot.buy.market_helpers import MarketHelpers
 
 # Import professional settings (Unibot/Maestro standards)
-from paper_trading.bot.professional_settings import PositionLimits
+from paper_trading.bot.shared.professional_settings import PositionLimits
 
 logger = logging.getLogger(__name__)
 

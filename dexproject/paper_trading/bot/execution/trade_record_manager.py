@@ -39,7 +39,7 @@ from paper_trading.intelligence.core.base import TradingDecision
 from paper_trading.services.websocket_service import websocket_service
 
 # Import validation functions
-from .validation import (
+from paper_trading.bot.shared.validation import (
     validate_usd_amount,
     validate_balance_update,
     decimal_to_str,
@@ -48,7 +48,7 @@ from .validation import (
 )
 
 if TYPE_CHECKING:
-    from paper_trading.bot.trade_executor import TradeExecutor
+    from paper_trading.bot.execution.trade_executor import TradeExecutor
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ Responsibilities:
 - Close/reduce existing positions
 - Calculate and update account P&L
 
-File: dexproject/paper_trading/bot/position_manager.py
+File: dexproject/paper_trading/bot/positions/position_manager.py
 """
 
 import logging
@@ -106,7 +106,10 @@ class PositionManager:
             return len(self.positions)
 
         except Exception as e:
-            logger.error(f"[POSITION MANAGER] Failed to load positions: {e}")
+            logger.error(
+                f"[POSITION MANAGER] Failed to load positions: {e}",
+                exc_info=True
+            )
             return 0
 
     # =========================================================================
@@ -146,11 +149,42 @@ class PositionManager:
                 old_price = position.current_price_usd
                 new_price = current_token['price']
 
+                # ✅ VALIDATE: Skip if price is invalid
+                if not new_price or new_price <= 0:
+                    logger.warning(
+                        f"[PRICE UPDATE] Invalid price for {token_symbol}: {new_price}"
+                    )
+                    continue
+
+                # ✅ VALIDATE: Convert to Decimal safely
+                try:
+                    new_price = Decimal(str(new_price))
+                except (ValueError, TypeError, ArithmeticError):
+                    logger.warning(
+                        f"[PRICE UPDATE] Cannot convert price to Decimal for {token_symbol}: {new_price}"
+                    )
+                    continue
+
+                # Calculate new values
                 position.current_price_usd = new_price
-                position.current_value_usd = position.quantity * new_price
-                position.unrealized_pnl_usd = (
-                    position.current_value_usd - position.total_invested_usd
-                )
+                new_value = position.quantity * new_price
+                new_pnl = new_value - position.total_invested_usd
+
+                # ✅ CRITICAL: Normalize tiny values to zero (prevents scientific notation)
+                # If P&L is smaller than 0.01 cents, it's a rounding error - set to zero
+                if abs(new_pnl) < Decimal('0.0001'):
+                    new_pnl = Decimal('0')
+
+                # ✅ VALIDATE: Check for NaN/Infinity before saving
+                if not (new_value.is_finite() and new_pnl.is_finite()):
+                    logger.error(
+                        f"[PRICE UPDATE] Invalid calculated values for {token_symbol}: "
+                        f"value={new_value}, pnl={new_pnl}"
+                    )
+                    continue
+
+                position.current_value_usd = new_value
+                position.unrealized_pnl_usd = new_pnl
                 position.last_updated = timezone.now()
 
                 position.save(update_fields=[
@@ -267,7 +301,6 @@ class PositionManager:
                         (token_symbol, 'TAKE_PROFIT', pnl_percent)
                     )
 
-                # Check maximum hold time (24 hours default)
                 # Check maximum hold time (configurable via strategy config)
                 if position.opened_at:
                     hold_duration = timezone.now() - position.opened_at
@@ -317,6 +350,9 @@ class PositionManager:
         """
         Open a new position or add to an existing position.
 
+        This method handles both creating new positions and adding to existing ones,
+        with full validation and normalization to prevent database corruption.
+
         Args:
             token_symbol: Token symbol (e.g., 'WETH')
             token_address: Token contract address
@@ -327,12 +363,78 @@ class PositionManager:
             Updated or created PaperPosition, or None if failed
         """
         try:
-            # Calculate quantity to buy
-            quantity = position_size_usd / current_price
+            logger.info(
+                f"[POSITION MANAGER] Opening/adding position: {token_symbol}, "
+                f"Size=${position_size_usd:.2f}, Price=${current_price:.8f}"
+            )
 
+            # =================================================================
+            # INPUT VALIDATION
+            # =================================================================
+            
+            # Validate position size
+            if position_size_usd <= 0:
+                logger.error(
+                    f"[POSITION MANAGER] Invalid position size: ${position_size_usd:.2f}"
+                )
+                return None
+
+            # Validate current price
+            if current_price <= 0:
+                logger.error(
+                    f"[POSITION MANAGER] Invalid price for {token_symbol}: ${current_price:.8f}"
+                )
+                return None
+
+            # Validate token address
+            if not token_address or token_address == '0x0000000000000000000000000000000000000000':
+                logger.error(
+                    f"[POSITION MANAGER] Invalid token address for {token_symbol}: {token_address}"
+                )
+                return None
+
+            # Check for NaN or Infinity in inputs
+            if not (position_size_usd.is_finite() and current_price.is_finite()):
+                logger.error(
+                    f"[POSITION MANAGER] Non-finite values detected: "
+                    f"size={position_size_usd}, price={current_price}"
+                )
+                return None
+
+            # =================================================================
+            # CALCULATE QUANTITY
+            # =================================================================
+            
+            try:
+                quantity = position_size_usd / current_price
+                
+                # Validate calculated quantity
+                if not quantity.is_finite() or quantity <= 0:
+                    logger.error(
+                        f"[POSITION MANAGER] Invalid calculated quantity: {quantity}"
+                    )
+                    return None
+                    
+                logger.debug(
+                    f"[POSITION MANAGER] Calculated quantity: {quantity:.18f} tokens"
+                )
+                
+            except (ArithmeticError, ZeroDivisionError) as e:
+                logger.error(
+                    f"[POSITION MANAGER] Failed to calculate quantity: {e}"
+                )
+                return None
+
+            # =================================================================
+            # FIND OR CREATE POSITION
+            # =================================================================
+            
             # Check if position exists in memory
             if token_symbol in self.positions:
                 position = self.positions[token_symbol]
+                logger.debug(
+                    f"[POSITION MANAGER] Found {token_symbol} in memory"
+                )
             else:
                 # Check if position exists in database but not loaded
                 try:
@@ -344,71 +446,159 @@ class PositionManager:
                     # Load it into memory
                     self.positions[token_symbol] = position
                     logger.info(
-                        f"[POSITION] Loaded existing {token_symbol} position from database"
+                        f"[POSITION MANAGER] Loaded existing {token_symbol} position "
+                        f"from database (ID: {position.position_id})"
                     )
                 except PaperPosition.DoesNotExist:
                     position = None
+                    logger.debug(
+                        f"[POSITION MANAGER] No existing position found for {token_symbol}"
+                    )
 
+            # =================================================================
+            # UPDATE EXISTING OR CREATE NEW POSITION
+            # =================================================================
+            
             if position:
-                # Add to existing position
+                # =============================================================
+                # ADD TO EXISTING POSITION
+                # =============================================================
+                
+                logger.info(
+                    f"[POSITION MANAGER] Adding to existing {token_symbol} position"
+                )
+                
+                # Store old values for logging
+                old_quantity = position.quantity
+                old_invested = position.total_invested_usd
+                
+                # Update quantities
                 position.quantity += quantity
                 position.total_invested_usd += position_size_usd
-                position.average_entry_price_usd = (
-                    position.total_invested_usd / position.quantity
-                )
+                
+                # Recalculate average entry price
+                try:
+                    position.average_entry_price_usd = (
+                        position.total_invested_usd / position.quantity
+                    )
+                except (ArithmeticError, ZeroDivisionError):
+                    logger.error(
+                        f"[POSITION MANAGER] Failed to calculate average entry price"
+                    )
+                    return None
+                
+                # Update current values
                 position.current_price_usd = current_price
                 position.current_value_usd = position.quantity * current_price
-                position.unrealized_pnl_usd = (
-                    position.current_value_usd - position.total_invested_usd
-                )
+                
+                # Calculate unrealized P&L
+                pnl = position.current_value_usd - position.total_invested_usd
+                
+                # ✅ CRITICAL: Normalize tiny P&L values to prevent scientific notation
+                if abs(pnl) < Decimal('0.0001'):
+                    logger.debug(
+                        f"[POSITION MANAGER] Normalizing tiny P&L: {pnl} → 0"
+                    )
+                    pnl = Decimal('0')
+                
+                # Validate P&L is finite
+                if not pnl.is_finite():
+                    logger.error(
+                        f"[POSITION MANAGER] Non-finite P&L calculated: {pnl}"
+                    )
+                    return None
+                
+                position.unrealized_pnl_usd = pnl
                 position.last_updated = timezone.now()
 
-                position.save()
-
-                logger.info(
-                    f"[POSITION] Added to {token_symbol}: "
-                    f"+{quantity:.4f} tokens (${position_size_usd:.2f}), "
-                    f"Total: {position.quantity:.4f} tokens "
-                    f"(${position.total_invested_usd:.2f})"
-                )
+                # Save to database
+                try:
+                    position.save()
+                    logger.info(
+                        f"[POSITION] ✅ Added to {token_symbol}: "
+                        f"+{quantity:.8f} tokens (${position_size_usd:.2f}), "
+                        f"Total: {old_quantity:.8f} → {position.quantity:.8f} tokens, "
+                        f"Invested: ${old_invested:.2f} → ${position.total_invested_usd:.2f}, "
+                        f"Avg Price: ${position.average_entry_price_usd:.8f}, "
+                        f"P&L: ${pnl:+.2f}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[POSITION MANAGER] Failed to save updated position: {e}",
+                        exc_info=True
+                    )
+                    return None
+                    
             else:
-                # Create new position
-                position = PaperPosition.objects.create(
-                    account=self.account,
-                    token_address=token_address,
-                    token_symbol=token_symbol,
-                    quantity=quantity,
-                    average_entry_price_usd=current_price,
-                    current_price_usd=current_price,
-                    total_invested_usd=position_size_usd,
-                    current_value_usd=position_size_usd,
-                    unrealized_pnl_usd=Decimal('0'),
-                    is_open=True
-                )
-
-                self.positions[token_symbol] = position
-
+                # =============================================================
+                # CREATE NEW POSITION
+                # =============================================================
+                
                 logger.info(
-                    f"[POSITION] Opened new {token_symbol} position: "
-                    f"{quantity:.4f} tokens @ ${current_price:.2f} "
-                    f"(${position_size_usd:.2f})"
+                    f"[POSITION MANAGER] Creating new {token_symbol} position"
                 )
+                
+                # Calculate initial values
+                current_value_usd = position_size_usd
+                
+                # ✅ Set initial P&L to exactly zero (no rounding errors)
+                unrealized_pnl_usd = Decimal('0')
+                
+                try:
+                    position = PaperPosition.objects.create(
+                        account=self.account,
+                        token_address=token_address,
+                        token_symbol=token_symbol,
+                        quantity=quantity,
+                        average_entry_price_usd=current_price,
+                        current_price_usd=current_price,
+                        total_invested_usd=position_size_usd,
+                        current_value_usd=current_value_usd,
+                        unrealized_pnl_usd=unrealized_pnl_usd,
+                        realized_pnl_usd=Decimal('0'),
+                        is_open=True,
+                        opened_at=timezone.now()
+                    )
 
-            # Update account P&L
-            self.update_account_pnl()
+                    # Add to memory
+                    self.positions[token_symbol] = position
+
+                    logger.info(
+                        f"[POSITION] ✅ Opened new {token_symbol} position: "
+                        f"{quantity:.8f} tokens @ ${current_price:.8f}, "
+                        f"Value=${position_size_usd:.2f}, "
+                        f"ID={position.position_id}"
+                    )
+                    
+                except Exception as e:
+                    logger.error(
+                        f"[POSITION MANAGER] Failed to create new position: {e}",
+                        exc_info=True
+                    )
+                    return None
+
+            # =================================================================
+            # UPDATE ACCOUNT P&L
+            # =================================================================
+            
+            try:
+                self.update_account_pnl()
+            except Exception as e:
+                logger.error(
+                    f"[POSITION MANAGER] Failed to update account P&L: {e}",
+                    exc_info=True
+                )
+                # Don't return None here - position was created/updated successfully
 
             return position
 
         except Exception as e:
             logger.error(
-                f"[POSITION MANAGER] Failed to open/add position for {token_symbol}: {e}",
+                f"[POSITION MANAGER] Unexpected error in open_or_add_position "
+                f"for {token_symbol}: {e}",
                 exc_info=True
             )
             return None
-
-
-
-
 
     def close_or_reduce_position(
         self,
@@ -419,6 +609,9 @@ class PositionManager:
         """
         Close or reduce an existing position.
 
+        Handles partial sells and full position closes with proper P&L calculation
+        and database cleanup. Normalizes all values to prevent scientific notation.
+
         Args:
             token_symbol: Token symbol to sell
             sell_amount_usd: USD amount to sell
@@ -428,78 +621,256 @@ class PositionManager:
             Updated PaperPosition, or None if failed/not found
         """
         try:
+            logger.info(
+                f"[POSITION MANAGER] Closing/reducing position: {token_symbol}, "
+                f"Sell=${sell_amount_usd:.2f}, Price=${current_price:.8f}"
+            )
+
+            # =================================================================
+            # INPUT VALIDATION
+            # =================================================================
+            
+            # Check if position exists
             if token_symbol not in self.positions:
                 logger.warning(
-                    f"[POSITION MANAGER] Position {token_symbol} not found"
+                    f"[POSITION MANAGER] Position {token_symbol} not found in memory"
                 )
                 return None
 
-            position = self.positions[token_symbol]
+            # Validate sell amount
+            if sell_amount_usd <= 0:
+                logger.error(
+                    f"[POSITION MANAGER] Invalid sell amount: ${sell_amount_usd:.2f}"
+                )
+                return None
 
-            # Calculate quantity to sell
-            sell_quantity = min(
-                position.quantity,
-                sell_amount_usd / current_price
+            # Validate current price
+            if current_price <= 0:
+                logger.error(
+                    f"[POSITION MANAGER] Invalid price for {token_symbol}: ${current_price:.8f}"
+                )
+                return None
+
+            # Check for NaN or Infinity
+            if not (sell_amount_usd.is_finite() and current_price.is_finite()):
+                logger.error(
+                    f"[POSITION MANAGER] Non-finite values detected: "
+                    f"amount={sell_amount_usd}, price={current_price}"
+                )
+                return None
+
+            # =================================================================
+            # CALCULATE SELL QUANTITY
+            # =================================================================
+            
+            position = self.positions[token_symbol]
+            
+            logger.debug(
+                f"[POSITION MANAGER] Current position: "
+                f"{position.quantity:.8f} tokens, "
+                f"Entry=${position.average_entry_price_usd:.8f}, "
+                f"Invested=${position.total_invested_usd:.2f}"
             )
 
-            # Calculate realized P&L from this sale
-            sale_value = sell_quantity * current_price
-            cost_basis = sell_quantity * position.average_entry_price_usd
-            realized_pnl = sale_value - cost_basis
+            # Calculate quantity to sell (don't sell more than we have)
+            try:
+                requested_quantity = sell_amount_usd / current_price
+                sell_quantity = min(position.quantity, requested_quantity)
+                
+                if sell_quantity <= 0:
+                    logger.error(
+                        f"[POSITION MANAGER] Invalid sell quantity: {sell_quantity}"
+                    )
+                    return None
+                    
+                logger.debug(
+                    f"[POSITION MANAGER] Selling {sell_quantity:.8f} tokens "
+                    f"(requested: {requested_quantity:.8f})"
+                )
+                
+            except (ArithmeticError, ZeroDivisionError) as e:
+                logger.error(
+                    f"[POSITION MANAGER] Failed to calculate sell quantity: {e}"
+                )
+                return None
 
-            # Update position
+            # =================================================================
+            # CALCULATE P&L
+            # =================================================================
+            
+            try:
+                # Calculate sale proceeds
+                sale_value = sell_quantity * current_price
+                
+                # Calculate cost basis
+                cost_basis = sell_quantity * position.average_entry_price_usd
+                
+                # Calculate realized P&L from this sale
+                realized_pnl = sale_value - cost_basis
+                
+                # ✅ Normalize tiny realized P&L to zero
+                if abs(realized_pnl) < Decimal('0.0001'):
+                    logger.debug(
+                        f"[POSITION MANAGER] Normalizing tiny realized P&L: {realized_pnl} → 0"
+                    )
+                    realized_pnl = Decimal('0')
+                
+                # Validate P&L is finite
+                if not realized_pnl.is_finite():
+                    logger.error(
+                        f"[POSITION MANAGER] Non-finite realized P&L: {realized_pnl}"
+                    )
+                    return None
+                
+                logger.debug(
+                    f"[POSITION MANAGER] P&L calculation: "
+                    f"Sale=${sale_value:.2f}, Cost=${cost_basis:.2f}, "
+                    f"Realized P&L=${realized_pnl:+.2f}"
+                )
+                
+            except (ArithmeticError, ZeroDivisionError) as e:
+                logger.error(
+                    f"[POSITION MANAGER] Failed to calculate P&L: {e}"
+                )
+                return None
+
+            # =================================================================
+            # UPDATE POSITION
+            # =================================================================
+            
+            # Store old values for logging
+            old_quantity = position.quantity
+            old_realized_pnl = position.realized_pnl_usd
+            
+            # Update position quantities
             position.quantity -= sell_quantity
             position.realized_pnl_usd += realized_pnl
             position.current_value_usd = position.quantity * current_price
-            position.unrealized_pnl_usd = (
-                position.current_value_usd -
-                (position.quantity * position.average_entry_price_usd)
-            )
+            
+            # Calculate unrealized P&L for remaining position
+            try:
+                unrealized_pnl = (
+                    position.current_value_usd -
+                    (position.quantity * position.average_entry_price_usd)
+                )
+                
+                # ✅ CRITICAL: Normalize tiny unrealized P&L to zero
+                if abs(unrealized_pnl) < Decimal('0.0001'):
+                    logger.debug(
+                        f"[POSITION MANAGER] Normalizing tiny unrealized P&L: {unrealized_pnl} → 0"
+                    )
+                    unrealized_pnl = Decimal('0')
+                
+                # Validate unrealized P&L is finite
+                if not unrealized_pnl.is_finite():
+                    logger.error(
+                        f"[POSITION MANAGER] Non-finite unrealized P&L: {unrealized_pnl}"
+                    )
+                    return None
+                
+                position.unrealized_pnl_usd = unrealized_pnl
+                
+            except (ArithmeticError, ZeroDivisionError) as e:
+                logger.error(
+                    f"[POSITION MANAGER] Failed to calculate unrealized P&L: {e}"
+                )
+                return None
+            
             position.last_updated = timezone.now()
 
-            # Check if position should be closed
-            # Check if position should be closed
+            # =================================================================
+            # SAVE OR CLOSE POSITION
+            # =================================================================
+            
+            # Check if position should be fully closed
             if position.quantity <= Decimal('0.0001'):  # Essentially zero
-                # Set all fields first
+                logger.info(
+                    f"[POSITION MANAGER] Position quantity below threshold "
+                    f"({position.quantity:.8f}), closing position"
+                )
+                
+                # Set all fields for closing
                 position.quantity = Decimal('0')
                 position.current_value_usd = Decimal('0')
                 position.unrealized_pnl_usd = Decimal('0')
                 position.is_open = False
                 position.closed_at = timezone.now()
                 
-                # Save with ALL updated fields at once
-                position.save(update_fields=[
-                    'is_open', 'closed_at', 'quantity', 'realized_pnl_usd',
-                    'current_value_usd', 'unrealized_pnl_usd', 'last_updated'
-                ])
-                position.quantity = Decimal('0')
-                position.current_value_usd = Decimal('0')
-                position.unrealized_pnl_usd = Decimal('0')
-
-                del self.positions[token_symbol]
-
-                logger.info(
-                    f"[POSITION] Closed {token_symbol} position: "
-                    f"Realized P&L: ${realized_pnl:+.2f}"
-                )
+                try:
+                    # Save with ALL updated fields at once
+                    position.save(update_fields=[
+                        'is_open',
+                        'closed_at',
+                        'quantity',
+                        'realized_pnl_usd',
+                        'current_value_usd',
+                        'unrealized_pnl_usd',
+                        'last_updated'
+                    ])
+                    
+                    # Remove from memory
+                    del self.positions[token_symbol]
+                    
+                    logger.info(
+                        f"[POSITION] ✅ Closed {token_symbol} position: "
+                        f"Sold {sell_quantity:.8f} tokens (${sale_value:.2f}), "
+                        f"Cost basis: ${cost_basis:.2f}, "
+                        f"Realized P&L: ${realized_pnl:+.2f}, "
+                        f"Total realized P&L: ${position.realized_pnl_usd:+.2f}"
+                    )
+                    
+                except Exception as e:
+                    logger.error(
+                        f"[POSITION MANAGER] Failed to save closed position: {e}",
+                        exc_info=True
+                    )
+                    return None
+                    
             else:
+                # Position remains open with reduced quantity
                 logger.info(
-                    f"[POSITION] Reduced {token_symbol} position: "
-                    f"Sold {sell_quantity:.4f} tokens (${sale_value:.2f}), "
-                    f"Remaining: {position.quantity:.4f} tokens, "
-                    f"Realized P&L: ${realized_pnl:+.2f}"
+                    f"[POSITION MANAGER] Reducing {token_symbol} position size"
                 )
-                position.save()  # ✅ NOW IN THE CORRECT LOCATION
+                
+                try:
+                    position.save()
+                    
+                    logger.info(
+                        f"[POSITION] ✅ Reduced {token_symbol} position: "
+                        f"Sold {sell_quantity:.8f} tokens (${sale_value:.2f}), "
+                        f"Remaining: {old_quantity:.8f} → {position.quantity:.8f} tokens, "
+                        f"Value: ${position.current_value_usd:.2f}, "
+                        f"Realized P&L: ${realized_pnl:+.2f} "
+                        f"(Total: ${old_realized_pnl:+.2f} → ${position.realized_pnl_usd:+.2f}), "
+                        f"Unrealized P&L: ${position.unrealized_pnl_usd:+.2f}"
+                    )
+                    
+                except Exception as e:
+                    logger.error(
+                        f"[POSITION MANAGER] Failed to save reduced position: {e}",
+                        exc_info=True
+                    )
+                    return None
 
-            # Update account P&L
-            self.update_account_pnl()
+            # =================================================================
+            # UPDATE ACCOUNT P&L
+            # =================================================================
+            
+            try:
+                self.update_account_pnl()
+            except Exception as e:
+                logger.error(
+                    f"[POSITION MANAGER] Failed to update account P&L: {e}",
+                    exc_info=True
+                )
+                # Don't return None here - position was updated successfully
 
             return position
 
         except Exception as e:
             logger.error(
-                f"[POSITION MANAGER] Failed to close/reduce position for "
-                f"{token_symbol}: {e}",
+                f"[POSITION MANAGER] Unexpected error in close_or_reduce_position "
+                f"for {token_symbol}: {e}",
                 exc_info=True
             )
             return None
@@ -508,7 +879,7 @@ class PositionManager:
     # P&L CALCULATION
     # =========================================================================
 
-    def update_account_pnl(self):
+    def update_account_pnl(self) -> None:
         """
         Update account's total P&L from all positions.
 

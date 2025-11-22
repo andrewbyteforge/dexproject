@@ -27,7 +27,7 @@ import asyncio
 from contextlib import suppress
 from typing import Any, Awaitable, Callable
 
-
+from paper_trading.bot.shared.validation import ValidationLimits
 # Force UTF-8 encoding for Windows console to support emoji logging
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(
@@ -77,16 +77,12 @@ from asgiref.sync import async_to_sync  # noqa: E402
 # ============================================================================
 # MODEL IMPORTS
 # ============================================================================
-from paper_trading.models import (  # noqa: E402
-    PaperTradingAccount,
-    PaperTradingSession,
-    PaperStrategyConfiguration
-)
+from paper_trading.models import PaperTradingAccount, PaperTradingSession, PaperPosition, PaperStrategyConfiguration
 
 # ============================================================================
 # BOT MODULE IMPORTS
 # ============================================================================
-from paper_trading.bot.price_service_integration import (  # noqa: E402
+from paper_trading.bot.shared.price_service_integration import (  # noqa: E402
     create_price_manager,
     RealPriceManager
 )
@@ -580,53 +576,56 @@ class EnhancedPaperTradingBot:
 
     def _cleanup_old_positions(self) -> None:
         """
-        Delete old positions from previous sessions.
-        
-        Deletes positions from previous sessions to avoid UNIQUE constraint
-        violations and ensure the bot starts fresh.
+        Delete any open positions from previous sessions.
+        This ensures clean slate for new session.
         """
-        assert self.account is not None, "Account must be initialized before position cleanup"
-        assert self.session is not None, "Session must be created before position cleanup"
-        
         try:
-            from paper_trading.models import PaperPosition
+            logger.info("[CLEANUP] Checking for old open positions...")
             
-            # Find all open positions that are NOT from the current session
-            old_positions = PaperPosition.objects.filter(
-                account=self.account,
-                is_open=True
-            ).exclude(
-                opened_at__gte=self.session.started_at
-            )
-            
-            count = old_positions.count()
-            
-            if count > 0:
-                logger.info(
-                    f"[CLEANUP] Found {count} open position(s) from previous sessions - deleting"
+            # Try to get positions - but handle corruption
+            try:
+                old_positions = PaperPosition.objects.filter(
+                    account=self.account,
+                    is_open=True
                 )
                 
-                # Log what we're deleting (first 5)
-                for pos in old_positions[:5]:
+                count = old_positions.count()
+                
+                if count > 0:
                     logger.info(
-                        f"[CLEANUP]   - Deleting {pos.token_symbol}: "
-                        f"Opened {pos.opened_at.date()}"
+                        f"[CLEANUP] Found {count} open position(s) from previous sessions - deleting"
                     )
+                    
+                    # Delete without iterating (safer with corrupted data)
+                    deleted_count, _ = old_positions.delete()
+                    
+                    logger.info(
+                        f"[CLEANUP] Deleted {deleted_count} old position(s)"
+                    )
+                else:
+                    logger.info("[CLEANUP] No old positions to clean up")
+                    
+            except Exception as db_error:
+                # If we can't load positions due to corruption, force delete via raw SQL
+                logger.error(
+                    f"[CLEANUP] Error during position cleanup: {db_error}"
+                )
+                logger.warning("[CLEANUP] Attempting direct database cleanup...")
                 
-                if count > 5:
-                    logger.info(f"[CLEANUP]   ... and {count - 5} more")
-                
-                # Delete all old positions
-                deleted_count, _ = old_positions.delete()
-                
-                logger.info(f"[CLEANUP] ✅ Deleted {deleted_count} old position(s)")
-            else:
-                logger.info("[CLEANUP] No old positions to clean up")
-        
+                from django.db import connection
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM paper_trading_paperposition WHERE account_id = %s AND is_open = 1",
+                        [str(self.account.account_id)]
+                    )
+                    deleted = cursor.rowcount
+                    logger.info(f"[CLEANUP] Force-deleted {deleted} corrupted position(s) via SQL")
+                    
         except Exception as e:
-            logger.error(f"[CLEANUP] Error during position cleanup: {e}", exc_info=True)
-            # Don't raise - cleanup failure shouldn't stop the bot
-
+            logger.error(
+                f"[CLEANUP] Critical error during cleanup: {e}",
+                exc_info=True
+            )
 
 
 

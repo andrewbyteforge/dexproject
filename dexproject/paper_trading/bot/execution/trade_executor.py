@@ -46,8 +46,7 @@ from paper_trading.models import (
 # Import intelligence types
 from paper_trading.intelligence.core.base import TradingDecision
 
-# Import validation module
-from .validation import ValidationLimits
+from paper_trading.bot.shared.validation import ValidationLimits
 
 # Import record creation functions
 from .trade_record_manager import (
@@ -56,7 +55,7 @@ from .trade_record_manager import (
 )
 
 # Import arbitrage functions and availability flag
-from .arbitrage_executor import (
+from paper_trading.bot.arbitrage.arbitrage_executor import (
     check_arbitrage_after_buy,
     ARBITRAGE_AVAILABLE
 )

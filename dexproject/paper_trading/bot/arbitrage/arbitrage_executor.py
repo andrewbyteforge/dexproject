@@ -31,7 +31,7 @@ from paper_trading.models import PaperTrade
 from shared.constants import get_token_address
 
 # Import validation functions
-from .validation import (
+from paper_trading.bot.shared.validation import (
     validate_usd_amount,
     validate_balance_update,
     ValidationLimits
@@ -48,7 +48,7 @@ except ImportError:
     DEXPriceComparator = None  # type: ignore
 
 if TYPE_CHECKING:
-    from paper_trading.bot.trade_executor import TradeExecutor
+    from paper_trading.bot.execution.trade_executor import TradeExecutor
 
 logger = logging.getLogger(__name__)
 
