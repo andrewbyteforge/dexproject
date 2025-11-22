@@ -88,24 +88,13 @@ class MarketAnalyzer:
                 )
 
             # Enhance market context with analysis results
+            # Enhance market context with ALL analysis results
             if analysis_result:
-                # Extract relevant metrics from analysis
-                if 'gas_analysis' in analysis_result:
-                    gas_data = analysis_result['gas_analysis']
-                    market_context.gas_price_gwei = gas_data.get(
-                        'current_gas_price',
-                        market_context.gas_price_gwei
-                    )
-
-                if 'liquidity_analysis' in analysis_result:
-                    liquidity_data = analysis_result['liquidity_analysis']
-                    market_context.liquidity_usd = liquidity_data.get(
-                        'total_liquidity_usd',
-                        market_context.liquidity_usd
-                    )
-
-                if 'overall_confidence' in analysis_result:
-                    market_context.confidence_in_data = analysis_result['overall_confidence']
+                market_context = self.enhance_context_with_analysis(
+                    market_context=market_context,
+                    analysis_result=analysis_result,
+                    price_history=None
+                )
 
             self.logger.info(
                 f"[ANALYZE MARKET] Market analysis complete for {token_address}"

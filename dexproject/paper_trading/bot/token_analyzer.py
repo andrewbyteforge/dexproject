@@ -201,11 +201,13 @@ class TokenAnalyzer:
         Analyze a single token for BUY opportunity.
 
         This method:
-        1. Gets real market data (gas, liquidity, volatility, MEV)
-        2. Creates market context
-        3. Calls intelligence engine for decision
-        4. Logs the decision
-        5. Executes if decision is BUY
+        1. Creates initial market context with token info
+        2. Calls intelligence engine analyze() which:
+        - Runs comprehensive market analysis (gas, liquidity, volatility, MEV)
+        - Populates MarketContext with real blockchain data
+        - Makes trading decision based on analysis
+        3. Logs the decision
+        4. Executes if decision is BUY
 
         Args:
             token_data: Token data dict (symbol, address, price)
@@ -237,36 +239,24 @@ class TokenAnalyzer:
                 f"[TOKEN ANALYZER] Analyzing {token_symbol} for BUY at ${current_price:.2f}"
             )
 
-            # Get price history for trend analysis
-            price_history = price_manager.get_price_history(token_symbol, limit=24)
-
-            # Get existing positions for context (but won't include this token)
-            existing_positions = position_manager.get_all_positions()
-
-            # Calculate initial trade size
+            # Get account balance for portfolio sizing
             account_balance = self.account.current_balance_usd
-            max_position_size_percent = Decimal('20.0')  # Default 20% of account
-            if self.strategy_config:
-                max_position_size_percent = getattr(
-                    self.strategy_config,
-                    'max_position_size_percent',
-                    Decimal('20.0')
-                )
 
-            initial_trade_size = (account_balance * max_position_size_percent) / Decimal('100')
-
-            # Call intelligence engine to get comprehensive market analysis and decision
-            # The engine will handle calling CompositeMarketAnalyzer internally
-            decision = async_to_sync(self.intelligence_engine.make_decision)(
-                market_context=MarketContext(
-                    token_address=token_address,
-                    token_symbol=token_symbol,
-                    current_price=current_price
-                ),
-                account_balance=account_balance,
-                existing_positions=list(existing_positions.values()),
+            # Create initial market context with basic token info
+            # The analyze() method will enhance this with comprehensive blockchain data
+            market_context = MarketContext(
                 token_address=token_address,
-                token_symbol=token_symbol
+                token_symbol=token_symbol,
+                current_price=current_price
+            )
+
+            # Call analyze() which:
+            # 1. Runs CompositeMarketAnalyzer (gas, liquidity, volatility, MEV, market state)
+            # 2. Enhances MarketContext with real blockchain data
+            # 3. Makes decision based on comprehensive analysis
+            decision = async_to_sync(self.intelligence_engine.analyze)(
+                market_context=market_context,
+                portfolio_value=account_balance
             )
 
             # VALIDATION: Ensure we only get BUY or SKIP
@@ -317,7 +307,7 @@ class TokenAnalyzer:
                 success = trade_executor.execute_trade(
                     decision=decision,
                     token_symbol=token_symbol,
-                    token_address=token_address,  # ✅ FIXED: Added token_address
+                    token_address=token_address,
                     current_price=current_price,
                     position_manager=position_manager
                 )
