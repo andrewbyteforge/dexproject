@@ -138,7 +138,7 @@ class WalletManager:
                 self.logger.debug("Loaded existing encryption key")
             else:
                 # Generate new encryption key for development
-                if config.trading_mode == 'PAPER':
+                if config and getattr(config, 'trading_mode', None) == 'PAPER':
                     self.encryption_key = Fernet.generate_key()
                     
                     # Create wallets directory
@@ -156,7 +156,7 @@ class WalletManager:
         """Load wallet configurations from various sources."""
         try:
             # Load development wallets for testing
-            if config.trading_mode == 'PAPER':
+            if config and getattr(config, 'trading_mode', None) == 'PAPER':
                 await self._load_development_wallets()
             
             # Load environment variable wallets
@@ -615,7 +615,7 @@ class WalletManager:
         """
         try:
             # In development mode, auto-unlock
-            if config.trading_mode == 'PAPER':
+            if config and getattr(config, 'trading_mode', None) == 'PAPER':
                 self.is_locked = False
                 self.logger.info("🔓 Wallet manager unlocked (development mode)")
                 return True

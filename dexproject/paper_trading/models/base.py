@@ -666,7 +666,7 @@ class PaperPosition(models.Model):
     
     average_entry_price_usd = models.DecimalField(
         max_digits=20,
-        decimal_places=8,
+        decimal_places=18,
         help_text="Average entry price in USD"
     )
     
@@ -679,7 +679,7 @@ class PaperPosition(models.Model):
     # Current values
     current_price_usd = models.DecimalField(
         max_digits=20,
-        decimal_places=8,
+        decimal_places=18,
         help_text="Current market price"
     )
     
@@ -740,6 +740,109 @@ class PaperPosition(models.Model):
         """String representation."""
         status = "OPEN" if self.is_open else "CLOSED"
         return f"{status}: {self.quantity} {self.token_symbol}"
+    
+    def clean(self) -> None:
+        """
+        Validate all decimal fields before saving.
+        
+        This prevents decimal.InvalidOperation errors by ensuring all decimal
+        values are properly formatted and within valid ranges.
+        
+        Raises:
+            ValidationError: If validation fails critically
+        """
+        # Validate quantity (wei values, 18 decimal places)
+        self.quantity = validate_decimal_field(
+            value=self.quantity,
+            field_name='quantity',
+            min_value=Decimal('0'),
+            default_value=Decimal('0'),
+            decimal_places=18
+        )
+        
+        # Validate prices (18 decimal places for precision)
+        self.average_entry_price_usd = validate_decimal_field(
+            value=self.average_entry_price_usd,
+            field_name='average_entry_price_usd',
+            min_value=Decimal('0'),
+            default_value=Decimal('0'),
+            decimal_places=18
+        )
+        
+        self.current_price_usd = validate_decimal_field(
+            value=self.current_price_usd,
+            field_name='current_price_usd',
+            min_value=Decimal('0'),
+            default_value=Decimal('0'),
+            decimal_places=18
+        )
+        
+        # Validate USD values (2 decimal places)
+        self.total_invested_usd = validate_decimal_field(
+            value=self.total_invested_usd,
+            field_name='total_invested_usd',
+            min_value=Decimal('0'),
+            default_value=Decimal('0'),
+            decimal_places=2
+        )
+        
+        self.current_value_usd = validate_decimal_field(
+            value=self.current_value_usd,
+            field_name='current_value_usd',
+            min_value=Decimal('0'),
+            default_value=Decimal('0'),
+            decimal_places=2
+        )
+        
+        # Validate P&L fields (can be negative, 2 decimal places)
+        self.unrealized_pnl_usd = validate_decimal_field(
+            value=self.unrealized_pnl_usd,
+            field_name='unrealized_pnl_usd',
+            default_value=Decimal('0'),
+            decimal_places=2
+        )
+        
+        self.realized_pnl_usd = validate_decimal_field(
+            value=self.realized_pnl_usd,
+            field_name='realized_pnl_usd',
+            default_value=Decimal('0'),
+            decimal_places=2
+        )
+        
+        logger.debug(
+            f"[VALIDATION] Position {self.position_id} validated: "
+            f"{self.token_symbol} quantity={self.quantity}, "
+            f"value=${self.current_value_usd}"
+        )
+
+    def save(self, *args, **kwargs) -> None:
+        """
+        Save the position, ensuring all decimal fields are validated first.
+        
+        This override ensures that clean() is ALWAYS called before saving,
+        preventing bad decimal data from ever reaching the database.
+        
+        Args:
+            *args: Positional arguments to pass to parent save()
+            **kwargs: Keyword arguments to pass to parent save()
+        """
+        # Always validate before saving
+        try:
+            self.clean()
+        except Exception as e:
+            logger.error(
+                f"[VALIDATION] Failed to validate position before save: {e}",
+                exc_info=True
+            )
+            # Re-raise as a more specific error
+            raise ValidationError(
+                f"Cannot save position with invalid decimal data: {e}"
+            )
+        
+        # Call parent save with validated data
+        super().save(*args, **kwargs)
+
+    
     
     def update_price(self, new_price_usd: Decimal) -> None:
         """

@@ -386,15 +386,58 @@ class PriceFeedService:
         Get or create aiohttp session (lazy initialization).
         
         This prevents memory leaks by reusing the same session across requests.
+        CRITICAL: Also detects if event loop has changed (from async_to_sync wrapper)
+        and creates a new session if needed.
         
         Returns:
             Active aiohttp ClientSession
         """
-        if self._session is None or self._session.closed:
+        try:
+            # Check if we need a new session
+            needs_new_session = False
+            
+            if self._session is None:
+                needs_new_session = True
+            elif self._session.closed:
+                needs_new_session = True
+            else:
+                # CRITICAL FIX: Check if the session's loop is still running
+                # This handles the case where async_to_sync creates new loops
+                try:
+                    session_loop = self._session._loop
+                    current_loop = asyncio.get_running_loop()
+                    
+                    # If loops don't match, we need a new session
+                    if session_loop != current_loop:
+                        logger.debug(
+                            "[PRICE FEED] Event loop changed, closing old session"
+                        )
+                        await self._session.close()
+                        needs_new_session = True
+                except Exception:
+                    # If we can't check, be safe and create new session
+                    needs_new_session = True
+            
+            if needs_new_session:
+                timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
+                self._session = aiohttp.ClientSession(timeout=timeout)
+                logger.debug("[PRICE FEED] Created new aiohttp session")
+            
+            return self._session
+            
+        except Exception as e:
+            logger.error(f"[PRICE FEED] Error creating session: {e}", exc_info=True)
+            # Fallback: always create fresh session on error
             timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
             self._session = aiohttp.ClientSession(timeout=timeout)
-            logger.debug("[PRICE FEED] Created new aiohttp session")
-        return self._session
+            return self._session
+
+
+
+
+
+
+
 
     async def close(self) -> None:
         """
@@ -404,12 +447,48 @@ class PriceFeedService:
         """
         if self._session and not self._session.closed:
             await self._session.close()
-            logger.debug("[PRICE FEED] Closed aiohttp session")
+            logger.debug("[PRICE FEED] Closed aiohttp session")            
+            
+    def _run_async(self, coro: Awaitable[Any]) -> Any:
+        """
+        Safely run async coroutine from sync code.
+        
+        This handles event loop management properly to avoid
+        "Event loop is closed" errors across multiple calls.
+        
+        Args:
+            coro: Async coroutine to run
+            
+        Returns:
+            Result from the coroutine
+        """
+        try:
+            # Try to get the current running loop
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop running - we need to create one
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    # Loop exists but is closed - create new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+            except RuntimeError:
+                # No loop at all - create new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        
+        # Run the coroutine
+        if loop.is_running():
+            # Already in async context - just await
+            return coro
+        else:
+            # Not in async context - run until complete
+            return loop.run_until_complete(coro)
 
     # =========================================================================
     # PUBLIC API METHODS
     # =========================================================================
-
     async def get_token_price(
         self,
         token_address: str,

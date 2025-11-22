@@ -53,7 +53,7 @@ class ValidationLimits:
     MAX_TRADE_USD: Decimal = Decimal('100000.00')  # $100K max per trade
     
     # Price limits (USD)
-    MIN_PRICE_USD: Decimal = Decimal('0.00000001')
+    MIN_PRICE_USD: Decimal = Decimal('0.000000000000001')
     MAX_PRICE_USD: Decimal = Decimal('1000000.00')
     
     # Gas limits (USD)

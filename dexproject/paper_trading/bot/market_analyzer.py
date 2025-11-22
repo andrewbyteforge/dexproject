@@ -43,11 +43,14 @@ from paper_trading.intelligence.core.base import TradingDecision
 from paper_trading.intelligence.core.intel_slider import IntelSliderEngine
 
 # Import arbitrage detection components
+# Import arbitrage detection components
 try:
-    from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
-    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector
+    from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator  # type: ignore
+    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector  # type: ignore
     ARBITRAGE_AVAILABLE = True
 except ImportError:
+    DEXPriceComparator = None  # type: ignore
+    ArbitrageDetector = None  # type: ignore
     ARBITRAGE_AVAILABLE = False
 
 # Import WebSocket service
@@ -382,7 +385,8 @@ class MarketAnalyzer:
                 logger.info(
                     f"[TICK {self.tick_count}] ⚠️  Already at max positions "
                     f"({position_count}/{MAX_OPEN_POSITIONS}) - Skipping BUY path"
-                )
+                )           
+
             else:
                 available_slots = MAX_OPEN_POSITIONS - position_count
                 logger.info(
@@ -413,6 +417,17 @@ class MarketAnalyzer:
                     f"[TICK {self.tick_count}] ✅ Phase 4 complete - "
                     "BUY analysis finished"
                 )
+
+            # Reload position count after BUY analysis for accurate final summary
+            current_positions = PaperPosition.objects.filter(
+                account=self.account,
+                is_open=True
+            )
+            position_count = current_positions.count()
+            logger.debug(
+                f"[TICK {self.tick_count}] Position count after BUY analysis: "
+                f"{position_count}/{MAX_OPEN_POSITIONS}"
+            )
 
             # ================================================================
             # PHASE 5: STATISTICS & STATUS UPDATES
@@ -463,12 +478,11 @@ class MarketAnalyzer:
             logger.error(
                 f"[TICK {self.tick_count}] ❌ TICK FAILED: {e}",
                 exc_info=True
-            )
+            )            
 
     # =========================================================================
     # TRANSACTION MANAGER INTEGRATION
-    # =========================================================================
-
+    # =========================================================================   
     def _check_pending_transactions(self) -> None:
         """
         Check status of pending transactions via Transaction Manager.
@@ -541,17 +555,14 @@ class MarketAnalyzer:
                     if hasattr(price_manager, 'get_gas_price'):
                         gas_price_gwei = price_manager.get_gas_price()
                         if gas_price_gwei:
-                            self.helpers.update_gas_price(
-                                Decimal(str(gas_price_gwei)),
-                                self.arbitrage_detector
+                            # Update arbitrage detector directly
+                            self.arbitrage_detector.update_gas_price(
+                                Decimal(str(gas_price_gwei))
                             )
                     else:
                         # Use conservative default if not available
                         # On Base, gas is typically very low (< 1 gwei)
-                        self.helpers.update_gas_price(
-                            Decimal('0.5'),
-                            self.arbitrage_detector
-                        )
+                        self.arbitrage_detector.update_gas_price(Decimal('0.5'))
                 except Exception as gas_error:
                     logger.debug(f"[PRICES] Could not update gas price: {gas_error}")
 
@@ -732,8 +743,8 @@ class MarketAnalyzer:
                 )
             else:
                 logger.warning(
-                    f"[STATUS UPDATE] ⚠️ WebSocket service returned False - "
-                    f"update may not have been sent"
+                    "[STATUS UPDATE] ⚠️ WebSocket service returned False - "
+                    "update may not have been sent"
                 )
             
         except Exception as e:

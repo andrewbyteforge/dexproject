@@ -492,6 +492,8 @@ elif REDIS_AVAILABLE:
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
             'CONFIG': {
                 "hosts": [REDIS_URL],  # ✅ CORRECT
+                "capacity": 1500,  # Increased from default 100
+                "expiry": 10,      # Message expiry in seconds
             },
         },
     }

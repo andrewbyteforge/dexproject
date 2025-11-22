@@ -272,7 +272,7 @@ class TokenAnalyzer:
             # VALIDATION: Ensure we only get BUY or SKIP
             if decision.action not in [DecisionType.BUY, DecisionType.SKIP]:
                 logger.error(
-                    f"[TOKEN ANALYZER] ⚠️  INVALID DECISION TYPE: {decision.action} "
+                    f"[TOKEN ANALYZER] ⚠️ INVALID DECISION TYPE: {decision.action} "
                     f"for {token_symbol}. TokenAnalyzer should only return BUY or SKIP. "
                     "Converting to SKIP."
                 )
@@ -317,6 +317,7 @@ class TokenAnalyzer:
                 success = trade_executor.execute_trade(
                     decision=decision,
                     token_symbol=token_symbol,
+                    token_address=token_address,  # ✅ FIXED: Added token_address
                     current_price=current_price,
                     position_manager=position_manager
                 )

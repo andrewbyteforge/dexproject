@@ -134,6 +134,7 @@ class TradeExecutor:
         success = executor.execute_trade(
             decision=trading_decision,
             token_symbol='WETH',
+            token_address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
             current_price=Decimal('2500'),
             position_manager=position_manager
         )
@@ -209,6 +210,7 @@ class TradeExecutor:
         self,
         decision: TradingDecision,
         token_symbol: str,
+        token_address: str,
         current_price: Decimal,
         position_manager: Any  # Avoid circular import
     ) -> bool:
@@ -222,7 +224,8 @@ class TradeExecutor:
         
         Args:
             decision: Trading decision from intelligence engine
-            token_symbol: Token to trade
+            token_symbol: Token symbol (e.g., 'WETH')
+            token_address: Token contract address (e.g., '0xC02a...')
             current_price: Current token price
             position_manager: PositionManager instance for position updates
         
@@ -248,6 +251,7 @@ class TradeExecutor:
                 success = self._execute_trade_with_tx_manager(
                     decision=decision,
                     token_symbol=token_symbol,
+                    token_address=token_address,
                     current_price=current_price,
                     position_manager=position_manager
                 )
@@ -255,6 +259,7 @@ class TradeExecutor:
                 success = self._execute_trade_legacy(
                     decision=decision,
                     token_symbol=token_symbol,
+                    token_address=token_address,
                     current_price=current_price,
                     position_manager=position_manager
                 )
@@ -317,6 +322,7 @@ class TradeExecutor:
         self,
         decision: TradingDecision,
         token_symbol: str,
+        token_address: str,
         current_price: Decimal,
         position_manager: Any
     ) -> bool:
@@ -325,7 +331,8 @@ class TradeExecutor:
         
         Args:
             decision: Trading decision
-            token_symbol: Token to trade
+            token_symbol: Token symbol to trade
+            token_address: Token contract address
             current_price: Current price
             position_manager: PositionManager instance
         
@@ -340,7 +347,7 @@ class TradeExecutor:
             
             # Create paper trade record FIRST
             trade_record = create_paper_trade_record(
-                session=self.session,  # ← Correct parameter
+                executor=self,  # Pass the TradeExecutor instance
                 decision=decision,
                 token_symbol=token_symbol,
                 current_price=current_price
@@ -351,17 +358,16 @@ class TradeExecutor:
                 return False
             
             # Create AI thought log
-            create_ai_thought_log(
-                account=self.account,
+            trade_record = create_paper_trade_record(
+                executor=self,  # Pass the TradeExecutor instance
                 decision=decision,
                 token_symbol=token_symbol,
-                trade_record=trade_record,
-                intel_level=self.intel_level
+                current_price=current_price
             )
             
             # Initialize TX Manager if needed
             if not self.tx_manager:
-                self.tx_manager = get_transaction_manager()
+                self.tx_manager = get_transaction_manager(chain_id=self.chain_id)
             
             # Build swap params
             # ... TX Manager logic ...
@@ -370,6 +376,7 @@ class TradeExecutor:
             if decision.action == 'BUY':
                 position_manager.open_or_add_position(
                     token_symbol=token_symbol,
+                    token_address=token_address,
                     position_size_usd=decision.position_size_usd,
                     current_price=current_price
                 )
@@ -380,7 +387,6 @@ class TradeExecutor:
                     current_price=current_price
                 )
             
-            self.trades_with_tx_manager += 1
             logger.info(
                 "[TX MANAGER] Trade successful: "
                 f"Gas savings=23.1%, Total savings=438.9%"
@@ -388,7 +394,7 @@ class TradeExecutor:
             return True
             
         except Exception as e:
-            logger.error(f"[TX MANAGER] Trade execution failed: {e}", exc_info=True)
+            logger.error(f"[TX MANAGER] Execution failed: {e}", exc_info=True)
             return False
     
     # =========================================================================
@@ -399,6 +405,7 @@ class TradeExecutor:
         self,
         decision: TradingDecision,
         token_symbol: str,
+        token_address: str,
         current_price: Decimal,
         position_manager: Any
     ) -> bool:
@@ -407,7 +414,8 @@ class TradeExecutor:
         
         Args:
             decision: Trading decision
-            token_symbol: Token to trade
+            token_symbol: Token symbol to trade
+            token_address: Token contract address
             current_price: Current price
             position_manager: PositionManager instance
         
@@ -421,8 +429,7 @@ class TradeExecutor:
             )
             
             # Create paper trade record
-            trade_record = create_paper_trade_record(
-                session=self.session,  # ← Correct parameter
+            trade_record = create_paper_trade_record(                
                 decision=decision,
                 token_symbol=token_symbol,
                 current_price=current_price
@@ -446,6 +453,7 @@ class TradeExecutor:
             if decision.action == 'BUY':
                 position = position_manager.open_or_add_position(
                     token_symbol=token_symbol,
+                    token_address=token_address,
                     position_size_usd=decision.position_size_usd,
                     current_price=current_price
                 )

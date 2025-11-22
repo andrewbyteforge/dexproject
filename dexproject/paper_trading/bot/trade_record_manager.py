@@ -113,7 +113,7 @@ def create_paper_trade_record(
             return None
         
         # ⚠️ CRITICAL: Check for zero or near-zero price (prevents NaN from division)
-        if current_price <= Decimal('0.00001'):
+        if current_price <= ValidationLimits.MIN_PRICE_USD:
             logger.error(
                 f"[TRADE RECORD] Price too low or zero for {token_symbol}: ${current_price}. "
                 f"Cannot calculate trade amounts safely (would cause division by zero)."
