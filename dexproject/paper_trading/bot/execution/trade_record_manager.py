@@ -61,7 +61,10 @@ def create_paper_trade_record(
     executor: 'TradeExecutor',
     decision: TradingDecision,
     token_symbol: str,
-    current_price: Decimal
+    current_price: Decimal,
+    position_manager: Any,
+    execution_dex: str = 'uniswap_v3',  # NEW parameter
+    dex_price: Decimal = Decimal('0')   # NEW parameter
 ) -> Optional[PaperTrade]:
     """
     Create a paper trade record in the database.

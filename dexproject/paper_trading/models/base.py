@@ -22,7 +22,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 import logging
 from django.core.exceptions import ValidationError
-
+from typing import Any, Dict, Optional
 
 def validate_decimal_field(
     value: Optional[Decimal],
@@ -321,7 +321,11 @@ class PaperTrade(models.Model):
     Individual simulated trade record.
     
     Stores all simulated trades with realistic execution details including
-    gas costs, slippage, timing, and execution status.
+    gas costs, slippage, timing, execution status, and DEX routing.
+    
+    Enhanced with multi-DEX routing to track which DEX (Uniswap V3, SushiSwap,
+    Curve) was used for each trade, enabling analysis of routing efficiency
+    and price optimization.
     
     Attributes:
         trade_id: Unique identifier (UUID)
@@ -347,6 +351,7 @@ class PaperTrade(models.Model):
         mock_tx_hash: Simulated transaction hash
         mock_block_number: Simulated block number
         strategy_name: Strategy that generated this trade
+        execution_dex: DEX where trade was executed (NEW)
         metadata: Additional context (AI decisions, etc.)
     """
     
@@ -362,6 +367,14 @@ class PaperTrade(models.Model):
         ('buy', 'Buy'),
         ('sell', 'Sell'),
         ('swap', 'Swap'),
+    )
+    
+    # ✅ NEW: DEX choices for multi-DEX routing
+    DEX_CHOICES = (
+        ('uniswap_v3', 'Uniswap V3'),
+        ('uniswap_v2', 'Uniswap V2'),
+        ('sushiswap', 'SushiSwap'),
+        ('curve', 'Curve Finance'),
     )
     
     # Identity
@@ -514,12 +527,21 @@ class PaperTrade(models.Model):
         blank=True,
         help_text="Strategy that generated this trade"
     )
+    
+    # ✅ NEW: Multi-DEX routing - Track which DEX was used
+    execution_dex = models.CharField(
+        max_length=50,
+        choices=DEX_CHOICES,
+        default='uniswap_v3',
+        db_index=True,
+        help_text="DEX where trade was executed (Uniswap V3, SushiSwap, Curve)"
+    )
 
     # Metadata for AI context
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        help_text="AI trade context (intel level, confidence, reasoning)"
+        help_text="AI trade context (intel level, confidence, reasoning, DEX comparison)"
     )
 
     def save(self, *args, **kwargs):
@@ -539,17 +561,25 @@ class PaperTrade(models.Model):
         if self.simulated_slippage_percent is None:
             self.simulated_slippage_percent = Decimal('0.50')
         
+        # ✅ NEW: Validate execution_dex (must be one of the valid choices)
+        valid_dexs = [choice[0] for choice in self.DEX_CHOICES]
+        if self.execution_dex not in valid_dexs:
+            logger.warning(
+                f"Invalid execution_dex '{self.execution_dex}', defaulting to 'uniswap_v3'"
+            )
+            self.execution_dex = 'uniswap_v3'
+        
         # Validate token amounts (18 decimal places for wei precision)
         self.amount_in = validate_decimal_field(
             self.amount_in, 'amount_in',
             Decimal('0'), None, Decimal('0'),
-            decimal_places=0  # ← Changed from 18 to 0
+            decimal_places=0
         )
         
         self.expected_amount_out = validate_decimal_field(
             self.expected_amount_out, 'expected_amount_out',
             Decimal('0'), None, Decimal('0'),
-            decimal_places=0  # ← Changed from 18 to 0
+            decimal_places=0
         )
         
         # Validate actual_amount_out (nullable, 18 decimal places)
@@ -557,7 +587,7 @@ class PaperTrade(models.Model):
             self.actual_amount_out = validate_decimal_field(
                 self.actual_amount_out, 'actual_amount_out',
                 Decimal('0'), None, Decimal('0'),
-                decimal_places=0  # ← Changed from 18 to 0
+                decimal_places=0
             )
         
         # Validate USD amounts (2 decimal places: $0.01 to $100,000)
@@ -602,13 +632,100 @@ class PaperTrade(models.Model):
             models.Index(fields=['account', 'status']),
             models.Index(fields=['created_at']),
             models.Index(fields=['trade_type']),
+            models.Index(fields=['execution_dex']),  # ✅ NEW: Index for DEX queries
         ]
         verbose_name = 'Paper Trade'
         verbose_name_plural = 'Paper Trades'
     
     def __str__(self) -> str:
         """String representation."""
-        return f"{self.trade_type.upper()}: {self.token_in_symbol} → {self.token_out_symbol}"
+        return f"{self.trade_type.upper()}: {self.token_in_symbol} → {self.token_out_symbol} on {self.get_execution_dex_display()}"
+    
+    # ✅ NEW: Helper methods for DEX routing analytics
+    
+    def get_dex_display_name(self) -> str:
+        """
+        Get human-readable DEX name.
+        
+        Returns:
+            Display name (e.g., 'Uniswap V3')
+        """
+        return self.get_execution_dex_display()
+    
+    @classmethod
+    def get_dex_statistics(cls, account: 'PaperTradingAccount') -> Dict[str, Any]:
+        """
+        Get DEX usage statistics for an account.
+        
+        Args:
+            account: Paper trading account
+            
+        Returns:
+            Dictionary with DEX statistics:
+            {
+                'uniswap_v3': {'count': 45, 'percent': 60.0},
+                'sushiswap': {'count': 22, 'percent': 29.3},
+                'curve': {'count': 8, 'percent': 10.7},
+                'total_trades': 75
+            }
+        """
+        from django.db.models import Count
+        
+        # Get trade counts per DEX
+        dex_counts = cls.objects.filter(
+            account=account,
+            status='completed'
+        ).values('execution_dex').annotate(
+            count=Count('trade_id')
+        )
+        
+        # Calculate total and percentages
+        total_trades = sum(item['count'] for item in dex_counts)
+        
+        stats = {}
+        for item in dex_counts:
+            dex_name = item['execution_dex']
+            count = item['count']
+            percent = (count / total_trades * 100) if total_trades > 0 else 0
+            
+            stats[dex_name] = {
+                'count': count,
+                'percent': round(percent, 1)
+            }
+        
+        stats['total_trades'] = total_trades
+        
+        return stats
+    
+    @classmethod
+    def get_best_performing_dex(cls, account: 'PaperTradingAccount') -> Optional[str]:
+        """
+        Get the DEX with the best average trade performance.
+        
+        Args:
+            account: Paper trading account
+            
+        Returns:
+            DEX name with best performance, or None if no trades
+        """
+        from django.db.models import Avg
+        
+        # Get average profit per DEX
+        dex_performance = cls.objects.filter(
+            account=account,
+            status='completed',
+            trade_type='sell'
+        ).values('execution_dex').annotate(
+            avg_profit=Avg('amount_in_usd')
+        ).order_by('-avg_profit')
+        
+        if dex_performance:
+            return dex_performance[0]['execution_dex']
+        
+        return None
+    
+    
+    
     
 
 class PaperPosition(models.Model):

@@ -316,6 +316,18 @@
                             </select>
                         </div>
                         
+                        <!-- DEX Filter -->
+                        <div class="filter-group">
+                            <label for="dex-filter" class="form-label">DEX</label>
+                            <select name="dex" id="dex-filter" class="form-select">
+                                <option value="">All DEXes</option>
+                                <option value="UNISWAP_V3" {% if dex_filter == 'UNISWAP_V3' %}selected{% endif %}>Uniswap V3</option>
+                                <option value="UNISWAP_V2" {% if dex_filter == 'UNISWAP_V2' %}selected{% endif %}>Uniswap V2</option>
+                                <option value="SUSHISWAP" {% if dex_filter == 'SUSHISWAP' %}selected{% endif %}>SushiSwap</option>
+                                <option value="CURVE" {% if dex_filter == 'CURVE' %}selected{% endif %}>Curve Finance</option>
+                            </select>
+                        </div>
+                        
                         <!-- Date From -->
                         <div class="filter-group">
                             <label for="date-from" class="form-label">From Date</label>
@@ -374,6 +386,7 @@
                                         <th>Token Pair</th>
                                         <th>Amount In</th>
                                         <th>Amount Out</th>
+                                        <th>DEX</th>
                                         <th>Gas Cost</th>
                                         <th>Slippage</th>
                                         <th>Status</th>
@@ -416,13 +429,19 @@
                                         </td>
                                         
                                         <!-- Amount Out -->
-                                        <!-- Amount Out -->
                                         <td>
                                             {% if trade.amount_out %}
                                                 <div>{{ trade.amount_out|floatformat:4 }} {{ trade.token_out_symbol }}</div>
                                             {% else %}
                                                 <span class="text-muted">—</span>
                                             {% endif %}
+                                        </td>
+
+                                        <!-- DEX Column -->
+                                        <td>
+                                            <span class="badge bg-info" title="Executed on {{ trade.get_execution_dex_display }}">
+                                                {{ trade.get_execution_dex_display }}
+                                            </span>
                                         </td>
 
                                         <!-- Gas Cost -->
@@ -485,13 +504,13 @@
                             <i class="bi bi-inbox"></i>
                             <h4>No Trades Found</h4>
                             <p>
-                                {% if status_filter or trade_type_filter or date_from or date_to %}
+                                {% if status_filter or trade_type_filter or dex_filter or date_from or date_to %}
                                     No trades match your current filters. Try adjusting your search criteria.
                                 {% else %}
                                     You haven't executed any paper trades yet. Start the bot to begin trading!
                                 {% endif %}
                             </p>
-                            {% if status_filter or trade_type_filter or date_from or date_to %}
+                            {% if status_filter or trade_type_filter or dex_filter or date_from or date_to %}
                                 <button class="btn btn-primary mt-3" onclick="clearFilters()">
                                     <i class="bi bi-x-circle me-2"></i>Clear Filters
                                 </button>
@@ -513,7 +532,7 @@
                                     <!-- Previous Page -->
                                     {% if trades.has_previous %}
                                         <li class="page-item">
-                                            <a class="page-link" href="?page={{ trades.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                                            <a class="page-link" href="?page={{ trades.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if dex_filter %}&dex={{ dex_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
                                                 <i class="bi bi-chevron-left"></i>
                                             </a>
                                         </li>
@@ -531,7 +550,7 @@
                                             </li>
                                         {% elif num > trades.number|add:'-3' and num < trades.number|add:'3' %}
                                             <li class="page-item">
-                                                <a class="page-link" href="?page={{ num }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                                                <a class="page-link" href="?page={{ num }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if dex_filter %}&dex={{ dex_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
                                                     {{ num }}
                                                 </a>
                                             </li>
@@ -541,7 +560,7 @@
                                     <!-- Next Page -->
                                     {% if trades.has_next %}
                                         <li class="page-item">
-                                            <a class="page-link" href="?page={{ trades.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+                                            <a class="page-link" href="?page={{ trades.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if trade_type_filter %}&trade_type={{ trade_type_filter }}{% endif %}{% if dex_filter %}&dex={{ dex_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
                                                 <i class="bi bi-chevron-right"></i>
                                             </a>
                                         </li>

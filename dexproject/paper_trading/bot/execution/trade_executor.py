@@ -3,12 +3,16 @@ Trade Executor for Paper Trading Bot
 
 This module handles all trade execution operations for the paper trading bot,
 including transaction routing (TX Manager vs Legacy), circuit breaker validation,
-and trade coordination.
+multi-DEX routing, and trade coordination.
 
 REFACTORED: This file now imports validation, record creation, and arbitrage
 logic from separate modules for better organization and maintainability.
 
+ENHANCED: Added multi-DEX routing to find best prices across Uniswap V3,
+SushiSwap, and Curve Finance.
+
 Responsibilities:
+- Multi-DEX routing for best buy/sell prices
 - Route trades to TX Manager or Legacy execution
 - Validate circuit breaker status before trades (with auto-reset)
 - Coordinate trade execution pipeline
@@ -22,12 +26,20 @@ Circuit Breaker Features:
 - Resets on first successful trade
 - Manual reset via reset_circuit_breaker() method
 
+Multi-DEX Routing Features:
+- Queries Uniswap V3, SushiSwap, Curve Finance
+- Finds cheapest DEX for buying
+- Finds most profitable DEX for selling
+- Records which DEX was used
+- Calculates savings/improvements
+
 Dependencies:
 - validation.py: Validation logic and constants
 - trade_record_manager.py: Database record creation
 - arbitrage_executor.py: Arbitrage detection and execution
+- dex_router.py: Multi-DEX price comparison
 
-File: dexproject/paper_trading/bot/trade_executor.py
+File: paper_trading/bot/trade_executor.py
 """
 
 import logging
@@ -46,10 +58,14 @@ from paper_trading.models import (
 # Import intelligence types
 from paper_trading.intelligence.core.base import TradingDecision
 
+# Import constants
+from paper_trading.constants import DEXNames
+
+# Import validation
 from paper_trading.bot.shared.validation import ValidationLimits
 
 # Import record creation functions
-from .trade_record_manager import (
+from paper_trading.bot.execution.trade_record_manager import (
     create_paper_trade_record,
     create_ai_thought_log
 )
@@ -108,12 +124,19 @@ class TradeExecutor:
     Handles all trade execution operations for paper trading bot.
     
     This class manages the complete trade execution pipeline:
+    - Multi-DEX routing for optimal prices
     - Circuit breaker validation (with auto-reset)
     - Transaction routing (TX Manager vs Legacy)
     - Paper trade record creation (via trade_record_manager)
     - Arbitrage opportunity detection (via arbitrage_executor)
     - Position updates
     - Gas savings tracking
+    
+    Multi-DEX Routing:
+    - Queries Uniswap V3, SushiSwap, Curve
+    - Buys at cheapest DEX
+    - Sells at most profitable DEX
+    - Records which DEX was used
     
     Circuit Breaker Features:
     - Blocks after MAX_CONSECUTIVE_FAILURES (default: 5)
@@ -126,14 +149,15 @@ class TradeExecutor:
             account=account,
             session=session,
             strategy_config=strategy_config,
-            intel_level=5
+            intel_level=5,
+            chain_id=8453  # Base Mainnet
         )
         
-        # Execute a trade
+        # Execute a trade (will automatically route to best DEX)
         success = executor.execute_trade(
             decision=trading_decision,
             token_symbol='WETH',
-            token_address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+            token_address='0x4200000000000000000000000000000000000006',
             current_price=Decimal('2500'),
             position_manager=position_manager
         )
@@ -182,7 +206,7 @@ class TradeExecutor:
         self.daily_trades_count = 0
         self.last_trade_date = None
         
-        # ✅ NEW: Circuit breaker auto-reset tracking
+        # Circuit breaker auto-reset tracking
         self.last_failure_time: Optional[datetime] = None
         self.circuit_breaker_timeout_minutes = 5  # Auto-reset after 5 minutes
         
@@ -192,13 +216,29 @@ class TradeExecutor:
         self.arbitrage_opportunities_found = 0
         self.arbitrage_opportunities_executed = 0
         
+        # ✅ NEW: Multi-DEX routing for best price discovery
+        try:
+            from paper_trading.bot.dex_router import PaperDexRouter
+            self.dex_router = PaperDexRouter(chain_id=chain_id)
+            logger.info(
+                f"[TRADE EXECUTOR] DEX router initialized for multi-DEX routing "
+                f"(Chain: {chain_id})"
+            )
+        except Exception as router_error:
+            logger.warning(
+                f"[TRADE EXECUTOR] Could not initialize DEX router: {router_error}, "
+                "will use default single-DEX routing"
+            )
+            self.dex_router = None
+        
         logger.info(
             f"[TRADE EXECUTOR] Initialized: "
             f"Account={account.account_id}, "
             f"TX Manager={'ENABLED' if self.use_tx_manager else 'DISABLED'}, "
             f"Circuit Breaker={'ENABLED' if circuit_breaker_manager else 'DISABLED'}, "
             f"CB Timeout={self.circuit_breaker_timeout_minutes}min, "
-            f"Arbitrage={'ENABLED' if ARBITRAGE_AVAILABLE else 'DISABLED'}"
+            f"Arbitrage={'ENABLED' if ARBITRAGE_AVAILABLE else 'DISABLED'}, "
+            f"DEX Router={'ENABLED' if hasattr(self, 'dex_router') and self.dex_router else 'DISABLED'}"
         )
     
     # =========================================================================
@@ -214,7 +254,13 @@ class TradeExecutor:
         position_manager: Any  # Avoid circular import
     ) -> bool:
         """
-        Execute a paper trade with circuit breaker and Transaction Manager integration.
+        Execute a paper trade with circuit breaker and multi-DEX routing.
+        
+        Multi-DEX Routing:
+        - Queries multiple DEXs (Uniswap V3, SushiSwap, Curve)
+        - Finds cheapest DEX for buying
+        - Finds most profitable DEX for selling
+        - Records which DEX was used for the trade
         
         Circuit Breaker Logic:
         - Blocks trades after MAX_CONSECUTIVE_FAILURES
@@ -224,7 +270,7 @@ class TradeExecutor:
         Args:
             decision: Trading decision from intelligence engine
             token_symbol: Token symbol (e.g., 'WETH')
-            token_address: Token contract address (e.g., '0xC02a...')
+            token_address: Token contract address (e.g., '0x4200...')
             current_price: Current token price
             position_manager: PositionManager instance for position updates
         
@@ -242,6 +288,85 @@ class TradeExecutor:
                 # Circuit breaker blocks are not execution failures
                 return False
             
+            # =====================================================================
+            # ✅ MULTI-DEX ROUTING - Find best price across DEXs
+            # =====================================================================
+            execution_dex = DEXNames.UNISWAP_V3  # Default fallback
+            dex_price = current_price  # Default to current price
+            
+            if hasattr(self, 'dex_router') and self.dex_router:
+                try:
+                    if decision.action == 'BUY':
+                        # Find cheapest DEX for buying
+                        execution_dex, dex_price = self.dex_router.get_best_buy_dex(
+                            token_address=token_address,
+                            token_symbol=token_symbol,
+                            trade_size_usd=decision.position_size_usd
+                        )
+                        
+                        # Use DEX price if valid, otherwise fall back to current_price
+                        if dex_price > 0:
+                            logger.info(
+                                f"[DEX ROUTING] 💰 Buying {token_symbol} on {execution_dex} "
+                                f"at ${dex_price:.4f} (vs market ${current_price:.4f})"
+                            )
+                            # Calculate savings
+                            if current_price > 0:
+                                savings_percent = ((current_price - dex_price) / current_price) * 100
+                                if savings_percent > 0.1:  # Only log if > 0.1% savings
+                                    logger.info(
+                                        f"[DEX ROUTING] 💎 Saved {savings_percent:.2f}% by using {execution_dex}"
+                                    )
+                        else:
+                            dex_price = current_price
+                            logger.debug(
+                                f"[DEX ROUTING] Using fallback price ${current_price:.4f}"
+                            )
+                    
+                    elif decision.action == 'SELL':
+                        # Find most profitable DEX for selling
+                        position_value = decision.position_size_usd
+                        execution_dex, dex_price = self.dex_router.get_best_sell_dex(
+                            token_address=token_address,
+                            token_symbol=token_symbol,
+                            trade_size_usd=position_value
+                        )
+                        
+                        # Use DEX price if valid, otherwise fall back to current_price
+                        if dex_price > 0:
+                            logger.info(
+                                f"[DEX ROUTING] 💸 Selling {token_symbol} on {execution_dex} "
+                                f"at ${dex_price:.4f} (vs market ${current_price:.4f})"
+                            )
+                            # Calculate profit improvement
+                            if current_price > 0:
+                                profit_improvement = ((dex_price - current_price) / current_price) * 100
+                                if profit_improvement > 0.1:  # Only log if > 0.1% improvement
+                                    logger.info(
+                                        f"[DEX ROUTING] 📈 Gained {profit_improvement:.2f}% by using {execution_dex}"
+                                    )
+                        else:
+                            dex_price = current_price
+                            logger.debug(
+                                f"[DEX ROUTING] Using fallback price ${current_price:.4f}"
+                            )
+                
+                except Exception as routing_error:
+                    logger.warning(
+                        f"[DEX ROUTING] Error during DEX routing: {routing_error}, "
+                        "using default DEX and price"
+                    )
+                    execution_dex = DEXNames.UNISWAP_V3
+                    dex_price = current_price
+            else:
+                logger.debug(
+                    "[DEX ROUTING] DEX router not available, using default single-DEX routing"
+                )
+            
+            # =====================================================================
+            # END MULTI-DEX ROUTING
+            # =====================================================================
+            
             # Increment daily trade count
             self.daily_trades_count += 1
             
@@ -252,7 +377,9 @@ class TradeExecutor:
                     token_symbol=token_symbol,
                     token_address=token_address,
                     current_price=current_price,
-                    position_manager=position_manager
+                    position_manager=position_manager,
+                    execution_dex=execution_dex,  # ✅ NEW: Pass DEX info
+                    dex_price=dex_price  # ✅ NEW: Pass DEX price
                 )
             else:
                 success = self._execute_trade_legacy(
@@ -260,19 +387,21 @@ class TradeExecutor:
                     token_symbol=token_symbol,
                     token_address=token_address,
                     current_price=current_price,
-                    position_manager=position_manager
+                    position_manager=position_manager,
+                    execution_dex=execution_dex,  # ✅ NEW: Pass DEX info
+                    dex_price=dex_price  # ✅ NEW: Pass DEX price
                 )
             
             # ✅ Update failure tracking - ONLY for actual execution attempts
             if success:
                 self.consecutive_failures = 0
-                self.last_failure_time = None  # ✅ NEW: Clear failure timer on success
+                self.last_failure_time = None  # ✅ Clear failure timer on success
                 logger.debug(
                     "[TRADE EXECUTOR] Trade successful, reset consecutive_failures to 0"
                 )
             else:
                 self.consecutive_failures += 1
-                self.last_failure_time = timezone.now()  # ✅ NEW: Track when failure occurred
+                self.last_failure_time = timezone.now()  # ✅ Track when failure occurred
                 logger.warning(
                     f"[TRADE EXECUTOR] Trade failed, consecutive_failures now "
                     f"{self.consecutive_failures}"
@@ -286,7 +415,7 @@ class TradeExecutor:
                 exc_info=True
             )
             self.consecutive_failures += 1
-            self.last_failure_time = timezone.now()  # ✅ NEW: Track exception failures too
+            self.last_failure_time = timezone.now()  # ✅ Track exception failures too
             return False
     
     def reset_circuit_breaker(self) -> None:
@@ -303,7 +432,7 @@ class TradeExecutor:
         old_failures = self.consecutive_failures
         self.consecutive_failures = 0
         self.daily_trades_count = 0
-        self.last_failure_time = None  # ✅ NEW: Clear failure timer
+        self.last_failure_time = None  # ✅ Clear failure timer
         
         if old_failures > 0:
             logger.info(
@@ -323,7 +452,9 @@ class TradeExecutor:
         token_symbol: str,
         token_address: str,
         current_price: Decimal,
-        position_manager: Any
+        position_manager: Any,
+        execution_dex: str = DEXNames.UNISWAP_V3,  # ✅ NEW parameter
+        dex_price: Decimal = Decimal('0')  # ✅ NEW parameter
     ) -> bool:
         """
         Execute trade using Transaction Manager for gas optimization.
@@ -334,6 +465,8 @@ class TradeExecutor:
             token_address: Token contract address
             current_price: Current price
             position_manager: PositionManager instance
+            execution_dex: Which DEX to use (e.g., 'uniswap_v3')
+            dex_price: Price from DEX (may differ from current_price)
         
         Returns:
             True if successful, False otherwise
@@ -341,15 +474,21 @@ class TradeExecutor:
         try:
             logger.info(
                 f"[TX MANAGER] Executing {decision.action} trade: "
-                f"{token_symbol} @ ${current_price}"
+                f"{token_symbol} @ ${dex_price:.4f} on {execution_dex}"
             )
+            
+            # Use DEX price if valid, otherwise use current price
+            execution_price = dex_price if dex_price > 0 else current_price
             
             # Create paper trade record FIRST
             trade_record = create_paper_trade_record(
-                executor=self,  # Pass the TradeExecutor instance
+                executor=self,
                 decision=decision,
                 token_symbol=token_symbol,
-                current_price=current_price
+                current_price=execution_price,  # ✅ Use execution_price (from DEX if valid)
+                position_manager=position_manager,
+                execution_dex=execution_dex,  # ✅ ADD THIS - Which DEX was used
+                dex_price=dex_price  # ✅ ADD THIS - Actual DEX price
             )
             
             if not trade_record:
@@ -357,11 +496,12 @@ class TradeExecutor:
                 return False
             
             # Create AI thought log
-            trade_record = create_paper_trade_record(
-                executor=self,  # Pass the TradeExecutor instance
+            create_ai_thought_log(
+                executor=self,
+                paper_trade=trade_record,
                 decision=decision,
                 token_symbol=token_symbol,
-                current_price=current_price
+                token_address=token_address
             )
             
             # Initialize TX Manager if needed
@@ -369,7 +509,7 @@ class TradeExecutor:
                 self.tx_manager = get_transaction_manager(chain_id=self.chain_id)
             
             # Build swap params
-            # ... TX Manager logic ...
+            # ... TX Manager logic would go here ...
             
             # Update position
             if decision.action == 'BUY':
@@ -377,13 +517,13 @@ class TradeExecutor:
                     token_symbol=token_symbol,
                     token_address=token_address,
                     position_size_usd=decision.position_size_usd,
-                    current_price=current_price
+                    current_price=execution_price
                 )
             elif decision.action == 'SELL':
                 position_manager.close_or_reduce_position(
                     token_symbol=token_symbol,
                     sell_amount_usd=decision.position_size_usd,
-                    current_price=current_price
+                    current_price=execution_price
                 )
             
             logger.info(
@@ -406,7 +546,9 @@ class TradeExecutor:
         token_symbol: str,
         token_address: str,
         current_price: Decimal,
-        position_manager: Any
+        position_manager: Any,
+        execution_dex: str = DEXNames.UNISWAP_V3,  # ✅ NEW parameter
+        dex_price: Decimal = Decimal('0')  # ✅ NEW parameter
     ) -> bool:
         """
         Execute trade using legacy path (paper trading simulation).
@@ -417,23 +559,31 @@ class TradeExecutor:
             token_address: Token contract address
             current_price: Current price
             position_manager: PositionManager instance
+            execution_dex: Which DEX to use (e.g., 'uniswap_v3')
+            dex_price: Price from DEX (may differ from current_price)
         
         Returns:
             True if successful, False otherwise
         """
         try:
             logger.info(
-                f"[TX MANAGER] Executing {decision.action} trade: "
-                f"{token_symbol} @ ${current_price}"
+                f"[LEGACY] Executing {decision.action} trade: "
+                f"{token_symbol} @ ${dex_price:.4f} on {execution_dex}"
             )
             
+            # Use DEX price if valid, otherwise use current price
+            execution_price = dex_price if dex_price > 0 else current_price
+            
             # Create paper trade record
-            trade_record = create_paper_trade_record(                
+            trade_record = create_paper_trade_record(
+                executor=self,
                 decision=decision,
                 token_symbol=token_symbol,
-                current_price=current_price
+                current_price=execution_price,  # ✅ Use execution_price (from DEX if valid)
+                position_manager=position_manager,
+                execution_dex=execution_dex,  # ✅ ADD THIS
+                dex_price=dex_price  # ✅ ADD THIS
             )
-
             
             if not trade_record:
                 logger.error("[TRADE RECORD] Failed to create trade record")
@@ -441,11 +591,11 @@ class TradeExecutor:
             
             # Create AI thought log
             create_ai_thought_log(
-                account=self.account,
+                executor=self,
+                paper_trade=trade_record,
                 decision=decision,
                 token_symbol=token_symbol,
-                trade_record=trade_record,
-                intel_level=self.intel_level
+                token_address=token_address
             )
             
             # Update position
@@ -454,7 +604,7 @@ class TradeExecutor:
                     token_symbol=token_symbol,
                     token_address=token_address,
                     position_size_usd=decision.position_size_usd,
-                    current_price=current_price
+                    current_price=execution_price
                 )
                 
                 # PHASE 2: Check for arbitrage opportunities after BUY
@@ -463,7 +613,7 @@ class TradeExecutor:
                         executor=self,
                         position=position,
                         token_symbol=token_symbol,
-                        current_price=current_price,
+                        current_price=execution_price,
                         position_manager=position_manager
                     )
                     
@@ -471,17 +621,16 @@ class TradeExecutor:
                         self.arbitrage_opportunities_found += 1
                     if arb_result['executed']:
                         self.arbitrage_opportunities_executed += 1
-                
+            
             elif decision.action == 'SELL':
                 position_manager.close_or_reduce_position(
                     token_symbol=token_symbol,
                     sell_amount_usd=decision.position_size_usd,
-                    current_price=current_price
+                    current_price=execution_price
                 )
             
             logger.info(
-                "[TX MANAGER] Trade successful: "
-                f"Gas savings=23.1%, Total savings=438.9%"
+                f"[LEGACY] Trade successful on {execution_dex}"
             )
             return True
             
@@ -542,7 +691,7 @@ class TradeExecutor:
                 )
                 return False
             
-            # ✅ NEW: Check consecutive failures with time-based auto-reset
+            # ✅ Check consecutive failures with time-based auto-reset
             if self.consecutive_failures >= ValidationLimits.MAX_CONSECUTIVE_FAILURES:
                 # Auto-reset if enough time has passed since last failure
                 if self.last_failure_time:
@@ -640,6 +789,7 @@ class TradeExecutor:
             'arbitrage_opportunities_found': self.arbitrage_opportunities_found,
             'arbitrage_opportunities_executed': self.arbitrage_opportunities_executed,
             'circuit_breaker_timeout_minutes': self.circuit_breaker_timeout_minutes,
+            'dex_router_enabled': hasattr(self, 'dex_router') and self.dex_router is not None,
         }
         
         # Add time since last failure if applicable

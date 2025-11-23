@@ -47,6 +47,21 @@
     border-color: rgba(255, 255, 255, 0.05);
     color: rgba(255, 255, 255, 0.3);
 }
+
+/* DEX Statistics Card Styling */
+.dex-stat-card {
+    background: rgba(255, 255, 255, 0.03);
+    transition: all 0.3s ease;
+}
+
+.dex-stat-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    transform: translateY(-2px);
+}
+
+.dex-icon {
+    font-size: 2rem;
+}
 </style>
 {% endblock %}
 
@@ -266,48 +281,66 @@
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
-                        <table class="table table-sm">
+                        <table class="table table-hover table-sm">
                             <thead>
                                 <tr>
                                     <th>Time</th>
                                     <th>Type</th>
                                     <th>Token</th>
                                     <th>Amount</th>
+                                    <th>Price</th>
+                                    <th>DEX</th>
+                                    <th>P&L</th>
                                     <th>Status</th>
                                 </tr>
                             </thead>
                             <tbody id="recent-trades-tbody">
-                                {% if recent_trades %}
-                                    {% for trade in recent_trades %}
-                                    <tr data-trade-id="{{ trade.trade_id }}">
-                                        <td><small>{{ trade.created_at|date:"H:i" }}</small></td>
-                                        <td>
-                                            <span class="badge {% if trade.trade_type == 'buy' %}bg-success{% else %}bg-danger{% endif %}">
-                                                {{ trade.trade_type|upper }}
-                                            </span>
-                                        </td>
-                                        <td><small>{{ trade.token_out_symbol|default:"N/A" }}</small></td>
-                                        <td><small>${{ trade.amount_in_usd|floatformat:2 }}</small></td>
-                                        <td>
-                                            <span class="badge {% if trade.status == 'COMPLETED' %}bg-success{% elif trade.status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
-                                                {{ trade.status }}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                {% else %}
-                                    <tr class="no-trades-message">
-                                        <td colspan="5" class="text-center text-muted py-4">
-                                            <i class="bi bi-graph-up fs-3 mb-2 d-block"></i>
-                                            <p class="mb-0">No trades yet. Start the bot to begin paper trading!</p>
-                                        </td>
-                                    </tr>
-                                {% endif %}
+                                {% for trade in recent_trades %}
+                                <tr data-trade-id="{{ trade.trade_id }}">
+                                    <td><small>{{ trade.created_at|date:"M d, H:i" }}</small></td>
+                                    <td>
+                                        <span class="badge {% if trade.trade_type == 'buy' %}bg-success{% else %}bg-danger{% endif %}">
+                                            {{ trade.trade_type|upper }}
+                                        </span>
+                                    </td>
+                                    <td><small>{{ trade.token_out_symbol }}</small></td>
+                                    <td><small>${{ trade.amount_in_usd|floatformat:2 }}</small></td>
+                                    <td><small>${{ trade.metadata.current_price|default:"0"|floatformat:4 }}</small></td>
+                                    <td>
+                                        <span class="badge bg-info" title="Executed on {{ trade.get_execution_dex_display }}">
+                                            {{ trade.get_execution_dex_display }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if trade.trade_type == 'sell' %}
+                                            {% with pnl=trade.metadata.pnl_percent|default:0 %}
+                                            <small>
+                                                <span class="{% if pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                                    {{ pnl|floatformat:2 }}%
+                                                </span>
+                                            </small>
+                                            {% endwith %}
+                                        {% else %}
+                                            <small>-</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-{{ trade.status }}">{{ trade.status }}</span>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr class="no-trades-message">
+                                    <td colspan="8" class="text-center text-muted py-4">
+                                        <i class="bi bi-graph-up fs-3 mb-2 d-block"></i>
+                                        <p class="mb-0">No trades yet</p>
+                                    </td>
+                                </tr>
+                                {% endfor %}
                             </tbody>
                         </table>
                     </div>
                     
-                    <!-- 🆕 TRADES PAGINATION - BOOTSTRAP (FIXED) -->
+                    <!-- TRADES PAGINATION -->
                     {% if trades_page_obj and trades_page_obj.paginator.count > 0 %}
                     <div class="pagination-controls">
                         <div class="pagination-info">
@@ -382,6 +415,76 @@
                             </ul>
                         </nav>
                     </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- DEX Statistics Widget -->
+            <div class="card card-glass mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-diagram-3 me-2"></i>
+                        DEX Routing Statistics
+                    </h5>
+                    <small class="text-muted">Multi-DEX Price Optimization</small>
+                </div>
+                <div class="card-body">
+                    {% if dex_stats %}
+                    <div class="row mb-3">
+                        <!-- Uniswap V3 -->
+                        {% if dex_stats.uniswap_v3 %}
+                        <div class="col-md-4 mb-3">
+                            <div class="dex-stat-card text-center p-3 border rounded">
+                                <div class="dex-icon mb-2">
+                                    <i class="fas fa-exchange-alt text-primary"></i>
+                                </div>
+                                <h6>Uniswap V3</h6>
+                                <h3>{{ dex_stats.uniswap_v3.count }}</h3>
+                                <small class="text-muted">{{ dex_stats.uniswap_v3.percent }}% of trades</small>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- SushiSwap -->
+                        {% if dex_stats.sushiswap %}
+                        <div class="col-md-4 mb-3">
+                            <div class="dex-stat-card text-center p-3 border rounded">
+                                <div class="dex-icon mb-2">
+                                    <i class="fas fa-fish text-info"></i>
+                                </div>
+                                <h6>SushiSwap</h6>
+                                <h3>{{ dex_stats.sushiswap.count }}</h3>
+                                <small class="text-muted">{{ dex_stats.sushiswap.percent }}% of trades</small>
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- Curve -->
+                        {% if dex_stats.curve %}
+                        <div class="col-md-4 mb-3">
+                            <div class="dex-stat-card text-center p-3 border rounded">
+                                <div class="dex-icon mb-2">
+                                    <i class="fas fa-wave-square text-warning"></i>
+                                </div>
+                                <h6>Curve Finance</h6>
+                                <h3>{{ dex_stats.curve.count }}</h3>
+                                <small class="text-muted">{{ dex_stats.curve.percent }}% of trades</small>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Total Trades -->
+                    <div class="text-center mt-3">
+                        <p class="text-muted mb-0">
+                            <strong>Total Trades:</strong> {{ dex_stats.total_trades }}
+                        </p>
+                        <small class="text-muted">
+                            Bot automatically routes to best-priced DEX for each trade
+                        </small>
+                    </div>
+                    {% else %}
+                    <p class="text-muted text-center mb-0">No trade statistics available yet</p>
                     {% endif %}
                 </div>
             </div>
@@ -468,7 +571,7 @@
                         </table>
                     </div>
                     
-                    <!-- 🆕 POSITIONS PAGINATION - BOOTSTRAP (FIXED) -->
+                    <!-- POSITIONS PAGINATION -->
                     {% if positions_page_obj and positions_page_obj.paginator.count > 0 %}
                     <div class="pagination-controls">
                         <div class="pagination-info">
