@@ -24,12 +24,12 @@ from typing import Dict, Any, Optional
 # Import arbitrage detection components
 try:
     from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
-    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector
+    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageEngine
     ARBITRAGE_AVAILABLE = True
 except ImportError as e:
     ARBITRAGE_AVAILABLE = False
     DEXPriceComparator = None
-    ArbitrageDetector = None
+    ArbitrageEngine = None
 
 # Type hints for external dependencies (avoid circular imports)
 from typing import TYPE_CHECKING
@@ -82,7 +82,7 @@ class ArbitrageHandler:
         self.strategy_config = strategy_config
         self.check_arbitrage = False
         self.dex_comparator: Optional[Any] = None
-        self.arbitrage_detector: Optional[Any] = None
+        self.arbitrage_engine: Optional[Any] = None
         self.arbitrage_opportunities_found = 0
         self.arbitrage_trades_executed = 0
 
@@ -118,7 +118,7 @@ class ArbitrageHandler:
             self.dex_comparator = DEXPriceComparator(chain_id=chain_id)
 
             # Initialize arbitrage detector with sensible defaults
-            self.arbitrage_detector = ArbitrageDetector(
+            self.arbitrage_engine = ArbitrageEngine(
                 gas_price_gwei=Decimal('1.0'),  # Will update dynamically
                 min_spread_percent=Decimal('0.5'),  # 0.5% minimum spread
                 min_profit_usd=Decimal('10')  # $10 minimum profit
@@ -154,8 +154,8 @@ class ArbitrageHandler:
         Args:
             gas_price_gwei: Current gas price in gwei
         """
-        if self.arbitrage_detector:
-            self.arbitrage_detector.update_gas_price(gas_price_gwei)
+        if self.arbitrage_engine:
+            self.arbitrage_engine.update_gas_price(gas_price_gwei)
             logger.debug(f"[ARBITRAGE] Updated gas price to {gas_price_gwei} gwei")
 
     def increment_opportunities_found(self) -> None:
@@ -185,9 +185,9 @@ class ArbitrageHandler:
                 (self.arbitrage_trades_executed / self.arbitrage_opportunities_found) * 100
             )
 
-        if self.arbitrage_detector:
+        if self.arbitrage_engine:
             try:
-                stats['detector_stats'] = self.arbitrage_detector.get_performance_stats()
+                stats['detector_stats'] = self.arbitrage_engine.get_performance_stats()
             except Exception as e:
                 logger.debug(f"[ARBITRAGE] Could not get detector stats: {e}")
 

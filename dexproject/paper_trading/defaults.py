@@ -302,13 +302,17 @@ class DEXComparisonDefaults:
     ENABLE_UNISWAP_V2: Final[bool] = False  # Disabled initially
     ENABLE_SUSHISWAP: Final[bool] = True
     ENABLE_CURVE: Final[bool] = True
+    ENABLE_AERODROME: Final[bool] = True
+    ENABLE_BASESWAP: Final[bool] = True
     
     # DEX priority order (higher priority = queried first)
     DEX_PRIORITY: Final[Dict[str, int]] = {
-        'uniswap_v3': 1,     # Highest liquidity, query first
-        'sushiswap': 2,      # Good alternative
-        'curve': 3,          # For stablecoins
-        'uniswap_v2': 4      # Fallback
+        'aerodrome': 1,      # ✅ NEW - Highest Base liquidity
+        'uniswap_v3': 2,     
+        'sushiswap': 3,      
+        'baseswap': 4,       # ✅ NEW - Base alternative
+        'curve': 5,          
+        'uniswap_v2': 6      
     }
     
     # =========================================================================

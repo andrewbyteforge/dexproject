@@ -39,7 +39,7 @@ from paper_trading.bot.shared.validation import (
 
 # Import Arbitrage Components (optional)
 try:
-    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector
+    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageEngine
     from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator
     ARBITRAGE_AVAILABLE = True
 except ImportError:
@@ -90,8 +90,8 @@ def check_arbitrage_after_buy(
             return
         
         # Initialize arbitrage components lazily
-        if not executor.arbitrage_detector:
-            executor.arbitrage_detector = ArbitrageDetector()
+        if not executor.arbitrage_engine:
+            executor.arbitrage_engine = ArbitrageDetector()
             logger.info("[ARBITRAGE] Detector initialized")
         
         if not executor.dex_price_comparator:
@@ -131,7 +131,7 @@ def check_arbitrage_after_buy(
         price_comparison.__post_init__()  # Recalculate best/worst
         
         # Detect arbitrage opportunity using detect_arbitrage()
-        opportunity = executor.arbitrage_detector.detect_arbitrage(
+        opportunity = executor.arbitrage_engine.detect_arbitrage(
             price_comparison=price_comparison,
             trade_amount_usd=trade_amount_usd
         )

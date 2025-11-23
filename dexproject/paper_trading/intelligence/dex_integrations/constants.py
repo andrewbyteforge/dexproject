@@ -97,6 +97,34 @@ CURVE_ADDRESS_PROVIDER: Dict[int, str] = {
 
 
 # =============================================================================
+# AERODROME CONSTANTS (BASE CHAIN SPECIFIC)
+# =============================================================================
+
+AERODROME_FACTORY: Dict[int, str] = {
+    8453: '0x420DD381b31aEf6683db6B902084cB0FFECe40Da',
+}
+
+AERODROME_ROUTER: Dict[int, str] = {
+    8453: '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',
+}
+
+
+# =============================================================================
+# BASESWAP CONSTANTS (BASE CHAIN SPECIFIC)
+# =============================================================================
+
+BASESWAP_FACTORY: Dict[int, str] = {
+    8453: '0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB',
+}
+
+BASESWAP_ROUTER: Dict[int, str] = {
+    8453: '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',
+}
+
+
+
+
+# =============================================================================
 # BASE TOKEN ADDRESSES (WETH, USDC, USDT, DAI)
 # =============================================================================
 
@@ -371,6 +399,16 @@ def get_dex_addresses(dex_name: str, chain_id: int) -> Dict[str, str]:
         return {
             'registry': CURVE_REGISTRY.get(chain_id, ''),
             'address_provider': CURVE_ADDRESS_PROVIDER.get(chain_id, '')
+        }
+    elif dex_name == 'aerodrome':
+        return {
+            'factory': AERODROME_FACTORY.get(chain_id, ''),
+            'router': AERODROME_ROUTER.get(chain_id, '')
+        }
+    elif dex_name == 'baseswap':
+        return {
+            'factory': BASESWAP_FACTORY.get(chain_id, ''),
+            'router': BASESWAP_ROUTER.get(chain_id, '')
         }
     else:
         raise ValueError(f"Unknown DEX: {dex_name}")

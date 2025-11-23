@@ -1,58 +1,84 @@
 """
-Modular Market Analyzers for Paper Trading Intelligence
+DEX Integrations Module - Complete Multi-DEX Support
 
-Separate analyzer modules for different aspects of market analysis,
-making the system easier to maintain and extend.
+This module provides unified access to 6 major DEX protocols:
+- Uniswap V3: Multi-tier concentrated liquidity
+- SushiSwap: Proven V2-style AMM
+- Curve: Optimized stablecoin swaps
+- Aerodrome: Base chain's largest DEX
+- BaseSwap: Base chain V2 alternative
 
-This module provides a clean public API for all analyzer components:
-- RealGasAnalyzer: Network gas conditions
-- RealLiquidityAnalyzer: Uniswap V3 pool liquidity
-- RealVolatilityAnalyzer: Price volatility and trends
-- MEVThreatDetector: MEV threat analysis
-- MarketStateAnalyzer: Overall market conditions
-- CompositeMarketAnalyzer: Comprehensive analysis coordinator
+All DEX adapters implement the BaseDEX interface and return DEXPrice objects
+for consistent cross-DEX comparison and arbitrage detection.
 
-File: dexproject/paper_trading/intelligence/analyzers/__init__.py
+File: dexproject/paper_trading/intelligence/dex_integrations/__init__.py
 """
 
 import logging
 
-# Import defaults for initialization logging
-from paper_trading.defaults import IntelligenceDefaults
-
-# Import DEX constants
-from paper_trading.intelligence.dex_integrations.constants import (
-    UNISWAP_V3_FACTORY,
-    FACTORY_ABI,
-    POOL_ABI,
-    FEE_TIERS,
+# Import base classes and data structures
+from paper_trading.intelligence.dex_integrations.base import (
+    BaseDEX,
+    DEXPrice
 )
 
-# =============================================================================
-# ENGINE AVAILABILITY CHECK
-# =============================================================================
-# Check if engine config module is available for Web3 connectivity
-try:
-    import engine.config as engine_config_module
-    from engine.config import get_config
-    from engine.web3_client import Web3Client
-    ENGINE_CONFIG_MODULE_AVAILABLE = True
-except ImportError:
-    engine_config_module = None  # type: ignore
-    get_config = None  # type: ignore
-    Web3Client = None  # type: ignore
-    ENGINE_CONFIG_MODULE_AVAILABLE = False
+# Import all DEX implementations
+from paper_trading.intelligence.dex_integrations.uniswap_v3 import UniswapV3DEX
+from paper_trading.intelligence.dex_integrations.sushiswap import SushiSwapDEX
+from paper_trading.intelligence.dex_integrations.curve import CurveDEX
+from paper_trading.intelligence.dex_integrations.aerodrome import AerodromeDEX
+from paper_trading.intelligence.dex_integrations.baseswap import BaseSwapDEX
 
-# Import base analyzer
-from paper_trading.intelligence.analyzers.base import BaseAnalyzer
-
-# Import all specific analyzers
-from paper_trading.intelligence.analyzers.gas_analyzer import RealGasAnalyzer
-from paper_trading.intelligence.analyzers.liquidity_analyzer import RealLiquidityAnalyzer
-from paper_trading.intelligence.analyzers.volatility_analyzer import RealVolatilityAnalyzer
-from paper_trading.intelligence.analyzers.mev_detector import MEVThreatDetector
-from paper_trading.intelligence.analyzers.market_state import MarketStateAnalyzer
-from paper_trading.intelligence.analyzers.composite_analyzer import CompositeMarketAnalyzer
+# Import all constants
+from paper_trading.intelligence.dex_integrations.constants import (
+    # Uniswap V3
+    UNISWAP_V3_FACTORY,
+    UNISWAP_V3_ROUTER,
+    UNISWAP_V3_FEE_TIERS,
+    FEE_TIERS,  # Alias
+    
+    # Uniswap V2
+    UNISWAP_V2_FACTORY,
+    UNISWAP_V2_ROUTER,
+    
+    # SushiSwap
+    SUSHISWAP_FACTORY,
+    SUSHISWAP_ROUTER,
+    
+    # Curve
+    CURVE_REGISTRY,
+    CURVE_ADDRESS_PROVIDER,
+    
+    # Aerodrome (Base chain)
+    AERODROME_FACTORY,
+    AERODROME_ROUTER,
+    
+    # BaseSwap (Base chain)
+    BASESWAP_FACTORY,
+    BASESWAP_ROUTER,
+    
+    # Base tokens
+    WETH_ADDRESS,
+    USDC_ADDRESS,
+    USDT_ADDRESS,
+    DAI_ADDRESS,
+    
+    # ABIs
+    FACTORY_ABI,
+    POOL_ABI,
+    ERC20_ABI,
+    UNISWAP_V2_PAIR_ABI,
+    UNISWAP_V2_FACTORY_ABI,
+    
+    # Gas estimates
+    GAS_ESTIMATES_PER_CHAIN,
+    DEFAULT_GAS_ESTIMATE,
+    
+    # Helper functions
+    get_base_tokens,
+    get_dex_addresses,
+    get_gas_estimate
+)
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -64,34 +90,26 @@ logger = logging.getLogger(__name__)
 
 def _log_initialization() -> None:
     """
-    Log analyzer initialization status.
+    Log DEX integrations initialization status.
     
-    Provides visibility into:
-    - Engine config availability
-    - Data sources being used
-    - Configuration settings
+    Provides visibility into available DEX protocols and their capabilities.
     """
     logger.info("=" * 80)
-    logger.info("[ANALYZERS] Modular Market Analyzers - REAL DATA VERSION")
+    logger.info("[DEX INTEGRATIONS] Multi-DEX Trading System Initialized")
     logger.info("=" * 80)
-    logger.info(
-        f"[ANALYZERS] Engine Config Module Available: {ENGINE_CONFIG_MODULE_AVAILABLE}"
-    )
-    
-    if ENGINE_CONFIG_MODULE_AVAILABLE:
-        logger.info("[ANALYZERS] ✅ Using REAL blockchain data (lazy initialization)")
-        logger.info("[ANALYZERS]    - Gas: Blockchain RPC queries")
-        logger.info("[ANALYZERS]    - Liquidity: Uniswap V3 pool queries")
-        logger.info("[ANALYZERS]    - Volatility: Price history calculations")
-        logger.info("[ANALYZERS]    - MEV: Smart heuristics (liquidity-based)")
-        logger.info("[ANALYZERS]    - Config: Initialized on-demand when analyzers run")
-    else:
-        logger.warning("[ANALYZERS] ⚠️ Engine config module unavailable")
-    
-    logger.info(
-        "[ANALYZERS] SKIP_TRADE_ON_MISSING_DATA: %s",
-        IntelligenceDefaults.SKIP_TRADE_ON_MISSING_DATA
-    )
+    logger.info("[DEX INTEGRATIONS] Available DEX Protocols:")
+    logger.info("[DEX INTEGRATIONS]   1. Uniswap V3 - Concentrated liquidity")
+    logger.info("[DEX INTEGRATIONS]   2. SushiSwap - V2-style AMM")
+    logger.info("[DEX INTEGRATIONS]   3. Curve Finance - Stablecoin optimization")
+    logger.info("[DEX INTEGRATIONS]   4. Aerodrome - Base chain primary")
+    logger.info("[DEX INTEGRATIONS]   5. BaseSwap - Base chain alternative")
+    logger.info("[DEX INTEGRATIONS]")
+    logger.info("[DEX INTEGRATIONS] Capabilities:")
+    logger.info("[DEX INTEGRATIONS]   ✅ Multi-DEX price comparison")
+    logger.info("[DEX INTEGRATIONS]   ✅ Cross-DEX arbitrage detection")
+    logger.info("[DEX INTEGRATIONS]   ✅ Smart trade routing")
+    logger.info("[DEX INTEGRATIONS]   ✅ Base chain optimization")
+    logger.info("[DEX INTEGRATIONS]   ✅ Stablecoin specialization")
     logger.info("=" * 80)
 
 
@@ -100,25 +118,207 @@ _log_initialization()
 
 
 # =============================================================================
+# DEX FACTORY FUNCTION
+# =============================================================================
+
+def create_dex(
+    dex_name: str,
+    chain_id: int = 8453,
+    cache_ttl_seconds: int = 60
+) -> BaseDEX:
+    """
+    Factory function to create DEX instances by name.
+    
+    This provides a convenient way to instantiate DEX adapters without
+    knowing their specific class names.
+    
+    Args:
+        dex_name: DEX name ('uniswap_v3', 'sushiswap', 'curve', 'aerodrome', 'baseswap')
+        chain_id: Blockchain network ID (default: 8453 = Base Mainnet)
+        cache_ttl_seconds: Cache TTL for price data (default: 60 seconds)
+        
+    Returns:
+        Initialized DEX instance
+        
+    Raises:
+        ValueError: If dex_name is not recognized
+        
+    Example:
+        >>> dex = create_dex('aerodrome', chain_id=8453)
+        >>> price = await dex.get_token_price(token_address, 'WETH')
+    """
+    dex_map = {
+        'uniswap_v3': UniswapV3DEX,
+        'sushiswap': SushiSwapDEX,
+        'curve': CurveDEX,
+        'aerodrome': AerodromeDEX,
+        'baseswap': BaseSwapDEX
+    }
+    
+    dex_class = dex_map.get(dex_name.lower())
+    if not dex_class:
+        raise ValueError(
+            f"Unknown DEX: {dex_name}. "
+            f"Available: {', '.join(dex_map.keys())}"
+        )
+    
+    return dex_class(
+        chain_id=chain_id,
+        cache_ttl_seconds=cache_ttl_seconds
+    )
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def get_supported_dexs(chain_id: int = 8453) -> list[str]:
+    """
+    Get list of supported DEXs for a specific chain.
+    
+    Args:
+        chain_id: Blockchain network ID
+        
+    Returns:
+        List of DEX names available on this chain
+        
+    Example:
+        >>> get_supported_dexs(8453)
+        ['uniswap_v3', 'sushiswap', 'curve', 'aerodrome', 'baseswap']
+    """
+    supported = []
+    
+    # Uniswap V3 - Multi-chain
+    if chain_id in UNISWAP_V3_FACTORY:
+        supported.append('uniswap_v3')
+    
+    # SushiSwap - Multi-chain
+    if chain_id in SUSHISWAP_FACTORY:
+        supported.append('sushiswap')
+    
+    # Curve - Multi-chain
+    if chain_id in CURVE_REGISTRY:
+        supported.append('curve')
+    
+    # Aerodrome - Base only
+    if chain_id in AERODROME_FACTORY:
+        supported.append('aerodrome')
+    
+    # BaseSwap - Base only
+    if chain_id in BASESWAP_FACTORY:
+        supported.append('baseswap')
+    
+    return supported
+
+
+def get_dex_info() -> dict[str, dict[str, str]]:
+    """
+    Get information about all available DEXs.
+    
+    Returns:
+        Dictionary mapping DEX names to their descriptions
+        
+    Example:
+        >>> info = get_dex_info()
+        >>> print(info['aerodrome']['description'])
+        'Base chain primary DEX with volatile and stable pools'
+    """
+    return {
+        'uniswap_v3': {
+            'name': 'Uniswap V3',
+            'type': 'Concentrated Liquidity',
+            'description': 'Multi-tier concentrated liquidity with 0.05%, 0.3%, and 1% fees',
+            'best_for': 'High-volume tokens, deep liquidity',
+            'chains': 'Multi-chain (Ethereum, Base, Arbitrum, Optimism)'
+        },
+        'sushiswap': {
+            'name': 'SushiSwap',
+            'type': 'Constant Product AMM',
+            'description': 'Proven Uniswap V2-style AMM with consistent pricing',
+            'best_for': 'Alternative liquidity, arbitrage opportunities',
+            'chains': 'Multi-chain (Ethereum, Base, Arbitrum, Polygon)'
+        },
+        'curve': {
+            'name': 'Curve Finance',
+            'type': 'Stableswap AMM',
+            'description': 'Optimized for stablecoin swaps with minimal slippage',
+            'best_for': 'USDC/USDT/DAI swaps, large stable volumes',
+            'chains': 'Multi-chain (Ethereum, Base, Arbitrum, Optimism)'
+        },
+        'aerodrome': {
+            'name': 'Aerodrome',
+            'type': 'Hybrid AMM',
+            'description': 'Base chain primary DEX with volatile and stable pools',
+            'best_for': 'Base chain trading, highest Base liquidity',
+            'chains': 'Base only'
+        },
+        'baseswap': {
+            'name': 'BaseSwap',
+            'type': 'Constant Product AMM',
+            'description': 'Uniswap V2 fork on Base with Base-native token support',
+            'best_for': 'Alternative Base liquidity, Base-specific tokens',
+            'chains': 'Base only'
+        }
+    }
+
+
+# =============================================================================
 # PUBLIC API
 # =============================================================================
 
 __all__ = [
-    # Constants
+    # Base classes
+    'BaseDEX',
+    'DEXPrice',
+    
+    # DEX implementations
+    'UniswapV3DEX',
+    'SushiSwapDEX',
+    'CurveDEX',
+    'AerodromeDEX',
+    'BaseSwapDEX',
+    
+    # Factory function
+    'create_dex',
+    
+    # Utility functions
+    'get_supported_dexs',
+    'get_dex_info',
+    
+    # Constants - Factories
     'UNISWAP_V3_FACTORY',
+    'UNISWAP_V2_FACTORY',
+    'SUSHISWAP_FACTORY',
+    'CURVE_REGISTRY',
+    'AERODROME_FACTORY',
+    'BASESWAP_FACTORY',
+    
+    # Constants - Routers
+    'UNISWAP_V3_ROUTER',
+    'UNISWAP_V2_ROUTER',
+    'SUSHISWAP_ROUTER',
+    'AERODROME_ROUTER',
+    'BASESWAP_ROUTER',
+    
+    # Constants - Tokens
+    'WETH_ADDRESS',
+    'USDC_ADDRESS',
+    'USDT_ADDRESS',
+    'DAI_ADDRESS',
+    
+    # Constants - ABIs
     'FACTORY_ABI',
     'POOL_ABI',
+    'ERC20_ABI',
+    'UNISWAP_V2_PAIR_ABI',
+    'UNISWAP_V2_FACTORY_ABI',
+    
+    # Helper functions
+    'get_base_tokens',
+    'get_dex_addresses',
+    'get_gas_estimate',
+    
+    # Fee tiers
     'FEE_TIERS',
-    'ENGINE_CONFIG_MODULE_AVAILABLE',
-    
-    # Base class
-    'BaseAnalyzer',
-    
-    # Analyzers
-    'RealGasAnalyzer',
-    'RealLiquidityAnalyzer',
-    'RealVolatilityAnalyzer',
-    'MEVThreatDetector',
-    'MarketStateAnalyzer',
-    'CompositeMarketAnalyzer',
+    'UNISWAP_V3_FEE_TIERS',
 ]

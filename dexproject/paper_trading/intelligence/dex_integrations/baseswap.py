@@ -1,17 +1,23 @@
 """
-SushiSwap DEX Integration - COMPLETE IMPLEMENTATION
+BaseSwap DEX Integration - BASE CHAIN SPECIFIC
 
-SushiSwap integration for price and liquidity queries.
-SushiSwap uses Uniswap V2-style AMM with xy=k constant product formula.
+BaseSwap is a Uniswap V2 fork on Base chain.
+Simple constant product AMM (xy=k) optimized for Base.
 
 This implementation:
-- Queries SushiSwap factory to find trading pairs
-- Gets reserves from pairs using getReserves()
-- Calculates prices using constant product formula
-- Supports multiple base tokens (WETH, USDC, USDT, DAI)
+- Queries BaseSwap factory for pairs
+- Gets reserves using getReserves()
+- Calculates prices with constant product formula
+- Supports multiple base tokens (WETH, USDC, etc.)
 - Returns standardized DEXPrice objects
 
-File: dexproject/paper_trading/intelligence/dex_integrations/sushiswap.py
+BaseSwap is important for Base trading as it provides:
+- Additional liquidity sources
+- Alternative to Aerodrome for certain pairs
+- Simple, proven AMM design
+- Base-native token support
+
+File: dexproject/paper_trading/intelligence/dex_integrations/baseswap.py
 """
 
 import logging
@@ -24,8 +30,6 @@ from paper_trading.intelligence.dex_integrations.base import BaseDEX, DEXPrice
 
 # Import constants
 from paper_trading.intelligence.dex_integrations.constants import (
-    SUSHISWAP_FACTORY,
-    SUSHISWAP_ROUTER,
     UNISWAP_V2_FACTORY_ABI,
     UNISWAP_V2_PAIR_ABI,
     ERC20_ABI,
@@ -35,20 +39,35 @@ from paper_trading.intelligence.dex_integrations.constants import (
 logger = logging.getLogger(__name__)
 
 
-class SushiSwapDEX(BaseDEX):
+# BaseSwap addresses on Base Mainnet
+BASESWAP_ADDRESSES = {
+    8453: {  # Base Mainnet
+        'factory': '0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB',
+        'router': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86'
+    }
+}
+
+
+class BaseSwapDEX(BaseDEX):
     """
-    SushiSwap price fetching implementation.
+    BaseSwap DEX price fetching implementation.
     
-    SushiSwap uses the Uniswap V2 constant product formula (xy=k) for pricing.
-    This implementation queries on-chain pairs to get real-time prices.
+    BaseSwap is a Uniswap V2 fork on Base chain.
+    Uses the proven constant product formula (xy=k).
+    
+    Best for:
+    - Base chain trading (additional liquidity)
+    - Simple token swaps
+    - Alternative pricing to Aerodrome
+    - Arbitrage opportunities vs other Base DEXs
     
     Process:
     1. Try each base token (WETH, USDC, USDT, DAI)
-    2. Query factory.getPair(token, baseToken)
+    2. Query factory.getPair()
     3. Get reserves from pair.getReserves()
     4. Calculate price from reserve ratio
-    5. Convert to USD using base token price
-    6. Return best price (highest liquidity pair)
+    5. Convert to USD
+    6. Select highest liquidity pair
     """
     
     def __init__(
@@ -57,34 +76,39 @@ class SushiSwapDEX(BaseDEX):
         cache_ttl_seconds: int = 60
     ):
         """
-        Initialize SushiSwap integration.
+        Initialize BaseSwap integration.
         
         Args:
             chain_id: Blockchain network ID (default: 8453 = Base Mainnet)
             cache_ttl_seconds: Cache TTL for price data
         """
         super().__init__(
-            dex_name="sushiswap",
+            dex_name="baseswap",
             chain_id=chain_id,
             cache_ttl_seconds=cache_ttl_seconds
         )
         
-        # Get SushiSwap factory address for this chain
-        self.factory_address = SUSHISWAP_FACTORY.get(chain_id)
-        if not self.factory_address:
+        # Get BaseSwap addresses for this chain
+        addresses = BASESWAP_ADDRESSES.get(chain_id)
+        if not addresses:
             self.logger.warning(
-                f"[SUSHISWAP] No factory address for chain {chain_id}"
+                f"[BASESWAP] No addresses configured for chain {chain_id}"
             )
+            self.factory_address = None
+            self.router_address = None
+        else:
+            self.factory_address = addresses['factory']
+            self.router_address = addresses['router']
         
-        # Get base tokens for this chain (WETH, USDC, USDT, DAI)
+        # Get base tokens for this chain
         self.base_tokens = get_base_tokens(chain_id)
         if not self.base_tokens:
             self.logger.warning(
-                f"[SUSHISWAP] No base tokens configured for chain {chain_id}"
+                f"[BASESWAP] No base tokens configured for chain {chain_id}"
             )
         
         self.logger.info(
-            f"[SUSHISWAP] Initialized with {len(self.base_tokens)} base tokens"
+            f"[BASESWAP] Initialized for Base chain with {len(self.base_tokens)} base tokens"
         )
     
     async def get_token_price(
@@ -93,7 +117,7 @@ class SushiSwapDEX(BaseDEX):
         token_symbol: str
     ) -> DEXPrice:
         """
-        Get token price from SushiSwap.
+        Get token price from BaseSwap.
         
         Process:
         1. Check cache
@@ -137,7 +161,7 @@ class SushiSwapDEX(BaseDEX):
                     token_address=token_address,
                     token_symbol=token_symbol,
                     success=False,
-                    error_message=f"No SushiSwap factory address for chain {self.chain_id}",
+                    error_message=f"No BaseSwap factory for chain {self.chain_id}",
                     query_time_ms=(time_module.time() - start_time) * 1000
                 )
             
@@ -150,7 +174,7 @@ class SushiSwapDEX(BaseDEX):
                     token_address=token_address,
                     token_symbol=token_symbol,
                     success=False,
-                    error_message="No SushiSwap pair found",
+                    error_message="No BaseSwap pair found",
                     query_time_ms=(time_module.time() - start_time) * 1000
                 )
             
@@ -185,7 +209,7 @@ class SushiSwapDEX(BaseDEX):
                 self._cache_price(token_address, price_obj)
                 
                 self.logger.debug(
-                    f"[SUSHISWAP] {token_symbol}: ${price_usd:.4f}, "
+                    f"[BASESWAP] {token_symbol}: ${price_usd:.4f}, "
                     f"Liquidity: ${liquidity_usd:,.0f} ({query_time_ms:.0f}ms)"
                 )
             else:
@@ -195,7 +219,7 @@ class SushiSwapDEX(BaseDEX):
         
         except Exception as e:
             self.logger.error(
-                f"[SUSHISWAP] Error fetching price for {token_symbol}: {e}",
+                f"[BASESWAP] Error fetching price for {token_symbol}: {e}",
                 exc_info=True
             )
             
@@ -210,7 +234,7 @@ class SushiSwapDEX(BaseDEX):
     
     async def _find_best_pair(self, token_address: str) -> Optional[Dict[str, Any]]:
         """
-        Find best SushiSwap pair for token.
+        Find best BaseSwap pair for token.
         
         Tries all base tokens to find pair with highest liquidity.
         
@@ -256,7 +280,7 @@ class SushiSwapDEX(BaseDEX):
             
             except Exception as e:
                 self.logger.debug(
-                    f"[SUSHISWAP] Error checking pair "
+                    f"[BASESWAP] Error checking pair "
                     f"({token_address[:10]}.../{base_token[:10]}...): {e}"
                 )
                 continue
@@ -269,11 +293,7 @@ class SushiSwapDEX(BaseDEX):
         base_token_address: str
     ) -> Decimal:
         """
-        Get liquidity from SushiSwap pair.
-        
-        Liquidity is calculated as the value of the base token reserves.
-        For WETH pairs, assumes $3000 per ETH.
-        For stablecoin pairs, uses $1.00.
+        Get liquidity from BaseSwap pair.
         
         Args:
             pair_address: Pair contract address
@@ -309,7 +329,7 @@ class SushiSwapDEX(BaseDEX):
             return liquidity_usd
         
         except Exception as e:
-            self.logger.debug(f"[SUSHISWAP] Error getting pair liquidity: {e}")
+            self.logger.debug(f"[BASESWAP] Error getting pair liquidity: {e}")
             return Decimal('0')
     
     async def _query_pair_data(
@@ -356,11 +376,7 @@ class SushiSwapDEX(BaseDEX):
             reserve1 = Decimal(reserves[1])
             
             # Determine which is our target token and which is base token
-            token_is_token0 = token0.lower() == token_address.lower()
-            base_is_token0 = token0.lower() == base_token_address.lower()
-            
-            # Get token contracts for decimals
-            if token_is_token0:
+            if token0.lower() == token_address.lower():
                 token_contract = self.web3_client.web3.eth.contract(
                     address=token0,
                     abi=ERC20_ABI
@@ -397,7 +413,6 @@ class SushiSwapDEX(BaseDEX):
                 return None, None
             
             # Calculate price (base tokens per target token)
-            # Price = base_reserve / token_reserve (in token decimals)
             price_in_base = base_amount / token_amount
             
             # Convert to USD
@@ -419,7 +434,7 @@ class SushiSwapDEX(BaseDEX):
         
         except Exception as e:
             self.logger.error(
-                f"[SUSHISWAP] Error querying pair data: {e}",
+                f"[BASESWAP] Error querying pair data: {e}",
                 exc_info=True
             )
             return None, None

@@ -82,6 +82,77 @@ class PositionManager:
         logger.info(
             f"[POSITION MANAGER] Initialized for account: {account.account_id}"
         )
+        
+
+
+    def _safe_quantity_calculation(
+        self,
+        position_size_usd: Decimal,
+        current_price: Decimal,
+        token_symbol: str
+    ) -> Decimal:
+        """Safely calculate token quantity."""
+        try:
+            quantity = position_size_usd / current_price
+            
+            if abs(quantity) > Decimal('1000000000000000000'):
+                logger.warning(f"[POSITION] Quantity too large for {token_symbol}")
+                quantity = Decimal('1000000000000000000')
+            
+            if abs(quantity) < Decimal('0.000000000000000001') and quantity != Decimal('0'):
+                logger.warning(f"[POSITION] Quantity too small for {token_symbol}")
+                quantity = Decimal('0.000000000000000001')
+            
+            return quantity
+        except Exception as e:
+            logger.error(f"[POSITION] Error calculating quantity for {token_symbol}: {e}")
+            return Decimal('1.0')
+
+
+    def _safe_pnl_calculation(
+        self,
+        current_value: Decimal,
+        invested: Decimal,
+        token_symbol: str
+    ) -> Decimal:
+        """Safely calculate P&L."""
+        try:
+            pnl = current_value - invested
+            
+            # Round tiny values to zero to prevent scientific notation
+            if abs(pnl) < Decimal('0.01'):  # Less than 1 cent
+                pnl = Decimal('0.00')
+            
+            return pnl.quantize(Decimal('0.01'))
+        except Exception as e:
+            logger.error(f"[POSITION] Error calculating P&L for {token_symbol}: {e}")
+            return Decimal('0.00')
+
+
+    def _safe_average_price_calculation(
+        self,
+        total_invested: Decimal,
+        quantity: Decimal,
+        token_symbol: str
+    ) -> Decimal:
+        """Safely calculate average entry price."""
+        try:
+            if quantity == Decimal('0'):
+                logger.warning(f"[POSITION] Cannot calc avg price for {token_symbol} - zero quantity")
+                return Decimal('1.00')
+            
+            avg_price = total_invested / quantity
+            
+            if avg_price < Decimal('0.00000001'):
+                avg_price = Decimal('0.00000001')
+            
+            if avg_price > Decimal('1000000.00'):
+                avg_price = Decimal('1000000.00')
+            
+            return avg_price.quantize(Decimal('0.00000001'))
+        except Exception as e:
+            logger.error(f"[POSITION] Error calculating avg price for {token_symbol}: {e}")
+            return Decimal('1.00')
 
     # =========================================================================
     # POSITION LOADING
@@ -886,9 +957,8 @@ class PositionManager:
             
             # Recalculate current value and unrealized P&L
             position.current_value_usd = position.quantity * current_price
-            position.unrealized_pnl_usd = (
-                position.current_value_usd -
-                (position.quantity * position.average_entry_price_usd)
+            position.unrealized_pnl_usd = self._safe_pnl_calculation(
+                position.current_value_usd, position.total_invested_usd, token_symbol
             )
             
             # ✅ CRITICAL FIX: Validate recalculated values

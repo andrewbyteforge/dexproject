@@ -678,7 +678,7 @@ class PaperPosition(models.Model):
     )
     
     average_entry_price_usd = models.DecimalField(
-        max_digits=20,
+        max_digits=26,
         decimal_places=18,
         default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Average entry price in USD"
@@ -693,7 +693,7 @@ class PaperPosition(models.Model):
     
     # Current values
     current_price_usd = models.DecimalField(
-        max_digits=20,
+        max_digits=26,
         decimal_places=18,
         default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Current market price"
@@ -760,159 +760,100 @@ class PaperPosition(models.Model):
         return f"{status}: {self.quantity} {self.token_symbol}"
     
     def clean(self) -> None:
-        """
-        Validate all decimal fields before saving.
+        """Validate all decimal fields before saving."""        
         
-        This prevents decimal.InvalidOperation errors by ensuring all decimal
-        values are properly formatted and within valid ranges.
+        if self.quantity is not None:
+            self.quantity = validate_decimal_field(
+                value=self.quantity,
+                field_name='quantity',
+                min_value=Decimal('0'),
+                max_value=Decimal('1000000000000000000'),
+                default_value=Decimal('0'),
+                decimal_places=18
+            )
         
-        Raises:
-            ValidationError: If validation fails critically
-        """
-        # Validate quantity (wei values, 18 decimal places)
-        self.quantity = validate_decimal_field(
-            value=self.quantity,
-            field_name='quantity',
-            min_value=Decimal('0'),
-            default_value=Decimal('0'),
-            decimal_places=18
-        )
+        if self.average_entry_price_usd is not None:
+            self.average_entry_price_usd = validate_decimal_field(
+                value=self.average_entry_price_usd,
+                field_name='average_entry_price_usd',
+                min_value=Decimal('0.00000001'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('1.00'),
+                decimal_places=18  # ← FIXED
+            )
         
-        # Validate prices (18 decimal places for precision)
-        self.average_entry_price_usd = validate_decimal_field(
-            value=self.average_entry_price_usd,
-            field_name='average_entry_price_usd',
-            min_value=Decimal('0'),
-            default_value=Decimal('0'),
-            decimal_places=18
-        )
+        if self.total_invested_usd is not None:
+            self.total_invested_usd = validate_decimal_field(
+                value=self.total_invested_usd,
+                field_name='total_invested_usd',
+                min_value=Decimal('0'),
+                max_value=Decimal('100000.00'),
+                default_value=Decimal('0.00'),
+                decimal_places=2
+            )
         
-        self.current_price_usd = validate_decimal_field(
-            value=self.current_price_usd,
-            field_name='current_price_usd',
-            min_value=Decimal('0'),
-            default_value=Decimal('0'),
-            decimal_places=18
-        )
+        if self.current_price_usd is not None:
+            self.current_price_usd = validate_decimal_field(
+                value=self.current_price_usd,
+                field_name='current_price_usd',
+                min_value=Decimal('0.00000001'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('1.00'),
+                decimal_places=18  # ← FIXED
+            )
         
-        # Validate USD values (2 decimal places)
-        self.total_invested_usd = validate_decimal_field(
-            value=self.total_invested_usd,
-            field_name='total_invested_usd',
-            min_value=Decimal('0'),
-            default_value=Decimal('0'),
-            decimal_places=2
-        )
+        if self.current_value_usd is not None:
+            self.current_value_usd = validate_decimal_field(
+                value=self.current_value_usd,
+                field_name='current_value_usd',
+                min_value=Decimal('0'),
+                max_value=Decimal('100000.00'),
+                default_value=Decimal('0.00'),
+                decimal_places=2
+            )
         
-        self.current_value_usd = validate_decimal_field(
-            value=self.current_value_usd,
-            field_name='current_value_usd',
-            min_value=Decimal('0'),
-            default_value=Decimal('0'),
-            decimal_places=2
-        )
+        if self.unrealized_pnl_usd is not None:
+            self.unrealized_pnl_usd = validate_decimal_field(
+                value=self.unrealized_pnl_usd,
+                field_name='unrealized_pnl_usd',
+                min_value=Decimal('-100000.00'),
+                max_value=Decimal('100000.00'),
+                default_value=Decimal('0.00'),
+                decimal_places=2
+            )
         
-        # Validate P&L fields (can be negative, 2 decimal places)
-        self.unrealized_pnl_usd = validate_decimal_field(
-            value=self.unrealized_pnl_usd,
-            field_name='unrealized_pnl_usd',
-            default_value=Decimal('0'),
-            decimal_places=2
-        )
-        
-        self.realized_pnl_usd = validate_decimal_field(
-            value=self.realized_pnl_usd,
-            field_name='realized_pnl_usd',
-            default_value=Decimal('0'),
-            decimal_places=2
-        )
-        
-        logger.debug(
-            f"[VALIDATION] Position {self.position_id} validated: "
-            f"{self.token_symbol} quantity={self.quantity}, "
-            f"value=${self.current_value_usd}"
-        )
+        if self.realized_pnl_usd is not None:
+            self.realized_pnl_usd = validate_decimal_field(
+                value=self.realized_pnl_usd,
+                field_name='realized_pnl_usd',
+                min_value=Decimal('-100000.00'),
+                max_value=Decimal('100000.00'),
+                default_value=Decimal('0.00'),
+                decimal_places=2
+            )
+
 
     def save(self, *args, **kwargs) -> None:
-        """
-        Save the position with comprehensive decimal validation and error tracking.
+        """Override save to ensure validation happens."""
+        import logging
+        logger = logging.getLogger(__name__)
         
-        This enhanced version:
-        1. Logs all field values before validation for debugging
-        2. Ensures no NULL values reach the database
-        3. Provides detailed error tracking
-        """
-        # Log incoming values for debugging
-        logger.info(
-            f"[POSITION SAVE] Attempting to save position {self.token_symbol}:\n"
-            f"  position_id: {self.position_id}\n"
-            f"  quantity: {self.quantity} (type: {type(self.quantity)})\n"
-            f"  current_value_usd: {self.current_value_usd} (type: {type(self.current_value_usd)})"
-        )
-        
-        # Pre-validation: Ensure no NULL values
-        decimal_fields = [
-            ('quantity', Decimal('0')),
-            ('average_entry_price_usd', Decimal('0')),
-            ('total_invested_usd', Decimal('0')),
-            ('current_price_usd', Decimal('0')),
-            ('current_value_usd', Decimal('0')),
-            ('unrealized_pnl_usd', Decimal('0')),
-            ('realized_pnl_usd', Decimal('0')),
-        ]
-        
-        # Fix NULL values before validation
-        for field_name, default_value in decimal_fields:
-            current_value = getattr(self, field_name, None)
-            
-            # Check for NULL, None, empty string, or invalid values
-            if current_value is None or current_value == '' or current_value == 'None':
-                logger.warning(
-                    f"[POSITION SAVE] Field {field_name} is NULL/empty, setting to {default_value}"
-                )
-                setattr(self, field_name, default_value)
-            else:
-                # Try to convert to Decimal to ensure it's valid
-                try:
-                    if not isinstance(current_value, Decimal):
-                        converted = Decimal(str(current_value))
-                        setattr(self, field_name, converted)
-                except (InvalidOperation, ValueError, TypeError) as e:
-                    logger.error(
-                        f"[POSITION SAVE] Invalid value for {field_name}: {current_value}, "
-                        f"using default {default_value}. Error: {e}"
-                    )
-                    setattr(self, field_name, default_value)
-        
-        # Now run the clean() validation
         try:
-            self.clean()
-            logger.info(f"[POSITION SAVE] Validation successful for {self.token_symbol}")
-        except Exception as e:
-            logger.error(
-                f"[POSITION SAVE] Validation failed for {self.token_symbol}: {e}",
-                exc_info=True
-            )
-            # Try to fix and continue instead of raising
-            for field_name, default_value in decimal_fields:
-                setattr(self, field_name, default_value)
-            logger.warning(f"[POSITION SAVE] Reset all decimal fields to defaults for {self.token_symbol}")
-        
-        # Log final values before saving
-        logger.info(
-            f"[POSITION SAVE] Final values for {self.token_symbol}:\n"
-            f"  quantity: {self.quantity}\n"
-            f"  current_value_usd: {self.current_value_usd}\n"
-            f"  unrealized_pnl_usd: {self.unrealized_pnl_usd}"
-        )
-        
-        # Call parent save with validated data
-        try:
+            self.full_clean()
             super().save(*args, **kwargs)
-            logger.info(f"[POSITION SAVE] ✅ Successfully saved position {self.token_symbol}")
+            logger.debug(f"[POSITION SAVE] Saved {self.token_symbol}")
         except Exception as e:
-            logger.error(f"[POSITION SAVE] ❌ Failed to save position {self.token_symbol}: {e}", exc_info=True)
+            logger.error(f"[POSITION SAVE] Failed for {self.token_symbol}: {e}", exc_info=True)
             raise
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     @classmethod
     def fix_all_positions(cls) -> int:

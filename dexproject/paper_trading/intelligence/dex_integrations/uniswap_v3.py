@@ -13,10 +13,10 @@ from decimal import Decimal
 from typing import Optional, Dict, Any, List
 
 # Import base classes
-from paper_trading.intelligence.dex.protocols.base import BaseDEX, DEXPrice
+from paper_trading.intelligence.dex_integrations.base import BaseDEX, DEXPrice
 
 # Import constants
-from paper_trading.intelligence.dex.protocols.constants import (
+from paper_trading.intelligence.dex_integrations.constants import (
     UNISWAP_V3_FACTORY,
     UNISWAP_V3_FEE_TIERS,
     FACTORY_ABI,
