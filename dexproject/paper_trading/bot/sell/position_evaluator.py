@@ -317,6 +317,7 @@ class PositionEvaluator:
                 success = trade_executor.execute_trade(
                     decision=decision,
                     token_symbol=token_symbol,
+                    token_address=token_address,
                     current_price=current_price,
                     position_manager=position_manager
                 )
@@ -475,6 +476,7 @@ class PositionEvaluator:
             success = trade_executor.execute_trade(
                 decision=decision,
                 token_symbol=token_symbol,
+                token_address=token_address,
                 current_price=best_price,  # Use best price, not current
                 position_manager=position_manager
             )
@@ -660,6 +662,7 @@ class PositionEvaluator:
             success = trade_executor.execute_trade(
                 decision=decision,
                 token_symbol=token_symbol,
+                token_address=token_address,
                 current_price=current_price,
                 position_manager=position_manager
             )

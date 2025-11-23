@@ -196,6 +196,9 @@ class BaseDEX(ABC):
             # Create Web3 client using the config
             self.web3_client = Web3Client(chain_config)
             
+            # ✅ CRITICAL: Connect the Web3 client to the blockchain
+            async_to_sync(self.web3_client.connect)()
+            
             self.logger.info(
                 f"[{self.dex_name.upper()}] Web3 client initialized for chain {self.chain_id}"
             )

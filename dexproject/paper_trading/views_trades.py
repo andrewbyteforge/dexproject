@@ -91,7 +91,7 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         
         # Format trades BEFORE pagination to avoid issues
         formatted_trades = []
-        for trade in trades_query[:500]:  # Limit to avoid memory issues
+        for trade in trades_query.iterator():  # Use iterator() to handle decimal errors
             try:
                 formatted_trades.append(format_trade_for_template(trade))
             except Exception as e:
