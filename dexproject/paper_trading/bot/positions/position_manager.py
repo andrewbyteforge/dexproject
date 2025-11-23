@@ -89,68 +89,31 @@ class PositionManager:
 
     def load_positions(self) -> int:
         """
-        Load positions using raw SQL to bypass Django's decimal converter completely.
+        Load open positions for this account using Django ORM.
         
         Returns:
             Number of positions loaded
         """
         try:
-            from django.db import connection
-            from decimal import Decimal
+            # Use Django ORM - decimals are now fixed so this will work
+            queryset = PaperPosition.objects.filter(
+                account=self.account,
+                is_open=True
+            ).order_by('-opened_at')
             
             self.positions = {}
             
-            # Use raw SQL to bypass Django's ORM entirely
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT 
-                        position_id,
-                        token_symbol,
-                        token_address,
-                        CAST(quantity AS TEXT) as quantity,
-                        CAST(average_entry_price_usd AS TEXT) as average_entry_price_usd,
-                        CAST(current_price_usd AS TEXT) as current_price_usd,
-                        CAST(current_value_usd AS TEXT) as current_value_usd,
-                        CAST(unrealized_pnl_usd AS TEXT) as unrealized_pnl_usd,
-                        CAST(total_invested_usd AS TEXT) as total_invested_usd
-                    FROM paper_positions
-                    WHERE account_id = %s AND is_open = 1
-                """, [str(self.account.account_id).replace('-', '')])
-                
-                rows = cursor.fetchall()
-                
-                for row in rows:
-                    try:
-                        # Create a mock position object with the data
-                        position_data = {
-                            'position_id': row[0],
-                            'token_symbol': row[1],
-                            'token_address': row[2],
-                            'quantity': Decimal(row[3] or '0'),
-                            'average_entry_price_usd': Decimal(row[4] or '0'),
-                            'current_price_usd': Decimal(row[5] or '0'),
-                            'current_value_usd': Decimal(row[6] or '0'),
-                            'unrealized_pnl_usd': Decimal(row[7] or '0'),
-                            'total_invested_usd': Decimal(row[8] or '0'),
-                        }
-                        
-                        # Only add if quantity > 0
-                        if position_data['quantity'] > 0:
-                            # Store as a dictionary instead of model object
-                            self.positions[position_data['token_symbol']] = position_data
-                            
-                    except Exception as e:
-                        logger.warning(f"Skipping invalid position: {e}")
-                        continue
+            for position in queryset:
+                # Store by token symbol
+                self.positions[position.token_symbol] = position
             
-            logger.info(f"[POSITION MANAGER] Loaded {len(self.positions)} open positions via raw SQL")
+            logger.info(f"[POSITION MANAGER] Loaded {len(self.positions)} open positions via Django ORM")
             return len(self.positions)
             
         except Exception as e:
             logger.error(f"[POSITION MANAGER] Failed to load positions: {e}", exc_info=True)
             self.positions = {}
             return 0
-
 
 
 

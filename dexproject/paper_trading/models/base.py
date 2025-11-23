@@ -70,11 +70,23 @@ def validate_decimal_field(
             value = Decimal(str(value))
         
         # Check for scientific notation in string representation
+        # Check for scientific notation in string representation
         value_str = str(value)
         if 'e' in value_str.lower() or 'E' in value_str:
             logger.warning(f"[VALIDATION] {field_name} has scientific notation: {value_str}")
-            # Convert properly without scientific notation
-            value = Decimal(value).quantize(Decimal('0.00000001'))
+            
+            # CRITICAL FIX: Convert scientific notation to fixed-point decimal
+            # Step 1: Normalize to remove trailing zeros and compact representation
+            value = value.normalize()
+            
+            # Step 2: Convert to string with fixed notation (no exponents)
+            # Use format with 'f' to force fixed-point notation
+            fixed_str = format(value, 'f')
+            
+            # Step 3: Convert back to Decimal with fixed representation
+            value = Decimal(fixed_str)
+            
+            logger.info(f"[VALIDATION] Converted {field_name} from scientific to fixed: {value}")
         
         # Check for NaN
         if value.is_nan():
