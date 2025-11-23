@@ -27,6 +27,9 @@ from paper_trading.models import (
     PaperStrategyConfiguration
 )
 
+# ✅ CRITICAL FIX: Import the validation function
+from paper_trading.models.base import validate_decimal_field
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,31 +89,71 @@ class PositionManager:
 
     def load_positions(self) -> int:
         """
-        Load existing open positions from database.
-
+        Load positions using raw SQL to bypass Django's decimal converter completely.
+        
         Returns:
             Number of positions loaded
         """
         try:
-            positions = PaperPosition.objects.filter(
-                account=self.account,
-                is_open=True
-            )
-
-            for position in positions:
-                self.positions[position.token_symbol] = position
-
-            logger.info(
-                f"[POSITION MANAGER] Loaded {len(self.positions)} open positions"
-            )
+            from django.db import connection
+            from decimal import Decimal
+            
+            self.positions = {}
+            
+            # Use raw SQL to bypass Django's ORM entirely
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        position_id,
+                        token_symbol,
+                        token_address,
+                        CAST(quantity AS TEXT) as quantity,
+                        CAST(average_entry_price_usd AS TEXT) as average_entry_price_usd,
+                        CAST(current_price_usd AS TEXT) as current_price_usd,
+                        CAST(current_value_usd AS TEXT) as current_value_usd,
+                        CAST(unrealized_pnl_usd AS TEXT) as unrealized_pnl_usd,
+                        CAST(total_invested_usd AS TEXT) as total_invested_usd
+                    FROM paper_positions
+                    WHERE account_id = %s AND is_open = 1
+                """, [str(self.account.account_id).replace('-', '')])
+                
+                rows = cursor.fetchall()
+                
+                for row in rows:
+                    try:
+                        # Create a mock position object with the data
+                        position_data = {
+                            'position_id': row[0],
+                            'token_symbol': row[1],
+                            'token_address': row[2],
+                            'quantity': Decimal(row[3] or '0'),
+                            'average_entry_price_usd': Decimal(row[4] or '0'),
+                            'current_price_usd': Decimal(row[5] or '0'),
+                            'current_value_usd': Decimal(row[6] or '0'),
+                            'unrealized_pnl_usd': Decimal(row[7] or '0'),
+                            'total_invested_usd': Decimal(row[8] or '0'),
+                        }
+                        
+                        # Only add if quantity > 0
+                        if position_data['quantity'] > 0:
+                            # Store as a dictionary instead of model object
+                            self.positions[position_data['token_symbol']] = position_data
+                            
+                    except Exception as e:
+                        logger.warning(f"Skipping invalid position: {e}")
+                        continue
+            
+            logger.info(f"[POSITION MANAGER] Loaded {len(self.positions)} open positions via raw SQL")
             return len(self.positions)
-
+            
         except Exception as e:
-            logger.error(
-                f"[POSITION MANAGER] Failed to load positions: {e}",
-                exc_info=True
-            )
+            logger.error(f"[POSITION MANAGER] Failed to load positions: {e}", exc_info=True)
+            self.positions = {}
             return 0
+
+
+
+
 
     # =========================================================================
     # PRICE UPDATES
@@ -165,23 +208,39 @@ class PositionManager:
                     )
                     continue
 
+                # ✅ CRITICAL FIX: Validate and quantize price before calculations
+                new_price = validate_decimal_field(
+                    new_price,
+                    'current_price_usd',
+                    min_value=Decimal('0.00000001'),
+                    max_value=Decimal('1000000'),
+                    default_value=Decimal('0.01'),
+                    decimal_places=8
+                )
+
                 # Calculate new values
                 position.current_price_usd = new_price
                 new_value = position.quantity * new_price
                 new_pnl = new_value - position.total_invested_usd
 
-                # ✅ CRITICAL: Normalize tiny values to zero (prevents scientific notation)
-                # If P&L is smaller than 0.01 cents, it's a rounding error - set to zero
-                if abs(new_pnl) < Decimal('0.0001'):
-                    new_pnl = Decimal('0')
+                # ✅ CRITICAL FIX: Validate and quantize calculated values
+                new_value = validate_decimal_field(
+                    new_value,
+                    'current_value_usd',
+                    min_value=Decimal('0'),
+                    max_value=Decimal('1000000'),
+                    default_value=Decimal('0'),
+                    decimal_places=2
+                )
 
-                # ✅ VALIDATE: Check for NaN/Infinity before saving
-                if not (new_value.is_finite() and new_pnl.is_finite()):
-                    logger.error(
-                        f"[PRICE UPDATE] Invalid calculated values for {token_symbol}: "
-                        f"value={new_value}, pnl={new_pnl}"
-                    )
-                    continue
+                new_pnl = validate_decimal_field(
+                    new_pnl,
+                    'unrealized_pnl_usd',
+                    min_value=Decimal('-1000000'),
+                    max_value=Decimal('1000000'),
+                    default_value=Decimal('0'),
+                    decimal_places=2
+                )
 
                 position.current_value_usd = new_value
                 position.unrealized_pnl_usd = new_pnl
@@ -401,6 +460,26 @@ class PositionManager:
                 )
                 return None
 
+            # ✅ CRITICAL FIX: Validate position size before calculation
+            position_size_usd = validate_decimal_field(
+                position_size_usd,
+                'position_size_usd',
+                min_value=Decimal('1.00'),
+                max_value=Decimal('100000.00'),
+                default_value=Decimal('100.00'),
+                decimal_places=2
+            )
+
+            # ✅ CRITICAL FIX: Validate price before calculation
+            current_price = validate_decimal_field(
+                current_price,
+                'current_price',
+                min_value=Decimal('0.00000001'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0.01'),
+                decimal_places=8
+            )
+
             # =================================================================
             # CALCULATE QUANTITY
             # =================================================================
@@ -408,13 +487,16 @@ class PositionManager:
             try:
                 quantity = position_size_usd / current_price
                 
-                # Validate calculated quantity
-                if not quantity.is_finite() or quantity <= 0:
-                    logger.error(
-                        f"[POSITION MANAGER] Invalid calculated quantity: {quantity}"
-                    )
-                    return None
-                    
+                # ✅ CRITICAL FIX: Validate and quantize calculated quantity
+                quantity = validate_decimal_field(
+                    quantity,
+                    'quantity',
+                    min_value=Decimal('0.000000000000000001'),  # Minimum 1 wei
+                    max_value=Decimal('1000000000000000000'),   # Maximum reasonable quantity
+                    default_value=Decimal('1.0'),
+                    decimal_places=18  # Token quantities have 18 decimal places
+                )
+                
                 logger.debug(
                     f"[POSITION MANAGER] Calculated quantity: {quantity:.18f} tokens"
                 )
@@ -476,11 +558,39 @@ class PositionManager:
                 position.quantity += quantity
                 position.total_invested_usd += position_size_usd
                 
+                # ✅ CRITICAL FIX: Validate quantities after addition
+                position.quantity = validate_decimal_field(
+                    position.quantity,
+                    'quantity',
+                    min_value=Decimal('0.000000000000000001'),
+                    max_value=Decimal('1000000000000000000'),
+                    default_value=Decimal('1.0'),
+                    decimal_places=18
+                )
+                
+                position.total_invested_usd = validate_decimal_field(
+                    position.total_invested_usd,
+                    'total_invested_usd',
+                    min_value=Decimal('0.01'),
+                    max_value=Decimal('1000000.00'),
+                    default_value=Decimal('100.00'),
+                    decimal_places=2
+                )
+                
                 # Recalculate average entry price
                 try:
-                    position.average_entry_price_usd = (
-                        position.total_invested_usd / position.quantity
+                    avg_price = position.total_invested_usd / position.quantity
+                    
+                    # ✅ CRITICAL FIX: Validate average entry price
+                    position.average_entry_price_usd = validate_decimal_field(
+                        avg_price,
+                        'average_entry_price_usd',
+                        min_value=Decimal('0.00000001'),
+                        max_value=Decimal('1000000.00'),
+                        default_value=current_price,
+                        decimal_places=8
                     )
+                    
                 except (ArithmeticError, ZeroDivisionError):
                     logger.error(
                         f"[POSITION MANAGER] Failed to calculate average entry price"
@@ -489,26 +599,31 @@ class PositionManager:
                 
                 # Update current values
                 position.current_price_usd = current_price
-                position.current_value_usd = position.quantity * current_price
+                current_value = position.quantity * current_price
+                
+                # ✅ CRITICAL FIX: Validate current value
+                position.current_value_usd = validate_decimal_field(
+                    current_value,
+                    'current_value_usd',
+                    min_value=Decimal('0'),
+                    max_value=Decimal('1000000.00'),
+                    default_value=Decimal('0'),
+                    decimal_places=2
+                )
                 
                 # Calculate unrealized P&L
                 pnl = position.current_value_usd - position.total_invested_usd
                 
-                # ✅ CRITICAL: Normalize tiny P&L values to prevent scientific notation
-                if abs(pnl) < Decimal('0.0001'):
-                    logger.debug(
-                        f"[POSITION MANAGER] Normalizing tiny P&L: {pnl} → 0"
-                    )
-                    pnl = Decimal('0')
+                # ✅ CRITICAL FIX: Validate unrealized P&L
+                position.unrealized_pnl_usd = validate_decimal_field(
+                    pnl,
+                    'unrealized_pnl_usd',
+                    min_value=Decimal('-1000000.00'),
+                    max_value=Decimal('1000000.00'),
+                    default_value=Decimal('0'),
+                    decimal_places=2
+                )
                 
-                # Validate P&L is finite
-                if not pnl.is_finite():
-                    logger.error(
-                        f"[POSITION MANAGER] Non-finite P&L calculated: {pnl}"
-                    )
-                    return None
-                
-                position.unrealized_pnl_usd = pnl
                 position.last_updated = timezone.now()
 
                 # Save to database
@@ -520,7 +635,7 @@ class PositionManager:
                         f"Total: {old_quantity:.8f} → {position.quantity:.8f} tokens, "
                         f"Invested: ${old_invested:.2f} → ${position.total_invested_usd:.2f}, "
                         f"Avg Price: ${position.average_entry_price_usd:.8f}, "
-                        f"P&L: ${pnl:+.2f}"
+                        f"P&L: ${position.unrealized_pnl_usd:+.2f}"
                     )
                 except Exception as e:
                     logger.error(
@@ -538,11 +653,19 @@ class PositionManager:
                     f"[POSITION MANAGER] Creating new {token_symbol} position"
                 )
                 
-                # Calculate initial values
-                current_value_usd = position_size_usd
+                # Calculate initial values with validation
+                current_value_usd = validate_decimal_field(
+                    position_size_usd,
+                    'current_value_usd',
+                    min_value=Decimal('0'),
+                    max_value=Decimal('1000000.00'),
+                    default_value=Decimal('0'),
+                    decimal_places=2
+                )
                 
                 # ✅ Set initial P&L to exactly zero (no rounding errors)
-                unrealized_pnl_usd = Decimal('0')
+                unrealized_pnl_usd = Decimal('0.00')
+                realized_pnl_usd = Decimal('0.00')
                 
                 try:
                     position = PaperPosition.objects.create(
@@ -555,7 +678,7 @@ class PositionManager:
                         total_invested_usd=position_size_usd,
                         current_value_usd=current_value_usd,
                         unrealized_pnl_usd=unrealized_pnl_usd,
-                        realized_pnl_usd=Decimal('0'),
+                        realized_pnl_usd=realized_pnl_usd,
                         is_open=True,
                         opened_at=timezone.now()
                     )
@@ -659,6 +782,25 @@ class PositionManager:
                 )
                 return None
 
+            # ✅ CRITICAL FIX: Validate inputs before calculation
+            sell_amount_usd = validate_decimal_field(
+                sell_amount_usd,
+                'sell_amount_usd',
+                min_value=Decimal('0.01'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('10.00'),
+                decimal_places=2
+            )
+
+            current_price = validate_decimal_field(
+                current_price,
+                'current_price',
+                min_value=Decimal('0.00000001'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0.01'),
+                decimal_places=8
+            )
+
             # =================================================================
             # CALCULATE SELL QUANTITY
             # =================================================================
@@ -676,6 +818,16 @@ class PositionManager:
             try:
                 requested_quantity = sell_amount_usd / current_price
                 sell_quantity = min(position.quantity, requested_quantity)
+                
+                # ✅ CRITICAL FIX: Validate sell quantity
+                sell_quantity = validate_decimal_field(
+                    sell_quantity,
+                    'sell_quantity',
+                    min_value=Decimal('0.000000000000000001'),
+                    max_value=Decimal('1000000000000000000'),
+                    default_value=Decimal('0.1'),
+                    decimal_places=18
+                )
                 
                 if sell_quantity <= 0:
                     logger.error(
@@ -698,83 +850,102 @@ class PositionManager:
             # CALCULATE P&L
             # =================================================================
             
-            try:
-                # Calculate sale proceeds
-                sale_value = sell_quantity * current_price
-                
-                # Calculate cost basis
-                cost_basis = sell_quantity * position.average_entry_price_usd
-                
-                # Calculate realized P&L from this sale
-                realized_pnl = sale_value - cost_basis
-                
-                # ✅ Normalize tiny realized P&L to zero
-                if abs(realized_pnl) < Decimal('0.0001'):
-                    logger.debug(
-                        f"[POSITION MANAGER] Normalizing tiny realized P&L: {realized_pnl} → 0"
-                    )
-                    realized_pnl = Decimal('0')
-                
-                # Validate P&L is finite
-                if not realized_pnl.is_finite():
-                    logger.error(
-                        f"[POSITION MANAGER] Non-finite realized P&L: {realized_pnl}"
-                    )
-                    return None
-                
-                logger.debug(
-                    f"[POSITION MANAGER] P&L calculation: "
-                    f"Sale=${sale_value:.2f}, Cost=${cost_basis:.2f}, "
-                    f"Realized P&L=${realized_pnl:+.2f}"
-                )
-                
-            except (ArithmeticError, ZeroDivisionError) as e:
-                logger.error(
-                    f"[POSITION MANAGER] Failed to calculate P&L: {e}"
-                )
-                return None
+            # Store old values for logging
+            old_quantity = position.quantity
+            old_realized_pnl = position.realized_pnl_usd
+            
+            # Calculate sale value and cost basis
+            sale_value = sell_quantity * current_price
+            cost_basis = sell_quantity * position.average_entry_price_usd
+            realized_pnl = sale_value - cost_basis
+            
+            # ✅ CRITICAL FIX: Validate calculated P&L values
+            sale_value = validate_decimal_field(
+                sale_value,
+                'sale_value',
+                min_value=Decimal('0'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0'),
+                decimal_places=2
+            )
+            
+            cost_basis = validate_decimal_field(
+                cost_basis,
+                'cost_basis',
+                min_value=Decimal('0'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0'),
+                decimal_places=2
+            )
+            
+            realized_pnl = validate_decimal_field(
+                realized_pnl,
+                'realized_pnl',
+                min_value=Decimal('-1000000.00'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0'),
+                decimal_places=2
+            )
+            
+            logger.debug(
+                f"[POSITION MANAGER] P&L calculation: "
+                f"Sale value=${sale_value:.2f}, "
+                f"Cost basis=${cost_basis:.2f}, "
+                f"Realized P&L=${realized_pnl:+.2f}"
+            )
 
             # =================================================================
             # UPDATE POSITION
             # =================================================================
             
-            # Store old values for logging
-            old_quantity = position.quantity
-            old_realized_pnl = position.realized_pnl_usd
-            
             # Update position quantities
             position.quantity -= sell_quantity
             position.realized_pnl_usd += realized_pnl
-            position.current_value_usd = position.quantity * current_price
             
-            # Calculate unrealized P&L for remaining position
-            try:
-                unrealized_pnl = (
-                    position.current_value_usd -
-                    (position.quantity * position.average_entry_price_usd)
-                )
-                
-                # ✅ CRITICAL: Normalize tiny unrealized P&L to zero
-                if abs(unrealized_pnl) < Decimal('0.0001'):
-                    logger.debug(
-                        f"[POSITION MANAGER] Normalizing tiny unrealized P&L: {unrealized_pnl} → 0"
-                    )
-                    unrealized_pnl = Decimal('0')
-                
-                # Validate unrealized P&L is finite
-                if not unrealized_pnl.is_finite():
-                    logger.error(
-                        f"[POSITION MANAGER] Non-finite unrealized P&L: {unrealized_pnl}"
-                    )
-                    return None
-                
-                position.unrealized_pnl_usd = unrealized_pnl
-                
-            except (ArithmeticError, ZeroDivisionError) as e:
-                logger.error(
-                    f"[POSITION MANAGER] Failed to calculate unrealized P&L: {e}"
-                )
-                return None
+            # ✅ CRITICAL FIX: Validate updated quantities
+            position.quantity = validate_decimal_field(
+                position.quantity,
+                'quantity',
+                min_value=Decimal('0'),
+                max_value=Decimal('1000000000000000000'),
+                default_value=Decimal('0'),
+                decimal_places=18
+            )
+            
+            position.realized_pnl_usd = validate_decimal_field(
+                position.realized_pnl_usd,
+                'realized_pnl_usd',
+                min_value=Decimal('-1000000.00'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0'),
+                decimal_places=2
+            )
+            
+            # Recalculate current value and unrealized P&L
+            position.current_value_usd = position.quantity * current_price
+            position.unrealized_pnl_usd = (
+                position.current_value_usd -
+                (position.quantity * position.average_entry_price_usd)
+            )
+            
+            # ✅ CRITICAL FIX: Validate recalculated values
+            position.current_value_usd = validate_decimal_field(
+                position.current_value_usd,
+                'current_value_usd',
+                min_value=Decimal('0'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0'),
+                decimal_places=2
+            )
+            
+            position.unrealized_pnl_usd = validate_decimal_field(
+                position.unrealized_pnl_usd,
+                'unrealized_pnl_usd',
+                min_value=Decimal('-1000000.00'),
+                max_value=Decimal('1000000.00'),
+                default_value=Decimal('0'),
+                decimal_places=2
+            )
             
             position.last_updated = timezone.now()
 

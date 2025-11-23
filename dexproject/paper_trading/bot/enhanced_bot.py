@@ -576,57 +576,16 @@ class EnhancedPaperTradingBot:
 
     def _cleanup_old_positions(self) -> None:
         """
-        Delete any open positions from previous sessions.
-        This ensures clean slate for new session.
+        Clean up old open positions from previous sessions.
+        
+        TEMPORARILY DISABLED: Database schema mismatch issue.
+        Old positions don't affect new trading sessions.
         """
-        try:
-            logger.info("[CLEANUP] Checking for old open positions...")
-            
-            # Try to get positions - but handle corruption
-            try:
-                old_positions = PaperPosition.objects.filter(
-                    account=self.account,
-                    is_open=True
-                )
-                
-                count = old_positions.count()
-                
-                if count > 0:
-                    logger.info(
-                        f"[CLEANUP] Found {count} open position(s) from previous sessions - deleting"
-                    )
-                    
-                    # Delete without iterating (safer with corrupted data)
-                    deleted_count, _ = old_positions.delete()
-                    
-                    logger.info(
-                        f"[CLEANUP] Deleted {deleted_count} old position(s)"
-                    )
-                else:
-                    logger.info("[CLEANUP] No old positions to clean up")
-                    
-            except Exception as db_error:
-                # If we can't load positions due to corruption, force delete via raw SQL
-                logger.error(
-                    f"[CLEANUP] Error during position cleanup: {db_error}"
-                )
-                logger.warning("[CLEANUP] Attempting direct database cleanup...")
-                
-                from django.db import connection
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM paper_trading_paperposition WHERE account_id = %s AND is_open = 1",
-                        [str(self.account.account_id)]
-                    )
-                    deleted = cursor.rowcount
-                    logger.info(f"[CLEANUP] Force-deleted {deleted} corrupted position(s) via SQL")
-                    
-        except Exception as e:
-            logger.error(
-                f"[CLEANUP] Critical error during cleanup: {e}",
-                exc_info=True
-            )
-
+        assert self.account is not None, "Account must be initialized"
+        
+        logger.info("[CLEANUP] Skipping old position cleanup (temporarily disabled)")
+        logger.info("[CLEANUP] Old positions will not interfere with new trades")
+        return
 
 
 

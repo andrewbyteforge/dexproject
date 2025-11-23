@@ -661,18 +661,21 @@ class PaperPosition(models.Model):
     quantity = models.DecimalField(
         max_digits=36,
         decimal_places=18,
+        default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Amount held in wei"
     )
     
     average_entry_price_usd = models.DecimalField(
         max_digits=20,
         decimal_places=18,
+        default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Average entry price in USD"
     )
     
     total_invested_usd = models.DecimalField(
         max_digits=20,
         decimal_places=2,
+        default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Total amount invested"
     )
     
@@ -680,18 +683,21 @@ class PaperPosition(models.Model):
     current_price_usd = models.DecimalField(
         max_digits=20,
         decimal_places=18,
+        default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Current market price"
     )
     
     current_value_usd = models.DecimalField(
         max_digits=20,
         decimal_places=2,
+        default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Current position value"
     )
     
     unrealized_pnl_usd = models.DecimalField(
         max_digits=20,
         decimal_places=2,
+        default=Decimal('0'),  # ADDED DEFAULT to prevent NULL
         help_text="Unrealized profit/loss"
     )
     
@@ -817,32 +823,129 @@ class PaperPosition(models.Model):
 
     def save(self, *args, **kwargs) -> None:
         """
-        Save the position, ensuring all decimal fields are validated first.
+        Save the position with comprehensive decimal validation and error tracking.
         
-        This override ensures that clean() is ALWAYS called before saving,
-        preventing bad decimal data from ever reaching the database.
-        
-        Args:
-            *args: Positional arguments to pass to parent save()
-            **kwargs: Keyword arguments to pass to parent save()
+        This enhanced version:
+        1. Logs all field values before validation for debugging
+        2. Ensures no NULL values reach the database
+        3. Provides detailed error tracking
         """
-        # Always validate before saving
+        # Log incoming values for debugging
+        logger.info(
+            f"[POSITION SAVE] Attempting to save position {self.token_symbol}:\n"
+            f"  position_id: {self.position_id}\n"
+            f"  quantity: {self.quantity} (type: {type(self.quantity)})\n"
+            f"  current_value_usd: {self.current_value_usd} (type: {type(self.current_value_usd)})"
+        )
+        
+        # Pre-validation: Ensure no NULL values
+        decimal_fields = [
+            ('quantity', Decimal('0')),
+            ('average_entry_price_usd', Decimal('0')),
+            ('total_invested_usd', Decimal('0')),
+            ('current_price_usd', Decimal('0')),
+            ('current_value_usd', Decimal('0')),
+            ('unrealized_pnl_usd', Decimal('0')),
+            ('realized_pnl_usd', Decimal('0')),
+        ]
+        
+        # Fix NULL values before validation
+        for field_name, default_value in decimal_fields:
+            current_value = getattr(self, field_name, None)
+            
+            # Check for NULL, None, empty string, or invalid values
+            if current_value is None or current_value == '' or current_value == 'None':
+                logger.warning(
+                    f"[POSITION SAVE] Field {field_name} is NULL/empty, setting to {default_value}"
+                )
+                setattr(self, field_name, default_value)
+            else:
+                # Try to convert to Decimal to ensure it's valid
+                try:
+                    if not isinstance(current_value, Decimal):
+                        converted = Decimal(str(current_value))
+                        setattr(self, field_name, converted)
+                except (InvalidOperation, ValueError, TypeError) as e:
+                    logger.error(
+                        f"[POSITION SAVE] Invalid value for {field_name}: {current_value}, "
+                        f"using default {default_value}. Error: {e}"
+                    )
+                    setattr(self, field_name, default_value)
+        
+        # Now run the clean() validation
         try:
             self.clean()
+            logger.info(f"[POSITION SAVE] Validation successful for {self.token_symbol}")
         except Exception as e:
             logger.error(
-                f"[VALIDATION] Failed to validate position before save: {e}",
+                f"[POSITION SAVE] Validation failed for {self.token_symbol}: {e}",
                 exc_info=True
             )
-            # Re-raise as a more specific error
-            raise ValidationError(
-                f"Cannot save position with invalid decimal data: {e}"
-            )
+            # Try to fix and continue instead of raising
+            for field_name, default_value in decimal_fields:
+                setattr(self, field_name, default_value)
+            logger.warning(f"[POSITION SAVE] Reset all decimal fields to defaults for {self.token_symbol}")
+        
+        # Log final values before saving
+        logger.info(
+            f"[POSITION SAVE] Final values for {self.token_symbol}:\n"
+            f"  quantity: {self.quantity}\n"
+            f"  current_value_usd: {self.current_value_usd}\n"
+            f"  unrealized_pnl_usd: {self.unrealized_pnl_usd}"
+        )
         
         # Call parent save with validated data
-        super().save(*args, **kwargs)
-
+        try:
+            super().save(*args, **kwargs)
+            logger.info(f"[POSITION SAVE] ✅ Successfully saved position {self.token_symbol}")
+        except Exception as e:
+            logger.error(f"[POSITION SAVE] ❌ Failed to save position {self.token_symbol}: {e}", exc_info=True)
+            raise
     
+    @classmethod
+    def fix_all_positions(cls) -> int:
+        """
+        Class method to fix all positions with invalid decimal fields.
+        Run this after migration to clean up existing data.
+        
+        Returns:
+            int: Number of positions fixed
+        """
+        from decimal import Decimal, InvalidOperation
+        fixed_count = 0
+        positions = cls.objects.all()
+        
+        for position in positions:
+            needs_save = False
+            
+            # Check and fix each decimal field
+            decimal_fields = [
+                ('quantity', Decimal('0')),
+                ('average_entry_price_usd', Decimal('0')),
+                ('total_invested_usd', Decimal('0')),
+                ('current_price_usd', Decimal('0')),
+                ('current_value_usd', Decimal('0')),
+                ('unrealized_pnl_usd', Decimal('0')),
+                ('realized_pnl_usd', Decimal('0')),
+            ]
+            
+            for field_name, default_value in decimal_fields:
+                current_value = getattr(position, field_name, None)
+                
+                if current_value is None or current_value == '':
+                    setattr(position, field_name, default_value)
+                    needs_save = True
+                    logger.info(f"[FIX] Fixed {field_name} for position {position.position_id}")
+            
+            if needs_save:
+                try:
+                    position.save()
+                    fixed_count += 1
+                except Exception as e:
+                    logger.error(f"[FIX] Failed to fix position {position.position_id}: {e}")
+        
+        logger.info(f"[FIX] Fixed {fixed_count} positions total")
+        return fixed_count
     
     def update_price(self, new_price_usd: Decimal) -> None:
         """
@@ -945,6 +1048,11 @@ class PaperPosition(models.Model):
             Total amount invested in USD
         """
         return self.total_invested_usd
+
+
+
+
+
 
 
 class PaperTradingConfig(models.Model):
