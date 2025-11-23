@@ -20,7 +20,7 @@ from django.utils import timezone
 from django.core.cache import cache
 
 # Import DEX integrations
-from paper_trading.intelligence.dex.protocols import (
+from paper_trading.intelligence.dex_integrations import (
     BaseDEX,
     DEXPrice,
     UniswapV3DEX,

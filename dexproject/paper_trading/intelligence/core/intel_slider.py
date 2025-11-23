@@ -46,17 +46,20 @@ from paper_trading.intelligence.core.data_tracker import DataTracker
 
 # PHASE 2: Import DEX comparison and arbitrage detection
 DEXPriceComparator: Optional[Type[Any]] = None
-ArbitrageDetector: Optional[Type[Any]] = None
-PHASE_2_AVAILABLE = False
+ArbitrageEngine: Optional[Type[Any]] = None
+
 
 try:
     from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator as _DEXPriceComparator
-    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector as _ArbitrageDetector
+    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageEngine as _ArbitrageEngine
     DEXPriceComparator = _DEXPriceComparator
-    ArbitrageDetector = _ArbitrageDetector
+    ArbitrageEngine = _ArbitrageEngine
     PHASE_2_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     # Phase 2 components not available - bot will run in Phase 1 mode
+    print(f"⚠️ PHASE 2 IMPORT FAILED: {e}")  # DEBUG - see what's failing
+    import traceback
+    traceback.print_exc()  # DEBUG - see full error
     PHASE_2_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -166,10 +169,10 @@ class IntelSliderEngine(IntelligenceEngine):
         dex_comparator_instance: Optional[Any] = None
         arbitrage_detector_instance: Optional[Any] = None
 
-        if PHASE_2_AVAILABLE and DEXPriceComparator is not None and ArbitrageDetector is not None:
+        if PHASE_2_AVAILABLE and DEXPriceComparator is not None and ArbitrageEngine is not None:  # ✅ NEW
             try:
                 dex_comparator_instance = DEXPriceComparator(chain_id=chain_id)
-                arbitrage_detector_instance = ArbitrageDetector()
+                arbitrage_detector_instance = ArbitrageEngine()
                 self.logger.info(
                     "[INTEL SLIDER] Phase 2 components initialized: "
                     "DEX comparison + Arbitrage detection"

@@ -46,11 +46,11 @@ from paper_trading.intelligence.core.intel_slider import IntelSliderEngine
 # Import arbitrage detection components
 try:
     from paper_trading.intelligence.dex.dex_price_comparator import DEXPriceComparator  # type: ignore
-    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageDetector  # type: ignore
+    from paper_trading.intelligence.strategies.arbitrage_engine import ArbitrageEngine  # type: ignore
     ARBITRAGE_AVAILABLE = True
 except ImportError:
     DEXPriceComparator = None  # type: ignore
-    ArbitrageDetector = None  # type: ignore
+    ArbitrageEngine = None  # type: ignore
     ARBITRAGE_AVAILABLE = False
 
 # Import WebSocket service
@@ -148,7 +148,7 @@ class MarketAnalyzer:
         self.pending_transactions: List[Any] = []
         
         # Initialize arbitrage detection components
-        self.arbitrage_detector: Optional[ArbitrageDetector] = None
+        self.arbitrage_detector: Optional[ArbitrageEngine] = None
         self.dex_comparator: Optional[DEXPriceComparator] = None
         self.check_arbitrage = False
         self.arbitrage_opportunities_found = 0
@@ -173,7 +173,7 @@ class MarketAnalyzer:
                     )
                     
                     # Initialize arbitrage detector with sensible defaults
-                    self.arbitrage_detector = ArbitrageDetector(
+                    self.arbitrage_detector = ArbitrageEngine(
                         gas_price_gwei=Decimal('1.0'),  # Will update dynamically
                         min_spread_percent=Decimal('0.5'),  # 0.5% minimum spread
                         min_profit_usd=Decimal('10')  # $10 minimum profit

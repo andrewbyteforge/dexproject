@@ -25,7 +25,7 @@ from datetime import datetime
 from django.utils import timezone
 
 # Import DEX price comparison classes
-from paper_trading.intelligence.dex_price_comparator import (
+from paper_trading.intelligence.dex.dex_price_comparator import (
     DEXPriceComparison,
     DEXPrice
 )

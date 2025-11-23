@@ -44,7 +44,7 @@ try:
     ARBITRAGE_AVAILABLE = True
 except ImportError:
     ARBITRAGE_AVAILABLE = False
-    ArbitrageDetector = None  # type: ignore
+    ArbitrageEngine = None  # type: ignore
     DEXPriceComparator = None  # type: ignore
 
 if TYPE_CHECKING:
@@ -91,7 +91,7 @@ def check_arbitrage_after_buy(
         
         # Initialize arbitrage components lazily
         if not executor.arbitrage_engine:
-            executor.arbitrage_engine = ArbitrageDetector()
+            executor.arbitrage_engine = ArbitrageEngine()
             logger.info("[ARBITRAGE] Detector initialized")
         
         if not executor.dex_price_comparator:
@@ -131,7 +131,7 @@ def check_arbitrage_after_buy(
         price_comparison.__post_init__()  # Recalculate best/worst
         
         # Detect arbitrage opportunity using detect_arbitrage()
-        opportunity = executor.arbitrage_engine.detect_arbitrage(
+        opportunity = executor.arbitrage_engine.detect_from_comparison(
             price_comparison=price_comparison,
             trade_amount_usd=trade_amount_usd
         )

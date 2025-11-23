@@ -155,13 +155,46 @@ class BaseDEX(ABC):
         
         This method attempts to create a Web3Client using the engine's config.
         If initialization fails, web3_client will be None and queries will fail.
+        
+        Note: get_config() is an async function that takes NO arguments and 
+        initializes a global config object in the engine.config module.
         """
         try:
-            # Get chain config
-            config = get_config(self.chain_id)
+            # Import async_to_sync for calling async function
+            from asgiref.sync import async_to_sync
             
-            # Create Web3 client
-            self.web3_client = Web3Client(config)
+            # Import engine config module to access global config
+            import engine.config as engine_config_module
+            
+            # Check if config is already initialized
+            if not hasattr(engine_config_module, 'config') or engine_config_module.config is None:
+                # Initialize config asynchronously (takes no args)
+                async_to_sync(get_config)()
+            
+            # Access the initialized config from the module
+            # Access the initialized config from the module
+            if hasattr(engine_config_module, 'config') and engine_config_module.config is not None:
+                engine_config = engine_config_module.config  # This is EngineConfig
+                
+                # ✅ GET CHAIN-SPECIFIC CONFIG
+                chain_config = engine_config.get_chain_config(self.chain_id)
+                
+                if chain_config is None:
+                    self.logger.warning(
+                        f"[{self.dex_name.upper()}] No chain config found for chain {self.chain_id}"
+                    )
+                    self.web3_client = None
+                    return
+            else:
+                self.logger.warning(
+                    f"[{self.dex_name.upper()}] Engine config not available - "
+                    f"Web3 client will not be initialized"
+                )
+                self.web3_client = None
+                return
+            
+            # Create Web3 client using the config
+            self.web3_client = Web3Client(chain_config)
             
             self.logger.info(
                 f"[{self.dex_name.upper()}] Web3 client initialized for chain {self.chain_id}"
