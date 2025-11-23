@@ -294,6 +294,12 @@ class MarketAnalyzer:
                 )
             
             logger.info(f"[TICK {self.tick_count}] ✅ Phase 1 complete - Market data updated")
+            
+            logger.info(f"[TICK {self.tick_count}] ✅ Phase 1 complete - Market data updated")
+
+            # ADD THIS LINE:
+            logger.info(f"[TICK {self.tick_count}] DEBUG: About to check circuit breaker")
+
 
             # ================================================================
             # PHASE 2: CIRCUIT BREAKER CHECK

@@ -218,7 +218,7 @@ class TradeExecutor:
         
         # ✅ NEW: Multi-DEX routing for best price discovery
         try:
-            from paper_trading.bot.dex_router import PaperDexRouter
+            from paper_trading.bot.execution.dex_router import PaperDexRouter
             self.dex_router = PaperDexRouter(chain_id=chain_id)
             logger.info(
                 f"[TRADE EXECUTOR] DEX router initialized for multi-DEX routing "

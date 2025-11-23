@@ -33,7 +33,7 @@ from paper_trading.constants import DecisionType
 # Type hints for external dependencies (avoid circular imports)
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from paper_trading.bot.price_service_integration import RealPriceManager
+    from paper_trading.bot.shared.price_service_integration import RealPriceManager
     from paper_trading.bot.positions import PositionManager
     from paper_trading.bot.execution import TradeExecutor
     from paper_trading.models import PaperTradingAccount, PaperStrategyConfiguration
@@ -378,19 +378,24 @@ class PositionEvaluator:
                 f"[POSITION EVALUATOR] Checking arbitrage exit for {token_symbol}"
             )
 
-            # Compare prices across DEXes
+            # Compare prices across DEXes           
+            # Line 385-398
+            # Compare prices across DEXes           
             comparison = async_to_sync(self.dex_comparator.compare_prices)(
                 token_address=token_address,
-                amount_in_usd=position.current_value_usd
+                token_symbol=token_symbol,
+                use_cache=False
             )
 
-            if not comparison or 'error' in comparison:
+            # DEXPriceComparison is a dataclass, not a dict - check successful_queries
+            if not comparison or comparison.successful_queries < 1:
                 logger.debug(f"[POSITION EVALUATOR] No arbitrage data for {token_symbol}")
                 return False
 
             # Check if there's a profitable exit opportunity
-            best_price = comparison.get('best_price', Decimal('0'))
-            spread_percent = comparison.get('spread_percent', Decimal('0'))
+            # Access dataclass attributes directly, not with .get()
+            best_price = comparison.best_price if comparison.best_price else Decimal('0')
+            spread_percent = comparison.price_spread_percent if comparison.price_spread_percent else Decimal('0') # ✅ CORRECT
 
             # Need at least 0.5% spread to cover gas and slippage
             min_spread = Decimal('0.5')
