@@ -438,36 +438,60 @@ function handleBotStatusUpdate(data) {
 /**
  * Handle portfolio update from WebSocket
  */
+/**
+ * Handle portfolio update from WebSocket
+ */
 function handlePortfolioUpdate(data) {
     if (!data) return;
 
-    // Calculate total portfolio value: cash + open positions
-    let totalPortfolio = parseFloat(data.account_balance) || 0;
-    let totalPositionsValue = 0;
+    // Use pre-calculated values from backend if available
+    // Otherwise fall back to client-side calculation
+    let totalPortfolio = data.portfolio_value;
+    let returnPercent = data.return_percent;
+    let totalPnL = data.total_pnl;
+    let winRate = data.win_rate;
 
-    // Sum up all open position values
-    if (data.open_positions && Array.isArray(data.open_positions)) {
-        for (let position of data.open_positions) {
-            const posValue = parseFloat(position.current_value_usd) || 0;
-            totalPositionsValue += posValue;
+    // Fallback: calculate if backend didn't send pre-calculated values
+    if (totalPortfolio === undefined) {
+        totalPortfolio = parseFloat(data.account_balance) || 0;
+        let totalPositionsValue = 0;
+
+        if (data.open_positions && Array.isArray(data.open_positions)) {
+            for (let position of data.open_positions) {
+                const posValue = parseFloat(position.current_value_usd) || 0;
+                totalPositionsValue += posValue;
+            }
+        }
+        totalPortfolio += totalPositionsValue;
+    }
+
+    // Fallback: calculate return if not provided
+    if (returnPercent === undefined) {
+        const initialBalance = 10000; // Fallback only
+        totalPnL = totalPortfolio - initialBalance;
+        returnPercent = ((totalPnL / initialBalance) * 100);
+    }
+
+    // Update UI elements
+    updatePortfolioValue(totalPortfolio);
+
+    if (totalPnL !== undefined) {
+        updateTotalPnL(totalPnL);
+    }
+
+    if (returnPercent !== undefined) {
+        updateReturnPercentage(returnPercent);
+    }
+
+    if (winRate !== undefined) {
+        const winRateElement = document.getElementById('win-rate');
+        if (winRateElement) {
+            winRateElement.textContent = `${parseFloat(winRate).toFixed(1)}%`;
         }
     }
 
-    totalPortfolio += totalPositionsValue;
-
-    // ⭐ ADD THESE THREE LINES ⭐
-    updatePortfolioValue(totalPortfolio);
-
-    const initialBalance = 10000;
-    const totalPnL = totalPortfolio - initialBalance;
-    const returnPercentage = ((totalPnL / initialBalance) * 100);
-
-    updateTotalPnL(totalPnL);
-    updateReturnPercentage(returnPercentage);
-    // ⭐ END OF NEW LINES ⭐
-
     // Log for debugging
-    console.log(`Portfolio Update: Cash=$${data.account_balance.toFixed(2)}, Positions=$${totalPositionsValue.toFixed(2)}, Total=$${totalPortfolio.toFixed(2)}, Return=${returnPercentage.toFixed(2)}%`);
+    console.log(`Portfolio Update: Total=$${totalPortfolio.toFixed(2)}, Return=${returnPercent.toFixed(2)}%, P&L=$${totalPnL?.toFixed(2) || 'N/A'}, WinRate=${winRate?.toFixed(1) || 'N/A'}%`);
 }
 
 /**

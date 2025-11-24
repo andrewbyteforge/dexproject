@@ -344,6 +344,12 @@ class DEXPriceComparator:
                     f"[DEX COMPARATOR] Only {comparison.successful_queries} successful "
                     f"quotes for {token_symbol} (minimum: {self.min_successful_quotes})"
                 )
+                # ✅ FIX: Invalidate comparison - no trade should happen
+                comparison.best_price = None
+                comparison.best_dex = None
+                comparison.worst_price = None
+                comparison.worst_dex = None
+                comparison.average_price = None
             else:
                 self.successful_comparisons += 1
             

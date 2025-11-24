@@ -714,6 +714,25 @@ class MarketAnalyzer:
                 f"Total=${total_portfolio_value:.2f}"
             )
             
+            # Calculate return percentage
+            starting_balance = float(self.account.initial_balance_usd)
+            return_percent = 0.0
+            if starting_balance > 0:
+                return_percent = ((total_portfolio_value - starting_balance) / starting_balance) * 100
+            
+            # Get total P&L and win rate from metrics
+            total_pnl = 0.0
+            win_rate = 0.0
+            try:
+                metrics = PaperPerformanceMetrics.objects.filter(
+                    session=self.session
+                ).first()
+                if metrics:
+                    total_pnl = float(metrics.total_pnl_usd or 0)
+                    win_rate = float(metrics.win_rate or 0)
+            except Exception:
+                pass
+            
             # Prepare status data
             status_data = {
                 'bot_status': str(status) if hasattr(status, 'value') else status,
@@ -731,7 +750,13 @@ class MarketAnalyzer:
                 # Arbitrage stats
                 'arbitrage_enabled': self.check_arbitrage,
                 'arbitrage_opportunities_found': self.arbitrage_opportunities_found,
-                'arbitrage_trades_executed': self.arbitrage_trades_executed
+                'arbitrage_trades_executed': self.arbitrage_trades_executed,
+                # NEW: Dashboard display fields
+                'portfolio_value': total_portfolio_value,
+                'return_percent': return_percent,
+                'total_pnl': total_pnl,
+                'win_rate': win_rate,
+                'positions_value': total_positions_value
             }
             
             logger.debug(f"[STATUS UPDATE] Sending portfolio.update message via WebSocket")
