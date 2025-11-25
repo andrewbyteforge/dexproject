@@ -661,130 +661,135 @@ class MarketAnalyzer:
     # =========================================================================
 
     def _send_bot_status_update(
-        self,
-        status: str,
-        price_manager: Any,
-        position_manager: Any,
-        trade_executor: Any
-    ) -> None:
-        """
-        Send bot status update via WebSocket.
-        
-        Args:
-            status: Bot status string
-            price_manager: RealPriceManager instance
-            position_manager: PositionManager instance
-            trade_executor: TradeExecutor instance
-        """
-        try:
-            logger.debug(f"[STATUS UPDATE] Starting portfolio update for account {self.account.account_id}")
+            self,
+            status: str,
+            price_manager: Any,
+            position_manager: Any,
+            trade_executor: Any
+        ) -> None:
+            """
+            Send bot status update via WebSocket.
             
-            # Get current positions
-            positions = position_manager.get_all_positions()
-            logger.debug(f"[STATUS UPDATE] Retrieved {len(positions)} open positions")
-            
-            # Format positions for WebSocket
-            positions_data = []
-            total_positions_value = 0.0
-            
-            for token_symbol, position in positions.items():
-                position_value = float(position.current_value_usd)
-                total_positions_value += position_value
-                
-                positions_data.append({
-                    'token_symbol': token_symbol,
-                    'quantity': float(position.quantity),
-                    'invested_usd': float(position.total_invested_usd),
-                    'current_value_usd': position_value,
-                    'pnl_percent': float(
-                        ((position.current_value_usd - position.total_invested_usd)
-                         / position.total_invested_usd * 100)
-                        if position.total_invested_usd > 0
-                        else 0
-                    )
-                })
-            
-            account_cash = float(self.account.current_balance_usd)
-            total_portfolio_value = account_cash + total_positions_value
-            
-            logger.debug(
-                f"[STATUS UPDATE] Portfolio breakdown: "
-                f"Cash=${account_cash:.2f}, "
-                f"Positions=${total_positions_value:.2f}, "
-                f"Total=${total_portfolio_value:.2f}"
-            )
-            
-            # Calculate return percentage
-            starting_balance = float(self.account.initial_balance_usd)
-            return_percent = 0.0
-            if starting_balance > 0:
-                return_percent = ((total_portfolio_value - starting_balance) / starting_balance) * 100
-            
-            # Get total P&L and win rate from metrics
-            total_pnl = 0.0
-            win_rate = 0.0
+            Args:
+                status: Bot status string
+                price_manager: RealPriceManager instance
+                position_manager: PositionManager instance
+                trade_executor: TradeExecutor instance
+            """
             try:
-                metrics = PaperPerformanceMetrics.objects.filter(
-                    session=self.session
-                ).first()
-                if metrics:
-                    total_pnl = float(metrics.total_pnl_usd or 0)
-                    win_rate = float(metrics.win_rate or 0)
-            except Exception:
-                pass
-            
-            # Prepare status data
-            status_data = {
-                'bot_status': str(status) if hasattr(status, 'value') else status,
-                'intel_level': self.intelligence_engine.intel_level,
-                'tx_manager_enabled': self.use_tx_manager,
-                'circuit_breaker_enabled': self.circuit_breaker_manager is not None,
-                'account_balance': account_cash,
-                'open_positions': positions_data,
-                'tick_count': self.tick_count,
-                'total_gas_savings': 0,  # Placeholder
-                'pending_transactions': len(self.pending_transactions),
-                'consecutive_failures': 0,  # Placeholder
-                'daily_trades': 0,  # Placeholder
-                'timestamp': timezone.now().isoformat(),
-                # Arbitrage stats
-                'arbitrage_enabled': self.check_arbitrage,
-                'arbitrage_opportunities_found': self.arbitrage_opportunities_found,
-                'arbitrage_trades_executed': self.arbitrage_trades_executed,
-                # NEW: Dashboard display fields
-                'portfolio_value': total_portfolio_value,
-                'return_percent': return_percent,
-                'total_pnl': total_pnl,
-                'win_rate': win_rate,
-                'positions_value': total_positions_value
-            }
-            
-            logger.debug(f"[STATUS UPDATE] Sending portfolio.update message via WebSocket")
-            
-            # Send WebSocket update
-            success = websocket_service.send_portfolio_update(
-                account_id=str(self.account.account_id),
-                portfolio_data=status_data
-            )
-            
-            if success:
-                logger.info(
-                    f"[STATUS UPDATE] ✅ Portfolio update sent successfully - "
-                    f"Total=${total_portfolio_value:.2f} "
-                    f"(Cash=${account_cash:.2f} + Positions=${total_positions_value:.2f})"
+                logger.debug(f"[STATUS UPDATE] Starting portfolio update for account {self.account.account_id}")
+                
+                # Get current positions
+                positions = position_manager.get_all_positions()
+                logger.debug(f"[STATUS UPDATE] Retrieved {len(positions)} open positions")
+                
+                # Format positions for WebSocket
+                positions_data = []
+                total_positions_value = 0.0
+                
+                for token_symbol, position in positions.items():
+                    position_value = float(position.current_value_usd)
+                    total_positions_value += position_value
+                    
+                    positions_data.append({
+                        'token_symbol': token_symbol,
+                        'quantity': float(position.quantity),
+                        'invested_usd': float(position.total_invested_usd),
+                        'current_value_usd': position_value,
+                        'pnl_percent': float(
+                            ((position.current_value_usd - position.total_invested_usd)
+                            / position.total_invested_usd * 100)
+                            if position.total_invested_usd > 0
+                            else 0
+                        )
+                    })
+                
+                account_cash = float(self.account.current_balance_usd)
+                total_portfolio_value = account_cash + total_positions_value
+                
+                logger.debug(
+                    f"[STATUS UPDATE] Portfolio breakdown: "
+                    f"Cash=${account_cash:.2f}, "
+                    f"Positions=${total_positions_value:.2f}, "
+                    f"Total=${total_portfolio_value:.2f}"
                 )
-            else:
-                logger.warning(
-                    "[STATUS UPDATE] ⚠️ WebSocket service returned False - "
-                    "update may not have been sent"
+                
+                # Calculate return percentage from initial balance
+                initial_balance = float(self.account.initial_balance_usd)
+                return_percent = 0.0
+                if initial_balance > 0:
+                    return_percent = ((total_portfolio_value - initial_balance) / initial_balance) * 100
+                
+                # Calculate total P&L directly (current portfolio minus starting balance)
+                total_pnl = total_portfolio_value - initial_balance
+                
+                # Get win rate from account trade statistics
+                win_rate = 0.0
+                try:
+                    # Refresh account from database to get latest trade counts
+                    self.account.refresh_from_db()
+                    total_trades = self.account.total_trades or 0
+                    winning_trades = self.account.winning_trades or 0
+                    if total_trades > 0:
+                        win_rate = (winning_trades / total_trades) * 100
+                    logger.debug(
+                        f"[STATUS UPDATE] Trade stats: {winning_trades}/{total_trades} wins, "
+                        f"win_rate={win_rate:.1f}%, P&L=${total_pnl:.2f}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[STATUS UPDATE] Could not calculate win rate: {e}")
+                
+                # Prepare status data
+                status_data = {
+                    'bot_status': str(status) if hasattr(status, 'value') else status,
+                    'intel_level': self.intelligence_engine.intel_level,
+                    'tx_manager_enabled': self.use_tx_manager,
+                    'circuit_breaker_enabled': self.circuit_breaker_manager is not None,
+                    'account_balance': account_cash,
+                    'open_positions': positions_data,
+                    'tick_count': self.tick_count,
+                    'total_gas_savings': 0,  # Placeholder
+                    'pending_transactions': len(self.pending_transactions),
+                    'consecutive_failures': 0,  # Placeholder
+                    'daily_trades': 0,  # Placeholder
+                    'timestamp': timezone.now().isoformat(),
+                    # Arbitrage stats
+                    'arbitrage_enabled': self.check_arbitrage,
+                    'arbitrage_opportunities_found': self.arbitrage_opportunities_found,
+                    'arbitrage_trades_executed': self.arbitrage_trades_executed,
+                    # Dashboard display fields
+                    'portfolio_value': total_portfolio_value,
+                    'return_percent': return_percent,
+                    'total_pnl': total_pnl,
+                    'win_rate': win_rate,
+                    'positions_value': total_positions_value
+                }
+                
+                logger.debug(f"[STATUS UPDATE] Sending portfolio.update message via WebSocket")
+                
+                # Send WebSocket update
+                success = websocket_service.send_portfolio_update(
+                    account_id=str(self.account.account_id),
+                    portfolio_data=status_data
                 )
-            
-        except Exception as e:
-            logger.error(
-                f"[STATUS UPDATE] ❌ Failed to send bot status: {e}",
-                exc_info=True
-            )
-
+                
+                if success:
+                    logger.info(
+                        f"[STATUS UPDATE] ✅ Portfolio update sent successfully - "
+                        f"Total=${total_portfolio_value:.2f} "
+                        f"(Cash=${account_cash:.2f} + Positions=${total_positions_value:.2f})"
+                    )
+                else:
+                    logger.warning(
+                        "[STATUS UPDATE] ⚠️ WebSocket service returned False - "
+                        "update may not have been sent"
+                    )
+                
+            except Exception as e:
+                logger.error(
+                    f"[STATUS UPDATE] ❌ Failed to send bot status: {e}",
+                    exc_info=True
+                )
     # =========================================================================
     # CLEANUP
     # =========================================================================

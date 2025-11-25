@@ -9,7 +9,7 @@ File: dexproject/paper_trading/views_dashboard.py
 
 import logging
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Dict, Any
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.shortcuts import render
@@ -77,7 +77,7 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
                 logger.info(f"Closed old session from {old_session.started_at.date()}: {old_session.session_id}")
         
         # =====================================================================
-        # RECENT TRADES WITH PAGINATION (5 per page)
+        # RECENT TRADES WITH PAGINATION (5 per page) - WITH ERROR HANDLING
         # =====================================================================
         try:
             raw_trades = PaperTrade.objects.filter(
@@ -96,15 +96,28 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             else:
                 try:
                     trades_page_obj = trades_paginator.page(trades_page_number)
-                    recent_trades = [format_trade_for_template(trade) for trade in trades_page_obj]
                 except PageNotAnInteger:
                     # Page is not an integer, deliver first page
                     trades_page_obj = trades_paginator.page(1)
-                    recent_trades = [format_trade_for_template(trade) for trade in trades_page_obj]
                 except EmptyPage:
                     # Page is out of range, deliver last page
                     trades_page_obj = trades_paginator.page(trades_paginator.num_pages)
-                    recent_trades = [format_trade_for_template(trade) for trade in trades_page_obj]
+                
+                # Format trades with error handling for corrupted data
+                recent_trades = []
+                corrupted_trade_count = 0
+                
+                for trade in trades_page_obj:
+                    try:
+                        recent_trades.append(format_trade_for_template(trade))
+                    except (InvalidOperation, ValueError, Exception) as e:
+                        logger.error(f"Skipping corrupted trade {trade.trade_id} on dashboard: {e}")
+                        corrupted_trade_count += 1
+                        continue
+                
+                # Log if we skipped corrupted trades
+                if corrupted_trade_count > 0:
+                    logger.warning(f"[DASHBOARD] Skipped {corrupted_trade_count} corrupted trades")
             
         except Exception as e:
             logger.warning(f"Error fetching recent trades: {e}", exc_info=True)
@@ -133,18 +146,23 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             else:
                 try:
                     positions_page_obj = positions_paginator.page(positions_page_number)
-                    open_positions = [format_position_for_template(pos) for pos in positions_page_obj]
-                    total_open_positions = raw_positions.count()
                 except PageNotAnInteger:
                     # Page is not an integer, deliver first page
                     positions_page_obj = positions_paginator.page(1)
-                    open_positions = [format_position_for_template(pos) for pos in positions_page_obj]
-                    total_open_positions = raw_positions.count()
                 except EmptyPage:
                     # Page is out of range, deliver last page
                     positions_page_obj = positions_paginator.page(positions_paginator.num_pages)
-                    open_positions = [format_position_for_template(pos) for pos in positions_page_obj]
-                    total_open_positions = raw_positions.count()
+                
+                # Format positions with error handling
+                open_positions = []
+                for pos in positions_page_obj:
+                    try:
+                        open_positions.append(format_position_for_template(pos))
+                    except Exception as e:
+                        logger.error(f"Skipping corrupted position {pos.position_id}: {e}")
+                        continue
+                
+                total_open_positions = raw_positions.count()
             
         except Exception as e:
             logger.warning(f"Error fetching open positions: {e}", exc_info=True)
@@ -236,10 +254,10 @@ def paper_trading_dashboard(request: HttpRequest) -> HttpResponse:
             'account_id': str(account.account_id),
             'active_session': active_session,
             'recent_trades': recent_trades,
-            'trades_page_obj': trades_page_obj,  # 🆕 Pagination object for trades
+            'trades_page_obj': trades_page_obj,  # Pagination object for trades
             'open_positions': open_positions,
-            'positions_page_obj': positions_page_obj,  # 🆕 Pagination object for positions
-            'open_positions_count': total_open_positions,  # 🆕 Total count (not just current page)
+            'positions_page_obj': positions_page_obj,  # Pagination object for positions
+            'open_positions_count': total_open_positions,  # Total count (not just current page)
             'performance': performance,
             'recent_thoughts': formatted_thoughts,
             'total_trades': total_trades,  # Total trade executions

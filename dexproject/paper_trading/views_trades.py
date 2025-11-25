@@ -8,7 +8,7 @@ File: dexproject/paper_trading/views_trades.py
 """
 
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Dict, Any
 
 from django.shortcuts import render
@@ -89,14 +89,27 @@ def trade_history(request: HttpRequest) -> HttpResponse:
         # Order by creation date
         trades_query = trades_query.order_by('-created_at')
         
-        # Format trades BEFORE pagination to avoid issues
+        # Format trades BEFORE pagination - handle corrupted trades gracefully
         formatted_trades = []
-        for trade in trades_query.iterator():  # Use iterator() to handle decimal errors
+        corrupted_count = 0
+        
+        # Don't use iterator() - it doesn't help with decimal errors and prevents further queries
+        for trade in trades_query:
             try:
                 formatted_trades.append(format_trade_for_template(trade))
-            except Exception as e:
-                logger.error(f"Error formatting trade {trade.trade_id}: {e}")
+            except (InvalidOperation, ValueError, Exception) as e:
+                logger.error(f"Skipping corrupted trade {trade.trade_id}: {e}")
+                corrupted_count += 1
                 continue
+        
+        # Warn user if corrupted trades were found
+        if corrupted_count > 0:
+            logger.warning(f"[TRADE HISTORY] Skipped {corrupted_count} corrupted trades")
+            messages.warning(
+                request, 
+                f"Warning: {corrupted_count} trade(s) could not be displayed due to data corruption. "
+                "Consider deleting old trades: python manage.py shell -> PaperTrade.objects.all().delete()"
+            )
         
         # Paginate the formatted trades
         paginator = Paginator(formatted_trades, 5)

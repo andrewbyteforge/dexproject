@@ -17,7 +17,9 @@ Responsibilities:
 - Track arbitrage statistics and performance
 - Validate profit amounts to prevent database corruption
 
-File: dexproject/paper_trading/bot/arbitrage_executor.py
+FIXED: Now uses decimal_to_str() to prevent scientific notation corruption
+
+File: dexproject/paper_trading/bot/arbitrage/arbitrage_executor.py
 """
 
 import logging
@@ -30,10 +32,11 @@ from asgiref.sync import async_to_sync
 from paper_trading.models import PaperTrade
 from shared.constants import get_token_address
 
-# Import validation functions
+# Import validation functions - INCLUDING decimal_to_str
 from paper_trading.bot.shared.validation import (
     validate_usd_amount,
     validate_balance_update,
+    decimal_to_str,  # ✅ ADDED: Import decimal_to_str to fix corruption
     ValidationLimits
 )
 
@@ -129,7 +132,7 @@ def check_arbitrage_after_buy(
         # Recreate price comparison with only valid prices
         price_comparison.prices = valid_prices
         price_comparison.__post_init__()  # Recalculate best/worst
-        
+      
         # Detect arbitrage opportunity using detect_arbitrage()
         opportunity = executor.arbitrage_engine.detect_from_comparison(
             price_comparison=price_comparison,
@@ -237,14 +240,32 @@ def execute_arbitrage_trade(
         
         # Log the arbitrage trade as a separate trade record
         try:
-            # Calculate amounts in wei
-            # Convert to string FIRST to avoid scientific notation
-            amount_in_wei_str = str(int(
-                (opportunity.trade_amount_usd / opportunity.sell_price) * ValidationLimits.TOKEN_DECIMALS
-            ))
-            amount_out_wei_str = str(int(
-                (opportunity.trade_amount_usd + opportunity.net_profit_usd) * ValidationLimits.USDC_DECIMALS
-            ))
+            # ✅ FIXED: Calculate amounts in wei using proper Decimal conversion
+            # Calculate as Decimal first, then use decimal_to_str() to prevent scientific notation
+            amount_in_wei = (
+                (opportunity.trade_amount_usd / opportunity.sell_price) * 
+                ValidationLimits.TOKEN_DECIMALS
+            )
+            amount_out_wei = (
+                (opportunity.trade_amount_usd + opportunity.net_profit_usd) * 
+                ValidationLimits.USDC_DECIMALS
+            )
+            
+            # ⚠️ CRITICAL: Check for NaN/Infinity before converting to string
+            if amount_in_wei.is_nan() or amount_in_wei.is_infinite():
+                logger.error(f"[ARBITRAGE] Invalid amount_in_wei: {amount_in_wei}")
+                return
+            if amount_out_wei.is_nan() or amount_out_wei.is_infinite():
+                logger.error(f"[ARBITRAGE] Invalid amount_out_wei: {amount_out_wei}")
+                return
+            
+            # ✅ FIXED: Use decimal_to_str() instead of str(int()) to prevent scientific notation
+            amount_in_wei_str = decimal_to_str(amount_in_wei)
+            amount_out_wei_str = decimal_to_str(amount_out_wei)
+            
+            # Debug logging
+            logger.debug(f"[ARBITRAGE] amount_in_wei_str: '{amount_in_wei_str}'")
+            logger.debug(f"[ARBITRAGE] amount_out_wei_str: '{amount_out_wei_str}'")
             
             # Simulate gas costs for arbitrage (higher than normal)
             simulated_gas_used = random.randint(300000, 400000)
@@ -286,7 +307,7 @@ def execute_arbitrage_trade(
             )
         
         except Exception as e:
-            logger.error(f"[ARBITRAGE] Failed to create trade record: {e}")
+            logger.error(f"[ARBITRAGE] Failed to create trade record: {e}", exc_info=True)
         
         logger.info(
             f"[ARBITRAGE] Total: Found={executor.arbitrage_opportunities_found}, "
