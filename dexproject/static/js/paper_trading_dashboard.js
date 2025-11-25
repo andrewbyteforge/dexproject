@@ -1394,7 +1394,7 @@ function initializeDashboard() {
 
     // Initial data fetch
     fetchRecentTrades();
-    // fetchOpenPositions();
+    fetchOpenPositions();
     fetchMetrics();
     loadActiveStrategies();
 

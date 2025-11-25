@@ -490,8 +490,11 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
         # Calculate win rate
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
 
-        # Get total P&L from account with safe conversion
-        total_pnl = safe_float(account.total_profit_loss_usd)
+        # Get initial balance for P&L calculation
+        initial_balance = safe_float(account.initial_balance_usd, 10000.0)
+        
+        # Get current cash balance
+        cash_balance = safe_float(account.current_balance_usd, 10000.0)
 
         # Get open positions value with safe aggregation
         open_positions_result = PaperPosition.objects.filter(
@@ -501,21 +504,27 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
         
         open_positions_value = safe_float(open_positions_result['total'])
 
-        # Calculate portfolio value with safe conversion
-        cash_balance = safe_float(account.current_balance_usd, 10000.0)
+        # Calculate portfolio value (cash + positions)
         portfolio_value = cash_balance + open_positions_value
+        
+        # ✅ CALCULATE total P&L from actual portfolio value vs initial balance
+        # This gives the true profit/loss, not relying on account.total_profit_loss_usd
+        total_pnl = portfolio_value - initial_balance
+        
+        # ✅ CALCULATE ROI from actual values
+        roi = (total_pnl / initial_balance * 100) if initial_balance > 0 else 0
 
         return JsonResponse({
             'success': True,
             'metrics': {
                 'portfolio_value': portfolio_value,
                 'cash_balance': cash_balance,
-                'total_pnl': total_pnl,
+                'total_pnl': total_pnl,  # ✅ Now calculated correctly
                 'total_trades': total_trades,
                 'winning_trades': winning_trades,
                 'losing_trades': losing_trades,
                 'win_rate': round(win_rate, 2),
-                'roi': safe_float(account.get_roi()),
+                'roi': round(roi, 2),  # ✅ Now calculated correctly
             }
         })
 

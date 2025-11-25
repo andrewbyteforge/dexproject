@@ -15,7 +15,7 @@ Responsibilities:
 - Send WebSocket notifications for real-time UI updates
 - Update account statistics (total trades, win/loss counts)
 
-File: dexproject/paper_trading/bot/trade_record_manager.py
+File: dexproject/paper_trading/bot/execution/trade_record_manager.py
 """
 
 import logging
@@ -41,6 +41,8 @@ from paper_trading.services.websocket_service import websocket_service
 # Import validation functions
 from paper_trading.bot.shared.validation import (
     validate_usd_amount,
+    validate_wei_amount,
+    validate_token_price_for_trade,
     validate_balance_update,
     decimal_to_str,
     get_token_address_for_trade,
@@ -63,17 +65,17 @@ def create_paper_trade_record(
     token_symbol: str,
     current_price: Decimal,
     position_manager: Any,
-    execution_dex: str = 'uniswap_v3',  # NEW parameter
-    dex_price: Decimal = Decimal('0')   # NEW parameter
+    execution_dex: str = 'uniswap_v3',
+    dex_price: Decimal = Decimal('0')
 ) -> Optional[PaperTrade]:
     """
     Create a paper trade record in the database.
     
     This function handles the complete paper trade creation process including:
     - Trade amount validation
-    - Price validation
+    - Price validation (with overflow check)
+    - Wei amount validation (prevents database corruption)
     - Gas cost simulation
-    - Wei amount calculation
     - Database record creation
     - Balance update with validation
     - Account statistics update
@@ -85,6 +87,8 @@ def create_paper_trade_record(
         decision: Trading decision from intelligence engine
         token_symbol: Token being traded
         current_price: Current token price
+        execution_dex: DEX where trade is executed
+        dex_price: Price from DEX (may differ from current_price)
         
     Returns:
         PaperTrade: Created trade record or None if failed
@@ -93,7 +97,9 @@ def create_paper_trade_record(
         # Determine trade type
         trade_type = decision.action.lower()
         
-        # ⚠️ CRITICAL: Validate trade amount
+        # =====================================================================
+        # STEP 1: VALIDATE TRADE AMOUNT (USD)
+        # =====================================================================
         is_valid, error = validate_usd_amount(
             decision.position_size_usd,
             'position_size_usd',
@@ -104,7 +110,9 @@ def create_paper_trade_record(
             logger.error(f"[TRADE RECORD] Invalid trade amount: {error}")
             return None
         
-        # ⚠️ CRITICAL: Validate token price
+        # =====================================================================
+        # STEP 2: VALIDATE TOKEN PRICE (USD)
+        # =====================================================================
         is_valid, error = validate_usd_amount(
             current_price,
             'current_price',
@@ -115,15 +123,29 @@ def create_paper_trade_record(
             logger.error(f"[TRADE RECORD] Invalid price: {error}")
             return None
         
-        # ⚠️ CRITICAL: Check for zero or near-zero price (prevents NaN from division)
+        # Check for zero or near-zero price (prevents division by zero)
         if current_price <= ValidationLimits.MIN_PRICE_USD:
             logger.error(
-                f"[TRADE RECORD] Price too low or zero for {token_symbol}: ${current_price}. "
-                f"Cannot calculate trade amounts safely (would cause division by zero)."
+                f"[TRADE RECORD] Price too low for {token_symbol}: ${current_price}. "
+                f"Minimum is ${ValidationLimits.MIN_PRICE_USD}."
             )
             return None
         
-        # Get token addresses based on trade direction
+        # =====================================================================
+        # STEP 3: CHECK IF PRICE WILL CAUSE WEI OVERFLOW (CRITICAL)
+        # =====================================================================
+        is_valid, error = validate_token_price_for_trade(
+            current_price,
+            decision.position_size_usd,
+            token_symbol
+        )
+        if not is_valid:
+            logger.error(f"[TRADE RECORD] {error}")
+            return None
+        
+        # =====================================================================
+        # STEP 4: DETERMINE TOKEN ADDRESSES
+        # =====================================================================
         if trade_type == 'buy':
             token_in_symbol = 'USDC'
             token_in_address = get_token_address_for_trade('USDC', executor.chain_id)
@@ -140,7 +162,9 @@ def create_paper_trade_record(
             logger.error(f"[TRADE RECORD] Unsupported action: {decision.action}")
             return None
         
-        # Simulate realistic gas costs
+        # =====================================================================
+        # STEP 5: SIMULATE GAS COSTS
+        # =====================================================================
         simulated_gas_used = random.randint(
             ValidationLimits.MIN_GAS_UNITS,
             ValidationLimits.MAX_GAS_UNITS // 10
@@ -150,14 +174,14 @@ def create_paper_trade_record(
                 float(ValidationLimits.MIN_GAS_PRICE_GWEI),
                 float(ValidationLimits.MAX_GAS_PRICE_GWEI) / 10
             ))
-        )
+        ).quantize(Decimal('0.01'))
         
-        # Calculate gas cost in USD (simplified)
-        eth_price = Decimal('2500')  # Approximate ETH price
+        # Calculate gas cost in USD
+        eth_price = Decimal('2500')
         gas_cost_eth = (Decimal(simulated_gas_used) * simulated_gas_price_gwei) / Decimal('1e9')
-        simulated_gas_cost_usd = gas_cost_eth * eth_price
+        simulated_gas_cost_usd = (gas_cost_eth * eth_price).quantize(Decimal('0.01'))
         
-        # ⚠️ CRITICAL: Validate gas cost
+        # Validate gas cost
         is_valid, error = validate_usd_amount(
             simulated_gas_cost_usd,
             'gas_cost',
@@ -166,9 +190,11 @@ def create_paper_trade_record(
         )
         if not is_valid:
             logger.warning(f"[TRADE RECORD] Invalid gas cost, using default: {error}")
-            simulated_gas_cost_usd = Decimal('5.00')  # Default safe value
+            simulated_gas_cost_usd = Decimal('5.00')
         
-        # Calculate amounts in wei (for model fields)
+        # =====================================================================
+        # STEP 6: CALCULATE WEI AMOUNTS WITH VALIDATION (CRITICAL)
+        # =====================================================================
         if trade_type == 'buy':
             # Buying: spending USDC (6 decimals), receiving token (18 decimals)
             amount_in_wei = Decimal(amount_in_usd) * ValidationLimits.USDC_DECIMALS
@@ -176,78 +202,66 @@ def create_paper_trade_record(
                 Decimal(amount_in_usd) / Decimal(str(current_price))
             ) * ValidationLimits.TOKEN_DECIMALS
             
-            # ⚠️ CRITICAL: Check for NaN/Infinity
-            if amount_in_wei.is_nan() or amount_in_wei.is_infinite():
-                logger.error(f"[TRADE RECORD] Invalid amount_in_wei for {token_symbol}: {amount_in_wei}")
-                return None
-            if expected_amount_out_wei.is_nan() or expected_amount_out_wei.is_infinite():
-                logger.error(f"[TRADE RECORD] Invalid expected_amount_out_wei for {token_symbol}: {expected_amount_out_wei}")
-                return None
-            
-            amount_in_wei_str = decimal_to_str(amount_in_wei)
-            expected_amount_out_wei_str = decimal_to_str(expected_amount_out_wei)
-            
         else:  # sell
             # Selling: spending token (18 decimals), receiving USDC (6 decimals)
             amount_in_wei = (
                 Decimal(amount_in_usd) / Decimal(str(current_price))
             ) * ValidationLimits.TOKEN_DECIMALS
             expected_amount_out_wei = Decimal(amount_in_usd) * ValidationLimits.USDC_DECIMALS
-            
-            # ⚠️ CRITICAL: Check for NaN/Infinity
-            if amount_in_wei.is_nan() or amount_in_wei.is_infinite():
-                logger.error(f"[TRADE RECORD] Invalid amount_in_wei for {token_symbol}: {amount_in_wei}")
-                return None
-            if expected_amount_out_wei.is_nan() or expected_amount_out_wei.is_infinite():
-                logger.error(f"[TRADE RECORD] Invalid expected_amount_out_wei for {token_symbol}: {expected_amount_out_wei}")
-                return None
-            
-            amount_in_wei_str = decimal_to_str(amount_in_wei)
-            expected_amount_out_wei_str = decimal_to_str(expected_amount_out_wei)
         
-        # Helper function to sanitize float values
+        # CRITICAL: Validate wei amounts before database storage
+        is_valid, error, amount_in_wei = validate_wei_amount(
+            amount_in_wei, 'amount_in'
+        )
+        if not is_valid:
+            logger.error(f"[TRADE RECORD] {error}")
+            return None
+        
+        is_valid, error, expected_amount_out_wei = validate_wei_amount(
+            expected_amount_out_wei, 'expected_amount_out'
+        )
+        if not is_valid:
+            logger.error(f"[TRADE RECORD] {error}")
+            return None
+        
+        # Convert to strings without scientific notation
+        amount_in_wei_str = decimal_to_str(amount_in_wei)
+        expected_amount_out_wei_str = decimal_to_str(expected_amount_out_wei)
+        
+        # Final safety check - reject if conversion failed
+        if amount_in_wei_str == '0' and amount_in_usd > 0:
+            logger.error(
+                f"[TRADE RECORD] amount_in_wei conversion failed for {token_symbol}"
+            )
+            return None
+        if expected_amount_out_wei_str == '0' and amount_in_usd > 0:
+            logger.error(
+                f"[TRADE RECORD] expected_amount_out_wei conversion failed for {token_symbol}"
+            )
+            return None
+        
+        # =====================================================================
+        # STEP 7: DEBUG LOGGING
+        # =====================================================================
+        logger.info(f"[TRADE RECORD] Creating {trade_type.upper()} trade for {token_symbol}")
+        logger.debug(f"  amount_in_wei: {amount_in_wei_str}")
+        logger.debug(f"  expected_amount_out_wei: {expected_amount_out_wei_str}")
+        logger.debug(f"  amount_in_usd: {amount_in_usd}")
+        logger.debug(f"  price: ${current_price}")
+        logger.debug(f"  dex: {execution_dex}")
+        
+        # =====================================================================
+        # STEP 8: HELPER FUNCTION FOR METADATA
+        # =====================================================================
         def sanitize_float(value: float, default: float = 0.0) -> float:
-            """
-            Sanitize float values, replacing NaN/Inf with default.
-            
-            Args:
-                value: Float value to sanitize
-                default: Default value if NaN/Inf
-                
-            Returns:
-                Sanitized float value
-            """
+            """Sanitize float values, replacing NaN/Inf with default."""
             if value is None or math.isnan(value) or math.isinf(value):
                 return default
             return float(value)
         
-        # ⚠️ CRITICAL: Debug log all values before create
-        logger.info(f"[TRADE RECORD DEBUG] About to create trade for {token_symbol}")
-        logger.info(f"  amount_in_wei_str: '{amount_in_wei_str}'")
-        logger.info(f"  expected_amount_out_wei_str: '{expected_amount_out_wei_str}'")
-        logger.info(f"  amount_in_usd: {amount_in_usd} (type: {type(amount_in_usd)})")
-        logger.info(f"  simulated_gas_price_gwei: {simulated_gas_price_gwei} (type: {type(simulated_gas_price_gwei)})")
-        logger.info(f"  simulated_gas_cost_usd: {simulated_gas_cost_usd} (type: {type(simulated_gas_cost_usd)})")
-        logger.info(f"  simulated_slippage_percent: 0.5")
-        
-        # Check if any Decimal values are NaN
-        try:
-            test_vals = [
-                ("amount_in", Decimal(amount_in_wei_str)),
-                ("expected_out", Decimal(expected_amount_out_wei_str)),
-                ("amount_in_usd", amount_in_usd),
-                ("gas_price", simulated_gas_price_gwei),
-                ("gas_cost", simulated_gas_cost_usd),
-            ]
-            for name, val in test_vals:
-                if val.is_nan():
-                    logger.error(f"  ❌ {name} is NaN!")
-                if val.is_infinite():
-                    logger.error(f"  ❌ {name} is Infinite!")
-        except Exception as e:
-            logger.error(f"  ❌ Error checking values: {e}")
-        
-        # Create trade record
+        # =====================================================================
+        # STEP 9: CREATE TRADE RECORD
+        # =====================================================================
         trade = PaperTrade.objects.create(
             account=executor.account,
             trade_type=trade_type,
@@ -264,9 +278,11 @@ def create_paper_trade_record(
             simulated_gas_cost_usd=simulated_gas_cost_usd,
             simulated_slippage_percent=Decimal('0.5'),
             status='completed',
+            execution_dex=execution_dex,
             strategy_name=executor.strategy_config.name if executor.strategy_config else 'Default',
             metadata={
                 'price_at_execution': sanitize_float(float(current_price)),
+                'dex_price': sanitize_float(float(dex_price)) if dex_price > 0 else None,
                 'session_id': str(executor.session.session_id) if executor.session else None,
                 'intel_level': executor.intel_level,
                 'confidence': sanitize_float(float(getattr(decision, 'overall_confidence', 0))),
@@ -277,10 +293,12 @@ def create_paper_trade_record(
         
         logger.info(
             f"[PAPER TRADE] Created: {trade_type.upper()} {token_out_symbol}, "
-            f"Amount=${amount_in_usd:.2f}, Price=${current_price:.4f}"
+            f"Amount=${amount_in_usd:.2f}, Price=${current_price:.4f}, DEX={execution_dex}"
         )
         
-        # ⚠️ CRITICAL: Validate and update account balance
+        # =====================================================================
+        # STEP 10: UPDATE ACCOUNT BALANCE
+        # =====================================================================
         if trade_type == 'buy':
             operation = 'subtract'
             amount_change = amount_in_usd
@@ -303,7 +321,6 @@ def create_paper_trade_record(
                 f"[TRADE RECORD] Balance update failed validation: {error}. "
                 f"Trade created but balance not updated!"
             )
-            # Still return the trade, but don't update balance
             return trade
         
         # Apply validated balance update
@@ -330,7 +347,9 @@ def create_paper_trade_record(
             f"Balance=${executor.account.current_balance_usd:.2f}"
         )
         
-        # Create AI thought log for this trade
+        # =====================================================================
+        # STEP 11: CREATE AI THOUGHT LOG
+        # =====================================================================
         create_ai_thought_log(
             executor=executor,
             paper_trade=trade,
@@ -339,7 +358,9 @@ def create_paper_trade_record(
             token_address=token_out_address if trade_type == 'buy' else token_in_address
         )
         
-        # Send WebSocket update
+        # =====================================================================
+        # STEP 12: SEND WEBSOCKET UPDATE
+        # =====================================================================
         try:
             trade_data = {
                 'trade_id': str(trade.trade_id),
@@ -348,6 +369,7 @@ def create_paper_trade_record(
                 'token_out_symbol': token_out_symbol,
                 'amount_in_usd': float(amount_in_usd),
                 'status': 'completed',
+                'execution_dex': execution_dex,
                 'created_at': trade.created_at.isoformat()
             }
             websocket_service.send_trade_update(

@@ -243,14 +243,14 @@ def execute_arbitrage_trade(
             # ✅ FIXED: Calculate amounts in wei using proper Decimal conversion
             # Calculate as Decimal first, then use decimal_to_str() to prevent scientific notation
             amount_in_wei = (
-                (opportunity.trade_amount_usd / opportunity.sell_price) * 
+                (opportunity.trade_amount_usd / opportunity.sell_price) *
                 ValidationLimits.TOKEN_DECIMALS
             )
             amount_out_wei = (
-                (opportunity.trade_amount_usd + opportunity.net_profit_usd) * 
+                (opportunity.trade_amount_usd + opportunity.net_profit_usd) *
                 ValidationLimits.USDC_DECIMALS
             )
-            
+
             # ⚠️ CRITICAL: Check for NaN/Infinity before converting to string
             if amount_in_wei.is_nan() or amount_in_wei.is_infinite():
                 logger.error(f"[ARBITRAGE] Invalid amount_in_wei: {amount_in_wei}")
@@ -258,15 +258,15 @@ def execute_arbitrage_trade(
             if amount_out_wei.is_nan() or amount_out_wei.is_infinite():
                 logger.error(f"[ARBITRAGE] Invalid amount_out_wei: {amount_out_wei}")
                 return
-            
+
             # ✅ FIXED: Use decimal_to_str() instead of str(int()) to prevent scientific notation
             amount_in_wei_str = decimal_to_str(amount_in_wei)
             amount_out_wei_str = decimal_to_str(amount_out_wei)
-            
+
             # Debug logging
             logger.debug(f"[ARBITRAGE] amount_in_wei_str: '{amount_in_wei_str}'")
             logger.debug(f"[ARBITRAGE] amount_out_wei_str: '{amount_out_wei_str}'")
-            
+
             # Simulate gas costs for arbitrage (higher than normal)
             simulated_gas_used = random.randint(300000, 400000)
             simulated_gas_price_gwei = Decimal('1.0')

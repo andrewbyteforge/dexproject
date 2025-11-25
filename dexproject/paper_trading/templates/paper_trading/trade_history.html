@@ -364,8 +364,9 @@
                         <h5 class="card-title mb-0">
                             <i class="bi bi-table me-2"></i>Trades
                             {% if trades.paginator.count %}
-                                <span class="badge bg-info ms-2">{{ trades.paginator.count }}</span>
+                                <span id="total-trades-count" class="badge bg-info ms-2">{{ trades.paginator.count }}</span>
                             {% endif %}
+                            <span id="ws-status" class="badge bg-secondary ms-2">Connecting...</span>
                         </h5>
                         <div class="text-muted" style="font-size: 0.9rem;">
                             {% if trades.has_other_pages %}
@@ -392,7 +393,7 @@
                                         <th>Execution</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody id="trade-table-body">
                                     {% for trade in trades %}
                                     <tr class="trade-row">
                                         <!-- Time -->
