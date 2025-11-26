@@ -41,10 +41,10 @@ else:
 def get_ws_service():
     """
     Safely get the centralized WebSocket service.
-    
+
     Returns:
         WebSocket service instance or None if unavailable
-        
+
     Note:
         This lazy import prevents circular dependencies and allows
         the service to be optional during testing/migrations.
@@ -62,6 +62,79 @@ def get_ws_service():
 
 
 # ============================================================================
+# PORTFOLIO CALCULATION HELPER
+# ============================================================================
+
+def calculate_portfolio_metrics(account):
+    """
+    Calculate complete portfolio metrics including cash and positions.
+
+    This is the centralized function for calculating portfolio value
+    to ensure consistency across all WebSocket updates.
+
+    Args:
+        account: PaperTradingAccount instance
+
+    Returns:
+        Dictionary with portfolio metrics
+    """
+    try:
+        from paper_trading.models import PaperPosition
+        from decimal import Decimal
+
+        # Get cash balance
+        cash_balance = float(account.current_balance_usd or 0)
+
+        # Calculate total value of open positions
+        open_positions = PaperPosition.objects.filter(
+            account=account,
+            is_open=True
+        )
+
+        positions_value = sum(
+            float(pos.current_value_usd or 0)
+            for pos in open_positions
+        )
+
+        # Calculate portfolio value (cash + positions)
+        portfolio_value = cash_balance + positions_value
+
+        # Get P&L and return percentage
+        total_pnl = float(account.total_profit_loss_usd or 0)
+        initial_balance = float(account.initial_balance_usd or 10000)
+        return_percent = ((portfolio_value - initial_balance) / initial_balance * 100) if initial_balance > 0 else 0.0
+
+        # Calculate win rate
+        total_trades = account.total_trades or 0
+        winning_trades = account.winning_trades or 0
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+
+        return {
+            'portfolio_value': portfolio_value,
+            'cash_balance': cash_balance,
+            'positions_value': positions_value,
+            'total_pnl': total_pnl,
+            'return_percent': return_percent,
+            'win_rate': win_rate,
+            'total_trades': total_trades,
+            'successful_trades': winning_trades,
+        }
+
+    except Exception as e:
+        logger.error(f"Error calculating portfolio metrics: {e}", exc_info=True)
+        return {
+            'portfolio_value': float(account.current_balance_usd or 0),
+            'cash_balance': float(account.current_balance_usd or 0),
+            'positions_value': 0.0,
+            'total_pnl': 0.0,
+            'return_percent': 0.0,
+            'win_rate': 0.0,
+            'total_trades': 0,
+            'successful_trades': 0,
+        }
+
+
+# ============================================================================
 # SIGNAL HANDLERS - PAPER TRADING ACCOUNT
 # ============================================================================
 
@@ -74,57 +147,71 @@ def paper_account_created_or_updated(
 ) -> None:
     """
     Handle paper trading account creation or updates.
-    
-    Sends real-time updates via WebSocket when accounts are created or modified.
-    
+
+    Sends real-time portfolio updates via WebSocket when accounts are created or modified.
+    This ensures the dashboard shows up-to-date portfolio value (cash + positions).
+
     Args:
         sender: The model class (PaperTradingAccount)
         instance: The actual instance being saved
         created: True if this is a new instance
         **kwargs: Additional signal arguments
-        
+
     Note:
         Uses transaction.on_commit() to ensure WebSocket notification
         only happens after successful database commit.
     """
     if RUNNING_MIGRATION:
         return
-        
+
     try:
         ws_service = get_ws_service()
         if not ws_service:
             logger.debug("WebSocket service unavailable, skipping notification")
             return
-            
-        # Prepare account data
-        account_data = {
-            'account_id': str(instance.account_id),
-            'balance': float(instance.current_balance_usd),
-            'is_active': instance.is_active,
-            'total_trades': instance.total_trades,
-            'winning_trades': instance.winning_trades,
-            'losing_trades': instance.losing_trades,
-            'event_type': 'created' if created else 'updated',
-        }
-        
+
         # Send notification after successful database commit
         def send_notification():
             try:
-                # Use account-based WebSocket API
+                # Calculate full portfolio metrics (cash + positions)
+                portfolio_metrics = calculate_portfolio_metrics(instance)
+
+                # Send portfolio_update (primary update for dashboard)
+                ws_service.send_portfolio_update(
+                    account_id=instance.account_id,
+                    portfolio_data=portfolio_metrics
+                )
+
+                # Also send account_updated for backward compatibility
+                account_data = {
+                    'account_id': str(instance.account_id),
+                    'current_balance_usd': portfolio_metrics['cash_balance'],
+                    'total_pnl_usd': portfolio_metrics['total_pnl'],
+                    'win_rate': portfolio_metrics['win_rate'],
+                    'total_trades': portfolio_metrics['total_trades'],
+                    'successful_trades': portfolio_metrics['successful_trades'],
+                    'is_active': instance.is_active,
+                    'event_type': 'created' if created else 'updated',
+                }
+
                 ws_service.send_update(
                     account_id=instance.account_id,
                     message_type='account_updated',
                     data=account_data
                 )
+
                 logger.info(
                     f"Paper account {'created' if created else 'updated'}: "
-                    f"account_id={instance.account_id}, balance={instance.current_balance_usd}"
+                    f"account_id={instance.account_id}, "
+                    f"portfolio_value=${portfolio_metrics['portfolio_value']:.2f}, "
+                    f"cash=${portfolio_metrics['cash_balance']:.2f}, "
+                    f"positions=${portfolio_metrics['positions_value']:.2f}"
                 )
             except Exception as e:
                 logger.error(f"Error sending account notification: {e}")
-        
+
         transaction.on_commit(send_notification)
-        
+
     except Exception as e:
         logger.error(f"Error in paper_account_created_or_updated signal: {e}")
 
@@ -142,9 +229,10 @@ def paper_trade_created_or_updated(
 ) -> None:
     """
     Handle paper trade creation or updates.
-    
-    Sends real-time trade notifications and updates account metrics.
-    
+
+    Sends real-time trade notifications and portfolio updates.
+    Trades affect account balance and positions, so portfolio must be recalculated.
+
     Args:
         sender: The model class (PaperTrade)
         instance: The actual trade instance
@@ -153,13 +241,13 @@ def paper_trade_created_or_updated(
     """
     if RUNNING_MIGRATION:
         return
-        
+
     try:
         ws_service = get_ws_service()
         if not ws_service:
             logger.debug("WebSocket service unavailable, skipping notification")
             return
-            
+
         # Prepare trade data
         trade_data = {
             'trade_id': str(instance.trade_id),
@@ -174,27 +262,36 @@ def paper_trade_created_or_updated(
             'executed_at': instance.executed_at.isoformat() if instance.executed_at else None,
             'event_type': 'created' if created else 'updated',
         }
-        
+
         # Send notification after database commit
         def send_notification():
             try:
-                # Use trade-specific WebSocket method
+                # Send trade update
                 ws_service.send_trade_update(
                     account_id=instance.account.account_id,
                     trade_data=trade_data
                 )
-                    
+
+                # IMPORTANT: Send portfolio update for completed/executed trades
+                # since they affect account balance and positions
+                if instance.status in ['completed', 'executed', 'success']:
+                    portfolio_metrics = calculate_portfolio_metrics(instance.account)
+                    ws_service.send_portfolio_update(
+                        account_id=instance.account.account_id,
+                        portfolio_data=portfolio_metrics
+                    )
+
                 logger.info(
                     f"Paper trade {'created' if created else 'updated'}: "
                     f"trade_id={instance.trade_id}, type={instance.trade_type}, "
-                    f"amount=${float(instance.amount_in_usd):.2f}"
+                    f"amount=${float(instance.amount_in_usd):.2f}, status={instance.status}"
                 )
-                
+
             except Exception as e:
                 logger.error(f"Error sending trade notification: {e}")
-        
+
         transaction.on_commit(send_notification)
-        
+
     except Exception as e:
         logger.error(f"Error in paper_trade_created_or_updated signal: {e}")
 
@@ -238,9 +335,10 @@ def paper_position_created_or_updated(
 ) -> None:
     """
     Handle paper position creation or updates.
-    
-    Sends real-time position updates when positions are opened or modified.
-    
+
+    Sends real-time position updates AND portfolio updates when positions change.
+    This is crucial because position changes affect total portfolio value.
+
     Args:
         sender: The model class (PaperPosition)
         instance: The position instance
@@ -249,13 +347,13 @@ def paper_position_created_or_updated(
     """
     if RUNNING_MIGRATION:
         return
-        
+
     try:
         ws_service = get_ws_service()
         if not ws_service:
             logger.debug("WebSocket service unavailable, skipping notification")
             return
-            
+
         # Prepare position data
         position_data = {
             'position_id': str(instance.position_id),
@@ -271,27 +369,35 @@ def paper_position_created_or_updated(
             'closed_at': instance.closed_at.isoformat() if instance.closed_at else None,
             'event_type': 'created' if created else 'updated',
         }
-        
+
         # Send notification after database commit
         def send_notification():
             try:
-                # Use position-specific WebSocket method
+                # Send position update
                 ws_service.send_position_update(
                     account_id=instance.account.account_id,
                     position_data=position_data
                 )
-                    
+
+                # CRITICAL: Also send portfolio update since position value affects total portfolio
+                portfolio_metrics = calculate_portfolio_metrics(instance.account)
+                ws_service.send_portfolio_update(
+                    account_id=instance.account.account_id,
+                    portfolio_data=portfolio_metrics
+                )
+
                 logger.info(
                     f"Paper position {'created' if created else 'updated'}: "
                     f"position_id={instance.position_id}, token={instance.token_symbol}, "
-                    f"qty={float(instance.quantity):.4f}"
+                    f"qty={float(instance.quantity):.4f}, "
+                    f"value=${float(instance.current_value_usd or 0):.2f}"
                 )
-                
+
             except Exception as e:
                 logger.error(f"Error sending position notification: {e}")
-        
+
         transaction.on_commit(send_notification)
-        
+
     except Exception as e:
         logger.error(f"Error in paper_position_created_or_updated signal: {e}")
 
@@ -304,9 +410,10 @@ def paper_position_deleted(
 ) -> None:
     """
     Handle paper position deletion.
-    
+
     Notifies users when positions are closed/deleted.
-    
+    Also triggers portfolio update since deleting a position changes portfolio value.
+
     Args:
         sender: The model class (PaperPosition)
         instance: The deleted position instance
@@ -314,13 +421,13 @@ def paper_position_deleted(
     """
     if RUNNING_MIGRATION:
         return
-        
+
     try:
         ws_service = get_ws_service()
         if not ws_service:
             logger.debug("WebSocket service unavailable, skipping notification")
             return
-            
+
         # Prepare deletion data
         deletion_data = {
             'position_id': str(instance.position_id),
@@ -331,18 +438,25 @@ def paper_position_deleted(
             'closed_at': instance.closed_at.isoformat() if instance.closed_at else None,
             'event_type': 'deleted',
         }
-        
+
         # Send position deletion notification
         ws_service.send_position_update(
             account_id=instance.account.account_id,
             position_data=deletion_data
         )
-            
+
+        # CRITICAL: Also send portfolio update since position was removed
+        portfolio_metrics = calculate_portfolio_metrics(instance.account)
+        ws_service.send_portfolio_update(
+            account_id=instance.account.account_id,
+            portfolio_data=portfolio_metrics
+        )
+
         logger.info(
             f"Paper position deleted: position_id={instance.position_id}, "
             f"token={instance.token_symbol}"
         )
-        
+
     except Exception as e:
         logger.error(f"Error in paper_position_deleted signal: {e}")
 
