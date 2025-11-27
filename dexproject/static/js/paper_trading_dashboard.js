@@ -368,7 +368,7 @@ function handleAccountUpdated(data) {
     if (data.account_balance !== undefined) {
         const cashElement = document.getElementById('cash-balance');
         if (cashElement) {
-            cashElement.textContent = `$${parseFloat(data.account_balance).toFixed(2)}`;
+            cashElement.textContent = `${parseFloat(data.account_balance).toFixed(2)}`;
         }
     }
 }
@@ -1035,7 +1035,7 @@ function updateMetrics(metrics) {
     if (metrics.cash_balance !== undefined && !isNaN(metrics.cash_balance)) {
         const cashElement = document.getElementById('cash-balance');
         if (cashElement) {
-            cashElement.textContent = `$${parseFloat(metrics.cash_balance).toFixed(2)}`;
+            cashElement.textContent = `${parseFloat(metrics.cash_balance).toFixed(2)}`;
         }
     }
     // Update P&L
