@@ -365,10 +365,10 @@ function handleAccountUpdated(data) {
     }
 
     // Update balance display
-    if (data.balance !== undefined) {
+    if (data.account_balance !== undefined) {
         const cashElement = document.getElementById('cash-balance');
         if (cashElement) {
-            cashElement.textContent = `$${parseFloat(data.balance).toFixed(2)}`;
+            cashElement.textContent = `$${parseFloat(data.account_balance).toFixed(2)}`;
         }
     }
 }
@@ -492,10 +492,12 @@ function handlePortfolioUpdate(data) {
     }
 
     // Update Cash Balance display
-    if (data.account_balance !== undefined) {
+    // Update Cash Balance display (check both field names for compatibility)
+    const cashValue = data.account_balance ?? data.cash_balance;
+    if (cashValue !== undefined) {
         const cashElement = document.getElementById('cash-balance');
         if (cashElement) {
-            cashElement.textContent = `$${parseFloat(data.account_balance).toFixed(2)}`;
+            cashElement.textContent = parseFloat(cashValue).toFixed(2);
         }
     }
 
