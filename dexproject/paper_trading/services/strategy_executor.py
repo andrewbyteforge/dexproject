@@ -50,6 +50,7 @@ from paper_trading.constants import (
 # Import strategy classes
 from paper_trading.strategies.dca_strategy import DCAStrategy
 from paper_trading.strategies.grid_strategy import GridStrategy
+from paper_trading.strategies.twap_strategy import TWAPStrategy  # ADD THIS
 
 # Import Celery tasks
 from paper_trading.tasks.strategy_execution import (
@@ -57,6 +58,8 @@ from paper_trading.tasks.strategy_execution import (
     execute_grid_strategy,
     monitor_grid_orders,
     send_strategy_notification,
+    execute_twap_chunk,        # ADD THIS
+    monitor_twap_strategy,     # ADD THIS
 )
 
 # Import WebSocket service for notifications
@@ -109,11 +112,11 @@ class StrategyExecutor:
         self.strategy_classes = {
             StrategyType.DCA: DCAStrategy,
             StrategyType.GRID: GridStrategy,
-            # TWAP, VWAP, CUSTOM will be added in future phases
+            StrategyType.TWAP: TWAPStrategy,
         }
         
         logger.info("StrategyExecutor initialized with strategy types: %s", 
-                   list(self.strategy_classes.keys()))
+                    list(self.strategy_classes.keys()))
     
     # =========================================================================
     # STRATEGY EXECUTION

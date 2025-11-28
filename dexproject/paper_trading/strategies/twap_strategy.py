@@ -145,7 +145,7 @@ class TWAPStrategy(BaseStrategy):
             raise ValueError(f"Invalid TWAP configuration: {e}")
 
     # =========================================================================
-    # ABSTRACT METHOD IMPLEMENTATIONS
+    # ABSTRACT METHOD IMPLEMENTATIONS (Required by BaseStrategy)
     # =========================================================================
 
     def validate_config(self) -> tuple[bool, Optional[str]]:
@@ -207,6 +207,220 @@ class TWAPStrategy(BaseStrategy):
             return False, "token_symbol must be 1-20 characters"
 
         return True, None
+
+    def execute(self) -> bool:
+        """
+        Execute the TWAP strategy.
+
+        This method:
+        1. Validates configuration
+        2. Updates status to RUNNING
+        3. Schedules the first chunk via Celery task
+        4. Returns success
+
+        Returns:
+            True if execution started successfully, False otherwise
+        """
+        try:
+            # Validate configuration
+            is_valid, error = self.validate_config()
+            if not is_valid:
+                self._mark_failed(f"Configuration validation failed: {error}")
+                return False
+
+            # Check if we can execute
+            can_execute, error = self._can_execute()
+            if not can_execute:
+                self._mark_failed(f"Cannot execute: {error}")
+                return False
+
+            # Update status to RUNNING
+            self._update_status(StrategyStatus.RUNNING)
+
+            # Update total_orders if not set
+            if self.strategy_run.total_orders == 0:
+                self.strategy_run.total_orders = self.num_chunks
+                self.strategy_run.save()
+
+            logger.info(
+                f"[TWAP] Starting TWAP strategy {self.strategy_run.strategy_id}: "
+                f"{self.num_chunks} chunks of ${self.chunk_size_usd} "
+                f"every {self.interval_minutes} minutes over {self.execution_window_hours}h"
+            )
+
+            # Import and schedule Celery task for first chunk
+            from paper_trading.tasks.strategy_execution import execute_twap_chunk
+
+            # Schedule first chunk
+            if self.start_immediately:
+                # Execute first chunk in 5 seconds
+                execute_twap_chunk.apply_async(
+                    args=[str(self.strategy_run.strategy_id), 1],
+                    countdown=5,
+                )
+                logger.info(f"[TWAP] Scheduled chunk 1 to execute in 5 seconds")
+            else:
+                # Execute first chunk after one interval
+                execute_twap_chunk.apply_async(
+                    args=[str(self.strategy_run.strategy_id), 1],
+                    countdown=self.interval_minutes * 60,
+                )
+                logger.info(f"[TWAP] Scheduled chunk 1 to execute in {self.interval_minutes} minutes")
+
+            self._update_progress(
+                Decimal('0.00'),
+                f"Scheduled chunk 1 of {self.num_chunks}"
+            )
+
+            logger.info(f"[TWAP] Strategy {self.strategy_run.strategy_id} execution started")
+            return True
+
+        except Exception as e:
+            logger.exception(f"[TWAP] Error executing strategy: {e}")
+            self._mark_failed(f"Execution error: {str(e)}")
+            return False
+
+    def pause(self) -> bool:
+        """
+        Pause TWAP strategy execution.
+
+        Stops scheduling new chunks but allows current chunk to complete.
+        Can be resumed later with resume().
+
+        Returns:
+            True if paused successfully, False otherwise
+        """
+        # Check if we can pause
+        can_pause, error = self._can_pause()
+        if not can_pause:
+            logger.warning(f"[TWAP] Cannot pause strategy: {error}")
+            return False
+
+        # Update status to PAUSED
+        self._update_status(StrategyStatus.PAUSED)
+
+        # Note: Celery tasks check strategy status before executing,
+        # so paused strategies will have their scheduled chunks skipped
+
+        logger.info(
+            f"[TWAP] Strategy {self.strategy_run.strategy_id} paused at "
+            f"chunk {self.strategy_run.completed_orders}/{self.num_chunks}"
+        )
+        return True
+
+    def resume(self) -> bool:
+        """
+        Resume paused TWAP strategy.
+
+        Restarts execution from where it was paused by scheduling the next chunk.
+
+        Returns:
+            True if resumed successfully, False otherwise
+        """
+        # Check if we can resume
+        can_resume, error = self._can_resume()
+        if not can_resume:
+            logger.warning(f"[TWAP] Cannot resume strategy: {error}")
+            return False
+
+        # Update status to RUNNING
+        self._update_status(StrategyStatus.RUNNING)
+
+        # Determine next chunk number
+        next_chunk = self.strategy_run.completed_orders + 1
+
+        if next_chunk > self.num_chunks:
+            # All chunks already completed
+            self._update_status(StrategyStatus.COMPLETED)
+            logger.info(f"[TWAP] Strategy {self.strategy_run.strategy_id} already complete")
+            return True
+
+        # Schedule next chunk
+        from paper_trading.tasks.strategy_execution import execute_twap_chunk
+
+        execute_twap_chunk.apply_async(
+            args=[str(self.strategy_run.strategy_id), next_chunk],
+            countdown=10,  # Resume in 10 seconds
+        )
+
+        logger.info(
+            f"[TWAP] Strategy {self.strategy_run.strategy_id} resumed, "
+            f"scheduling chunk {next_chunk}/{self.num_chunks}"
+        )
+        return True
+
+    def cancel(self) -> bool:
+        """
+        Cancel TWAP strategy execution.
+
+        Stops all execution and marks strategy as CANCELLED.
+        This action cannot be undone.
+
+        Returns:
+            True if cancelled successfully, False otherwise
+        """
+        # Check if we can cancel
+        can_cancel, error = self._can_cancel()
+        if not can_cancel:
+            logger.warning(f"[TWAP] Cannot cancel strategy: {error}")
+            return False
+
+        # Update status to CANCELLED
+        self._update_status(StrategyStatus.CANCELLED)
+
+        # Note: Celery tasks check strategy status before executing,
+        # so cancelled strategies will have their scheduled chunks skipped
+
+        chunks_remaining = self.num_chunks - self.strategy_run.completed_orders
+
+        logger.info(
+            f"[TWAP] Strategy {self.strategy_run.strategy_id} cancelled. "
+            f"Completed {self.strategy_run.completed_orders}/{self.num_chunks} chunks, "
+            f"{chunks_remaining} chunks cancelled"
+        )
+        return True
+
+    def get_progress(self) -> Dict[str, Any]:
+        """
+        Get current execution progress.
+
+        Returns:
+            Dictionary containing progress information
+        """
+        completed = self.strategy_run.completed_orders
+        total = self.num_chunks if self.num_chunks > 0 else self.strategy_run.total_orders
+
+        if total > 0:
+            progress_percent = (completed / total) * 100
+        else:
+            progress_percent = 0
+
+        # Calculate time remaining
+        chunks_remaining = total - completed
+        time_remaining_minutes = chunks_remaining * self.interval_minutes
+
+        # Calculate estimated completion
+        estimated_completion = None
+        if chunks_remaining > 0 and self.interval_minutes > 0:
+            estimated_completion = timezone.now() + timedelta(minutes=time_remaining_minutes)
+
+        return {
+            'progress_percent': round(progress_percent, 2),
+            'current_step': f"Chunk {completed}/{total}",
+            'completed_orders': completed,
+            'total_orders': total,
+            'chunks_remaining': chunks_remaining,
+            'chunk_size_usd': float(self.chunk_size_usd),
+            'interval_minutes': self.interval_minutes,
+            'time_remaining_minutes': time_remaining_minutes,
+            'estimated_completion': estimated_completion.isoformat() if estimated_completion else None,
+            'token_symbol': self.token_symbol,
+            'execution_window_hours': self.execution_window_hours,
+        }
+
+    # =========================================================================
+    # TWAP-SPECIFIC METHODS
+    # =========================================================================
 
     def calculate_next_execution(self) -> Optional[Any]:
         """
@@ -313,12 +527,7 @@ class TWAPStrategy(BaseStrategy):
         """
         try:
             # Import here to avoid circular dependencies
-            from paper_trading.bot.trade_executor import TradeExecutor
             from paper_trading.intelligence.core.base import TradingDecision
-
-            # Get current price for the token
-            # This would normally come from price manager, but we'll use a placeholder
-            current_price = Decimal('0')  # TODO: Get from price manager
 
             # Create a simple BUY decision for this chunk
             decision = TradingDecision(
@@ -365,6 +574,34 @@ class TWAPStrategy(BaseStrategy):
             )
             return False
 
+    def update_progress(
+        self,
+        completed_orders: int,
+        current_step: str
+    ) -> None:
+        """
+        Update strategy progress in the database.
+
+        Args:
+            completed_orders: Number of completed orders
+            current_step: Description of current step
+        """
+        try:
+            progress_percent = Decimal(str(completed_orders / self.num_chunks * 100))
+
+            self.strategy_run.completed_orders = completed_orders
+            self.strategy_run.progress_percent = progress_percent
+            self.strategy_run.current_step = current_step
+            self.strategy_run.total_invested = self.chunk_size_usd * Decimal(str(completed_orders))
+            self.strategy_run.save()
+
+            logger.debug(
+                f"[TWAP] Progress updated: {completed_orders}/{self.num_chunks} "
+                f"({float(progress_percent):.1f}%)"
+            )
+        except Exception as e:
+            logger.error(f"[TWAP] Error updating progress: {e}")
+
     def should_continue(self) -> bool:
         """
         Determine if the strategy should continue executing.
@@ -396,7 +633,7 @@ class TWAPStrategy(BaseStrategy):
 
     def get_progress_summary(self) -> Dict[str, Any]:
         """
-        Get current progress summary.
+        Get current progress summary (detailed version).
 
         Returns:
             Dictionary with progress metrics
