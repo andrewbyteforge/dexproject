@@ -5,6 +5,7 @@ Handles background execution of trading strategies:
 - DCA interval execution
 - Grid strategy monitoring and rebalancing
 - TWAP chunk execution
+- VWAP interval execution (Phase 7B Day 10)
 - Strategy monitoring and health checks
 - Progress updates and notifications
 - Strategy completion handling
@@ -12,6 +13,7 @@ Handles background execution of trading strategies:
 Phase 7B - Day 2: DCA Strategy Execution Tasks
 Phase 7B - Day 4: Grid Strategy Execution Tasks
 Phase 7B - Day 9: TWAP Strategy Execution Tasks
+Phase 7B - Day 10: VWAP Strategy Execution Tasks
 
 File: dexproject/paper_trading/tasks/strategy_execution.py
 """
@@ -837,6 +839,499 @@ def monitor_twap_strategy(strategy_id: str) -> dict:
 
 
 # =============================================================================
+# VWAP STRATEGY EXECUTION (Phase 7B - Day 10)
+# =============================================================================
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name='paper_trading.execute_vwap_interval'
+)
+def execute_vwap_interval(self, strategy_id: str, interval_number: int) -> dict:
+    """
+    Execute a single VWAP buy interval.
+    
+    VWAP (Volume-Weighted Average Price) splits a large order into variable-sized
+    chunks based on typical market volume distribution. Unlike TWAP which uses
+    equal chunks, VWAP executes more during high-volume periods and less during
+    low-volume periods to achieve better fill prices.
+    
+    Key Differences from TWAP:
+    - TWAP: Equal chunks at equal intervals (for LOW liquidity)
+    - VWAP: Variable chunks based on volume (for HIGH liquidity)
+    
+    Args:
+        strategy_id: UUID of the StrategyRun
+        interval_number: Current interval number (1-indexed)
+    
+    Returns:
+        Dictionary with execution result including:
+        - success: bool
+        - interval: int
+        - order_id: str (if successful)
+        - amount: str (if successful)
+        - volume_weight: float (weight applied to this interval)
+        - next_interval: int or None
+        
+    Example:
+        execute_vwap_interval.apply_async(
+            args=['uuid-here', 1],
+            countdown=1800  # Execute in 30 minutes
+        )
+    """
+    logger.info(
+        f"[VWAP TASK] Executing interval {interval_number} for strategy {strategy_id}"
+    )
+    
+    try:
+        # Get strategy run with account
+        try:
+            strategy_run = StrategyRun.objects.select_related('account').get(
+                strategy_id=strategy_id
+            )
+        except StrategyRun.DoesNotExist:
+            logger.error(f"[VWAP TASK] Strategy {strategy_id} not found")
+            return {
+                'success': False,
+                'error': 'Strategy not found',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+            }
+        
+        # Check if strategy is still running
+        if strategy_run.status != StrategyStatus.RUNNING:
+            logger.warning(
+                f"[VWAP TASK] Strategy {strategy_id} is not running "
+                f"(status: {strategy_run.status})"
+            )
+            return {
+                'success': False,
+                'error': f'Strategy is {strategy_run.status}, not RUNNING',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+            }
+        
+        # Get strategy configuration
+        config = strategy_run.config or {}
+        token_address = config.get('token_address', '')
+        token_symbol = config.get('token_symbol', 'UNKNOWN')
+        total_amount_usd = Decimal(str(config.get('total_amount_usd', '0')))
+        num_intervals = int(config.get('num_intervals', 12))
+        execution_window_hours = int(config.get('execution_window_hours', 6))
+        participation_rate = Decimal(str(config.get('participation_rate', '0.05')))
+        
+        # Calculate interval timing
+        interval_minutes = (execution_window_hours * 60) // num_intervals
+        
+        # Calculate this interval's amount based on volume distribution
+        # Import volume profile for weight calculation
+        volume_weight = _calculate_vwap_volume_weight(
+            interval_number=interval_number,
+            num_intervals=num_intervals,
+            execution_window_hours=execution_window_hours,
+            interval_minutes=interval_minutes
+        )
+        
+        # Calculate volume-weighted amount for this interval
+        interval_amount_usd = total_amount_usd * volume_weight
+        
+        logger.info(
+            f"[VWAP TASK] Interval {interval_number}/{num_intervals}: "
+            f"${float(interval_amount_usd):.2f} of {token_symbol} "
+            f"(volume weight: {float(volume_weight)*100:.1f}%)"
+        )
+        
+        # Get account
+        account = strategy_run.account
+        if not account:
+            logger.error(f"[VWAP TASK] No account for strategy {strategy_id}")
+            return {
+                'success': False,
+                'error': 'No account associated with strategy',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+            }
+        
+        # Check account balance
+        if account.balance_usd < interval_amount_usd:
+            logger.error(
+                f"[VWAP TASK] Insufficient balance: ${account.balance_usd} < "
+                f"${interval_amount_usd}"
+            )
+            # Mark strategy as failed
+            strategy_run.status = StrategyStatus.FAILED
+            strategy_run.error_message = 'Insufficient account balance'
+            strategy_run.save()
+            
+            return {
+                'success': False,
+                'error': 'Insufficient balance',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+                'required': float(interval_amount_usd),
+                'available': float(account.balance_usd),
+            }
+        
+        # Create paper order for this interval
+        with transaction.atomic():
+            order = PaperOrder.objects.create(
+                account=account,
+                token_address=token_address,
+                token_symbol=token_symbol,
+                order_type=OrderType.MARKET,
+                side='BUY',
+                quantity_usd=interval_amount_usd,
+                status=OrderStatus.PENDING,
+                notes=f"VWAP interval {interval_number}/{num_intervals} (weight: {float(volume_weight)*100:.1f}%)",
+            )
+            
+            # Link order to strategy
+            StrategyOrder.objects.create(
+                strategy_run=strategy_run,
+                order=order,
+                sequence_number=interval_number,
+            )
+            
+            # Update strategy progress
+            progress_percent = Decimal(str(interval_number / num_intervals * 100))
+            strategy_run.progress_percent = progress_percent
+            strategy_run.current_step = f"Interval {interval_number}/{num_intervals}"
+            strategy_run.completed_orders = interval_number
+            strategy_run.total_invested += interval_amount_usd
+            strategy_run.save()
+        
+        logger.info(
+            f"[VWAP TASK] Created order {order.order_id} for interval {interval_number}"
+        )
+        
+        # Execute the order via order executor
+        try:
+            from paper_trading.services.order_executor import execute_order
+            execute_order(order.order_id)
+        except ImportError:
+            logger.warning("[VWAP TASK] Order executor not available, order remains pending")
+        except Exception as exec_error:
+            logger.error(f"[VWAP TASK] Order execution failed: {exec_error}")
+            # Order remains pending, can be retried
+        
+        # Check if strategy is complete
+        if interval_number >= num_intervals:
+            # Mark strategy as completed
+            strategy_run.status = StrategyStatus.COMPLETED
+            strategy_run.completed_at = timezone.now()
+            strategy_run.progress_percent = Decimal('100.00')
+            strategy_run.current_step = f"Completed all {num_intervals} intervals"
+            strategy_run.save()
+            
+            logger.info(f"[VWAP TASK] Strategy {strategy_id} COMPLETED!")
+            
+            # Send completion notification
+            send_strategy_notification.apply_async(
+                args=[strategy_id, 'completed'],
+            )
+            
+            return {
+                'success': True,
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+                'total_intervals': num_intervals,
+                'amount_usd': float(interval_amount_usd),
+                'volume_weight': float(volume_weight),
+                'progress_percent': 100.0,
+                'is_complete': True,
+            }
+        
+        # Schedule next interval
+        next_interval = interval_number + 1
+        delay_seconds = interval_minutes * 60
+        
+        execute_vwap_interval.apply_async(
+            args=[strategy_id, next_interval],
+            countdown=delay_seconds
+        )
+        
+        logger.info(
+            f"[VWAP TASK] Scheduled interval {next_interval} in "
+            f"{delay_seconds} seconds ({interval_minutes} minutes)"
+        )
+        
+        # Send progress notification
+        send_strategy_notification.delay(
+            strategy_id=strategy_id,
+            event_type='interval_executed',
+        )
+        
+        return {
+            'success': True,
+            'strategy_id': strategy_id,
+            'interval_number': interval_number,
+            'total_intervals': num_intervals,
+            'order_id': str(order.order_id),
+            'amount_usd': float(interval_amount_usd),
+            'volume_weight': float(volume_weight),
+            'progress_percent': float(progress_percent),
+            'next_interval': next_interval,
+            'is_complete': False,
+        }
+        
+    except Exception as e:
+        logger.exception(f"[VWAP TASK] Error executing interval: {e}")
+        
+        # Retry with exponential backoff
+        try:
+            raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+        except self.MaxRetriesExceededError:
+            logger.error(f"[VWAP TASK] Max retries exceeded for interval {interval_number}")
+            
+            # Mark strategy as failed
+            try:
+                strategy_run = StrategyRun.objects.get(strategy_id=strategy_id)
+                strategy_run.status = StrategyStatus.FAILED
+                strategy_run.error_message = f"Failed to execute interval {interval_number}: {str(e)}"
+                strategy_run.save()
+            except Exception as save_error:
+                logger.exception(f"[VWAP TASK] Error marking strategy as failed: {save_error}")
+            
+            return {
+                'success': False,
+                'error': str(e),
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+                'max_retries_exceeded': True,
+            }
+
+
+def _calculate_vwap_volume_weight(
+    interval_number: int,
+    num_intervals: int,
+    execution_window_hours: int,
+    interval_minutes: int
+) -> Decimal:
+    """
+    Calculate the volume weight for a specific VWAP interval.
+    
+    Uses a simplified intraday volume distribution pattern based on typical
+    crypto market activity (higher volume during US/EU market hours).
+    
+    Args:
+        interval_number: Which interval (1-indexed)
+        num_intervals: Total number of intervals
+        execution_window_hours: Total execution window in hours
+        interval_minutes: Minutes between intervals
+        
+    Returns:
+        Decimal weight for this interval (normalized so all weights sum to 1.0)
+    """
+    # Hourly volume weights (24 hours, UTC timezone)
+    # Based on typical crypto market patterns
+    hourly_weights = [
+        Decimal('0.025'),  # 00:00 - Low (Asia night)
+        Decimal('0.020'),  # 01:00
+        Decimal('0.018'),  # 02:00
+        Decimal('0.022'),  # 03:00 - Europe waking up
+        Decimal('0.030'),  # 04:00
+        Decimal('0.040'),  # 05:00
+        Decimal('0.050'),  # 06:00 - Europe morning
+        Decimal('0.060'),  # 07:00
+        Decimal('0.065'),  # 08:00
+        Decimal('0.070'),  # 09:00 - Peak (Europe + US pre-market)
+        Decimal('0.072'),  # 10:00
+        Decimal('0.070'),  # 11:00
+        Decimal('0.065'),  # 12:00 - US market open
+        Decimal('0.068'),  # 13:00
+        Decimal('0.070'),  # 14:00 - Peak US hours
+        Decimal('0.065'),  # 15:00
+        Decimal('0.055'),  # 16:00 - US afternoon
+        Decimal('0.045'),  # 17:00
+        Decimal('0.035'),  # 18:00 - US market close
+        Decimal('0.030'),  # 19:00
+        Decimal('0.028'),  # 20:00 - Asia waking up
+        Decimal('0.030'),  # 21:00
+        Decimal('0.028'),  # 22:00
+        Decimal('0.025'),  # 23:00
+    ]
+    
+    # Get current hour (UTC)
+    current_hour = timezone.now().hour
+    
+    # Calculate raw weights for each interval
+    raw_weights = []
+    for i in range(num_intervals):
+        # Determine which hour this interval covers
+        offset_minutes = i * interval_minutes
+        offset_hours = offset_minutes // 60
+        interval_hour = (current_hour + offset_hours) % 24
+        
+        # Get volume weight for this hour
+        raw_weights.append(hourly_weights[interval_hour])
+    
+    # Normalize weights to sum to 1.0
+    total_weight = sum(raw_weights)
+    if total_weight == 0:
+        # Equal distribution if all weights are zero
+        normalized_weights = [Decimal('1.0') / num_intervals for _ in range(num_intervals)]
+    else:
+        normalized_weights = [w / total_weight for w in raw_weights]
+    
+    # Return weight for the requested interval (1-indexed)
+    if 1 <= interval_number <= len(normalized_weights):
+        return normalized_weights[interval_number - 1]
+    else:
+        # Fallback to equal distribution
+        return Decimal('1.0') / num_intervals
+
+
+@shared_task(name='paper_trading.monitor_vwap_strategy')
+def monitor_vwap_strategy(strategy_id: str) -> dict:
+    """
+    Monitor VWAP strategy execution progress.
+    
+    This task checks on VWAP strategies to:
+    1. Verify intervals are being executed on schedule
+    2. Detect stalled strategies
+    3. Handle recovery from failures
+    4. Update progress metrics
+    
+    Args:
+        strategy_id: UUID of the StrategyRun
+    
+    Returns:
+        Dictionary with monitoring results
+    """
+    logger.debug(f"[VWAP MONITOR] Monitoring strategy {strategy_id}")
+    
+    try:
+        strategy_run = StrategyRun.objects.select_related('account').get(
+            strategy_id=strategy_id
+        )
+        
+        # Check if strategy is still active
+        if strategy_run.status not in [StrategyStatus.RUNNING, StrategyStatus.PAUSED]:
+            logger.info(
+                f"[VWAP MONITOR] Strategy {strategy_id} is {strategy_run.status}, "
+                f"stopping monitor"
+            )
+            return {
+                'success': True,
+                'reason': f"Strategy {strategy_run.status}",
+                'continue_monitoring': False,
+            }
+        
+        # If paused, just reschedule without processing
+        if strategy_run.status == StrategyStatus.PAUSED:
+            monitor_vwap_strategy.apply_async(
+                args=[strategy_id],
+                countdown=60,
+            )
+            return {
+                'success': True,
+                'reason': 'Strategy paused',
+                'continue_monitoring': True,
+            }
+        
+        # Get strategy orders
+        strategy_orders = StrategyOrder.objects.filter(
+            strategy_run=strategy_run
+        ).select_related('order')
+        
+        filled_count = 0
+        pending_count = 0
+        failed_count = 0
+        
+        for so in strategy_orders:
+            if so.order.status == OrderStatus.FILLED:
+                filled_count += 1
+            elif so.order.status == OrderStatus.PENDING:
+                pending_count += 1
+            elif so.order.status in [OrderStatus.FAILED, OrderStatus.CANCELLED]:
+                failed_count += 1
+        
+        # Parse config for total intervals
+        config = strategy_run.config
+        num_intervals = int(config.get('num_intervals', 12))
+        
+        # Check for stalled strategy
+        if strategy_run.started_at:
+            time_since_start = timezone.now() - strategy_run.started_at
+            execution_window_hours = int(config.get('execution_window_hours', 6))
+            expected_duration = timedelta(hours=execution_window_hours)
+            
+            # If strategy has been running longer than 2x expected, flag it
+            if time_since_start > (expected_duration * 2) and filled_count < num_intervals:
+                logger.warning(
+                    f"[VWAP MONITOR] Strategy {strategy_id} appears stalled: "
+                    f"running for {time_since_start}, expected {expected_duration}, "
+                    f"only {filled_count}/{num_intervals} intervals completed"
+                )
+        
+        # Update progress
+        if num_intervals > 0:
+            progress = Decimal(str(filled_count / num_intervals * 100))
+            strategy_run.progress_percent = progress
+            strategy_run.completed_orders = filled_count
+            strategy_run.failed_orders = failed_count
+            strategy_run.current_step = f"VWAP progress: {filled_count}/{num_intervals} intervals"
+            strategy_run.save()
+        
+        # Check if VWAP is complete
+        if filled_count >= num_intervals:
+            strategy_run.status = StrategyStatus.COMPLETED
+            strategy_run.completed_at = timezone.now()
+            strategy_run.progress_percent = Decimal('100')
+            strategy_run.current_step = f"VWAP completed: {filled_count} intervals"
+            strategy_run.save()
+            
+            send_strategy_notification.apply_async(
+                args=[strategy_id, 'completed'],
+            )
+            
+            return {
+                'success': True,
+                'reason': 'VWAP completed',
+                'continue_monitoring': False,
+            }
+        
+        # Reschedule monitoring
+        monitor_vwap_strategy.apply_async(
+            args=[strategy_id],
+            countdown=120,  # Check every 2 minutes
+        )
+        
+        return {
+            'success': True,
+            'filled_intervals': filled_count,
+            'pending_intervals': pending_count,
+            'failed_intervals': failed_count,
+            'total_intervals': num_intervals,
+            'continue_monitoring': True,
+        }
+        
+    except StrategyRun.DoesNotExist:
+        logger.error(f"[VWAP MONITOR] Strategy {strategy_id} not found")
+        return {
+            'success': False,
+            'reason': 'Strategy not found',
+            'continue_monitoring': False,
+        }
+        
+    except Exception as e:
+        logger.exception(f"[VWAP MONITOR] Error monitoring strategy: {e}")
+        
+        # Reschedule anyway to keep monitoring
+        monitor_vwap_strategy.apply_async(
+            args=[strategy_id],
+            countdown=180,  # Longer delay after error
+        )
+        
+        return {
+            'success': False,
+            'reason': str(e),
+            'continue_monitoring': True,
+        }
+
+
+# =============================================================================
 # STRATEGY NOTIFICATIONS
 # =============================================================================
 
@@ -987,6 +1482,20 @@ def monitor_active_strategies() -> dict:
                         if time_since_start > (expected_duration * 2):
                             logger.warning(
                                 f"TWAP strategy {strategy.strategy_id} appears stuck: "
+                                f"running for {time_since_start}, expected {expected_duration}"
+                            )
+                            issues_found += 1
+                    
+                    # If VWAP strategy has been running too long (Phase 7B Day 10)
+                    elif strategy.strategy_type == StrategyType.VWAP:
+                        config = strategy.config
+                        execution_window_hours = int(config.get('execution_window_hours', 6))
+                        expected_duration = timedelta(hours=execution_window_hours)
+                        
+                        # Allow 2x expected duration before flagging as stuck
+                        if time_since_start > (expected_duration * 2):
+                            logger.warning(
+                                f"VWAP strategy {strategy.strategy_id} appears stuck: "
                                 f"running for {time_since_start}, expected {expected_duration}"
                             )
                             issues_found += 1

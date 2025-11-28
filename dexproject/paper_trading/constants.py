@@ -6,13 +6,15 @@ These prevent typos, enable IDE autocomplete, and serve as single source of trut
 
 ENHANCED: Added API request/response field names and configuration constants
 PHASE 7A: Added order-related constants for advanced order types
+PHASE 7B: Added strategy types, TWAP thresholds, VWAP thresholds
 
 Location: paper_trading/constants.py
 
 Usage:
     from paper_trading.constants import (
         DecisionType, ConfidenceLevel, ThoughtLogFields,
-        ConfigAPIFields, BotControlFields, OrderType, OrderStatus
+        ConfigAPIFields, BotControlFields, OrderType, OrderStatus,
+        StrategyType, StrategySelectionThresholds
     )
 """
 
@@ -40,12 +42,14 @@ class DecisionType:
     # Strategy-related decisions (Phase 7B)
     DCA_STRATEGY: Final[str] = 'DCA_STRATEGY'
     GRID_STRATEGY: Final[str] = 'GRID_STRATEGY'
+    TWAP_STRATEGY: Final[str] = 'TWAP_STRATEGY'
+    VWAP_STRATEGY: Final[str] = 'VWAP_STRATEGY'
     SPOT_BUY: Final[str] = 'SPOT_BUY'
     
     # All valid decision types
     ALL: Final[tuple] = (
         BUY, SELL, HOLD, SKIP, STOP_LOSS, TAKE_PROFIT,
-        DCA_STRATEGY, GRID_STRATEGY, SPOT_BUY
+        DCA_STRATEGY, GRID_STRATEGY, TWAP_STRATEGY, VWAP_STRATEGY, SPOT_BUY
     )
     
     # Actionable decisions (require execution)
@@ -55,7 +59,9 @@ class DecisionType:
     NON_ACTIONABLE: Final[tuple] = (HOLD, SKIP)
     
     # Strategy decisions
-    STRATEGY_DECISIONS: Final[tuple] = (DCA_STRATEGY, GRID_STRATEGY, SPOT_BUY)
+    STRATEGY_DECISIONS: Final[tuple] = (
+        DCA_STRATEGY, GRID_STRATEGY, TWAP_STRATEGY, VWAP_STRATEGY, SPOT_BUY
+    )
 
 
 # =============================================================================
@@ -260,6 +266,11 @@ class StrategyConfigFields:
     DCA_INTERVAL_HOURS: Final[str] = 'dca_interval_hours'
     GRID_NUM_LEVELS: Final[str] = 'grid_num_levels'
     GRID_PROFIT_TARGET_PERCENT: Final[str] = 'grid_profit_target_percent'
+    TWAP_EXECUTION_WINDOW_HOURS: Final[str] = 'twap_execution_window_hours'
+    TWAP_NUM_CHUNKS: Final[str] = 'twap_num_chunks'
+    VWAP_EXECUTION_WINDOW_HOURS: Final[str] = 'vwap_execution_window_hours'
+    VWAP_NUM_INTERVALS: Final[str] = 'vwap_num_intervals'
+    VWAP_PARTICIPATION_RATE: Final[str] = 'vwap_participation_rate'
     CONFIDENCE_THRESHOLD: Final[str] = 'confidence_threshold'
     ALLOWED_TOKENS: Final[str] = 'allowed_tokens'
     BLOCKED_TOKENS: Final[str] = 'blocked_tokens'
@@ -620,7 +631,11 @@ class OrderType:
     
     These define the different types of orders users can place.
     """
+    # Market order - execute immediately at best available price
+    MARKET: Final[str] = 'MARKET'
+    
     # Limit orders - execute at specific price or better
+    LIMIT: Final[str] = 'LIMIT'
     LIMIT_BUY: Final[str] = 'LIMIT_BUY'      # Buy when price drops to limit or below
     LIMIT_SELL: Final[str] = 'LIMIT_SELL'    # Sell when price rises to limit or above
     
@@ -633,6 +648,7 @@ class OrderType:
     
     # All valid order types
     ALL: Final[tuple] = (
+        MARKET, LIMIT,
         LIMIT_BUY, LIMIT_SELL,
         STOP_LIMIT_BUY, STOP_LIMIT_SELL,
         TRAILING_STOP
@@ -645,7 +661,7 @@ class OrderType:
     SELL_ORDERS: Final[tuple] = (LIMIT_SELL, STOP_LIMIT_SELL, TRAILING_STOP)
     
     # Limit-based orders
-    LIMIT_ORDERS: Final[tuple] = (LIMIT_BUY, LIMIT_SELL)
+    LIMIT_ORDERS: Final[tuple] = (LIMIT, LIMIT_BUY, LIMIT_SELL)
     
     # Stop-limit orders
     STOP_LIMIT_ORDERS: Final[tuple] = (STOP_LIMIT_BUY, STOP_LIMIT_SELL)
@@ -794,6 +810,7 @@ def is_order_terminal(status: str) -> bool:
     """
     return status in OrderStatus.TERMINAL
 
+
 # =============================================================================
 # STRATEGY TYPES - Phase 7B
 # =============================================================================
@@ -936,7 +953,6 @@ def is_strategy_active(status: str) -> bool:
     return status in StrategyStatus.ACTIVE
 
 
-
 # =============================================================================
 # MARKET TREND CLASSIFICATIONS - Phase 7B
 # =============================================================================
@@ -1055,6 +1071,36 @@ class StrategySelectionThresholds:
     TWAP_MAX_CHUNKS: Final[int] = 24  # Maximum 24 orders
 
     # =========================================================================
+    # VWAP STRATEGY THRESHOLDS (Phase 7B - Day 10)
+    # =========================================================================
+
+    # VWAP (Volume-Weighted Average Price) requires:
+    # - Large position size (meaningful order to split)
+    # - HIGH liquidity (opposite of TWAP - needs active markets)
+    # - Low to moderate volatility (stable for volume tracking)
+    # - Volume-based execution for better fills
+
+    VWAP_MIN_POSITION_SIZE_USD: Final[Decimal] = Decimal('2000')  # $2000 minimum
+    VWAP_OPTIMAL_POSITION_SIZE_USD: Final[Decimal] = Decimal('5000')  # $5k+ ideal
+    VWAP_MIN_LIQUIDITY_USD: Final[Decimal] = Decimal('1000000')  # $1M minimum (HIGH liquidity)
+    VWAP_OPTIMAL_LIQUIDITY_USD: Final[Decimal] = Decimal('5000000')  # $5M+ ideal
+    VWAP_MIN_CONFIDENCE: Final[Decimal] = Decimal('80.0')  # 80% confidence (highest of all)
+    VWAP_MIN_VOLATILITY: Final[Decimal] = Decimal('0.01')  # 1% minimum volatility
+    VWAP_MAX_VOLATILITY: Final[Decimal] = Decimal('0.10')  # 10% max (too volatile = inaccurate VWAP)
+
+    # VWAP timing parameters
+    VWAP_MIN_EXECUTION_WINDOW_HOURS: Final[int] = 2  # Minimum 2 hours
+    VWAP_DEFAULT_EXECUTION_WINDOW_HOURS: Final[int] = 6  # Default 6 hours
+    VWAP_MAX_EXECUTION_WINDOW_HOURS: Final[int] = 24  # Maximum 24 hours
+    VWAP_MIN_INTERVALS: Final[int] = 4  # Minimum 4 intervals
+    VWAP_DEFAULT_INTERVALS: Final[int] = 12  # Default 12 intervals
+    VWAP_MAX_INTERVALS: Final[int] = 48  # Maximum 48 intervals
+    VWAP_MIN_PARTICIPATION_RATE: Final[Decimal] = Decimal('0.01')  # 1% minimum
+    VWAP_DEFAULT_PARTICIPATION_RATE: Final[Decimal] = Decimal('0.05')  # 5% default
+    VWAP_MAX_PARTICIPATION_RATE: Final[Decimal] = Decimal('0.20')  # 20% maximum
+    VWAP_MAX_DEVIATION_PERCENT: Final[Decimal] = Decimal('0.02')  # 2% max deviation from VWAP
+
+    # =========================================================================
     # GENERAL THRESHOLDS
     # =========================================================================
 
@@ -1063,7 +1109,7 @@ class StrategySelectionThresholds:
 
     # Minimum liquidity for ANY strategy
     ABSOLUTE_MIN_LIQUIDITY_USD: Final[Decimal] = Decimal('50000')
-    
+
 
 def is_strategy_terminal(status: str) -> bool:
     """
