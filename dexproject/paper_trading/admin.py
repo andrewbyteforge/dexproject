@@ -776,5 +776,167 @@ class AutoPilotPerformanceSnapshotAdmin(admin.ModelAdmin):
             color, prefix, pnl
         )
     total_pnl_display.short_description = 'Total P&L'
+    
+    
+    
+    
+from django.contrib import admin
+# =============================================================================
+# BACKTESTING ADMIN (Lazy import to avoid circular dependency)
+# =============================================================================
+
+# Import backtest models only when admin is ready
+try:
+    from paper_trading.backtesting.models.backtest import BacktestRun, BacktestResult
+    
+    @admin.register(BacktestRun)
+    class BacktestRunAdmin(admin.ModelAdmin):
+        """Admin interface for BacktestRun model."""
+        
+        list_display = [
+            'backtest_id',
+            'strategy_type',
+            'token_symbol',
+            'status',
+            'initial_balance_usd',
+            'created_at',
+            'duration_display',
+        ]
+        
+        list_filter = [
+            'strategy_type',
+            'token_symbol',
+            'status',
+            'created_at',
+        ]
+        
+        search_fields = [
+            'backtest_id',
+            'token_symbol',
+            'error_message',
+        ]
+        
+        readonly_fields = [
+            'backtest_id',
+            'created_at',
+            'completed_at',
+            'duration_display',
+        ]
+        
+        fieldsets = (
+            ('Identification', {
+                'fields': ('backtest_id', 'status')
+            }),
+            ('Configuration', {
+                'fields': (
+                    'strategy_type',
+                    'token_symbol',
+                    'start_date',
+                    'end_date',
+                    'interval',
+                    'initial_balance_usd',
+                    'fee_percent',
+                    'strategy_params',
+                )
+            }),
+            ('Results', {
+                'fields': (
+                    'data_points',
+                    'error_message',
+                )
+            }),
+            ('Timestamps', {
+                'fields': (
+                    'created_at',
+                    'completed_at',
+                    'duration_display',
+                )
+            }),
+        )
+        
+        ordering = ['-created_at']
+
+
+    @admin.register(BacktestResult)
+    class BacktestResultAdmin(admin.ModelAdmin):
+        """Admin interface for BacktestResult model."""
+        
+        list_display = [
+            'backtest_run',
+            'return_percent',
+            'profit_loss_usd',
+            'win_rate_percent',
+            'sharpe_ratio',
+            'num_trades',
+            'performance_grade',
+        ]
+        
+        list_filter = [
+            'created_at',
+        ]
+        
+        search_fields = [
+            'backtest_run__backtest_id',
+            'backtest_run__token_symbol',
+        ]
+        
+        readonly_fields = [
+            'backtest_run',
+            'created_at',
+            'performance_grade',
+        ]
+        
+        fieldsets = (
+            ('Results Summary', {
+                'fields': (
+                    'backtest_run',
+                    'final_balance_usd',
+                    'profit_loss_usd',
+                    'return_percent',
+                    'performance_grade',
+                )
+            }),
+            ('Trade Statistics', {
+                'fields': (
+                    'num_trades',
+                    'num_buys',
+                    'num_sells',
+                    'total_fees_usd',
+                    'avg_entry_price',
+                )
+            }),
+            ('Performance Metrics', {
+                'fields': (
+                    'win_rate_percent',
+                    'profit_factor',
+                    'max_drawdown_percent',
+                    'sharpe_ratio',
+                    'sortino_ratio',
+                    'avg_holding_hours',
+                )
+            }),
+            ('Consecutive Stats', {
+                'fields': (
+                    'max_consecutive_wins',
+                    'max_consecutive_losses',
+                )
+            }),
+            ('Detailed Data', {
+                'fields': (
+                    'trades_data',
+                    'metrics_data',
+                ),
+                'classes': ('collapse',),
+            }),
+            ('Timestamps', {
+                'fields': ('created_at',)
+            }),
+        )
+        
+        ordering = ['-created_at']
+
+except ImportError:
+    # Backtesting models not available yet
+    pass
 
 # End of dexproject/paper_trading/admin.py

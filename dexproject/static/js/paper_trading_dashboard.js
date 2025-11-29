@@ -619,7 +619,7 @@ function updateTotalPnL(value) {
         const isPositive = value >= 0;
         element.innerHTML = `
             <span class="${isPositive ? 'text-success' : 'text-danger'}">
-                ${isPositive ? '+' : ''}$${Math.abs(value).toFixed(2)}
+                ${isPositive ? '+' : '-'}$${Math.abs(value).toFixed(2)}
             </span>
         `;
     }
@@ -1035,7 +1035,7 @@ function updateMetrics(metrics) {
     if (metrics.cash_balance !== undefined && !isNaN(metrics.cash_balance)) {
         const cashElement = document.getElementById('cash-balance');
         if (cashElement) {
-            cashElement.textContent = `{parseFloat(metrics.cash_balance).toFixed(2)}`;
+            cashElement.textContent = parseFloat(metrics.cash_balance).toFixed(2);
         }
     }
     // Update P&L

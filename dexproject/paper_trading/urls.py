@@ -221,4 +221,7 @@ urlpatterns = [
     # POST: /paper-trading/api/strategies/<strategy_id>/cancel/
     # Changes status to CANCELLED (cannot be resumed)
     path('api/strategies/<uuid:strategy_id>/cancel/', api_cancel_strategy, name='api_cancel_strategy'),
+ 
+ 
+ 
 ]

@@ -36,7 +36,8 @@ urlpatterns = [
     path('api/wallet/', include('wallet.urls')),
     
     # Root redirect to dashboard
-    path('', lambda request: redirect('dashboard:home')),
+    path('', lambda request: redirect('dashboard:home')),   
+    
 ]
 
 # Customize admin site

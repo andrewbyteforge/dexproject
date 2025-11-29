@@ -91,6 +91,12 @@ def log_new_configuration_values(config_data: Dict[str, Any]) -> None:
         logger.info(f"     └─ Profit Target: {config_data.get('grid_profit_target_percent', 'N/A')}%")
     logger.info(f"  ⏰ TWAP Strategy: {'✓ ENABLED' if config_data.get('enable_twap') else '✗ DISABLED'}")
     logger.info(f"  📈 VWAP Strategy: {'✓ ENABLED' if config_data.get('enable_vwap') else '✗ DISABLED'}")
+    if config_data.get('enable_twap'):
+        logger.info(f"     └─ Execution Window: {config_data.get('twap_execution_window_hours', 'N/A')} hours")
+        logger.info(f"     └─ Number of Chunks: {config_data.get('twap_num_chunks', 'N/A')}")
+    if config_data.get('enable_vwap'):
+        logger.info(f"     └─ Execution Window: {config_data.get('vwap_execution_window_hours', 'N/A')} hours")
+        logger.info(f"     └─ Number of Intervals: {config_data.get('vwap_num_intervals', 'N/A')}")
 
 
 def log_configuration_differences(old_config: PaperStrategyConfiguration, new_data: Dict[str, Any]) -> None:
@@ -218,6 +224,24 @@ def log_configuration_differences(old_config: PaperStrategyConfiguration, new_da
     new_vwap = '✓ ENABLED' if new_data.get('enable_vwap') else '✗ DISABLED'
     if old_config.enable_vwap != new_data.get('enable_vwap'):
         logger.info(f"  📈 VWAP Strategy: {old_vwap} → {new_vwap}")
+        changes_detected = True
+
+    # TWAP Parameters
+    if old_config.twap_execution_window_hours != new_data.get('twap_execution_window_hours'):
+        logger.info(f"     └─ TWAP Window: {old_config.twap_execution_window_hours}h → {new_data.get('twap_execution_window_hours')}h")
+        changes_detected = True
+    
+    if old_config.twap_num_chunks != new_data.get('twap_num_chunks'):
+        logger.info(f"     └─ TWAP Chunks: {old_config.twap_num_chunks} → {new_data.get('twap_num_chunks')}")
+        changes_detected = True
+    
+    # VWAP Parameters
+    if old_config.vwap_execution_window_hours != new_data.get('vwap_execution_window_hours'):
+        logger.info(f"     └─ VWAP Window: {old_config.vwap_execution_window_hours}h → {new_data.get('vwap_execution_window_hours')}h")
+        changes_detected = True
+    
+    if old_config.vwap_num_intervals != new_data.get('vwap_num_intervals'):
+        logger.info(f"     └─ VWAP Intervals: {old_config.vwap_num_intervals} → {new_data.get('vwap_num_intervals')}")
         changes_detected = True
 
     if not changes_detected:
@@ -370,6 +394,10 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'dca_interval_hours': int(request.POST.get('dca_interval_hours', '2')),
                     'grid_num_levels': int(request.POST.get('grid_num_levels', '7')),
                     'grid_profit_target_percent': Decimal(request.POST.get('grid_profit_target_percent', '2.0')),
+                    'twap_execution_window_hours': int(request.POST.get('twap_execution_window_hours', '4')),
+                    'twap_num_chunks': int(request.POST.get('twap_num_chunks', '8')),
+                    'vwap_execution_window_hours': int(request.POST.get('vwap_execution_window_hours', '6')),
+                    'vwap_num_intervals': int(request.POST.get('vwap_num_intervals', '12')),
                 }
 
                 # Determine action: create new or update existing
@@ -406,6 +434,10 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                             'dca_interval_hours': config_data['dca_interval_hours'],
                             'grid_num_levels': config_data['grid_num_levels'],
                             'grid_profit_target_percent': config_data['grid_profit_target_percent'],
+                            'twap_execution_window_hours': config_data['twap_execution_window_hours'],
+                            'twap_num_chunks': config_data['twap_num_chunks'],
+                            'vwap_execution_window_hours': config_data['vwap_execution_window_hours'],
+                            'vwap_num_intervals': config_data['vwap_num_intervals'],
                             'is_active': True,
                         }
                     )
@@ -478,6 +510,10 @@ def configuration_view(request: HttpRequest) -> HttpResponse:
                     'dca_interval_hours': 2,
                     'grid_num_levels': 7,
                     'grid_profit_target_percent': Decimal('2.0'),
+                    'twap_execution_window_hours': 4,
+                    'twap_num_chunks': 8,
+                    'vwap_execution_window_hours': 6,
+                    'vwap_num_intervals': 12,
                     'is_active': True
                 }
                 config = PaperStrategyConfiguration.objects.create(**default_config_data)

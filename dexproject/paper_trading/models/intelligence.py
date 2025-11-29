@@ -15,8 +15,6 @@ from decimal import Decimal
 import uuid
 import logging
 from typing import Optional
-from django.core.validators import MinValueValidator, MaxValueValidator
-from decimal import Decimal
 
 from .base import PaperTradingAccount, PaperTrade
 
@@ -229,10 +227,14 @@ class PaperAIThoughtLog(models.Model):
     
     def __str__(self) -> str:
         """String representation."""
-        return (
-            f"Thought: {self.decision_type} {self.token_symbol} "
-            f"({self.confidence_percent}% confidence)"
-        )
+        try:
+            return (
+                f"Thought: {self.decision_type} {self.token_symbol} "
+                f"({self.confidence_percent}% confidence)"
+            )
+        except Exception as e:
+            logger.error(f"Error in PaperAIThoughtLog __str__: {e}")
+            return f"Thought {self.thought_id}"
 
 
 class PaperStrategyConfiguration(models.Model):
@@ -251,6 +253,7 @@ class PaperStrategyConfiguration(models.Model):
     - Lane preferences (Fast Lane / Smart Lane)
     - Risk management parameters
     - Token filters and custom parameters
+    - Strategy enablement (DCA, Grid, TWAP, VWAP)
     - Auto Pilot adaptive learning configuration
     - Parameter boundaries for safe adaptation
     - Learning rate and aggressiveness controls
@@ -262,12 +265,15 @@ class PaperStrategyConfiguration(models.Model):
         name: Configuration name
         is_active: Whether config is currently active
         trading_mode: Conservative/Moderate/Aggressive/Custom
+        intel_level: Intelligence level (1-10)
         use_fast_lane: Enable Fast Lane trading
         use_smart_lane: Enable Smart Lane trading
         fast_lane_threshold_usd: Max trade size for Fast Lane
         max_position_size_percent: Max position as % of portfolio
+        max_trade_size_usd: Maximum trade size in USD
         stop_loss_percent: Default stop loss percentage
         take_profit_percent: Default take profit percentage
+        max_hold_hours: Maximum hours to hold position
         max_daily_trades: Maximum trades per day
         max_concurrent_positions: Maximum open positions
         min_liquidity_usd: Minimum liquidity required
@@ -276,6 +282,18 @@ class PaperStrategyConfiguration(models.Model):
         allowed_tokens: Whitelist of token addresses
         blocked_tokens: Blacklist of token addresses
         custom_parameters: Additional custom settings
+        enable_dca: Enable DCA strategy
+        dca_num_intervals: Number of DCA intervals
+        dca_interval_hours: Hours between DCA purchases
+        enable_grid: Enable Grid strategy
+        grid_num_levels: Number of grid levels
+        grid_profit_target_percent: Profit target per grid level
+        enable_twap: Enable TWAP strategy
+        twap_execution_window_hours: TWAP execution window
+        twap_num_chunks: Number of TWAP chunks
+        enable_vwap: Enable VWAP strategy
+        vwap_execution_window_hours: VWAP execution window
+        vwap_num_intervals: Number of VWAP intervals
         autopilot_enabled: Enable Auto Pilot
         autopilot_started_at: When Auto Pilot was activated
         autopilot_adjustments_count: Total adjustments made
@@ -307,7 +325,10 @@ class PaperStrategyConfiguration(models.Model):
         MODERATE = 'MODERATE', 'Moderate - Balanced learning'
         AGGRESSIVE = 'AGGRESSIVE', 'Aggressive - Fast adaptation'
     
-    # Identity
+    # =========================================================================
+    # IDENTITY FIELDS
+    # =========================================================================
+    
     config_id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -331,59 +352,10 @@ class PaperStrategyConfiguration(models.Model):
         default=True,
         help_text="Whether this configuration is active"
     )
-
-    enable_dca = models.BooleanField(
-        default=False,
-        help_text='Enable Dollar Cost Averaging (DCA) strategy - spreads buys over time'
-    )
     
-    enable_grid = models.BooleanField(
-        default=False,
-        help_text='Enable Grid Trading strategy - places multiple orders at different price levels'
-    )
-    
-    enable_twap = models.BooleanField(
-        default=False,
-        help_text='Enable TWAP (Time-Weighted Average Price) strategy'
-    )
-    
-    enable_vwap = models.BooleanField(
-        default=False,
-        help_text='Enable VWAP (Volume-Weighted Average Price) strategy'
-    )
-    
-    dca_num_intervals = models.IntegerField(
-        default=5,
-        help_text='Number of DCA buy intervals (2-20)',
-        validators=[MinValueValidator(2), MaxValueValidator(20)]
-    )
-    
-    dca_interval_hours = models.IntegerField(
-        default=2,
-        help_text='Hours between each DCA buy (1-168 hours = 1 week max)',
-        validators=[MinValueValidator(1), MaxValueValidator(168)]
-    )
-    
-    grid_num_levels = models.IntegerField(
-        default=7,
-        help_text='Number of grid price levels (3-20)',
-        validators=[MinValueValidator(3), MaxValueValidator(20)]
-    )
-    
-    grid_profit_target_percent = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('2.0'),
-        help_text='Target profit per grid level in percent (0.1-10.0%)',
-        validators=[
-            MinValueValidator(Decimal('0.1')),
-            MaxValueValidator(Decimal('10.0'))
-        ]
-    )
-    
-    # ==========================================================================
+    # =========================================================================
     # BASIC TRADING SETTINGS
-    # ==========================================================================
+    # =========================================================================
     
     trading_mode = models.CharField(
         max_length=20,
@@ -400,7 +372,6 @@ class PaperStrategyConfiguration(models.Model):
         ],
         help_text='Intelligence level (1-10) controlling bot decision-making behavior'
     )
-
     
     # Lane preferences
     use_fast_lane = models.BooleanField(
@@ -420,9 +391,9 @@ class PaperStrategyConfiguration(models.Model):
         help_text="Max trade size for Fast Lane"
     )
     
-    # ==========================================================================
+    # =========================================================================
     # RISK MANAGEMENT
-    # ==========================================================================
+    # =========================================================================
     
     max_position_size_percent = models.DecimalField(
         max_digits=5,
@@ -435,7 +406,6 @@ class PaperStrategyConfiguration(models.Model):
         help_text="Max position size as % of portfolio"
     )
 
-
     max_trade_size_usd = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -443,7 +413,6 @@ class PaperStrategyConfiguration(models.Model):
         validators=[MinValueValidator(Decimal('10')), MaxValueValidator(Decimal('100000'))],
         help_text='Maximum trade size in USD (absolute limit)'
     )
-
     
     stop_loss_percent = models.DecimalField(
         max_digits=5,
@@ -488,9 +457,9 @@ class PaperStrategyConfiguration(models.Model):
         help_text="Maximum concurrent open positions"
     )
     
-    # ==========================================================================
+    # =========================================================================
     # TRADING PARAMETERS
-    # ==========================================================================
+    # =========================================================================
     
     min_liquidity_usd = models.DecimalField(
         max_digits=15,
@@ -540,9 +509,90 @@ class PaperStrategyConfiguration(models.Model):
         help_text="Custom strategy parameters"
     )
     
-    # ==========================================================================
+    # =========================================================================
+    # STRATEGY CONFIGURATION - Phase 7B
+    # =========================================================================
+    
+    # DCA Strategy Configuration
+    enable_dca = models.BooleanField(
+        default=False,
+        help_text='Enable Dollar Cost Averaging (DCA) strategy - spreads buys over time'
+    )
+    
+    dca_num_intervals = models.IntegerField(
+        default=5,
+        help_text='Number of DCA buy intervals (2-20)',
+        validators=[MinValueValidator(2), MaxValueValidator(20)]
+    )
+    
+    dca_interval_hours = models.IntegerField(
+        default=2,
+        help_text='Hours between each DCA buy (1-168 hours = 1 week max)',
+        validators=[MinValueValidator(1), MaxValueValidator(168)]
+    )
+    
+    # Grid Strategy Configuration
+    enable_grid = models.BooleanField(
+        default=False,
+        help_text='Enable Grid Trading strategy - places multiple orders at different price levels'
+    )
+    
+    grid_num_levels = models.IntegerField(
+        default=7,
+        help_text='Number of grid price levels (3-20)',
+        validators=[MinValueValidator(3), MaxValueValidator(20)]
+    )
+    
+    grid_profit_target_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('2.0'),
+        help_text='Target profit per grid level in percent (0.1-10.0%)',
+        validators=[
+            MinValueValidator(Decimal('0.1')),
+            MaxValueValidator(Decimal('10.0'))
+        ]
+    )
+    
+    # TWAP Strategy Configuration
+    enable_twap = models.BooleanField(
+        default=False,
+        help_text="Enable Time-Weighted Average Price strategy"
+    )
+    
+    twap_execution_window_hours = models.IntegerField(
+        default=6,
+        validators=[MinValueValidator(1), MaxValueValidator(24)],
+        help_text="TWAP execution window in hours (1-24)"
+    )
+    
+    twap_num_chunks = models.IntegerField(  # Changed from twap_num_intervals to twap_num_chunks
+        default=12,
+        validators=[MinValueValidator(2), MaxValueValidator(100)],
+        help_text="Number of TWAP execution chunks (2-100)"
+    )
+    
+    # VWAP Strategy Configuration
+    enable_vwap = models.BooleanField(
+        default=False,
+        help_text="Enable Volume-Weighted Average Price strategy"
+    )
+    
+    vwap_execution_window_hours = models.IntegerField(
+        default=6,
+        validators=[MinValueValidator(1), MaxValueValidator(24)],
+        help_text="VWAP execution window in hours (1-24)"
+    )
+    
+    vwap_num_intervals = models.IntegerField(
+        default=12,
+        validators=[MinValueValidator(2), MaxValueValidator(100)],
+        help_text="Number of VWAP execution intervals (2-100)"
+    )
+    
+    # =========================================================================
     # AUTO PILOT CONFIGURATION
-    # ==========================================================================
+    # =========================================================================
     
     autopilot_enabled = models.BooleanField(
         default=False,
@@ -588,10 +638,6 @@ class PaperStrategyConfiguration(models.Model):
         ],
         help_text="Maximum position size Auto Pilot can set"
     )
-
-
-
-
     
     min_confidence_threshold = models.DecimalField(
         max_digits=5,
@@ -659,9 +705,9 @@ class PaperStrategyConfiguration(models.Model):
         help_text="Disable Auto Pilot after N consecutive bad adjustments"
     )
     
-    # ==========================================================================
+    # =========================================================================
     # TIMESTAMPS
-    # ==========================================================================
+    # =========================================================================
     
     created_at = models.DateTimeField(
         auto_now_add=True,
@@ -688,8 +734,12 @@ class PaperStrategyConfiguration(models.Model):
     
     def __str__(self) -> str:
         """String representation."""
-        autopilot_status = "🤖 AUTO" if self.autopilot_enabled else "👤 MANUAL"
-        return f"{self.name} ({self.trading_mode}) [{autopilot_status}]"
+        try:
+            autopilot_status = "🤖 AUTO" if self.autopilot_enabled else "👤 MANUAL"
+            return f"{self.name} ({self.trading_mode}) [{autopilot_status}]"
+        except Exception as e:
+            logger.error(f"Error in PaperStrategyConfiguration __str__: {e}")
+            return f"Config {self.config_id}"
     
     def can_adjust_now(self) -> bool:
         """
@@ -722,20 +772,26 @@ class PaperStrategyConfiguration(models.Model):
             
             # Check daily limit
             # Import here to avoid circular dependency
-            from .autopilot import AutoPilotLog
-            
-            today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            today_adjustments = AutoPilotLog.objects.filter(
-                strategy_config=self,
-                timestamp__gte=today_start
-            ).count()
-            
-            if today_adjustments >= self.max_daily_adjustments:
+            try:
+                from .autopilot import AutoPilotLog
+                
+                today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                today_adjustments = AutoPilotLog.objects.filter(
+                    strategy_config=self,
+                    timestamp__gte=today_start
+                ).count()
+                
+                if today_adjustments >= self.max_daily_adjustments:
+                    logger.warning(
+                        f"Config {self.config_id}: Daily adjustment limit reached "
+                        f"({today_adjustments}/{self.max_daily_adjustments})"
+                    )
+                    return False
+            except ImportError:
                 logger.warning(
-                    f"Config {self.config_id}: Daily adjustment limit reached "
-                    f"({today_adjustments}/{self.max_daily_adjustments})"
+                    f"Config {self.config_id}: AutoPilotLog not available, "
+                    "skipping daily limit check"
                 )
-                return False
             
             logger.debug(f"Config {self.config_id}: Can adjust now")
             return True
@@ -769,3 +825,27 @@ class PaperStrategyConfiguration(models.Model):
                 f"Error recording Auto Pilot adjustment for config {self.config_id}: {e}",
                 exc_info=True
             )
+    
+    def save(self, *args, **kwargs) -> None:
+        """
+        Override save to add validation and logging.
+        """
+        try:
+            # Auto-enable Auto Pilot timestamp if enabled
+            if self.autopilot_enabled and not self.autopilot_started_at:
+                self.autopilot_started_at = timezone.now()
+                logger.info(f"Auto Pilot enabled for config {self.config_id}")
+            
+            # Clear Auto Pilot timestamp if disabled
+            if not self.autopilot_enabled and self.autopilot_started_at:
+                self.autopilot_started_at = None
+                logger.info(f"Auto Pilot disabled for config {self.config_id}")
+            
+            super().save(*args, **kwargs)
+            
+        except Exception as e:
+            logger.error(
+                f"Error saving PaperStrategyConfiguration {self.config_id}: {e}",
+                exc_info=True
+            )
+            raise

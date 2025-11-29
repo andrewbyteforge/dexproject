@@ -695,17 +695,16 @@
                         </div>
                     </div>
                     
-                    <!-- TWAP Strategy (Coming Soon) -->
-                    <div class="strategy-toggle-card disabled" style="opacity: 0.6;">
+                    <!-- TWAP Strategy -->
+                    <div class="strategy-toggle-card" id="twap-card">
                         <div class="strategy-header">
                             <div class="strategy-info">
                                 <div class="strategy-title">
                                     ⏰ TWAP (Time-Weighted Average Price)
-                                    <span class="coming-soon-badge">COMING SOON</span>
                                 </div>
                                 <p class="strategy-description">
                                     Split large orders over time to minimize market impact. 
-                                    Optimal for executing large positions gradually.
+                                    Optimal for executing large positions in illiquid markets.
                                 </p>
                             </div>
                             <div class="strategy-toggle">
@@ -714,24 +713,57 @@
                                            type="checkbox" 
                                            name="enable_twap" 
                                            id="enable-twap"
-                                           disabled>
+                                           {% if strategy_config.enable_twap %}checked{% endif %}
+                                           onchange="toggleStrategyParams('twap')">
                                     <label class="form-check-label" for="enable-twap">Enable</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- TWAP Parameters (collapsible) -->
+                        <div class="strategy-params" id="twap-params" {% if strategy_config.enable_twap %}style="display:block;"{% endif %}>
+                            <div class="strategy-param-row">
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Execution Window (Hours)
+                                        <span class="form-value" id="twap-window-value">{{ strategy_config.twap_execution_window_hours|default:'4' }}</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="twap_execution_window_hours" 
+                                           class="form-range"
+                                           min="1" max="24" step="1"
+                                           value="{{ strategy_config.twap_execution_window_hours|default:'4' }}"
+                                           oninput="updateRangeValue('twap-window-value', this.value)">
+                                    <small class="text-muted">Time to complete execution (1-24 hours)</small>
+                                </div>
+                                
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Number of Chunks
+                                        <span class="form-value" id="twap-chunks-value">{{ strategy_config.twap_num_chunks|default:'8' }}</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="twap_num_chunks" 
+                                           class="form-range"
+                                           min="3" max="24" step="1"
+                                           value="{{ strategy_config.twap_num_chunks|default:'8' }}"
+                                           oninput="updateRangeValue('twap-chunks-value', this.value)">
+                                    <small class="text-muted">Number of equal-sized orders (3-24)</small>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
-                    <!-- VWAP Strategy (Coming Soon) -->
-                    <div class="strategy-toggle-card disabled" style="opacity: 0.6;">
+                    <!-- VWAP Strategy -->
+                    <div class="strategy-toggle-card" id="vwap-card">
                         <div class="strategy-header">
                             <div class="strategy-info">
                                 <div class="strategy-title">
                                     📈 VWAP (Volume-Weighted Average Price)
-                                    <span class="coming-soon-badge">COMING SOON</span>
                                 </div>
                                 <p class="strategy-description">
                                     Execute based on volume patterns for better fill prices. 
-                                    Ideal for high-volume tokens with consistent trading.
+                                    Ideal for high-liquidity tokens with consistent trading patterns.
                                 </p>
                             </div>
                             <div class="strategy-toggle">
@@ -740,8 +772,42 @@
                                            type="checkbox" 
                                            name="enable_vwap" 
                                            id="enable-vwap"
-                                           disabled>
+                                           {% if strategy_config.enable_vwap %}checked{% endif %}
+                                           onchange="toggleStrategyParams('vwap')">
                                     <label class="form-check-label" for="enable-vwap">Enable</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- VWAP Parameters (collapsible) -->
+                        <div class="strategy-params" id="vwap-params" {% if strategy_config.enable_vwap %}style="display:block;"{% endif %}>
+                            <div class="strategy-param-row">
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Execution Window (Hours)
+                                        <span class="form-value" id="vwap-window-value">{{ strategy_config.vwap_execution_window_hours|default:'6' }}</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="vwap_execution_window_hours" 
+                                           class="form-range"
+                                           min="2" max="24" step="1"
+                                           value="{{ strategy_config.vwap_execution_window_hours|default:'6' }}"
+                                           oninput="updateRangeValue('vwap-window-value', this.value)">
+                                    <small class="text-muted">Time to complete execution (2-24 hours)</small>
+                                </div>
+                                
+                                <div class="form-group-enhanced">
+                                    <label class="form-label">
+                                        Number of Intervals
+                                        <span class="form-value" id="vwap-intervals-value">{{ strategy_config.vwap_num_intervals|default:'12' }}</span>
+                                    </label>
+                                    <input type="range" 
+                                           name="vwap_num_intervals" 
+                                           class="form-range"
+                                           min="4" max="48" step="1"
+                                           value="{{ strategy_config.vwap_num_intervals|default:'12' }}"
+                                           oninput="updateRangeValue('vwap-intervals-value', this.value)">
+                                    <small class="text-muted">Number of volume-weighted intervals (4-48)</small>
                                 </div>
                             </div>
                         </div>
@@ -1149,6 +1215,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const gridCard = document.getElementById('grid-card');
     if (gridCheckbox && gridCheckbox.checked) {
         gridCard.classList.add('enabled');
+    }
+    
+    // Initialize TWAP card state
+    const twapCheckbox = document.getElementById('enable-twap');
+    const twapCard = document.getElementById('twap-card');
+    if (twapCheckbox && twapCheckbox.checked) {
+        twapCard.classList.add('enabled');
+    }
+    
+    // Initialize VWAP card state
+    const vwapCheckbox = document.getElementById('enable-vwap');
+    const vwapCard = document.getElementById('vwap-card');
+    if (vwapCheckbox && vwapCheckbox.checked) {
+        vwapCard.classList.add('enabled');
     }
 });
 

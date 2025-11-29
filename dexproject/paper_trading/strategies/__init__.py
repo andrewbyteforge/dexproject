@@ -17,7 +17,8 @@ Phase: 7B - Advanced Strategies
 from .base_strategy import BaseStrategy
 from .dca_strategy import DCAStrategy
 from .grid_strategy import GridStrategy
-from .twap_strategy import TWAPStrategy 
+from .twap_strategy import TWAPStrategy
+from .vwap_strategy import VWAPStrategy
 
 # Import strategy type and status constants
 from paper_trading.constants import (
@@ -40,6 +41,8 @@ __all__ = [
     # Strategy implementations
     'DCAStrategy',
     'GridStrategy',
+    'TWAPStrategy',
+    'VWAPStrategy',
     
     # Constants
     'StrategyType',
