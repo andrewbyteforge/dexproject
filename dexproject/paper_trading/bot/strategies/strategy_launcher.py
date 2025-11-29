@@ -3,14 +3,17 @@ Strategy Launcher for Paper Trading Bot - Strategy Execution Module
 
 This module handles the initialization and launch of advanced trading strategies.
 It calculates strategy parameters and coordinates with the strategy executor
-to start DCA, GRID, and TWAP strategies.
+to start DCA, GRID, TWAP, and VWAP strategies.
 
 STRATEGIES:
 - DCA (Dollar Cost Averaging): Spreads large orders over time intervals
 - GRID: Places multiple orders at different price levels for range-bound markets
-- TWAP (Time-Weighted Average Price): Splits very large orders to minimize slippage
+- TWAP (Time-Weighted Average Price): Splits very large orders to minimize slippage (ILLIQUID)
+- VWAP (Volume-Weighted Average Price): Volume-based execution for better fills (LIQUID)
 
-File: dexproject/paper_trading/bot/strategy_launcher.py
+Phase 7B - Day 10: Added VWAP strategy launcher
+
+File: dexproject/paper_trading/bot/strategies/strategy_launcher.py
 """
 
 import logging
@@ -40,7 +43,7 @@ class StrategyLauncher:
     """
     Launches and configures advanced trading strategies.
     
-    This class handles the initialization of DCA, GRID, and TWAP strategies
+    This class handles the initialization of DCA, GRID, TWAP, and VWAP strategies
     by calculating appropriate parameters and coordinating with the strategy
     executor service.
     
@@ -132,39 +135,31 @@ class StrategyLauncher:
             )
 
             # Log AI thought
-            from paper_trading.bot.market_helpers import MarketHelpers
-            if self.intelligence_engine:
-                helpers = MarketHelpers(
-                    account=self.account,
-                    intelligence_engine=self.intelligence_engine
-                )
-                
-                helpers.log_thought(
-                    action='BUY',
-                    reasoning=(
-                        f"Bot selected DCA strategy: Spreading ${float(total_amount):.2f} "
-                        f"across {num_intervals} intervals to average entry price"
-                    ),
-                    confidence=float(decision.overall_confidence),
-                    decision_type=DecisionType.DCA_STRATEGY,
-                    metadata={
-                        'token': token_symbol,
-                        'token_address': token_address,
-                        'strategy_id': str(strategy_run.strategy_id),
-                        'total_amount': float(total_amount),
-                        'num_intervals': num_intervals,
-                        'interval_hours': interval_hours
-                    }
-                )
+            self._log_strategy_thought(
+                token_symbol=token_symbol,
+                token_address=token_address,
+                strategy_type=DecisionType.DCA_STRATEGY,
+                strategy_id=str(strategy_run.strategy_id),
+                confidence=float(decision.overall_confidence),
+                reasoning=(
+                    f"Bot selected DCA strategy: Spreading ${float(total_amount):.2f} "
+                    f"across {num_intervals} intervals to average entry price"
+                ),
+                metadata={
+                    'total_amount': float(total_amount),
+                    'num_intervals': num_intervals,
+                    'interval_hours': interval_hours
+                }
+            )
 
             logger.info(
-                f"[DCA STRATEGY] ✅ Started DCA {strategy_run.strategy_id} for {token_symbol}"
+                f"[DCA STRATEGY] Started DCA {strategy_run.strategy_id} for {token_symbol}"
             )
             return True
 
         except Exception as e:
             logger.error(
-                f"[DCA STRATEGY] ❌ Failed to start DCA for {token_symbol}: {e}",
+                f"[DCA STRATEGY] Failed to start DCA for {token_symbol}: {e}",
                 exc_info=True
             )
             return False
@@ -208,7 +203,7 @@ class StrategyLauncher:
             volatility = market_context.volatility
 
             # Use volatility to determine price range
-            # Higher volatility → wider grid range
+            # Higher volatility -> wider grid range
             range_percent = max(Decimal('0.05'), volatility * Decimal('2'))  # Minimum 5%, scale with volatility
 
             lower_bound = current_price * (Decimal('1') - range_percent)
@@ -240,42 +235,34 @@ class StrategyLauncher:
             )
 
             # Log AI thought
-            from paper_trading.bot.market_helpers import MarketHelpers
-            if self.intelligence_engine:
-                helpers = MarketHelpers(
-                    account=self.account,
-                    intelligence_engine=self.intelligence_engine
-                )
-                
-                helpers.log_thought(
-                    action='BUY',
-                    reasoning=(
-                        f"Bot selected GRID strategy: High volatility ({float(volatility):.1%}) "
-                        f"+ {market_context.trend} market ideal for grid trading. "
-                        f"Placing {num_levels} orders in ${float(lower_bound):.4f}-${float(upper_bound):.4f} range"
-                    ),
-                    confidence=float(decision.overall_confidence),
-                    decision_type=DecisionType.GRID_STRATEGY,
-                    metadata={
-                        'token': token_symbol,
-                        'token_address': token_address,
-                        'strategy_id': str(strategy_run.strategy_id),
-                        'num_levels': num_levels,
-                        'lower_bound': float(lower_bound),
-                        'upper_bound': float(upper_bound),
-                        'volatility': float(volatility),
-                        'trend': market_context.trend
-                    }
-                )
+            self._log_strategy_thought(
+                token_symbol=token_symbol,
+                token_address=token_address,
+                strategy_type=DecisionType.GRID_STRATEGY,
+                strategy_id=str(strategy_run.strategy_id),
+                confidence=float(decision.overall_confidence),
+                reasoning=(
+                    f"Bot selected GRID strategy: High volatility ({float(volatility):.1%}) "
+                    f"+ {market_context.trend} market ideal for grid trading. "
+                    f"Placing {num_levels} orders in ${float(lower_bound):.4f}-${float(upper_bound):.4f} range"
+                ),
+                metadata={
+                    'num_levels': num_levels,
+                    'lower_bound': float(lower_bound),
+                    'upper_bound': float(upper_bound),
+                    'volatility': float(volatility),
+                    'trend': market_context.trend
+                }
+            )
 
             logger.info(
-                f"[GRID STRATEGY] ✅ Started Grid {strategy_run.strategy_id} for {token_symbol}"
+                f"[GRID STRATEGY] Started Grid {strategy_run.strategy_id} for {token_symbol}"
             )
             return True
 
         except Exception as e:
             logger.error(
-                f"[GRID STRATEGY] ❌ Failed to start Grid for {token_symbol}: {e}",
+                f"[GRID STRATEGY] Failed to start Grid for {token_symbol}: {e}",
                 exc_info=True
             )
             return False
@@ -295,7 +282,7 @@ class StrategyLauncher:
 
         TWAP splits a very large order into equal-sized chunks executed at regular
         time intervals over hours. This minimizes market impact and price slippage,
-        especially critical for illiquid tokens.
+        especially critical for ILLIQUID tokens.
 
         Args:
             token_address: Token contract address
@@ -359,41 +346,242 @@ class StrategyLauncher:
             )
 
             # Log AI thought
+            self._log_strategy_thought(
+                token_symbol=token_symbol,
+                token_address=token_address,
+                strategy_type=DecisionType.TWAP_STRATEGY,
+                strategy_id=str(strategy_run.strategy_id),
+                confidence=float(decision.overall_confidence),
+                reasoning=(
+                    f"Bot selected TWAP strategy: Large order ${float(total_amount):,.0f} "
+                    f"in illiquid market. Splitting into {num_chunks} equal chunks over "
+                    f"{execution_window_hours}h to minimize market impact"
+                ),
+                metadata={
+                    'total_amount': float(total_amount),
+                    'num_chunks': num_chunks,
+                    'execution_window_hours': execution_window_hours,
+                    'interval_minutes': interval_minutes
+                }
+            )
+
+            logger.info(
+                f"[TWAP STRATEGY] Started TWAP {strategy_run.strategy_id} for {token_symbol}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"[TWAP STRATEGY] Failed to start TWAP for {token_symbol}: {e}",
+                exc_info=True
+            )
+            return False
+
+    # =========================================================================
+    # VWAP STRATEGY (Phase 7B - Day 10)
+    # =========================================================================
+
+    def start_vwap_strategy(
+        self,
+        token_address: str,
+        token_symbol: str,
+        decision: TradingDecision
+    ) -> bool:
+        """
+        Start a Volume-Weighted Average Price (VWAP) strategy for this token.
+
+        VWAP splits a large order into variable-sized chunks based on typical
+        market volume distribution. Unlike TWAP which uses equal chunks for
+        illiquid markets, VWAP executes more during high-volume periods and
+        less during low-volume periods to achieve better fill prices in
+        LIQUID markets.
+
+        Key Differences from TWAP:
+        - TWAP: Equal chunks at equal intervals (for LOW liquidity)
+        - VWAP: Variable chunks based on volume (for HIGH liquidity)
+        - TWAP: Minimize market impact in thin markets
+        - VWAP: Achieve better fills by matching volume patterns
+
+        Args:
+            token_address: Token contract address
+            token_symbol: Token symbol
+            decision: Trading decision from intelligence engine
+
+        Returns:
+            True if strategy started successfully, False otherwise
+        """
+        try:
+            # Import strategy executor (lazy import to avoid circular dependency)
+            from paper_trading.services.strategy_executor import get_strategy_executor
+
+            # Get VWAP preferences from config or use defaults
+            execution_window_hours = getattr(
+                self.strategy_config,
+                'vwap_execution_window_hours',
+                StrategySelectionThresholds.VWAP_DEFAULT_EXECUTION_WINDOW_HOURS
+            ) if self.strategy_config else StrategySelectionThresholds.VWAP_DEFAULT_EXECUTION_WINDOW_HOURS
+
+            num_intervals = getattr(
+                self.strategy_config,
+                'vwap_num_intervals',
+                StrategySelectionThresholds.VWAP_DEFAULT_INTERVALS
+            ) if self.strategy_config else StrategySelectionThresholds.VWAP_DEFAULT_INTERVALS
+
+            participation_rate = getattr(
+                self.strategy_config,
+                'vwap_participation_rate',
+                StrategySelectionThresholds.VWAP_DEFAULT_PARTICIPATION_RATE
+            ) if self.strategy_config else StrategySelectionThresholds.VWAP_DEFAULT_PARTICIPATION_RATE
+
+            # Calculate VWAP parameters
+            total_amount = Decimal(str(decision.position_size_usd))
+
+            # Calculate interval timing
+            if num_intervals > 1:
+                total_minutes = execution_window_hours * 60
+                interval_minutes = int(total_minutes / (num_intervals - 1))
+            else:
+                interval_minutes = 0
+
+            logger.info(
+                f"[VWAP STRATEGY] Starting VWAP for {token_symbol}: "
+                f"${float(total_amount):,.0f} split into {num_intervals} volume-weighted intervals "
+                f"over {execution_window_hours}h (participation rate: {float(participation_rate)*100:.1f}%)"
+            )
+
+            # Start the strategy via executor
+            executor = get_strategy_executor()
+
+            strategy_run = executor.start_strategy(
+                account=self.account,
+                strategy_type=StrategyType.VWAP,
+                config={
+                    'token_address': token_address,
+                    'token_symbol': token_symbol,
+                    'total_amount_usd': str(total_amount),
+                    'execution_window_hours': execution_window_hours,
+                    'num_intervals': num_intervals,
+                    'interval_minutes': interval_minutes,
+                    'participation_rate': str(participation_rate),
+                    'start_immediately': True
+                }
+            )
+
+            # Log AI thought
+            self._log_strategy_thought(
+                token_symbol=token_symbol,
+                token_address=token_address,
+                strategy_type=DecisionType.VWAP_STRATEGY,
+                strategy_id=str(strategy_run.strategy_id),
+                confidence=float(decision.overall_confidence),
+                reasoning=(
+                    f"Bot selected VWAP strategy: Large order ${float(total_amount):,.0f} "
+                    f"in liquid market. Splitting into {num_intervals} volume-weighted intervals "
+                    f"over {execution_window_hours}h to achieve better fills during high-volume periods"
+                ),
+                metadata={
+                    'total_amount': float(total_amount),
+                    'num_intervals': num_intervals,
+                    'execution_window_hours': execution_window_hours,
+                    'interval_minutes': interval_minutes,
+                    'participation_rate': float(participation_rate)
+                }
+            )
+
+            logger.info(
+                f"[VWAP STRATEGY] Started VWAP {strategy_run.strategy_id} for {token_symbol}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"[VWAP STRATEGY] Failed to start VWAP for {token_symbol}: {e}",
+                exc_info=True
+            )
+            return False
+
+    # =========================================================================
+    # HELPER METHODS
+    # =========================================================================
+
+    def _log_strategy_thought(
+        self,
+        token_symbol: str,
+        token_address: str,
+        strategy_type: str,
+        strategy_id: str,
+        confidence: float,
+        reasoning: str,
+        metadata: dict
+    ) -> None:
+        """
+        Log an AI thought for the strategy decision.
+        
+        Args:
+            token_symbol: Token symbol
+            token_address: Token contract address
+            strategy_type: DecisionType constant for the strategy
+            strategy_id: UUID of the strategy run
+            confidence: Confidence percentage
+            reasoning: Human-readable reasoning for the decision
+            metadata: Additional metadata dictionary
+        """
+        try:
             from paper_trading.bot.market_helpers import MarketHelpers
+            
             if self.intelligence_engine:
                 helpers = MarketHelpers(
                     account=self.account,
                     intelligence_engine=self.intelligence_engine
                 )
                 
+                # Merge metadata with standard fields
+                full_metadata = {
+                    'token': token_symbol,
+                    'token_address': token_address,
+                    'strategy_id': strategy_id,
+                    **metadata
+                }
+                
                 helpers.log_thought(
                     action='BUY',
-                    reasoning=(
-                        f"Bot selected TWAP strategy: Large order ${float(total_amount):,.0f} "
-                        f"in illiquid market. Splitting into {num_chunks} chunks over "
-                        f"{execution_window_hours}h to minimize market impact"
-                    ),
-                    confidence=float(decision.overall_confidence),
-                    decision_type='TWAP_STRATEGY',  # Add this to DecisionType constants later
-                    metadata={
-                        'token': token_symbol,
-                        'token_address': token_address,
-                        'strategy_id': str(strategy_run.strategy_id),
-                        'total_amount': float(total_amount),
-                        'num_chunks': num_chunks,
-                        'execution_window_hours': execution_window_hours,
-                        'interval_minutes': interval_minutes
-                    }
+                    reasoning=reasoning,
+                    confidence=confidence,
+                    decision_type=strategy_type,
+                    metadata=full_metadata
                 )
-
-            logger.info(
-                f"[TWAP STRATEGY] ✅ Started TWAP {strategy_run.strategy_id} for {token_symbol}"
+                
+        except ImportError:
+            logger.warning(
+                f"[STRATEGY LAUNCHER] MarketHelpers not available, skipping thought log"
             )
-            return True
-
         except Exception as e:
-            logger.error(
-                f"[TWAP STRATEGY] ❌ Failed to start TWAP for {token_symbol}: {e}",
-                exc_info=True
+            logger.warning(
+                f"[STRATEGY LAUNCHER] Failed to log thought: {e}"
             )
-            return False
+
+    def _calculate_position_size(
+        self,
+        decision: TradingDecision,
+        default_percent: Decimal = Decimal('5.0')
+    ) -> Decimal:
+        """
+        Calculate position size from decision or account balance.
+        
+        Args:
+            decision: Trading decision containing position size
+            default_percent: Default percentage of balance if not specified
+            
+        Returns:
+            Position size in USD
+        """
+        # Use decision's position size if available
+        if hasattr(decision, 'position_size_usd') and decision.position_size_usd:
+            return Decimal(str(decision.position_size_usd))
+        
+        # Otherwise calculate from account balance
+        if self.account and self.account.balance_usd:
+            return self.account.balance_usd * (default_percent / Decimal('100'))
+        
+        # Fallback to minimum position
+        return Decimal('100.00')

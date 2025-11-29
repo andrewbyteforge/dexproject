@@ -111,6 +111,8 @@ function handleWebSocketMessage(event) {
             // Trade messages
             case 'trade_executed':
             case 'trade.executed':
+            case 'trade_update':        // ADD THIS LINE
+            case 'trade.update':        // ADD THIS LINE
                 console.log('Trade executed:', message.data);
                 handleTradeExecuted(message.data);
                 break;
@@ -327,30 +329,15 @@ function handlePositionClosed(data) {
 /**
  * Handle account updated event - NEW!
  */
+/**
+ * Handle account updated event
+ */
 function handleAccountUpdated(data) {
     if (!data) return;
 
     console.log('Processing account update:', data);
 
-    // // Update portfolio value
-    // if (data.current_balance_usd !== undefined) {
-    //     updatePortfolioValue(data.current_balance_usd);
-    // }
-
-    // Update total P&L
-    if (data.total_pnl_usd !== undefined) {
-        updateTotalPnL(data.total_pnl_usd);
-    }
-
-    // Update win rate
-    if (data.win_rate !== undefined) {
-        const winRateElement = document.getElementById('win-rate');
-        if (winRateElement) {
-            winRateElement.textContent = `${data.win_rate.toFixed(1)}%`;
-        }
-    }
-
-    // Update trade counts
+    // Update total trades
     if (data.total_trades !== undefined) {
         const totalTradesElement = document.getElementById('total-trades');
         if (totalTradesElement) {
@@ -358,21 +345,37 @@ function handleAccountUpdated(data) {
         }
     }
 
-    if (data.successful_trades !== undefined) {
+    // Update successful/winning trades (signal sends 'winning_trades')
+    const winningTrades = data.successful_trades || data.winning_trades;
+    if (winningTrades !== undefined) {
         const successfulTradesElement = document.getElementById('successful-trades');
         if (successfulTradesElement) {
-            successfulTradesElement.textContent = data.successful_trades;
+            successfulTradesElement.textContent = winningTrades;
         }
     }
 
-    // Show subtle notification for significant changes
-    if (data.total_pnl_usd !== undefined) {
-        const pnlChange = parseFloat(data.total_pnl_usd);
-        if (Math.abs(pnlChange) > 10) { // Only notify for changes > $10
-            showToast(`Account updated: P&L ${pnlChange >= 0 ? '+' : ''}$${Math.abs(pnlChange).toFixed(2)}`, 'info');
+    // Calculate and update win rate from winning/total
+    if (data.total_trades !== undefined && data.total_trades > 0) {
+        const wins = data.winning_trades || data.successful_trades || 0;
+        const winRate = (wins / data.total_trades) * 100;
+        const winRateElement = document.getElementById('win-rate');
+        if (winRateElement) {
+            winRateElement.textContent = `${winRate.toFixed(1)}%`;
+        }
+    }
+
+    // Update balance display
+    if (data.account_balance !== undefined) {
+        const cashElement = document.getElementById('cash-balance');
+        if (cashElement) {
+            cashElement.textContent = `${parseFloat(data.account_balance).toFixed(2)}`;
         }
     }
 }
+
+
+
+
 
 /**
  * Handle new thought log creation from WebSocket
@@ -441,58 +444,74 @@ function handleBotStatusUpdate(data) {
 /**
  * Handle portfolio update from WebSocket
  */
+/**
+ * Handle portfolio update from WebSocket
+ * Uses pre-calculated values from bot and updates all stat cards
+ */
 function handlePortfolioUpdate(data) {
     if (!data) return;
 
-    // Use pre-calculated values from backend if available
-    // Otherwise fall back to client-side calculation
-    let totalPortfolio = data.portfolio_value;
-    let returnPercent = data.return_percent;
-    let totalPnL = data.total_pnl;
-    let winRate = data.win_rate;
+    console.log('Processing portfolio update:', data);
 
-    // Fallback: calculate if backend didn't send pre-calculated values
-    if (totalPortfolio === undefined) {
-        totalPortfolio = parseFloat(data.account_balance) || 0;
-        let totalPositionsValue = 0;
-
-        if (data.open_positions && Array.isArray(data.open_positions)) {
-            for (let position of data.open_positions) {
-                const posValue = parseFloat(position.current_value_usd) || 0;
-                totalPositionsValue += posValue;
-            }
+    // Use pre-calculated portfolio value from bot (includes cash + positions)
+    if (data.portfolio_value !== undefined && !isNaN(data.portfolio_value)) {
+        updatePortfolioValue(parseFloat(data.portfolio_value));
+    } else {
+        // Fallback: calculate manually
+        let totalPortfolio = parseFloat(data.account_balance) || 0;
+        if (data.positions_value !== undefined) {
+            totalPortfolio += parseFloat(data.positions_value);
         }
-        totalPortfolio += totalPositionsValue;
+        updatePortfolioValue(totalPortfolio);
     }
 
-    // Fallback: calculate return if not provided
-    if (returnPercent === undefined) {
-        const initialBalance = 10000; // Fallback only
-        totalPnL = totalPortfolio - initialBalance;
-        returnPercent = ((totalPnL / initialBalance) * 100);
+    // Update Total P&L - use pre-calculated value
+    if (data.total_pnl !== undefined && !isNaN(data.total_pnl)) {
+        updateTotalPnL(parseFloat(data.total_pnl));
     }
 
-    // Update UI elements
-    updatePortfolioValue(totalPortfolio);
-
-    if (totalPnL !== undefined) {
-        updateTotalPnL(totalPnL);
+    // Update Return Percentage - use pre-calculated value
+    if (data.return_percent !== undefined && !isNaN(data.return_percent)) {
+        updateReturnPercentage(parseFloat(data.return_percent));
     }
 
-    if (returnPercent !== undefined) {
-        updateReturnPercentage(returnPercent);
-    }
-
-    if (winRate !== undefined) {
+    // Update Win Rate
+    if (data.win_rate !== undefined) {
         const winRateElement = document.getElementById('win-rate');
         if (winRateElement) {
-            winRateElement.textContent = `${parseFloat(winRate).toFixed(1)}%`;
+            winRateElement.textContent = `${parseFloat(data.win_rate).toFixed(1)}%`;
+        }
+    }
+
+    // Update 24h Trades (using daily_trades from bot)
+    if (data.daily_trades !== undefined) {
+        const trades24hElement = document.getElementById('trades-24h');
+        if (trades24hElement) {
+            trades24hElement.textContent = data.daily_trades;
+        }
+    }
+
+    // Update Cash Balance display
+    // Update Cash Balance display (check both field names for compatibility)
+    const cashValue = data.account_balance ?? data.cash_balance;
+    if (cashValue !== undefined) {
+        const cashElement = document.getElementById('cash-balance');
+        if (cashElement) {
+            cashElement.textContent = parseFloat(cashValue).toFixed(2);
         }
     }
 
     // Log for debugging
-    console.log(`Portfolio Update: Total=$${totalPortfolio.toFixed(2)}, Return=${returnPercent.toFixed(2)}%, P&L=$${totalPnL?.toFixed(2) || 'N/A'}, WinRate=${winRate?.toFixed(1) || 'N/A'}%`);
+    console.log(`Portfolio Update: Portfolio=$${parseFloat(data.portfolio_value || 0).toFixed(2)}, ` +
+        `P&L=$${parseFloat(data.total_pnl || 0).toFixed(2)}, ` +
+        `Return=${parseFloat(data.return_percent || 0).toFixed(2)}%, ` +
+        `WinRate=${parseFloat(data.win_rate || 0).toFixed(1)}%`);
 }
+
+
+
+
+
 
 /**
  * Handle performance metrics update
@@ -1012,7 +1031,13 @@ function updateMetrics(metrics) {
     } else {
         console.warn('Portfolio value not provided in metrics, skipping update');
     }
-
+    // Update cash balance
+    if (metrics.cash_balance !== undefined && !isNaN(metrics.cash_balance)) {
+        const cashElement = document.getElementById('cash-balance');
+        if (cashElement) {
+            cashElement.textContent = `{parseFloat(metrics.cash_balance).toFixed(2)}`;
+        }
+    }
     // Update P&L
     if (metrics.total_pnl !== undefined && !isNaN(metrics.total_pnl)) {
         updateTotalPnL(metrics.total_pnl);

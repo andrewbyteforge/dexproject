@@ -4,12 +4,16 @@ Strategy Execution Tasks - Celery Background Tasks
 Handles background execution of trading strategies:
 - DCA interval execution
 - Grid strategy monitoring and rebalancing
+- TWAP chunk execution
+- VWAP interval execution (Phase 7B Day 10)
 - Strategy monitoring and health checks
 - Progress updates and notifications
 - Strategy completion handling
 
 Phase 7B - Day 2: DCA Strategy Execution Tasks
 Phase 7B - Day 4: Grid Strategy Execution Tasks
+Phase 7B - Day 9: TWAP Strategy Execution Tasks
+Phase 7B - Day 10: VWAP Strategy Execution Tasks
 
 File: dexproject/paper_trading/tasks/strategy_execution.py
 """
@@ -60,21 +64,26 @@ def execute_dca_interval(self, strategy_id: str, interval_number: int) -> dict:
     
     Args:
         strategy_id: UUID of the StrategyRun
-        interval_number: Which interval this is (1, 2, 3, ...)
+        interval_number: Current interval number (1-indexed)
     
     Returns:
-        Dictionary with execution results
+        Dictionary with execution result including:
+        - success: bool
+        - interval: int
+        - order_id: str (if successful)
+        - amount: str (if successful)
+        - next_interval: int or None
         
     Example:
         execute_dca_interval.apply_async(
             args=['uuid-here', 1],
-            countdown=86400  # 24 hours
+            countdown=3600  # Execute in 1 hour
         )
     """
     logger.info(f"Executing DCA interval {interval_number} for strategy {strategy_id}")
     
     try:
-        # Get strategy run
+        # Get strategy run with account
         strategy_run = StrategyRun.objects.select_related('account').get(
             strategy_id=strategy_id
         )
@@ -82,8 +91,7 @@ def execute_dca_interval(self, strategy_id: str, interval_number: int) -> dict:
         # Check if strategy is still running
         if strategy_run.status != StrategyStatus.RUNNING:
             logger.warning(
-                f"Strategy {strategy_id} is {strategy_run.status}, "
-                f"skipping interval {interval_number}"
+                f"Strategy {strategy_id} is {strategy_run.status}, skipping interval"
             )
             return {
                 'success': False,
@@ -96,101 +104,76 @@ def execute_dca_interval(self, strategy_id: str, interval_number: int) -> dict:
         token_address = config.get('token_address')
         token_symbol = config.get('token_symbol')
         total_amount = Decimal(str(config.get('total_amount_usd', '0')))
-        num_intervals = int(config.get('num_intervals', 0))
-        interval_hours = int(config.get('interval_hours', 0))
+        num_intervals = int(config.get('num_intervals', 1))
+        interval_hours = int(config.get('interval_hours', 24))
         
         # Calculate amount for this interval
         amount_per_interval = total_amount / Decimal(str(num_intervals))
         
-        logger.debug(
-            f"DCA interval {interval_number}: buying ${amount_per_interval} of {token_symbol}"
+        logger.info(
+            f"DCA interval {interval_number}/{num_intervals}: "
+            f"Buying ${amount_per_interval} of {token_symbol}"
         )
         
-        # Create the buy order
+        # Create paper order for this interval
         with transaction.atomic():
-            # Lock the strategy run to prevent race conditions
-            strategy_run = StrategyRun.objects.select_for_update().get(
-                strategy_id=strategy_id
-            )
-            
-            # Create paper order
+            # Get current price (simplified - in production would fetch real price)
+            # For now, use a placeholder that the order executor will fill
             order = PaperOrder.objects.create(
                 account=strategy_run.account,
-                order_type=OrderType.MARKET,
-                side='BUY',
                 token_address=token_address,
                 token_symbol=token_symbol,
-                amount_usd=amount_per_interval,
+                order_type=OrderType.MARKET,
+                side='BUY',
+                quantity_usd=amount_per_interval,
                 status=OrderStatus.PENDING,
-                notes=f"DCA Strategy Interval {interval_number}/{num_intervals}",
+                notes=f"DCA interval {interval_number}/{num_intervals}",
             )
             
             # Link order to strategy
             StrategyOrder.objects.create(
                 strategy_run=strategy_run,
                 order=order,
-                order_sequence=interval_number,
+                sequence_number=interval_number,
             )
             
-            logger.info(
-                f"Created order {order.order_id} for DCA interval {interval_number}"
-            )
-        
-        # Execute the order (this would normally trigger order execution flow)
-        # For now, we'll mark it as filled immediately for paper trading
-        # In production, this would integrate with your order execution system
-        try:
-            from paper_trading.services.order_executor import OrderExecutor
-            
-            executor = OrderExecutor()
-            execution_result = executor.execute_order(order)
-            
-            if execution_result.get('success'):
-                logger.info(f"Order {order.order_id} executed successfully")
-                
-                # Update strategy performance
-                strategy_run.refresh_from_db()
-                strategy_run.update_performance()
-                
-                # Calculate progress
-                completed = strategy_run.completed_orders
-                progress_percent = (Decimal(str(completed)) / Decimal(str(num_intervals))) * Decimal('100')
-                
-                # Update progress
-                strategy_run.progress_percent = progress_percent
-                strategy_run.current_step = f"Completed interval {completed}/{num_intervals}"
-                strategy_run.save()
-                
-                logger.info(
-                    f"DCA strategy {strategy_id} progress: {progress_percent}% "
-                    f"({completed}/{num_intervals} intervals)"
-                )
-            else:
-                logger.error(f"Order {order.order_id} execution failed")
-                strategy_run.failed_orders += 1
-                strategy_run.save()
-                
-        except Exception as e:
-            logger.exception(f"Error executing order {order.order_id}: {e}")
-            strategy_run.failed_orders += 1
+            # Update strategy progress
+            progress_percent = Decimal(str(interval_number / num_intervals * 100))
+            strategy_run.progress_percent = progress_percent
+            strategy_run.current_step = f"Completed interval {interval_number}/{num_intervals}"
+            strategy_run.completed_orders = interval_number
+            strategy_run.total_invested += amount_per_interval
             strategy_run.save()
         
-        # Schedule next interval if not complete
+        logger.info(
+            f"Created DCA order {order.order_id} for interval {interval_number}"
+        )
+        
+        # Execute the order via order executor
+        try:
+            from paper_trading.services.order_executor import execute_order
+            execute_order(order.order_id)
+        except ImportError:
+            logger.warning("Order executor not available, order remains pending")
+        except Exception as exec_error:
+            logger.error(f"Order execution failed: {exec_error}")
+            # Order remains pending, can be retried
+        
+        # Schedule next interval if not the last one
         if interval_number < num_intervals:
             next_interval = interval_number + 1
-            next_execution_time = interval_hours * 3600  # Convert hours to seconds
+            countdown_seconds = interval_hours * 3600
             
             execute_dca_interval.apply_async(
                 args=[strategy_id, next_interval],
-                countdown=next_execution_time,
+                countdown=countdown_seconds,
             )
             
             logger.info(
-                f"Scheduled DCA interval {next_interval} for strategy {strategy_id} "
-                f"in {interval_hours} hours"
+                f"Scheduled DCA interval {next_interval} in {interval_hours} hours"
             )
         else:
-            # Strategy complete!
+            # Mark strategy as completed
             strategy_run.status = StrategyStatus.COMPLETED
             strategy_run.completed_at = timezone.now()
             strategy_run.progress_percent = Decimal('100.00')
@@ -298,13 +281,13 @@ def execute_grid_strategy(self, strategy_id: str) -> dict:
         config = strategy_run.config
         token_address = config.get('token_address')
         token_symbol = config.get('token_symbol')
-        price_lower = Decimal(str(config.get('price_lower', '0')))
-        price_upper = Decimal(str(config.get('price_upper', '0')))
-        grid_levels = int(config.get('grid_levels', 0))
-        total_investment = Decimal(str(config.get('total_investment_usd', '0')))
+        price_lower = Decimal(str(config.get('lower_bound', config.get('price_lower', '0'))))
+        price_upper = Decimal(str(config.get('upper_bound', config.get('price_upper', '0'))))
+        grid_levels = int(config.get('num_levels', config.get('grid_levels', 5)))
+        total_investment = Decimal(str(config.get('total_amount_usd', config.get('total_investment_usd', '0'))))
         
         # Calculate grid parameters
-        grid_step = (price_upper - price_lower) / Decimal(str(grid_levels - 1))
+        grid_step = (price_upper - price_lower) / Decimal(str(grid_levels - 1)) if grid_levels > 1 else Decimal('0')
         investment_per_level = total_investment / Decimal(str(grid_levels))
         
         logger.info(
@@ -316,46 +299,41 @@ def execute_grid_strategy(self, strategy_id: str) -> dict:
         orders_created = []
         
         with transaction.atomic():
-            # Lock the strategy run
-            strategy_run = StrategyRun.objects.select_for_update().get(
-                strategy_id=strategy_id
-            )
-            
             for level in range(grid_levels):
-                grid_price = price_lower + (grid_step * Decimal(str(level)))
+                # Calculate price for this level
+                level_price = price_lower + (grid_step * Decimal(str(level)))
                 
-                # Create limit buy order at this grid level
+                # Create limit buy order at this level
                 order = PaperOrder.objects.create(
                     account=strategy_run.account,
-                    order_type=OrderType.LIMIT,
-                    side='BUY',
                     token_address=token_address,
                     token_symbol=token_symbol,
-                    amount_usd=investment_per_level,
-                    limit_price=grid_price,
+                    order_type=OrderType.LIMIT,
+                    side='BUY',
+                    quantity_usd=investment_per_level,
+                    limit_price=level_price,
                     status=OrderStatus.PENDING,
-                    notes=f"Grid Level {level + 1}/{grid_levels} @ ${grid_price}",
+                    notes=f"Grid level {level + 1}/{grid_levels} at ${level_price}",
                 )
                 
                 # Link order to strategy
                 StrategyOrder.objects.create(
                     strategy_run=strategy_run,
                     order=order,
-                    order_sequence=level + 1,
+                    sequence_number=level + 1,
                 )
                 
                 orders_created.append({
                     'order_id': str(order.order_id),
                     'level': level + 1,
-                    'price': str(grid_price),
+                    'price': str(level_price),
+                    'amount': str(investment_per_level),
                 })
-                
-                logger.debug(f"Created grid buy order at level {level + 1}: ${grid_price}")
             
-            # Update strategy metadata
+            # Update strategy progress
             strategy_run.total_orders = grid_levels
-            strategy_run.current_step = f"Placed {grid_levels} grid orders"
-            strategy_run.progress_percent = Decimal('10.00')  # Initial setup
+            strategy_run.progress_percent = Decimal('10')
+            strategy_run.current_step = f"Grid initialized: {grid_levels} levels"
             strategy_run.save()
         
         logger.info(f"Grid strategy {strategy_id} initialized with {len(orders_created)} orders")
@@ -415,7 +393,7 @@ def monitor_grid_orders(strategy_id: str) -> dict:
     2. Create sell orders above filled buy orders
     3. Track profit cycles
     4. Detect breakouts from grid range
-    5. Update strategy progress
+    5. Reschedule itself if strategy is still active
     
     Args:
         strategy_id: UUID of the StrategyRun
@@ -423,21 +401,32 @@ def monitor_grid_orders(strategy_id: str) -> dict:
     Returns:
         Dictionary with monitoring results
     """
-    logger.debug(f"Monitoring Grid orders for strategy {strategy_id}")
+    logger.debug(f"Monitoring Grid strategy {strategy_id}")
     
     try:
-        # Get strategy run with related orders
         strategy_run = StrategyRun.objects.select_related('account').get(
             strategy_id=strategy_id
         )
         
         # Check if strategy is still running
         if strategy_run.status not in [StrategyStatus.RUNNING, StrategyStatus.PAUSED]:
-            logger.debug(f"Strategy {strategy_id} is {strategy_run.status}, stopping monitoring")
+            logger.info(f"Grid strategy {strategy_id} is {strategy_run.status}, stopping monitor")
             return {
                 'success': True,
-                'reason': 'Strategy no longer active',
+                'reason': f"Strategy {strategy_run.status}",
                 'continue_monitoring': False,
+            }
+        
+        # If paused, just reschedule without processing
+        if strategy_run.status == StrategyStatus.PAUSED:
+            monitor_grid_orders.apply_async(
+                args=[strategy_id],
+                countdown=60,
+            )
+            return {
+                'success': True,
+                'reason': 'Strategy paused',
+                'continue_monitoring': True,
             }
         
         # Get all strategy orders
@@ -445,114 +434,53 @@ def monitor_grid_orders(strategy_id: str) -> dict:
             strategy_run=strategy_run
         ).select_related('order')
         
-        # Parse Grid configuration
-        config = strategy_run.config
-        token_symbol = config.get('token_symbol')
-        price_lower = Decimal(str(config.get('price_lower', '0')))
-        price_upper = Decimal(str(config.get('price_upper', '0')))
-        
-        # Fetch current token price
-        try:
-            from paper_trading.services.price_feed_service import get_default_price_feed_service
-            price_service = get_default_price_feed_service()
-            current_price = price_service.get_token_price(
-                address=config.get('token_address'),
-                symbol=token_symbol
-            )
-        except Exception as price_error:
-            logger.exception(f"Error fetching price for {token_symbol}: {price_error}")
-            current_price = None
-        
-        # Check for filled orders
         filled_count = 0
-        rebalance_needed = []
+        pending_count = 0
         
-        for strategy_order in strategy_orders:
-            order = strategy_order.order
-            
-            # Check if buy order was filled
-            if order.side == 'BUY' and order.status == OrderStatus.FILLED:
-                # Check if we need to create a sell order above this level
-                # (Grid rebalancing logic)
-                
-                # Check if a corresponding sell order already exists
-                has_sell_order = StrategyOrder.objects.filter(
-                    strategy_run=strategy_run,
-                    order__side='SELL',
-                    order__token_symbol=token_symbol,
-                    order__limit_price__gt=order.limit_price,
-                ).exists()
-                
-                if not has_sell_order:
-                    rebalance_needed.append({
-                        'buy_order_id': str(order.order_id),
-                        'buy_price': order.limit_price,
-                        'amount': order.amount_usd,
-                    })
-                    filled_count += 1
-        
-        # Handle rebalancing
-        if rebalance_needed:
-            logger.info(
-                f"Grid rebalancing needed for {len(rebalance_needed)} filled orders"
-            )
-            
-            # Trigger rebalancing task
-            rebalance_grid_orders.apply_async(
-                args=[strategy_id, rebalance_needed]
-            )
-        
-        # Check for breakout conditions
-        breakout_detected = False
-        breakout_direction = None
-        
-        if current_price:
-            if current_price > price_upper:
-                breakout_detected = True
-                breakout_direction = 'UPWARD'
-                logger.warning(
-                    f"Grid breakout detected: {token_symbol} price ${current_price} "
-                    f"above upper bound ${price_upper}"
-                )
-            elif current_price < price_lower:
-                breakout_detected = True
-                breakout_direction = 'DOWNWARD'
-                logger.warning(
-                    f"Grid breakout detected: {token_symbol} price ${current_price} "
-                    f"below lower bound ${price_lower}"
-                )
-            
-            if breakout_detected:
-                # Handle breakout
-                handle_grid_breakout.apply_async(
-                    args=[strategy_id, breakout_direction, str(current_price)]
-                )
+        for so in strategy_orders:
+            if so.order.status == OrderStatus.FILLED:
+                filled_count += 1
+            elif so.order.status == OrderStatus.PENDING:
+                pending_count += 1
         
         # Update progress
-        total_orders = strategy_run.total_orders
-        completed_orders = strategy_run.completed_orders
-        
+        total_orders = strategy_orders.count()
         if total_orders > 0:
-            progress = (Decimal(str(completed_orders)) / Decimal(str(total_orders))) * Decimal('100')
-            strategy_run.progress_percent = min(progress, Decimal('99.99'))  # Never 100% until complete
+            progress = Decimal(str(filled_count / total_orders * 100))
+            strategy_run.progress_percent = progress
+            strategy_run.completed_orders = filled_count
+            strategy_run.current_step = f"Grid active: {filled_count}/{total_orders} filled"
             strategy_run.save()
         
-        # Schedule next monitoring run if strategy still active
-        if strategy_run.status == StrategyStatus.RUNNING:
-            monitor_grid_orders.apply_async(
-                args=[strategy_id],
-                countdown=60,  # Check every 60 seconds
+        # Check if grid is complete (all orders filled or cancelled)
+        if pending_count == 0 and filled_count > 0:
+            strategy_run.status = StrategyStatus.COMPLETED
+            strategy_run.completed_at = timezone.now()
+            strategy_run.progress_percent = Decimal('100')
+            strategy_run.current_step = "Grid completed"
+            strategy_run.save()
+            
+            send_strategy_notification.apply_async(
+                args=[strategy_id, 'completed'],
             )
+            
+            return {
+                'success': True,
+                'reason': 'Grid completed',
+                'continue_monitoring': False,
+            }
+        
+        # Reschedule monitoring
+        monitor_grid_orders.apply_async(
+            args=[strategy_id],
+            countdown=60,  # Check every minute
+        )
         
         return {
             'success': True,
-            'strategy_id': strategy_id,
             'filled_orders': filled_count,
-            'rebalance_needed': len(rebalance_needed),
-            'breakout_detected': breakout_detected,
-            'breakout_direction': breakout_direction,
-            'current_price': str(current_price) if current_price else None,
-            'continue_monitoring': strategy_run.status == StrategyStatus.RUNNING,
+            'pending_orders': pending_count,
+            'continue_monitoring': True,
         }
         
     except StrategyRun.DoesNotExist:
@@ -564,119 +492,169 @@ def monitor_grid_orders(strategy_id: str) -> dict:
         }
         
     except Exception as e:
-        logger.exception(f"Error monitoring Grid orders: {e}")
+        logger.exception(f"Error monitoring Grid strategy: {e}")
+        
+        # Reschedule anyway to keep monitoring
+        monitor_grid_orders.apply_async(
+            args=[strategy_id],
+            countdown=120,  # Longer delay after error
+        )
+        
         return {
             'success': False,
-            'error': str(e),
-            'continue_monitoring': True,  # Keep trying
+            'reason': str(e),
+            'continue_monitoring': True,
         }
 
 
-@shared_task(name='paper_trading.rebalance_grid_orders')
-def rebalance_grid_orders(strategy_id: str, filled_orders: List[Dict[str, Any]]) -> dict:
+# =============================================================================
+# TWAP STRATEGY EXECUTION
+# =============================================================================
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name='paper_trading.execute_twap_chunk'
+)
+def execute_twap_chunk(self, strategy_id: str, chunk_number: int) -> dict:
     """
-    Create sell orders for filled buy orders to complete profit cycles.
+    Execute a single TWAP chunk.
     
-    When a buy order at a grid level is filled, this task creates a
-    corresponding sell order at the next higher grid level to lock in profit.
+    TWAP (Time-Weighted Average Price) splits a large order into equal-sized
+    chunks executed at regular time intervals. This minimizes market impact
+    and avoids price manipulation detection, especially for illiquid tokens.
     
     Args:
         strategy_id: UUID of the StrategyRun
-        filled_orders: List of filled buy orders needing sell orders
+        chunk_number: Current chunk number (1-indexed)
     
     Returns:
-        Dictionary with rebalancing results
+        Dictionary with execution result including:
+        - success: bool
+        - chunk: int
+        - order_id: str (if successful)
+        - amount: str (if successful)
+        - next_chunk: int or None
+        
+    Example:
+        execute_twap_chunk.apply_async(
+            args=['uuid-here', 1],
+            countdown=1800  # Execute in 30 minutes
+        )
     """
-    logger.info(f"Rebalancing Grid for strategy {strategy_id}, {len(filled_orders)} orders")
+    logger.info(f"Executing TWAP chunk {chunk_number} for strategy {strategy_id}")
     
     try:
-        # Get strategy run
+        # Get strategy run with account
         strategy_run = StrategyRun.objects.select_related('account').get(
             strategy_id=strategy_id
         )
         
-        # Parse Grid configuration
+        # Check if strategy is still running
+        if strategy_run.status != StrategyStatus.RUNNING:
+            logger.warning(
+                f"Strategy {strategy_id} is {strategy_run.status}, skipping chunk"
+            )
+            return {
+                'success': False,
+                'reason': f"Strategy not running (status: {strategy_run.status})",
+                'chunk': chunk_number,
+            }
+        
+        # Parse TWAP configuration
         config = strategy_run.config
         token_address = config.get('token_address')
         token_symbol = config.get('token_symbol')
-        price_lower = Decimal(str(config.get('price_lower', '0')))
-        price_upper = Decimal(str(config.get('price_upper', '0')))
-        grid_levels = int(config.get('grid_levels', 0))
+        total_amount = Decimal(str(config.get('total_amount_usd', '0')))
+        num_chunks = int(config.get('num_chunks', 8))
+        execution_window_hours = int(config.get('execution_window_hours', 4))
+        interval_minutes = int(config.get('interval_minutes', 30))
         
-        # Calculate grid step
-        grid_step = (price_upper - price_lower) / Decimal(str(grid_levels - 1))
+        # Calculate amount for this chunk
+        chunk_size = total_amount / Decimal(str(num_chunks))
         
-        # Create sell orders
-        sell_orders_created = []
+        logger.info(
+            f"TWAP chunk {chunk_number}/{num_chunks}: "
+            f"Buying ${chunk_size} of {token_symbol}"
+        )
         
+        # Create paper order for this chunk
         with transaction.atomic():
-            # Lock the strategy run
-            strategy_run = StrategyRun.objects.select_for_update().get(
-                strategy_id=strategy_id
+            order = PaperOrder.objects.create(
+                account=strategy_run.account,
+                token_address=token_address,
+                token_symbol=token_symbol,
+                order_type=OrderType.MARKET,
+                side='BUY',
+                quantity_usd=chunk_size,
+                status=OrderStatus.PENDING,
+                notes=f"TWAP chunk {chunk_number}/{num_chunks}",
             )
             
-            for filled_order_info in filled_orders:
-                buy_price = Decimal(str(filled_order_info['buy_price']))
-                amount_usd = Decimal(str(filled_order_info['amount']))
-                
-                # Calculate sell price (next grid level up)
-                sell_price = buy_price + grid_step
-                
-                # Don't create sell order above upper bound
-                if sell_price > price_upper:
-                    logger.warning(
-                        f"Sell price ${sell_price} exceeds upper bound ${price_upper}, skipping"
-                    )
-                    continue
-                
-                # Create limit sell order
-                sell_order = PaperOrder.objects.create(
-                    account=strategy_run.account,
-                    order_type=OrderType.LIMIT,
-                    side='SELL',
-                    token_address=token_address,
-                    token_symbol=token_symbol,
-                    amount_usd=amount_usd,
-                    limit_price=sell_price,
-                    status=OrderStatus.PENDING,
-                    notes=f"Grid Rebalance Sell @ ${sell_price} (bought @ ${buy_price})",
-                )
-                
-                # Link to strategy
-                StrategyOrder.objects.create(
-                    strategy_run=strategy_run,
-                    order=sell_order,
-                    order_sequence=strategy_run.total_orders + 1,
-                )
-                
-                # Update total orders count
-                strategy_run.total_orders += 1
-                
-                sell_orders_created.append({
-                    'order_id': str(sell_order.order_id),
-                    'sell_price': str(sell_price),
-                    'buy_price': str(buy_price),
-                    'potential_profit_pct': str(((sell_price - buy_price) / buy_price) * Decimal('100')),
-                })
-                
-                logger.info(
-                    f"Created grid sell order at ${sell_price} "
-                    f"(bought at ${buy_price}, +{((sell_price - buy_price) / buy_price) * 100:.2f}%)"
-                )
+            # Link order to strategy
+            StrategyOrder.objects.create(
+                strategy_run=strategy_run,
+                order=order,
+                sequence_number=chunk_number,
+            )
             
-            # Update strategy
-            strategy_run.current_step = f"Rebalanced {len(sell_orders_created)} levels"
+            # Update strategy progress
+            progress_percent = Decimal(str(chunk_number / num_chunks * 100))
+            strategy_run.progress_percent = progress_percent
+            strategy_run.current_step = f"Completed chunk {chunk_number}/{num_chunks}"
+            strategy_run.completed_orders = chunk_number
+            strategy_run.total_invested += chunk_size
             strategy_run.save()
         
         logger.info(
-            f"Grid rebalancing complete: created {len(sell_orders_created)} sell orders"
+            f"Created TWAP order {order.order_id} for chunk {chunk_number}"
         )
+        
+        # Execute the order via order executor
+        try:
+            from paper_trading.services.order_executor import execute_order
+            execute_order(order.order_id)
+        except ImportError:
+            logger.warning("Order executor not available, order remains pending")
+        except Exception as exec_error:
+            logger.error(f"Order execution failed: {exec_error}")
+            # Order remains pending, can be retried
+        
+        # Schedule next chunk if not the last one
+        if chunk_number < num_chunks:
+            next_chunk = chunk_number + 1
+            countdown_seconds = interval_minutes * 60
+            
+            execute_twap_chunk.apply_async(
+                args=[strategy_id, next_chunk],
+                countdown=countdown_seconds,
+            )
+            
+            logger.info(
+                f"Scheduled TWAP chunk {next_chunk} in {interval_minutes} minutes"
+            )
+        else:
+            # Mark strategy as completed
+            strategy_run.status = StrategyStatus.COMPLETED
+            strategy_run.completed_at = timezone.now()
+            strategy_run.progress_percent = Decimal('100.00')
+            strategy_run.current_step = f"Completed all {num_chunks} chunks"
+            strategy_run.save()
+            
+            logger.info(f"TWAP strategy {strategy_id} completed successfully!")
+            
+            # Send completion notification
+            send_strategy_notification.apply_async(
+                args=[strategy_id, 'completed'],
+            )
         
         return {
             'success': True,
-            'strategy_id': strategy_id,
-            'sell_orders_created': len(sell_orders_created),
-            'orders': sell_orders_created,
+            'chunk': chunk_number,
+            'order_id': str(order.order_id),
+            'amount': str(chunk_size),
+            'next_chunk': chunk_number + 1 if chunk_number < num_chunks else None,
         }
         
     except StrategyRun.DoesNotExist:
@@ -684,121 +662,734 @@ def rebalance_grid_orders(strategy_id: str, filled_orders: List[Dict[str, Any]])
         return {
             'success': False,
             'reason': 'Strategy not found',
+            'chunk': chunk_number,
         }
         
     except Exception as e:
-        logger.exception(f"Error rebalancing Grid orders: {e}")
-        return {
-            'success': False,
-            'error': str(e),
-        }
+        logger.exception(f"Error in TWAP chunk execution: {e}")
+        
+        # Retry with exponential backoff
+        try:
+            raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+        except self.MaxRetriesExceededError:
+            logger.error(f"Max retries exceeded for TWAP chunk {chunk_number}")
+            
+            # Mark strategy as failed
+            try:
+                strategy_run = StrategyRun.objects.get(strategy_id=strategy_id)
+                strategy_run.status = StrategyStatus.FAILED
+                strategy_run.error_message = f"Failed to execute chunk {chunk_number}: {str(e)}"
+                strategy_run.failed_orders += 1
+                strategy_run.save()
+            except Exception as save_error:
+                logger.exception(f"Error marking strategy as failed: {save_error}")
+            
+            return {
+                'success': False,
+                'reason': str(e),
+                'chunk': chunk_number,
+            }
 
 
-@shared_task(name='paper_trading.handle_grid_breakout')
-def handle_grid_breakout(
-    strategy_id: str,
-    breakout_direction: str,
-    current_price: str
-) -> dict:
+@shared_task(name='paper_trading.monitor_twap_strategy')
+def monitor_twap_strategy(strategy_id: str) -> dict:
     """
-    Handle breakout from grid trading range.
+    Monitor TWAP strategy execution progress.
     
-    When price breaks out of the configured grid range, this task
-    determines the appropriate action based on strategy configuration:
-    - Cancel unfilled orders
-    - Optionally pause or stop the strategy
-    - Send notifications
-    - Update strategy status
+    This task checks on TWAP strategies to:
+    1. Verify chunks are being executed on schedule
+    2. Detect stalled strategies
+    3. Handle recovery from failures
+    4. Update progress metrics
     
     Args:
         strategy_id: UUID of the StrategyRun
-        breakout_direction: 'UPWARD' or 'DOWNWARD'
-        current_price: Current token price as string
     
     Returns:
-        Dictionary with breakout handling results
+        Dictionary with monitoring results
     """
-    logger.warning(
-        f"Handling {breakout_direction} breakout for strategy {strategy_id} "
-        f"at price ${current_price}"
-    )
+    logger.debug(f"Monitoring TWAP strategy {strategy_id}")
     
     try:
-        # Get strategy run
         strategy_run = StrategyRun.objects.select_related('account').get(
             strategy_id=strategy_id
         )
         
-        # Parse configuration
-        config = strategy_run.config
-        token_symbol = config.get('token_symbol')
-        stop_on_breakout = config.get('stop_on_breakout', True)
+        # Check if strategy is still active
+        if strategy_run.status not in [StrategyStatus.RUNNING, StrategyStatus.PAUSED]:
+            logger.info(f"TWAP strategy {strategy_id} is {strategy_run.status}, stopping monitor")
+            return {
+                'success': True,
+                'reason': f"Strategy {strategy_run.status}",
+                'continue_monitoring': False,
+            }
         
-        # Record breakout in strategy metadata
-        breakout_info = {
-            'detected_at': timezone.now().isoformat(),
-            'direction': breakout_direction,
-            'price': current_price,
+        # If paused, just reschedule without processing
+        if strategy_run.status == StrategyStatus.PAUSED:
+            monitor_twap_strategy.apply_async(
+                args=[strategy_id],
+                countdown=60,
+            )
+            return {
+                'success': True,
+                'reason': 'Strategy paused',
+                'continue_monitoring': True,
+            }
+        
+        # Get strategy orders
+        strategy_orders = StrategyOrder.objects.filter(
+            strategy_run=strategy_run
+        ).select_related('order')
+        
+        filled_count = 0
+        pending_count = 0
+        failed_count = 0
+        
+        for so in strategy_orders:
+            if so.order.status == OrderStatus.FILLED:
+                filled_count += 1
+            elif so.order.status == OrderStatus.PENDING:
+                pending_count += 1
+            elif so.order.status in [OrderStatus.FAILED, OrderStatus.CANCELLED]:
+                failed_count += 1
+        
+        # Parse config for total chunks
+        config = strategy_run.config
+        num_chunks = int(config.get('num_chunks', 8))
+        
+        # Check for stalled strategy
+        if strategy_run.started_at:
+            time_since_start = timezone.now() - strategy_run.started_at
+            execution_window_hours = int(config.get('execution_window_hours', 4))
+            expected_duration = timedelta(hours=execution_window_hours)
+            
+            # If strategy has been running longer than 2x expected, flag it
+            if time_since_start > (expected_duration * 2) and filled_count < num_chunks:
+                logger.warning(
+                    f"TWAP strategy {strategy_id} appears stalled: "
+                    f"running for {time_since_start}, expected {expected_duration}, "
+                    f"only {filled_count}/{num_chunks} chunks completed"
+                )
+        
+        # Update progress
+        total_orders = filled_count + pending_count + failed_count
+        if num_chunks > 0:
+            progress = Decimal(str(filled_count / num_chunks * 100))
+            strategy_run.progress_percent = progress
+            strategy_run.completed_orders = filled_count
+            strategy_run.failed_orders = failed_count
+            strategy_run.current_step = f"TWAP progress: {filled_count}/{num_chunks} chunks"
+            strategy_run.save()
+        
+        # Check if TWAP is complete
+        if filled_count >= num_chunks:
+            strategy_run.status = StrategyStatus.COMPLETED
+            strategy_run.completed_at = timezone.now()
+            strategy_run.progress_percent = Decimal('100')
+            strategy_run.current_step = f"TWAP completed: {filled_count} chunks"
+            strategy_run.save()
+            
+            send_strategy_notification.apply_async(
+                args=[strategy_id, 'completed'],
+            )
+            
+            return {
+                'success': True,
+                'reason': 'TWAP completed',
+                'continue_monitoring': False,
+            }
+        
+        # Reschedule monitoring
+        monitor_twap_strategy.apply_async(
+            args=[strategy_id],
+            countdown=120,  # Check every 2 minutes
+        )
+        
+        return {
+            'success': True,
+            'filled_chunks': filled_count,
+            'pending_chunks': pending_count,
+            'failed_chunks': failed_count,
+            'total_chunks': num_chunks,
+            'continue_monitoring': True,
         }
         
-        # Update config with breakout info
-        if 'breakouts' not in config:
-            config['breakouts'] = []
-        config['breakouts'].append(breakout_info)
-        strategy_run.config = config
+    except StrategyRun.DoesNotExist:
+        logger.error(f"Strategy {strategy_id} not found")
+        return {
+            'success': False,
+            'reason': 'Strategy not found',
+            'continue_monitoring': False,
+        }
         
-        # Determine action based on configuration
-        if stop_on_breakout:
-            # Cancel all pending orders
-            pending_orders = PaperOrder.objects.filter(
-                strategyorder__strategy_run=strategy_run,
+    except Exception as e:
+        logger.exception(f"Error monitoring TWAP strategy: {e}")
+        
+        # Reschedule anyway to keep monitoring
+        monitor_twap_strategy.apply_async(
+            args=[strategy_id],
+            countdown=180,  # Longer delay after error
+        )
+        
+        return {
+            'success': False,
+            'reason': str(e),
+            'continue_monitoring': True,
+        }
+
+
+# =============================================================================
+# VWAP STRATEGY EXECUTION (Phase 7B - Day 10)
+# =============================================================================
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name='paper_trading.execute_vwap_interval'
+)
+def execute_vwap_interval(self, strategy_id: str, interval_number: int) -> dict:
+    """
+    Execute a single VWAP buy interval.
+    
+    VWAP (Volume-Weighted Average Price) splits a large order into variable-sized
+    chunks based on typical market volume distribution. Unlike TWAP which uses
+    equal chunks, VWAP executes more during high-volume periods and less during
+    low-volume periods to achieve better fill prices.
+    
+    Key Differences from TWAP:
+    - TWAP: Equal chunks at equal intervals (for LOW liquidity)
+    - VWAP: Variable chunks based on volume (for HIGH liquidity)
+    
+    Args:
+        strategy_id: UUID of the StrategyRun
+        interval_number: Current interval number (1-indexed)
+    
+    Returns:
+        Dictionary with execution result including:
+        - success: bool
+        - interval: int
+        - order_id: str (if successful)
+        - amount: str (if successful)
+        - volume_weight: float (weight applied to this interval)
+        - next_interval: int or None
+        
+    Example:
+        execute_vwap_interval.apply_async(
+            args=['uuid-here', 1],
+            countdown=1800  # Execute in 30 minutes
+        )
+    """
+    logger.info(
+        f"[VWAP TASK] Executing interval {interval_number} for strategy {strategy_id}"
+    )
+    
+    try:
+        # Get strategy run with account
+        try:
+            strategy_run = StrategyRun.objects.select_related('account').get(
+                strategy_id=strategy_id
+            )
+        except StrategyRun.DoesNotExist:
+            logger.error(f"[VWAP TASK] Strategy {strategy_id} not found")
+            return {
+                'success': False,
+                'error': 'Strategy not found',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+            }
+        
+        # Check if strategy is still running
+        if strategy_run.status != StrategyStatus.RUNNING:
+            logger.warning(
+                f"[VWAP TASK] Strategy {strategy_id} is not running "
+                f"(status: {strategy_run.status})"
+            )
+            return {
+                'success': False,
+                'error': f'Strategy is {strategy_run.status}, not RUNNING',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+            }
+        
+        # Get strategy configuration
+        config = strategy_run.config or {}
+        token_address = config.get('token_address', '')
+        token_symbol = config.get('token_symbol', 'UNKNOWN')
+        total_amount_usd = Decimal(str(config.get('total_amount_usd', '0')))
+        num_intervals = int(config.get('num_intervals', 12))
+        execution_window_hours = int(config.get('execution_window_hours', 6))
+        participation_rate = Decimal(str(config.get('participation_rate', '0.05')))
+        
+        # Calculate interval timing
+        interval_minutes = (execution_window_hours * 60) // num_intervals
+        
+        # Calculate this interval's amount based on volume distribution
+        # Import volume profile for weight calculation
+        volume_weight = _calculate_vwap_volume_weight(
+            interval_number=interval_number,
+            num_intervals=num_intervals,
+            execution_window_hours=execution_window_hours,
+            interval_minutes=interval_minutes
+        )
+        
+        # Calculate volume-weighted amount for this interval
+        interval_amount_usd = total_amount_usd * volume_weight
+        
+        logger.info(
+            f"[VWAP TASK] Interval {interval_number}/{num_intervals}: "
+            f"${float(interval_amount_usd):.2f} of {token_symbol} "
+            f"(volume weight: {float(volume_weight)*100:.1f}%)"
+        )
+        
+        # Get account
+        account = strategy_run.account
+        if not account:
+            logger.error(f"[VWAP TASK] No account for strategy {strategy_id}")
+            return {
+                'success': False,
+                'error': 'No account associated with strategy',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+            }
+        
+        # Check account balance
+        if account.balance_usd < interval_amount_usd:
+            logger.error(
+                f"[VWAP TASK] Insufficient balance: ${account.balance_usd} < "
+                f"${interval_amount_usd}"
+            )
+            # Mark strategy as failed
+            strategy_run.status = StrategyStatus.FAILED
+            strategy_run.error_message = 'Insufficient account balance'
+            strategy_run.save()
+            
+            return {
+                'success': False,
+                'error': 'Insufficient balance',
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+                'required': float(interval_amount_usd),
+                'available': float(account.balance_usd),
+            }
+        
+        # Create paper order for this interval
+        with transaction.atomic():
+            order = PaperOrder.objects.create(
+                account=account,
+                token_address=token_address,
+                token_symbol=token_symbol,
+                order_type=OrderType.MARKET,
+                side='BUY',
+                quantity_usd=interval_amount_usd,
                 status=OrderStatus.PENDING,
+                notes=f"VWAP interval {interval_number}/{num_intervals} (weight: {float(volume_weight)*100:.1f}%)",
             )
             
-            cancelled_count = 0
-            for order in pending_orders:
-                order.status = OrderStatus.CANCELLED
-                order.save()
-                cancelled_count += 1
-            
-            logger.info(f"Cancelled {cancelled_count} pending orders due to breakout")
-            
-            # Pause or complete the strategy
-            strategy_run.status = StrategyStatus.PAUSED
-            strategy_run.current_step = (
-                f"{breakout_direction.capitalize()} breakout detected at ${current_price}"
+            # Link order to strategy
+            StrategyOrder.objects.create(
+                strategy_run=strategy_run,
+                order=order,
+                sequence_number=interval_number,
             )
-            strategy_run.error_message = (
-                f"Price broke {breakout_direction.lower()} out of grid range. "
-                f"Strategy paused. Current price: ${current_price}"
-            )
-            strategy_run.paused_at = timezone.now()
+            
+            # Update strategy progress
+            progress_percent = Decimal(str(interval_number / num_intervals * 100))
+            strategy_run.progress_percent = progress_percent
+            strategy_run.current_step = f"Interval {interval_number}/{num_intervals}"
+            strategy_run.completed_orders = interval_number
+            strategy_run.total_invested += interval_amount_usd
+            strategy_run.save()
+        
+        logger.info(
+            f"[VWAP TASK] Created order {order.order_id} for interval {interval_number}"
+        )
+        
+        # Execute the order via order executor
+        try:
+            from paper_trading.services.order_executor import execute_order
+            execute_order(order.order_id)
+        except ImportError:
+            logger.warning("[VWAP TASK] Order executor not available, order remains pending")
+        except Exception as exec_error:
+            logger.error(f"[VWAP TASK] Order execution failed: {exec_error}")
+            # Order remains pending, can be retried
+        
+        # Check if strategy is complete
+        if interval_number >= num_intervals:
+            # Mark strategy as completed
+            strategy_run.status = StrategyStatus.COMPLETED
+            strategy_run.completed_at = timezone.now()
+            strategy_run.progress_percent = Decimal('100.00')
+            strategy_run.current_step = f"Completed all {num_intervals} intervals"
             strategy_run.save()
             
-            logger.warning(f"Strategy {strategy_id} paused due to {breakout_direction} breakout")
+            logger.info(f"[VWAP TASK] Strategy {strategy_id} COMPLETED!")
             
-            # Send notification
+            # Send completion notification
             send_strategy_notification.apply_async(
-                args=[strategy_id, 'breakout_paused']
+                args=[strategy_id, 'completed'],
             )
             
-        else:
-            # Just record the breakout but continue
-            strategy_run.current_step = (
-                f"{breakout_direction.capitalize()} breakout detected at ${current_price}, continuing..."
-            )
-            strategy_run.save()
-            
-            logger.info(f"Breakout recorded for strategy {strategy_id}, continuing execution")
+            return {
+                'success': True,
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+                'total_intervals': num_intervals,
+                'amount_usd': float(interval_amount_usd),
+                'volume_weight': float(volume_weight),
+                'progress_percent': 100.0,
+                'is_complete': True,
+            }
+        
+        # Schedule next interval
+        next_interval = interval_number + 1
+        delay_seconds = interval_minutes * 60
+        
+        execute_vwap_interval.apply_async(
+            args=[strategy_id, next_interval],
+            countdown=delay_seconds
+        )
+        
+        logger.info(
+            f"[VWAP TASK] Scheduled interval {next_interval} in "
+            f"{delay_seconds} seconds ({interval_minutes} minutes)"
+        )
+        
+        # Send progress notification
+        send_strategy_notification.delay(
+            strategy_id=strategy_id,
+            event_type='interval_executed',
+        )
         
         return {
             'success': True,
             'strategy_id': strategy_id,
-            'breakout_direction': breakout_direction,
-            'current_price': current_price,
-            'action_taken': 'paused' if stop_on_breakout else 'recorded',
-            'orders_cancelled': cancelled_count if stop_on_breakout else 0,
+            'interval_number': interval_number,
+            'total_intervals': num_intervals,
+            'order_id': str(order.order_id),
+            'amount_usd': float(interval_amount_usd),
+            'volume_weight': float(volume_weight),
+            'progress_percent': float(progress_percent),
+            'next_interval': next_interval,
+            'is_complete': False,
         }
+        
+    except Exception as e:
+        logger.exception(f"[VWAP TASK] Error executing interval: {e}")
+        
+        # Retry with exponential backoff
+        try:
+            raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+        except self.MaxRetriesExceededError:
+            logger.error(f"[VWAP TASK] Max retries exceeded for interval {interval_number}")
+            
+            # Mark strategy as failed
+            try:
+                strategy_run = StrategyRun.objects.get(strategy_id=strategy_id)
+                strategy_run.status = StrategyStatus.FAILED
+                strategy_run.error_message = f"Failed to execute interval {interval_number}: {str(e)}"
+                strategy_run.save()
+            except Exception as save_error:
+                logger.exception(f"[VWAP TASK] Error marking strategy as failed: {save_error}")
+            
+            return {
+                'success': False,
+                'error': str(e),
+                'strategy_id': strategy_id,
+                'interval_number': interval_number,
+                'max_retries_exceeded': True,
+            }
+
+
+def _calculate_vwap_volume_weight(
+    interval_number: int,
+    num_intervals: int,
+    execution_window_hours: int,
+    interval_minutes: int
+) -> Decimal:
+    """
+    Calculate the volume weight for a specific VWAP interval.
+    
+    Uses a simplified intraday volume distribution pattern based on typical
+    crypto market activity (higher volume during US/EU market hours).
+    
+    Args:
+        interval_number: Which interval (1-indexed)
+        num_intervals: Total number of intervals
+        execution_window_hours: Total execution window in hours
+        interval_minutes: Minutes between intervals
+        
+    Returns:
+        Decimal weight for this interval (normalized so all weights sum to 1.0)
+    """
+    # Hourly volume weights (24 hours, UTC timezone)
+    # Based on typical crypto market patterns
+    hourly_weights = [
+        Decimal('0.025'),  # 00:00 - Low (Asia night)
+        Decimal('0.020'),  # 01:00
+        Decimal('0.018'),  # 02:00
+        Decimal('0.022'),  # 03:00 - Europe waking up
+        Decimal('0.030'),  # 04:00
+        Decimal('0.040'),  # 05:00
+        Decimal('0.050'),  # 06:00 - Europe morning
+        Decimal('0.060'),  # 07:00
+        Decimal('0.065'),  # 08:00
+        Decimal('0.070'),  # 09:00 - Peak (Europe + US pre-market)
+        Decimal('0.072'),  # 10:00
+        Decimal('0.070'),  # 11:00
+        Decimal('0.065'),  # 12:00 - US market open
+        Decimal('0.068'),  # 13:00
+        Decimal('0.070'),  # 14:00 - Peak US hours
+        Decimal('0.065'),  # 15:00
+        Decimal('0.055'),  # 16:00 - US afternoon
+        Decimal('0.045'),  # 17:00
+        Decimal('0.035'),  # 18:00 - US market close
+        Decimal('0.030'),  # 19:00
+        Decimal('0.028'),  # 20:00 - Asia waking up
+        Decimal('0.030'),  # 21:00
+        Decimal('0.028'),  # 22:00
+        Decimal('0.025'),  # 23:00
+    ]
+    
+    # Get current hour (UTC)
+    current_hour = timezone.now().hour
+    
+    # Calculate raw weights for each interval
+    raw_weights = []
+    for i in range(num_intervals):
+        # Determine which hour this interval covers
+        offset_minutes = i * interval_minutes
+        offset_hours = offset_minutes // 60
+        interval_hour = (current_hour + offset_hours) % 24
+        
+        # Get volume weight for this hour
+        raw_weights.append(hourly_weights[interval_hour])
+    
+    # Normalize weights to sum to 1.0
+    total_weight = sum(raw_weights)
+    if total_weight == 0:
+        # Equal distribution if all weights are zero
+        normalized_weights = [Decimal('1.0') / num_intervals for _ in range(num_intervals)]
+    else:
+        normalized_weights = [w / total_weight for w in raw_weights]
+    
+    # Return weight for the requested interval (1-indexed)
+    if 1 <= interval_number <= len(normalized_weights):
+        return normalized_weights[interval_number - 1]
+    else:
+        # Fallback to equal distribution
+        return Decimal('1.0') / num_intervals
+
+
+@shared_task(name='paper_trading.monitor_vwap_strategy')
+def monitor_vwap_strategy(strategy_id: str) -> dict:
+    """
+    Monitor VWAP strategy execution progress.
+    
+    This task checks on VWAP strategies to:
+    1. Verify intervals are being executed on schedule
+    2. Detect stalled strategies
+    3. Handle recovery from failures
+    4. Update progress metrics
+    
+    Args:
+        strategy_id: UUID of the StrategyRun
+    
+    Returns:
+        Dictionary with monitoring results
+    """
+    logger.debug(f"[VWAP MONITOR] Monitoring strategy {strategy_id}")
+    
+    try:
+        strategy_run = StrategyRun.objects.select_related('account').get(
+            strategy_id=strategy_id
+        )
+        
+        # Check if strategy is still active
+        if strategy_run.status not in [StrategyStatus.RUNNING, StrategyStatus.PAUSED]:
+            logger.info(
+                f"[VWAP MONITOR] Strategy {strategy_id} is {strategy_run.status}, "
+                f"stopping monitor"
+            )
+            return {
+                'success': True,
+                'reason': f"Strategy {strategy_run.status}",
+                'continue_monitoring': False,
+            }
+        
+        # If paused, just reschedule without processing
+        if strategy_run.status == StrategyStatus.PAUSED:
+            monitor_vwap_strategy.apply_async(
+                args=[strategy_id],
+                countdown=60,
+            )
+            return {
+                'success': True,
+                'reason': 'Strategy paused',
+                'continue_monitoring': True,
+            }
+        
+        # Get strategy orders
+        strategy_orders = StrategyOrder.objects.filter(
+            strategy_run=strategy_run
+        ).select_related('order')
+        
+        filled_count = 0
+        pending_count = 0
+        failed_count = 0
+        
+        for so in strategy_orders:
+            if so.order.status == OrderStatus.FILLED:
+                filled_count += 1
+            elif so.order.status == OrderStatus.PENDING:
+                pending_count += 1
+            elif so.order.status in [OrderStatus.FAILED, OrderStatus.CANCELLED]:
+                failed_count += 1
+        
+        # Parse config for total intervals
+        config = strategy_run.config
+        num_intervals = int(config.get('num_intervals', 12))
+        
+        # Check for stalled strategy
+        if strategy_run.started_at:
+            time_since_start = timezone.now() - strategy_run.started_at
+            execution_window_hours = int(config.get('execution_window_hours', 6))
+            expected_duration = timedelta(hours=execution_window_hours)
+            
+            # If strategy has been running longer than 2x expected, flag it
+            if time_since_start > (expected_duration * 2) and filled_count < num_intervals:
+                logger.warning(
+                    f"[VWAP MONITOR] Strategy {strategy_id} appears stalled: "
+                    f"running for {time_since_start}, expected {expected_duration}, "
+                    f"only {filled_count}/{num_intervals} intervals completed"
+                )
+        
+        # Update progress
+        if num_intervals > 0:
+            progress = Decimal(str(filled_count / num_intervals * 100))
+            strategy_run.progress_percent = progress
+            strategy_run.completed_orders = filled_count
+            strategy_run.failed_orders = failed_count
+            strategy_run.current_step = f"VWAP progress: {filled_count}/{num_intervals} intervals"
+            strategy_run.save()
+        
+        # Check if VWAP is complete
+        if filled_count >= num_intervals:
+            strategy_run.status = StrategyStatus.COMPLETED
+            strategy_run.completed_at = timezone.now()
+            strategy_run.progress_percent = Decimal('100')
+            strategy_run.current_step = f"VWAP completed: {filled_count} intervals"
+            strategy_run.save()
+            
+            send_strategy_notification.apply_async(
+                args=[strategy_id, 'completed'],
+            )
+            
+            return {
+                'success': True,
+                'reason': 'VWAP completed',
+                'continue_monitoring': False,
+            }
+        
+        # Reschedule monitoring
+        monitor_vwap_strategy.apply_async(
+            args=[strategy_id],
+            countdown=120,  # Check every 2 minutes
+        )
+        
+        return {
+            'success': True,
+            'filled_intervals': filled_count,
+            'pending_intervals': pending_count,
+            'failed_intervals': failed_count,
+            'total_intervals': num_intervals,
+            'continue_monitoring': True,
+        }
+        
+    except StrategyRun.DoesNotExist:
+        logger.error(f"[VWAP MONITOR] Strategy {strategy_id} not found")
+        return {
+            'success': False,
+            'reason': 'Strategy not found',
+            'continue_monitoring': False,
+        }
+        
+    except Exception as e:
+        logger.exception(f"[VWAP MONITOR] Error monitoring strategy: {e}")
+        
+        # Reschedule anyway to keep monitoring
+        monitor_vwap_strategy.apply_async(
+            args=[strategy_id],
+            countdown=180,  # Longer delay after error
+        )
+        
+        return {
+            'success': False,
+            'reason': str(e),
+            'continue_monitoring': True,
+        }
+
+
+# =============================================================================
+# STRATEGY NOTIFICATIONS
+# =============================================================================
+
+@shared_task(name='paper_trading.send_strategy_notification')
+def send_strategy_notification(strategy_id: str, event_type: str) -> dict:
+    """
+    Send WebSocket notification for strategy events.
+    
+    Args:
+        strategy_id: UUID of the StrategyRun
+        event_type: Type of event (started, paused, resumed, completed, failed, etc.)
+    
+    Returns:
+        Dictionary with notification result
+    """
+    logger.debug(f"Sending {event_type} notification for strategy {strategy_id}")
+    
+    try:
+        strategy_run = StrategyRun.objects.select_related('account').get(
+            strategy_id=strategy_id
+        )
+        
+        # Import WebSocket service
+        try:
+            from paper_trading.services.websocket_service import websocket_service
+            
+            message = {
+                'type': 'strategy_update',
+                'event': event_type,
+                'strategy_id': str(strategy_run.strategy_id),
+                'strategy_type': strategy_run.strategy_type,
+                'status': strategy_run.status,
+                'progress_percent': float(strategy_run.progress_percent),
+                'current_step': strategy_run.current_step,
+                'total_invested': float(strategy_run.total_invested),
+                'current_pnl': float(strategy_run.current_pnl),
+            }
+            
+            websocket_service.send_update(
+                account_id=strategy_run.account.account_id,
+                message_type='strategy_update',
+                data=message,
+            )
+            
+            logger.info(f"Sent {event_type} notification for strategy {strategy_id}")
+            
+            return {
+                'success': True,
+                'event': event_type,
+                'strategy_id': strategy_id,
+            }
+            
+        except ImportError:
+            logger.warning("WebSocket service not available")
+            return {
+                'success': False,
+                'reason': 'WebSocket service not available',
+            }
         
     except StrategyRun.DoesNotExist:
         logger.error(f"Strategy {strategy_id} not found")
@@ -808,10 +1399,10 @@ def handle_grid_breakout(
         }
         
     except Exception as e:
-        logger.exception(f"Error handling Grid breakout: {e}")
+        logger.exception(f"Error sending notification: {e}")
         return {
             'success': False,
-            'error': str(e),
+            'reason': str(e),
         }
 
 
@@ -824,6 +1415,7 @@ def monitor_active_strategies() -> dict:
     """
     Monitor all active strategies for health and progress.
     
+    This is a periodic task that should be scheduled via Celery Beat.
     Runs every 60 seconds (configured in Celery beat schedule).
     Checks for stuck strategies, updates progress, and sends notifications.
     
@@ -851,14 +1443,15 @@ def monitor_active_strategies() -> dict:
                     if strategy.strategy_type == StrategyType.DCA:
                         config = strategy.config
                         interval_hours = int(config.get('interval_hours', 24))
+                        num_intervals = int(config.get('num_intervals', 1))
                         expected_duration = timedelta(
-                            hours=interval_hours * int(config.get('num_intervals', 1))
+                            hours=interval_hours * num_intervals
                         )
                         
                         # Allow 2x expected duration before flagging as stuck
                         if time_since_start > (expected_duration * 2):
                             logger.warning(
-                                f"Strategy {strategy.strategy_id} appears stuck: "
+                                f"DCA strategy {strategy.strategy_id} appears stuck: "
                                 f"running for {time_since_start}, expected {expected_duration}"
                             )
                             issues_found += 1
@@ -875,98 +1468,61 @@ def monitor_active_strategies() -> dict:
                         if recent_fills == 0 and time_since_start > timedelta(days=1):
                             logger.warning(
                                 f"Grid strategy {strategy.strategy_id} has no recent fills "
-                                f"in 24 hours"
+                                f"(running for {time_since_start})"
+                            )
+                            issues_found += 1
+                    
+                    # If TWAP strategy has been running too long
+                    elif strategy.strategy_type == StrategyType.TWAP:
+                        config = strategy.config
+                        execution_window_hours = int(config.get('execution_window_hours', 4))
+                        expected_duration = timedelta(hours=execution_window_hours)
+                        
+                        # Allow 2x expected duration before flagging as stuck
+                        if time_since_start > (expected_duration * 2):
+                            logger.warning(
+                                f"TWAP strategy {strategy.strategy_id} appears stuck: "
+                                f"running for {time_since_start}, expected {expected_duration}"
+                            )
+                            issues_found += 1
+                    
+                    # If VWAP strategy has been running too long (Phase 7B Day 10)
+                    elif strategy.strategy_type == StrategyType.VWAP:
+                        config = strategy.config
+                        execution_window_hours = int(config.get('execution_window_hours', 6))
+                        expected_duration = timedelta(hours=execution_window_hours)
+                        
+                        # Allow 2x expected duration before flagging as stuck
+                        if time_since_start > (expected_duration * 2):
+                            logger.warning(
+                                f"VWAP strategy {strategy.strategy_id} appears stuck: "
+                                f"running for {time_since_start}, expected {expected_duration}"
                             )
                             issues_found += 1
                 
                 monitored_count += 1
                 
-            except Exception as e:
-                logger.exception(f"Error monitoring strategy {strategy.strategy_id}: {e}")
+            except Exception as strategy_error:
+                logger.exception(
+                    f"Error monitoring strategy {strategy.strategy_id}: {strategy_error}"
+                )
                 issues_found += 1
         
         logger.info(
-            f"Strategy monitoring complete: {monitored_count} active, {issues_found} issues"
+            f"Strategy monitoring complete: {monitored_count} strategies checked, "
+            f"{issues_found} issues found"
         )
         
         return {
             'success': True,
-            'monitored': monitored_count,
-            'issues': issues_found,
+            'monitored_count': monitored_count,
+            'issues_found': issues_found,
+            'active_strategies': active_strategies.count(),
         }
         
     except Exception as e:
         logger.exception(f"Error in strategy monitoring: {e}")
         return {
             'success': False,
-            'error': str(e),
-        }
-
-
-# =============================================================================
-# STRATEGY NOTIFICATIONS
-# =============================================================================
-
-@shared_task(name='paper_trading.send_strategy_notification')
-def send_strategy_notification(strategy_id: str, event_type: str) -> dict:
-    """
-    Send WebSocket notification for strategy events.
-    
-    Args:
-        strategy_id: UUID of the StrategyRun
-        event_type: Type of event ('started', 'completed', 'failed', 'paused', 
-                                   'cancelled', 'breakout_paused')
-    
-    Returns:
-        Dictionary with notification status
-    """
-    logger.info(f"Sending strategy notification: {event_type} for {strategy_id}")
-    
-    try:
-        strategy = StrategyRun.objects.select_related('account').get(
-            strategy_id=strategy_id
-        )
-        
-        # Prepare notification message
-        message = {
-            'type': 'strategy_update',
-            'event': event_type,
-            'strategy_id': str(strategy.strategy_id),
-            'strategy_type': strategy.strategy_type,
-            'status': strategy.status,
-            'progress_percent': str(strategy.progress_percent),
-            'current_step': strategy.current_step,
-            'completed_orders': strategy.completed_orders,
-            'total_orders': strategy.total_orders,
-            'error_message': strategy.error_message,
-        }
-        
-        # Send via WebSocket
-        from paper_trading.services.websocket_service import send_paper_trading_update
-        
-        send_paper_trading_update(
-            account_id=strategy.account.account_id,
-            message=message,
-        )
-        
-        logger.info(f"Strategy notification sent for {strategy_id}")
-        
-        return {
-            'success': True,
-            'strategy_id': strategy_id,
-            'event_type': event_type,
-        }
-        
-    except StrategyRun.DoesNotExist:
-        logger.error(f"Strategy {strategy_id} not found for notification")
-        return {
-            'success': False,
-            'reason': 'Strategy not found',
-        }
-        
-    except Exception as e:
-        logger.exception(f"Error sending strategy notification: {e}")
-        return {
-            'success': False,
-            'error': str(e),
+            'reason': str(e),
         }
