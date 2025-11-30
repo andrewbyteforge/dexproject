@@ -10,13 +10,12 @@ File: paper_trading/api/data_api.py
 import logging
 from datetime import datetime, timedelta
 import asyncio
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
+import decimal
 
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.http import require_http_methods
-from django.db.models import Sum
 from django.utils import timezone
-import decimal
 # Import models
 from ..models import (
     PaperTrade,
@@ -25,14 +24,9 @@ from ..models import (
     PaperPerformanceMetrics,
 )
 
-# Import constants for field names
-from ..constants import (
-    ThoughtLogFields,
-)
-
 # Import utilities
 from ..utils import get_single_trading_account
-from ..services.price_feed_service import PriceFeedService
+from ..services import get_default_price_feed_service
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +38,17 @@ logger = logging.getLogger(__name__)
 def safe_float(value, default: float = 0.0) -> float:
     """
     Safely convert a value to float, handling None, invalid decimals, and empty strings.
-    
+
     Args:
         value: The value to convert (can be None, Decimal, float, string, etc.)
         default: Default value to return if conversion fails
-        
+
     Returns:
         float: The converted value or default
     """
     if value is None or value == '':
         return default
-    
+
     try:
         # Handle Decimal type explicitly
         if isinstance(value, Decimal):
@@ -69,17 +63,17 @@ def safe_float(value, default: float = 0.0) -> float:
 def safe_decimal(value, default: str = '0.0') -> Decimal:
     """
     Safely convert a value to Decimal, handling None, invalid values, and empty strings.
-    
+
     Args:
         value: The value to convert
         default: Default value as string to return if conversion fails
-        
+
     Returns:
         Decimal: The converted value or default
     """
     if value is None or value == '':
         return Decimal(default)
-    
+
     try:
         if isinstance(value, Decimal):
             return value
@@ -118,16 +112,13 @@ def api_ai_thoughts(request: HttpRequest) -> JsonResponse:
         for thought in thoughts:
             thought_data = {
                 'thought_id': str(thought.thought_id),
-                'thought_type': thought.thought_type,
-                'intelligence_level': thought.intelligence_level,
-                'content': thought.content,
-                'metadata': thought.metadata or {},
+                'thought_type': thought.decision_type,  # Fixed: was thought.thought_type
+                'intelligence_level': float(thought.confidence_percent),  # Fixed: was thought.intelligence_level
+                'content': thought.primary_reasoning,  # Fixed: was thought.content
+                'metadata': thought.market_data or {},  # Fixed: was thought.metadata
                 'created_at': thought.created_at.isoformat(),
+                'token_symbol': thought.token_symbol,  # Add directly from model field
             }
-
-            # Add token symbol from metadata if available
-            if thought.metadata and 'token_symbol' in thought.metadata:
-                thought_data['token_symbol'] = thought.metadata['token_symbol']
 
             thoughts_data.append(thought_data)
 
@@ -180,17 +171,17 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         # Format positions with safe conversion
         positions_data = []
         total_positions_value = 0.0
-        
+
         for position in positions:
             try:
                 quantity = safe_float(position['quantity'])
                 if quantity <= 0:
                     logger.warning(f"Skipping position {position['position_id']} with invalid quantity")
                     continue
-                    
+
                 current_value = safe_float(position['current_value_usd'])
                 total_positions_value += current_value
-                
+
                 positions_data.append({
                     'position_id': str(position['position_id']),
                     'token_symbol': position['token_symbol'] or 'UNKNOWN',
@@ -209,7 +200,7 @@ def api_portfolio_data(request: HttpRequest) -> JsonResponse:
         cash_balance = safe_float(account.current_balance_usd, 10000.0)
         portfolio_value = cash_balance + total_positions_value
         total_pnl = safe_float(account.total_profit_loss_usd)
-        
+
         return JsonResponse({
             'success': True,
             'portfolio': {
@@ -267,7 +258,7 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
 
         # Apply limit
         limit = min(int(request.GET.get('limit', 50)), 200)
-        
+
         # Get trades using values to avoid decimal issues
         trades = trades_query.values(
             'trade_id',
@@ -333,31 +324,31 @@ def api_trades_data(request: HttpRequest) -> JsonResponse:
 def api_recent_trades(request: HttpRequest) -> JsonResponse:
     """
     API endpoint for most recent trades (last 24 hours).
-    
+
     Uses values() query to avoid decimal conversion errors with corrupted data.
     Individual trades with invalid decimals are skipped with warnings.
-    
+
     Returns:
         JsonResponse: Recent trades list with success status
     """
     try:
         account = get_single_trading_account()
-        
+
         # Get trades from last 24 hours using values() to avoid model conversion
         cutoff_time = timezone.now() - timedelta(hours=24)
-        
+
         trades = PaperTrade.objects.filter(
             account=account,
             created_at__gte=cutoff_time
         ).values(
             'trade_id',
-            'trade_type', 
+            'trade_type',
             'token_out_symbol',
             'amount_in_usd',
             'status',
             'created_at'
         ).order_by('-created_at')[:10]
-        
+
         # Format trades with safe decimal handling
         trades_data = []
         for trade in trades:
@@ -373,12 +364,12 @@ def api_recent_trades(request: HttpRequest) -> JsonResponse:
             except Exception as e:
                 logger.warning(f"Skipping trade {trade.get('trade_id')} due to error: {e}")
                 continue
-        
+
         return JsonResponse({
             'success': True,
             'trades': trades_data
         })
-        
+
     except Exception as e:
         logger.error(f"Error fetching recent trades: {e}", exc_info=True)
         return JsonResponse({
@@ -425,12 +416,12 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
             try:
                 # Safe conversion with validation
                 quantity = safe_float(position['quantity'])
-                
+
                 # Skip positions with invalid quantity
                 if quantity <= 0:
                     logger.warning(f"Skipping position {position['position_id']} with zero/invalid quantity")
                     continue
-                
+
                 position_data = {
                     'position_id': str(position['position_id']),
                     'token_symbol': position['token_symbol'] or 'UNKNOWN',
@@ -441,9 +432,9 @@ def api_open_positions(request: HttpRequest) -> JsonResponse:
                     'unrealized_pnl_usd': safe_float(position['unrealized_pnl_usd']),
                     'opened_at': position['opened_at'].isoformat() if position['opened_at'] else None,
                 }
-                
+
                 positions_data.append(position_data)
-                    
+
             except Exception as pos_error:
                 logger.error(f"Error processing position {position.get('position_id', 'unknown')}: {pos_error}")
                 continue
@@ -478,6 +469,8 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
         JsonResponse: Dashboard KPIs and statistics
     """
     try:
+        from ..services import get_default_price_feed_service
+
         account = get_single_trading_account()
 
         # Calculate basic metrics
@@ -492,27 +485,80 @@ def api_metrics(request: HttpRequest) -> JsonResponse:
 
         # Get initial balance for P&L calculation
         initial_balance = safe_float(account.initial_balance_usd, 10000.0)
-        
+
         # Get current cash balance
         cash_balance = safe_float(account.current_balance_usd, 10000.0)
 
-        # Get open positions value with safe aggregation
-        open_positions_result = PaperPosition.objects.filter(
+        # CRITICAL FIX: Calculate open positions value using CURRENT market prices
+        # Instead of aggregating stored entry prices from current_value_usd
+        open_positions = PaperPosition.objects.filter(
             account=account,
             is_open=True
-        ).aggregate(total=Sum('current_value_usd'))
-        
-        open_positions_value = safe_float(open_positions_result['total'])
+        )
 
-        # Calculate portfolio value (cash + positions)
+        open_positions_value = 0.0
+        price_service = get_default_price_feed_service()
+
+        # Create event loop for async price fetching
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        for position in open_positions:
+            try:
+                # Fetch CURRENT market price
+                current_price_result = loop.run_until_complete(
+                    price_service.get_token_price(
+                        token_address=position.token_address,
+                        token_symbol=position.token_symbol
+                    )
+                )
+
+                if current_price_result is None:
+                    # Fallback to entry price if current price unavailable
+                    logger.warning(
+                        f"[API METRICS] No current price for {position.token_symbol}, "
+                        f"using entry price"
+                    )
+                    current_price = safe_float(position.average_entry_price_usd, 0.0)
+                else:
+                    # Convert to float for consistent type handling
+                    current_price = float(current_price_result)
+                    logger.debug(
+                        f"[API METRICS] {position.token_symbol}: "
+                        f"Current=${current_price} vs Entry=${position.average_entry_price_usd}"
+                    )
+
+                # Calculate position value at CURRENT market price
+                position_value = safe_float(position.quantity, 0.0) * current_price
+                open_positions_value += position_value
+
+            except Exception as e:
+                logger.warning(
+                    f"[API METRICS] Error getting price for {position.token_symbol}: {e}, "
+                    f"using entry price"
+                )
+                # Fallback to entry price
+                position_value = safe_float(position.current_value_usd, 0.0)
+                open_positions_value += position_value
+
+        # Calculate portfolio value (cash + positions at CURRENT prices)
         portfolio_value = cash_balance + open_positions_value
-        
+
         # ✅ CALCULATE total P&L from actual portfolio value vs initial balance
         # This gives the true profit/loss, not relying on account.total_profit_loss_usd
         total_pnl = portfolio_value - initial_balance
-        
+
         # ✅ CALCULATE ROI from actual values
         roi = (total_pnl / initial_balance * 100) if initial_balance > 0 else 0
+
+        logger.debug(
+            f"[API METRICS] Portfolio=${portfolio_value:.2f} "
+            f"(Cash=${cash_balance:.2f} + Positions=${open_positions_value:.2f}), "
+            f"P&L=${total_pnl:.2f}, ROI={roi:.2f}%"
+        )
 
         return JsonResponse({
             'success': True,
@@ -559,14 +605,10 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                 'profit_factor': 0.0,
                 'sharpe_ratio': 0.0,
                 'max_drawdown_percent': 0.0,
-                'avg_win_usd': 0.0,
-                'avg_loss_usd': 0.0,
-                'best_trade_pnl_usd': 0.0,
-                'worst_trade_pnl_usd': 0.0,
-                'total_volume_usd': 0.0,
-                'trades_last_24h': 0,
-                'trades_last_7d': 0,
-                'trades_last_30d': 0,
+                'average_win_usd': 0.0,
+                'average_loss_usd': 0.0,
+                'largest_win_usd': 0.0,
+                'largest_loss_usd': 0.0,
             }
         )
 
@@ -578,15 +620,15 @@ def api_performance_metrics(request: HttpRequest) -> JsonResponse:
                 'profit_factor': safe_float(metrics.profit_factor),
                 'sharpe_ratio': safe_float(metrics.sharpe_ratio),
                 'max_drawdown_percent': safe_float(metrics.max_drawdown_percent),
-                'avg_win_usd': safe_float(metrics.avg_win_usd),
-                'avg_loss_usd': safe_float(metrics.avg_loss_usd),
-                'best_trade_pnl_usd': safe_float(metrics.best_trade_pnl_usd),
-                'worst_trade_pnl_usd': safe_float(metrics.worst_trade_pnl_usd),
-                'total_volume_usd': safe_float(metrics.total_volume_usd),
-                'trades_last_24h': metrics.trades_last_24h,
-                'trades_last_7d': metrics.trades_last_7d,
-                'trades_last_30d': metrics.trades_last_30d,
-                'last_updated': metrics.last_updated.isoformat() if metrics.last_updated else None,
+                'avg_win_usd': safe_float(metrics.average_win_usd),
+                'avg_loss_usd': safe_float(metrics.average_loss_usd),
+                'best_trade_pnl_usd': safe_float(metrics.largest_win_usd),
+                'worst_trade_pnl_usd': safe_float(metrics.largest_loss_usd),
+                'total_volume_usd': 0.0,  # Field doesn't exist in model
+                'trades_last_24h': 0,  # Field doesn't exist in model
+                'trades_last_7d': 0,  # Field doesn't exist in model
+                'trades_last_30d': 0,  # Field doesn't exist in model
+                'last_updated': metrics.created_at.isoformat() if hasattr(metrics, 'created_at') and metrics.created_at else None,
             }
         })
 
@@ -624,24 +666,37 @@ async def api_price_updates(request: HttpRequest) -> JsonResponse:
             }, status=400)
 
         # Get price feed service
-        price_service = PriceFeedService()
+        price_service = get_default_price_feed_service()
 
         # Fetch prices asynchronously
         prices = {}
-        for token in tokens:
+        for token_symbol in tokens:
             try:
-                price_data = await price_service.get_token_price(token)
-                if price_data:
-                    prices[token] = {
-                        'price_usd': safe_float(price_data.get('price_usd')),
-                        'change_24h': safe_float(price_data.get('change_24h')),
-                        'volume_24h': safe_float(price_data.get('volume_24h')),
-                        'market_cap': safe_float(price_data.get('market_cap')),
-                        'last_updated': price_data.get('last_updated'),
+                # Get token address from the service's token mapping
+                token_address = price_service.token_addresses.get(token_symbol)
+
+                if not token_address:
+                    logger.warning(f"Token {token_symbol} not found in configured tokens")
+                    prices[token_symbol] = {'error': f'Token {token_symbol} not configured'}
+                    continue
+
+                # Fetch price with both required parameters
+                current_price = await price_service.get_token_price(
+                    token_address=token_address,
+                    token_symbol=token_symbol
+                )
+
+                if current_price is not None:
+                    prices[token_symbol] = {
+                        'price_usd': float(current_price),
+                        'last_updated': datetime.now().isoformat()
                     }
+                else:
+                    prices[token_symbol] = {'error': 'Price not available'}
+
             except Exception as e:
-                logger.error(f"Error fetching price for {token}: {e}")
-                prices[token] = {'error': str(e)}
+                logger.error(f"Error fetching price for {token_symbol}: {e}")
+                prices[token_symbol] = {'error': str(e)}
 
         return JsonResponse({
             'success': True,
@@ -665,46 +720,46 @@ async def api_price_updates(request: HttpRequest) -> JsonResponse:
 def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
     """
     API endpoint for single token price lookup.
-    
+
     Args:
         token_symbol: Token symbol to look up (e.g., 'WETH', 'USDC')
-    
+
     Returns:
         JsonResponse: Current token price data
     """
     # Initialize to None to avoid unbound variable warning
     price_service = None
-    
+
     try:
         # Import DEFAULT_CHAIN_ID from Django settings
         from django.conf import settings
         chain_id = getattr(settings, 'DEFAULT_CHAIN_ID', 8453)  # Default to Base mainnet
-        
-        # Initialize price service with required chain_id
-        price_service = PriceFeedService(chain_id=chain_id)
-        
+
+        # Initialize price service
+        price_service = get_default_price_feed_service()
+
         # Get token address from the service's token mapping
         token_addresses = price_service.token_addresses
         token_address = token_addresses.get(token_symbol.upper())
-        
+
         if not token_address:
             return JsonResponse({
                 'success': False,
                 'error': f'Token {token_symbol} not found in configured tokens for chain {chain_id}'
             }, status=404)
-        
+
         # Get token price using correct method signature
         price = asyncio.run(price_service.get_token_price(
             token_address=token_address,
             token_symbol=token_symbol.upper()
         ))
-        
+
         if not price:
             return JsonResponse({
                 'success': False,
                 'error': f'Price not available for {token_symbol}'
             }, status=404)
-        
+
         # Use safe_float for price conversion
         return JsonResponse({
             'success': True,
@@ -712,7 +767,7 @@ def api_token_price(request: HttpRequest, token_symbol: str) -> JsonResponse:
             'price': safe_float(price),
             'chain_id': chain_id
         })
-    
+
     except Exception as e:
         logger.error(f"Error in token price API: {e}", exc_info=True)
         return JsonResponse({

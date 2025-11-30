@@ -677,6 +677,9 @@ class MarketAnalyzer:
                 trade_executor: TradeExecutor instance
             """
             try:
+                from paper_trading.services import get_default_price_feed_service
+                from asgiref.sync import async_to_sync
+                
                 logger.debug(f"[STATUS UPDATE] Starting portfolio update for account {self.account.account_id}")
                 
                 # Get current positions
@@ -685,25 +688,59 @@ class MarketAnalyzer:
                 
                 # Format positions for WebSocket
                 positions_data = []
-                total_positions_value = 0.0
+                total_positions_value = Decimal('0')
+                
+                # Get price service for current market prices
+                price_service = get_default_price_feed_service()
                 
                 for token_symbol, position in positions.items():
-                    position_value = float(position.current_value_usd)
-                    total_positions_value += position_value
+                    # CRITICAL FIX: Get CURRENT market price, not entry price
+                    try:
+                        current_price = async_to_sync(price_service.get_token_price)(
+                            token_address=position.token_address,
+                            token_symbol=position.token_symbol
+                        )
+                        
+                        if current_price is None:
+                            # Fallback to entry price if current price unavailable
+                            logger.warning(
+                                f"[STATUS UPDATE] No current price for {token_symbol}, "
+                                f"using entry price"
+                            )
+                            current_price = position.average_entry_price_usd
+                        else:
+                            logger.debug(
+                                f"[STATUS UPDATE] {token_symbol}: "
+                                f"Current=${current_price} vs Entry=${position.average_entry_price_usd}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[STATUS UPDATE] Error getting price for {token_symbol}: {e}, "
+                            f"using entry price"
+                        )
+                        current_price = position.average_entry_price_usd
+                    
+                    # Calculate position value using CURRENT market price
+                    position_value = float(position.quantity * current_price)
+                    total_positions_value += Decimal(str(position_value))
+                    
+                    # Calculate invested amount
+                    invested_amount = float(position.total_invested_usd)
                     
                     positions_data.append({
                         'token_symbol': token_symbol,
                         'quantity': float(position.quantity),
-                        'invested_usd': float(position.total_invested_usd),
+                        'invested_usd': invested_amount,
                         'current_value_usd': position_value,
                         'pnl_percent': float(
-                            ((position.current_value_usd - position.total_invested_usd)
-                            / position.total_invested_usd * 100)
-                            if position.total_invested_usd > 0
+                            ((position_value - invested_amount)
+                            / invested_amount * 100)
+                            if invested_amount > 0
                             else 0
                         )
                     })
                 
+                total_positions_value = float(total_positions_value)
                 account_cash = float(self.account.current_balance_usd)
                 total_portfolio_value = account_cash + total_positions_value
                 
@@ -790,10 +827,12 @@ class MarketAnalyzer:
                     f"[STATUS UPDATE] ❌ Failed to send bot status: {e}",
                     exc_info=True
                 )
+    
+    
+    
     # =========================================================================
     # CLEANUP
     # =========================================================================
-
     async def cleanup(self) -> None:
         """
         Clean up resources (DEX connections, etc.).

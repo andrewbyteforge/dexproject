@@ -467,16 +467,18 @@ def get_intel_level_from_trading_mode(trading_mode: str) -> int:
 # =============================================================================
 
 class DEXNames:
-    """Supported DEX names for multi-DEX price comparison."""
+    """Standardized DEX names for consistency across the application."""
     UNISWAP_V3: Final[str] = 'uniswap_v3'
     UNISWAP_V2: Final[str] = 'uniswap_v2'
     SUSHISWAP: Final[str] = 'sushiswap'
     CURVE: Final[str] = 'curve'
+    AERODROME: Final[str] = 'aerodrome'  # âœ… ADD THIS LINE
+    BASESWAP: Final[str] = 'baseswap'    # âœ… ADD THIS LINE
     
-    ALL: Final[tuple] = (UNISWAP_V3, UNISWAP_V2, SUSHISWAP, CURVE)
+    ALL: Final[tuple] = (UNISWAP_V3, UNISWAP_V2, SUSHISWAP, CURVE, AERODROME, BASESWAP)  # âœ… UPDATE THIS LINE
     
-    # Primary DEXs for Phase 2 launch
-    PRIMARY: Final[tuple] = (UNISWAP_V3, SUSHISWAP, CURVE)
+    # Primary DEXs for Phase 2 launch (Base chain focus)
+    PRIMARY: Final[tuple] = (AERODROME, UNISWAP_V3, SUSHISWAP, BASESWAP, CURVE)
 
 
 class ArbitrageFields:

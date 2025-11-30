@@ -293,10 +293,6 @@ from typing import Final, Dict, List
 class DEXComparisonDefaults:
     """Default configuration for multi-DEX price comparison."""
     
-    # =========================================================================
-    # DEX SELECTION
-    # =========================================================================
-    
     # Enable/disable specific DEXs
     ENABLE_UNISWAP_V3: Final[bool] = True
     ENABLE_UNISWAP_V2: Final[bool] = False  # Disabled initially

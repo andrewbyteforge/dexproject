@@ -7,7 +7,7 @@ Imports from views.py (dashboard views) and api package (API endpoints).
 File Path: dexproject/paper_trading/urls.py
 """
 
-from django.urls import path
+from django.urls import path, include  # UPDATED: Added 'include'
 from . import views
 from . import views_orders
 from .api import (
@@ -74,6 +74,18 @@ urlpatterns = [
     # Strategy performance history page - bot intelligence metrics
     # GET: /paper-trading/strategies/
     path('strategies/', views.strategies_view, name='strategies'),
+
+    # ==========================================================================
+    # BACKTESTING (Phase 7B - Days 12-13)
+    # Historical strategy testing and performance analysis
+    # ==========================================================================
+    
+    # Backtesting dashboard and detail views
+    # GET: /paper-trading/backtest/ - Main backtesting dashboard
+    # GET: /paper-trading/backtest/<uuid>/ - Specific backtest results
+    # POST: /paper-trading/backtest/api/run/ - Execute backtest
+    # Includes all backtesting API endpoints for running tests and managing results
+    path('backtest/', include('paper_trading.backtesting.urls', namespace='backtest')),
 
     # ==========================================================================
     # DATA API ENDPOINTS (from api/data_api.py)

@@ -224,7 +224,7 @@ class PositionEvaluator:
 
             # Calculate P&L
             invested = position.total_invested_usd
-            current_value = position.current_value_usd
+            current_value = position.quantity * current_price
             pnl_percent = ((current_value - invested) / invested * 100) if invested > 0 else Decimal('0')
 
             logger.info(

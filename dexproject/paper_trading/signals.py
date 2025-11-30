@@ -78,7 +78,8 @@ def calculate_portfolio_metrics(account: Any) -> Dict[str, Any]:
     This is the centralized function for calculating portfolio value
     to ensure consistency across all WebSocket updates.
 
-    CRITICAL: This must match the calculation in data_api.py and the
+    CRITICAL: Positions must be valued at CURRENT MARKET PRICE, not entry price!
+    This must match the calculation in data_api.py and the
     JavaScript handlePortfolioUpdate function expectations.
 
     Args:
@@ -97,7 +98,8 @@ def calculate_portfolio_metrics(account: Any) -> Dict[str, Any]:
     """
     try:
         from paper_trading.models import PaperPosition
-        from django.db.models import Sum
+        from paper_trading.services import get_default_price_feed_service
+        from asgiref.sync import async_to_sync
 
         logger.debug(f"[PORTFOLIO CALC] Starting calculation for account {account.account_id}")
 
@@ -105,16 +107,60 @@ def calculate_portfolio_metrics(account: Any) -> Dict[str, Any]:
         cash_balance = float(account.current_balance_usd or Decimal('0'))
         logger.debug(f"[PORTFOLIO CALC] Cash balance: ${cash_balance:.2f}")
 
-        # Calculate total value of open positions using aggregation for efficiency
-        positions_result = PaperPosition.objects.filter(
+        # CRITICAL FIX: Calculate position values using CURRENT MARKET PRICES
+        # NOT the current_value_usd field which stores values at ENTRY prices!
+        positions = PaperPosition.objects.filter(
             account=account,
             is_open=True
-        ).aggregate(total_value=Sum('current_value_usd'))
+        ).select_related('account')
 
-        positions_value = float(positions_result['total_value'] or Decimal('0'))
+        positions_value = Decimal('0')
+        price_service = get_default_price_feed_service()
+        
+        for position in positions:
+            # Get CURRENT market price for accurate valuation
+            try:
+                # FIXED: Use correct parameter names and async_to_sync wrapper
+                current_price = async_to_sync(price_service.get_token_price)(
+                    token_address=position.token_address,
+                    token_symbol=position.token_symbol
+                )
+                
+                if current_price is None:
+                    # Fallback to entry price if current price unavailable
+                    logger.warning(
+                        f"[PORTFOLIO CALC] No current price for {position.token_symbol}, "
+                        f"using entry price"
+                    )
+                    current_price = position.average_entry_price_usd
+                else:
+                    logger.debug(
+                        f"[PORTFOLIO CALC] {position.token_symbol}: "
+                        f"Current=${current_price} vs Entry=${position.average_entry_price_usd}"
+                    )
+                
+                # Calculate value using CURRENT price × quantity (natural units)
+                position_value = position.quantity * current_price
+                positions_value += position_value
+                
+                logger.debug(
+                    f"[PORTFOLIO CALC] {position.token_symbol}: "
+                    f"{position.quantity} × ${current_price} = ${position_value:.2f}"
+                )
+                
+            except Exception as e:
+                logger.warning(
+                    f"[PORTFOLIO CALC] Error getting price for {position.token_symbol}: {e}, "
+                    f"using fallback entry price"
+                )
+                # Fallback to entry price on any error
+                position_value = position.quantity * position.average_entry_price_usd
+                positions_value += position_value
+
+        positions_value = float(positions_value)
         logger.debug(f"[PORTFOLIO CALC] Open positions value: ${positions_value:.2f}")
 
-        # Calculate portfolio value (cash + positions)
+        # Calculate portfolio value (cash + positions at CURRENT MARKET prices)
         portfolio_value = cash_balance + positions_value
         logger.debug(f"[PORTFOLIO CALC] Total portfolio value: ${portfolio_value:.2f}")
 
@@ -189,8 +235,6 @@ def calculate_portfolio_metrics(account: Any) -> Dict[str, Any]:
             'winning_trades': 0,
             'losing_trades': 0,
         }
-
-
 # ============================================================================
 # SIGNAL HANDLERS - PAPER TRADING ACCOUNT
 # ============================================================================

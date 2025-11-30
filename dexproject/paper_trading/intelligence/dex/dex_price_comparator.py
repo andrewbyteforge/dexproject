@@ -25,7 +25,9 @@ from paper_trading.intelligence.dex_integrations import (
     DEXPrice,
     UniswapV3DEX,
     SushiSwapDEX,
-    CurveDEX
+    CurveDEX,
+    AerodromeDEX,  # âœ… ADD THIS LINE
+    BaseSwapDEX     # âœ… ADD THIS LINE
 )
 
 # Import constants and defaults
@@ -195,12 +197,6 @@ class DEXPriceComparator:
 
 
     def _get_default_enabled_dexs(self) -> List[str]:
-        """
-        Get list of enabled DEXs from defaults.
-        
-        Returns:
-            List of enabled DEX names
-        """
         enabled = []
         
         if DEXComparisonDefaults.ENABLE_UNISWAP_V3:
@@ -211,6 +207,13 @@ class DEXPriceComparator:
         
         if DEXComparisonDefaults.ENABLE_CURVE:
             enabled.append(DEXNames.CURVE)
+        
+        # âœ… ADD THESE LINES
+        if DEXComparisonDefaults.ENABLE_AERODROME:
+            enabled.append(DEXNames.AERODROME)
+        
+        if DEXComparisonDefaults.ENABLE_BASESWAP:
+            enabled.append(DEXNames.BASESWAP)
         
         return enabled
     
@@ -229,10 +232,29 @@ class DEXPriceComparator:
                     cache_ttl_seconds=DEXComparisonDefaults.PRICE_CACHE_TTL_SECONDS
                 )
             
-            if DEXNames.CURVE in self.enabled_dexs:
-                self.dexs[DEXNames.CURVE] = CurveDEX(
-                    chain_id=self.chain_id,
-                    cache_ttl_seconds=DEXComparisonDefaults.PRICE_CACHE_TTL_SECONDS
+                if DEXNames.CURVE in self.enabled_dexs:
+                    self.dexs[DEXNames.CURVE] = CurveDEX(
+                        chain_id=self.chain_id,
+                        cache_ttl_seconds=DEXComparisonDefaults.PRICE_CACHE_TTL_SECONDS
+                    )
+
+                # âœ… ADD THESE LINES
+                if DEXNames.AERODROME in self.enabled_dexs:
+                    self.dexs[DEXNames.AERODROME] = AerodromeDEX(
+                        chain_id=self.chain_id,
+                        cache_ttl_seconds=DEXComparisonDefaults.PRICE_CACHE_TTL_SECONDS
+                    )
+                    self.logger.info("[DEX COMPARATOR] âœ… Aerodrome initialized (Base chain primary DEX)")
+
+                if DEXNames.BASESWAP in self.enabled_dexs:
+                    self.dexs[DEXNames.BASESWAP] = BaseSwapDEX(
+                        chain_id=self.chain_id,
+                        cache_ttl_seconds=DEXComparisonDefaults.PRICE_CACHE_TTL_SECONDS
+                    )
+                    self.logger.info("[DEX COMPARATOR] âœ… BaseSwap initialized (Base chain alternative)")
+
+                self.logger.info(
+                    f"[DEX COMPARATOR] Initialized {len(self.dexs)} DEX integrations"
                 )
             
             self.logger.info(
